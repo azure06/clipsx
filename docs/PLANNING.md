@@ -1,6 +1,6 @@
 # Clips Next - System Design & Planning
 
-*Last Updated: February 15, 2026*
+*Last Updated: February 15, 2026 (afternoon)*
 
 ---
 
@@ -33,7 +33,7 @@ Philosophy: Clipboard as a gateway, not a destination. Every clip can be opened,
 - **P3:** Advanced features (post-MVP)
 
 ### Current Focus
-1. **Settings persistence (P0)** - Unblocks customization
+1. **UI component library migration** - Refactor remaining pages to use shared components
 2. **Clipboard pipeline refactor (P0)** - Improves testability
 3. **Quick paste (P1)** - Core clipboard manager function
 4. **Open in default editor (P1)** - Gateway functionality
@@ -56,10 +56,20 @@ Philosophy: Clipboard as a gateway, not a destination. Every clip can be opened,
 - List/Grid view toggle
 - Sidebar navigation
 - Pin/favorite/delete actions
-- **Settings persistence (P0)** - JSON config file with defaults ✨ NEW
+- **Settings persistence (P0)** - JSON config file with defaults
+- **Settings UI (P0)** - Full settings page with tabs, toggle switches, selects, button groups
+- **Shared UI component library** - Reusable components built with Radix UI:
+  - `Button` (5 variants, 3 sizes, loading state, icon slots)
+  - `Switch` (Radix UI, accessible toggle)
+  - `Select` (Radix UI dropdown with keyboard navigation)
+  - `Input` (label, error/helper text, icons)
+  - `Card` (header/footer, clickable variant)
+  - `Tabs` (Radix UI, horizontal/vertical)
+- **Settings page refactored** to use shared component library
 
 ### In Progress 🟡
-- None currently
+- Migrating remaining pages (ClipboardHistory) to shared components
+- Unit tests for shared components
 
 ### Blocked 🔴
 - None currently
@@ -80,7 +90,7 @@ Philosophy: Clipboard as a gateway, not a destination. Every clip can be opened,
 - Content type detection (URL, code, JSON, color, etc.)
 - Rich content preview (images, HTML, formatted text)
 - Clipboard snippets (save templates for frequently used text)
-- Settings tabs/navigation (organize settings by category)
+- ~~Settings tabs/navigation (organize settings by category)~~ ✅ Done
 - Paste format control (choose format when pasting: plain text, HTML, etc.)
 - Semantic search (find similar clips by meaning, not just keywords)
 - Smart ranking/sorting (frecency algorithm, customizable sort options)
@@ -873,7 +883,8 @@ Combine keyword search (FTS5) + semantic search for best results:
 - Desktop: Tauri 2 (Rust + webview)
 - Frontend: React 19 + TypeScript + Zustand
 - Database: SQLite with FTS5
-- UI: Tailwind CSS 4
+- UI: Tailwind CSS 4 + Radix UI (component primitives)
+- Component library: `src/shared/components/ui/` (Button, Switch, Select, Input, Card, Tabs)
 
 **AI Strategy:**
 - Easy Mode: Our backend → OpenRouter (95% of users)

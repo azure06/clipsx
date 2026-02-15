@@ -4,13 +4,13 @@ import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { Theme, ViewMode, RetentionPolicy, PasteFormat } from '../../shared/types'
+import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   Palette,
   Clipboard,
   Shield,
   Database,
   Keyboard,
-  ChevronRight,
   Trash,
   Loader2,
   Settings as SettingsIcon,
@@ -26,6 +26,8 @@ import {
 
 type Tab = 'general' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
 
+// --- Settings-specific layout components (not shared) ---
+
 type SettingsSectionProps = {
   readonly icon: React.ReactNode
   readonly title: string
@@ -34,8 +36,8 @@ type SettingsSectionProps = {
 }
 
 const SettingsSection = ({ icon, title, description, children }: SettingsSectionProps) => (
-  <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 shadow-sm overflow-hidden">
-    <div className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-5 py-4">
+  <Card
+    header={
       <div className="flex items-center gap-3">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
           {icon}
@@ -45,9 +47,11 @@ const SettingsSection = ({ icon, title, description, children }: SettingsSection
           <p className="text-xs text-gray-500 dark:text-gray-500">{description}</p>
         </div>
       </div>
-    </div>
-    <div className="p-5 space-y-4">{children}</div>
-  </div>
+    }
+    className="shadow-sm"
+  >
+    <div className="space-y-4">{children}</div>
+  </Card>
 )
 
 type SettingRowProps = {
@@ -68,59 +72,6 @@ const SettingRow = ({ label, description, children }: SettingRowProps) => (
   </div>
 )
 
-type ToggleSwitchProps = {
-  readonly checked: boolean
-  readonly onChange: (checked: boolean) => void
-  readonly disabled?: boolean
-}
-
-const ToggleSwitch = ({ checked, onChange, disabled }: ToggleSwitchProps) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    disabled={disabled}
-    onClick={() => onChange(!checked)}
-    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
-      checked
-        ? 'bg-gradient-to-r from-blue-500 to-violet-500 cursor-pointer'
-        : disabled
-          ? 'bg-gray-200 dark:bg-gray-800 cursor-not-allowed'
-          : 'bg-gray-300 dark:bg-gray-700 cursor-pointer hover:bg-gray-400 dark:hover:bg-gray-600'
-    }`}
-  >
-    <span
-      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 shadow-sm ${
-        checked ? 'translate-x-6' : 'translate-x-1'
-      }`}
-    />
-  </button>
-)
-
-type SelectProps<T extends string> = {
-  readonly value: T
-  readonly onChange: (value: T) => void
-  readonly options: readonly { readonly value: T; readonly label: string }[]
-  readonly className?: string
-}
-
-const Select = <T extends string>({ value, onChange, options, className = '' }: SelectProps<T>) => (
-  <div className="relative">
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value as T)}
-      className={`appearance-none rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 pr-8 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${className}`}
-    >
-      {options.map(option => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-    <ChevronRight className="absolute right-2.5 top-1/2 -translate-y-1/2 rotate-90 h-3.5 w-3.5 text-gray-500 pointer-events-none" />
-  </div>
-)
-
 type ButtonGroupOption = {
   readonly value: number
   readonly label: string
@@ -136,21 +87,20 @@ type ButtonGroupProps = {
 const ButtonGroup = ({ value, onChange, options }: ButtonGroupProps) => (
   <div className="flex flex-wrap gap-2">
     {options.map(option => (
-      <button
+      <Button
         key={option.value}
+        variant={value === option.value ? 'primary' : 'secondary'}
+        size="sm"
         onClick={() => onChange(option.value)}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer ${
-          value === option.value
-            ? 'bg-gradient-to-r from-blue-500 to-violet-500 text-white shadow-sm scale-105'
-            : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 hover:scale-105 hover:shadow-sm'
-        }`}
+        leftIcon={option.icon}
       >
-        {option.icon && <span className="shrink-0">{option.icon}</span>}
-        <span>{option.label}</span>
-      </button>
+        {option.label}
+      </Button>
     ))}
   </div>
 )
+
+// --- Main Settings component ---
 
 export const Settings = () => {
   const { settings, isLoading, error, loadSettings, updateSettings } = useSettingsStore()
@@ -224,10 +174,12 @@ export const Settings = () => {
 
   const handleReset = async () => {
     if (confirm('Are you sure you want to reset all settings to defaults?')) {
-      await loadSettings() // This will load defaults if file doesn't exist
+      await loadSettings()
       alert('Settings reset to defaults!')
     }
   }
+
+  // --- Loading / Error states ---
 
   if (isLoading) {
     return (
@@ -248,10 +200,10 @@ export const Settings = () => {
               {error || 'Settings file may be corrupted'}
             </p>
           </div>
-          <button
+          <Button
+            variant="primary"
             onClick={async () => {
               try {
-                // Delete corrupted settings and reload defaults
                 await invoke('update_settings', {
                   settings: {
                     theme: 'auto',
@@ -283,14 +235,15 @@ export const Settings = () => {
                 alert('Failed to reset settings: ' + err)
               }
             }}
-            className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 text-white text-sm font-medium hover:from-blue-600 hover:to-violet-600 transition-all cursor-pointer hover:scale-105 hover:shadow-lg"
           >
             Reset to Default Settings
-          </button>
+          </Button>
         </div>
       </div>
     )
   }
+
+  // --- Option lists ---
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: 'General', icon: <SettingsIcon className="h-4 w-4" /> },
@@ -300,15 +253,15 @@ export const Settings = () => {
     { id: 'advanced', label: 'Advanced', icon: <Keyboard className="h-4 w-4" /> },
   ]
 
-  const themeOptions: { value: Theme; label: string }[] = [
-    { value: 'auto', label: 'Auto (System)' },
-    { value: 'light', label: 'Light' },
-    { value: 'dark', label: 'Dark' },
+  const themeOptions = [
+    { value: 'auto' as Theme, label: 'Auto (System)' },
+    { value: 'light' as Theme, label: 'Light' },
+    { value: 'dark' as Theme, label: 'Dark' },
   ]
 
-  const viewModeOptions: { value: ViewMode; label: string }[] = [
-    { value: 'list', label: 'List' },
-    { value: 'grid', label: 'Grid' },
+  const viewModeOptions = [
+    { value: 'list' as ViewMode, label: 'List' },
+    { value: 'grid' as ViewMode, label: 'Grid' },
   ]
 
   const languageOptions = [
@@ -320,18 +273,20 @@ export const Settings = () => {
     { value: 'zh', label: '中文' },
   ]
 
-  const retentionPolicyOptions: { value: RetentionPolicy; label: string }[] = [
-    { value: 'unlimited', label: 'Keep Everything' },
-    { value: 'days', label: 'Delete After X Days' },
-    { value: 'count', label: 'Keep Last X Clips' },
+  const retentionPolicyOptions = [
+    { value: 'unlimited' as RetentionPolicy, label: 'Keep Everything' },
+    { value: 'days' as RetentionPolicy, label: 'Delete After X Days' },
+    { value: 'count' as RetentionPolicy, label: 'Keep Last X Clips' },
   ]
 
-  const pasteFormatOptions: { value: PasteFormat; label: string }[] = [
-    { value: 'auto', label: 'Auto (Original Format)' },
-    { value: 'plain', label: 'Plain Text' },
-    { value: 'html', label: 'HTML' },
-    { value: 'markdown', label: 'Markdown' },
+  const pasteFormatOptions = [
+    { value: 'auto' as PasteFormat, label: 'Auto (Original Format)' },
+    { value: 'plain' as PasteFormat, label: 'Plain Text' },
+    { value: 'html' as PasteFormat, label: 'HTML' },
+    { value: 'markdown' as PasteFormat, label: 'Markdown' },
   ]
+
+  // --- Render ---
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -350,9 +305,6 @@ export const Settings = () => {
             >
               <span className="transition-transform duration-200 group-hover:scale-110">{tab.icon}</span>
               {tab.label}
-              {/* {activeTab === tab.id && (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-blue-500 to-violet-500 animate-pulse"></span>
-              )} */}
             </button>
           ))}
         </div>
@@ -372,7 +324,7 @@ export const Settings = () => {
                 <SettingRow label="Theme" description="Choose your preferred color scheme">
                   <Select
                     value={settings.theme}
-                    onChange={value => updateSettings({ theme: value })}
+                    onChange={value => updateSettings({ theme: value as Theme })}
                     options={themeOptions}
                     className="w-40"
                   />
@@ -381,7 +333,7 @@ export const Settings = () => {
                 <SettingRow label="View Mode" description="List or grid display">
                   <Select
                     value={settings.view_mode}
-                    onChange={value => updateSettings({ view_mode: value })}
+                    onChange={value => updateSettings({ view_mode: value as ViewMode })}
                     options={viewModeOptions}
                     className="w-40"
                   />
@@ -427,21 +379,21 @@ export const Settings = () => {
                 description="Control what gets captured"
               >
                 <SettingRow label="Capture Images" description="Save images from clipboard">
-                  <ToggleSwitch
+                  <Switch
                     checked={settings.enable_images}
                     onChange={value => updateSettings({ enable_images: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Capture Files" description="Save file paths from clipboard">
-                  <ToggleSwitch
+                  <Switch
                     checked={settings.enable_files}
                     onChange={value => updateSettings({ enable_files: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Capture Rich Text" description="Save HTML/RTF formatting">
-                  <ToggleSwitch
+                  <Switch
                     checked={settings.enable_rich_text}
                     onChange={value => updateSettings({ enable_rich_text: value })}
                   />
@@ -450,7 +402,7 @@ export const Settings = () => {
                 <SettingRow label="Default Paste Format" description="Format to use when pasting">
                   <Select
                     value={settings.default_paste_format}
-                    onChange={value => updateSettings({ default_paste_format: value })}
+                    onChange={value => updateSettings({ default_paste_format: value as PasteFormat })}
                     options={pasteFormatOptions}
                     className="w-48"
                   />
@@ -488,9 +440,11 @@ export const Settings = () => {
                         }}
                         className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
-                      <button
+                      <Button
+                        size="sm"
                         onClick={(e) => {
-                          const input = e.currentTarget.previousElementSibling as HTMLInputElement
+                          const btn = e.currentTarget as HTMLButtonElement
+                          const input = btn.previousElementSibling as HTMLInputElement
                           const appName = input?.value.trim()
                           if (appName && !settings.excluded_apps.includes(appName)) {
                             updateSettings({
@@ -499,10 +453,9 @@ export const Settings = () => {
                             input.value = ''
                           }
                         }}
-                        className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-blue-500 to-violet-500 text-white text-sm font-medium hover:from-blue-600 hover:to-violet-600 transition-all cursor-pointer hover:scale-105 hover:shadow-lg"
                       >
                         Add
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   
@@ -520,7 +473,7 @@ export const Settings = () => {
                                 excluded_apps: settings.excluded_apps.filter(a => a !== app)
                               })
                             }}
-                            className="text-gray-500 hover:text-red-500 transition-colors"
+                            className="text-gray-500 hover:text-red-500 transition-colors cursor-pointer"
                             aria-label={`Remove ${app}`}
                           >
                             ×
@@ -588,7 +541,7 @@ export const Settings = () => {
                 <SettingRow label="Retention Policy" description="Choose retention strategy">
                   <Select
                     value={settings.retention_policy}
-                    onChange={value => updateSettings({ retention_policy: value })}
+                    onChange={value => updateSettings({ retention_policy: value as RetentionPolicy })}
                     options={retentionPolicyOptions}
                     className="w-48"
                   />
@@ -631,18 +584,18 @@ export const Settings = () => {
                 </SettingRow>
               </SettingsSection>
 
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 shadow-sm p-5">
-                <button
+              <Card className="shadow-sm">
+                <Button
+                  variant="destructive"
+                  leftIcon={<Trash className="h-4 w-4" />}
                   onClick={() => void handleClearAllData()}
-                  className="flex items-center gap-2 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all cursor-pointer hover:scale-105 hover:shadow-sm"
                 >
-                  <Trash className="h-4 w-4" />
                   Clear All Clipboard Data
-                </button>
+                </Button>
                 <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
                   Permanently delete all clipboard history. This action cannot be undone.
                 </p>
-              </div>
+              </Card>
             </>
           )}
 
@@ -674,7 +627,7 @@ export const Settings = () => {
                 label="Hide Window on Copy"
                 description="Automatically hide the app after copying a clip"
               >
-                <ToggleSwitch
+                <Switch
                   checked={settings.hide_on_copy}
                   onChange={value => updateSettings({ hide_on_copy: value })}
                 />
@@ -684,7 +637,7 @@ export const Settings = () => {
                 label="Clear on Exit"
                 description="Delete all clipboard history when closing the app"
               >
-                <ToggleSwitch
+                <Switch
                   checked={settings.clear_on_exit}
                   onChange={value => updateSettings({ clear_on_exit: value })}
                 />
@@ -694,7 +647,7 @@ export const Settings = () => {
                 label="Auto-close After Paste"
                 description="Close window after pasting a clip"
               >
-                <ToggleSwitch
+                <Switch
                   checked={settings.auto_close_after_paste}
                   onChange={value => updateSettings({ auto_close_after_paste: value })}
                 />
@@ -714,14 +667,14 @@ export const Settings = () => {
                   label="Auto-start on Login"
                   description="Launch automatically when you log in"
                 >
-                  <ToggleSwitch
+                  <Switch
                     checked={settings.auto_start}
                     onChange={value => updateSettings({ auto_start: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Show Copy Toast" description="Display notification when copying">
-                  <ToggleSwitch
+                  <Switch
                     checked={settings.show_copy_toast}
                     onChange={value => updateSettings({ show_copy_toast: value })}
                   />
@@ -741,34 +694,34 @@ export const Settings = () => {
                 </SettingRow>
               </SettingsSection>
 
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 shadow-sm p-5">
+              <Card className="shadow-sm">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">
                   Manage Settings
                 </h3>
                 <div className="flex gap-3">
-                  <button
+                  <Button
+                    variant="outline"
+                    leftIcon={<Download className="h-4 w-4" />}
                     onClick={handleExport}
-                    className="flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all cursor-pointer hover:scale-105 hover:shadow-sm"
                   >
-                    <Download className="h-4 w-4" />
                     Export
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="outline"
+                    leftIcon={<Upload className="h-4 w-4" />}
                     onClick={handleImport}
-                    className="flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all cursor-pointer hover:scale-105 hover:shadow-sm"
                   >
-                    <Upload className="h-4 w-4" />
                     Import
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => void handleReset()}
-                    className="flex items-center gap-2 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all cursor-pointer hover:scale-105 hover:shadow-sm"
                   >
-                    <RotateCcw className="h-4 w-4" />
                     Reset to Defaults
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </Card>
             </>
           )}
         </div>
