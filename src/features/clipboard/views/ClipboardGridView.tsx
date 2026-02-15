@@ -9,6 +9,7 @@ type ClipboardGridViewProps = {
   readonly onTogglePin: (id: string) => void
   readonly infiniteScrollTrigger?: React.ReactNode
   readonly scrollContainerRef?: React.RefObject<HTMLDivElement | null>
+  readonly selectedIndex?: number
 }
 
 export const ClipboardGridView = ({
@@ -19,10 +20,11 @@ export const ClipboardGridView = ({
   onTogglePin,
   infiniteScrollTrigger,
   scrollContainerRef,
+  selectedIndex,
 }: ClipboardGridViewProps) => (
   <div ref={scrollContainerRef} className="custom-scrollbar flex-1 overflow-y-auto p-3">
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-      {clips.map(clip => (
+      {clips.map((clip, index) => (
         <ClipboardGridItem
           key={clip.id}
           clip={clip}
@@ -30,9 +32,12 @@ export const ClipboardGridView = ({
           onDelete={() => void onDelete(clip.id)}
           onToggleFavorite={() => void onToggleFavorite(clip.id)}
           onTogglePin={() => void onTogglePin(clip.id)}
+          isSelected={index === selectedIndex}
+          index={index}
         />
       ))}
     </div>
     {infiniteScrollTrigger}
   </div>
 )
+

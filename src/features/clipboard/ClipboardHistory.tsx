@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useClipboardStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
@@ -29,6 +29,7 @@ export const ClipboardHistory = () => {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState<'all' | 'favorites' | 'code' | 'images'>('all')
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
 
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
@@ -154,6 +155,100 @@ export const ClipboardHistory = () => {
 
     return matchesFilter
   })
+
+  // Reset selection when filtered clips change
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [activeFilter, mode])
+
+  // Auto-scroll selected item into view
+  const scrollSelectedIntoView = useCallback((index: number) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const el = container.querySelector(`[data-clip-index="${index}"]`)
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [])
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if focus is inside search input
+      if (searchInputRef.current && document.activeElement === searchInputRef.current) {
+        // Allow Escape to blur search and return to navigation
+        if (e.key === 'Escape') {
+          searchInputRef.current.blur()
+          e.preventDefault()
+        }
+        return
+      }
+
+      const maxIndex = filteredClips.length - 1
+      if (maxIndex < 0) return
+
+      switch (e.key) {
+        case 'ArrowUp':
+        case 'k': {
+          e.preventDefault()
+          setSelectedIndex(prev => {
+            const next = Math.max(0, prev - 1)
+            scrollSelectedIntoView(next)
+            return next
+          })
+          break
+        }
+        case 'ArrowDown':
+        case 'j': {
+          e.preventDefault()
+          setSelectedIndex(prev => {
+            const next = Math.min(maxIndex, prev + 1)
+            scrollSelectedIntoView(next)
+            return next
+          })
+          break
+        }
+        case 'Enter': {
+          e.preventDefault()
+          const clip = filteredClips[selectedIndex]
+          if (clip?.contentText) {
+            void handleCopy(clip.contentText, clip.id)
+          }
+          break
+        }
+        case 'Delete':
+        case 'Backspace': {
+          e.preventDefault()
+          const clip = filteredClips[selectedIndex]
+          if (clip) {
+            void handleDelete(clip.id)
+            // Adjust index if we deleted the last item
+            setSelectedIndex(prev => Math.min(prev, maxIndex - 1))
+          }
+          break
+        }
+        case 'f': {
+          const clip = filteredClips[selectedIndex]
+          if (clip) handleToggleFavorite(clip.id)
+          break
+        }
+        case 'p': {
+          const clip = filteredClips[selectedIndex]
+          if (clip) handleTogglePin(clip.id)
+          break
+        }
+        case '/': {
+          // Focus search input
+          e.preventDefault()
+          searchInputRef.current?.focus()
+          break
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [filteredClips, selectedIndex, scrollSelectedIntoView])
 
   // Render toolbar function for reuse
   const renderToolbar = () => (
@@ -322,6 +417,7 @@ export const ClipboardHistory = () => {
           onTogglePin={handleTogglePin}
           infiniteScrollTrigger={infiniteScrollTrigger}
           scrollContainerRef={scrollContainerRef}
+          selectedIndex={selectedIndex}
         />
       )}
       {viewMode === 'grid' && (
@@ -333,6 +429,7 @@ export const ClipboardHistory = () => {
           onTogglePin={handleTogglePin}
           infiniteScrollTrigger={infiniteScrollTrigger}
           scrollContainerRef={scrollContainerRef}
+          selectedIndex={selectedIndex}
         />
       )}
 

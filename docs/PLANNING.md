@@ -68,7 +68,6 @@ Philosophy: Clipboard as a gateway, not a destination. Every clip can be opened,
 - **Settings page refactored** to use shared component library
 
 ### In Progress 🟡
-- Migrating remaining pages (ClipboardHistory) to shared components
 - Unit tests for shared components
 
 ### Blocked 🔴

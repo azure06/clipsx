@@ -9,6 +9,7 @@ type ClipboardListViewProps = {
   readonly onTogglePin: (id: string) => void
   readonly infiniteScrollTrigger?: React.ReactNode
   readonly scrollContainerRef?: React.RefObject<HTMLDivElement | null>
+  readonly selectedIndex?: number
 }
 
 export const ClipboardListView = ({
@@ -19,9 +20,10 @@ export const ClipboardListView = ({
   onTogglePin,
   infiniteScrollTrigger,
   scrollContainerRef,
+  selectedIndex,
 }: ClipboardListViewProps) => (
   <div ref={scrollContainerRef} className="custom-scrollbar flex-1 overflow-y-auto">
-    {clips.map(clip => (
+    {clips.map((clip, index) => (
       <ClipboardListItem
         key={clip.id}
         clip={clip}
@@ -29,6 +31,8 @@ export const ClipboardListView = ({
         onDelete={() => void onDelete(clip.id)}
         onToggleFavorite={() => void onToggleFavorite(clip.id)}
         onTogglePin={() => void onTogglePin(clip.id)}
+        isSelected={index === selectedIndex}
+        index={index}
       />
     ))}
     {infiniteScrollTrigger}

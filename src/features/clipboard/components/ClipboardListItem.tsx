@@ -12,6 +12,8 @@ type ClipboardListItemProps = {
   readonly onDelete: (id: string) => void
   readonly onToggleFavorite: () => void
   readonly onTogglePin: () => void
+  readonly isSelected?: boolean
+  readonly index?: number
 }
 
 export const ClipboardListItem = ({
@@ -20,6 +22,8 @@ export const ClipboardListItem = ({
   onDelete,
   onToggleFavorite,
   onTogglePin,
+  isSelected = false,
+  index,
 }: ClipboardListItemProps) => {
   const preview = formatClipPreview(clip, 100)
   const timestamp = formatTimestamp(clip.createdAt)
@@ -44,9 +48,11 @@ export const ClipboardListItem = ({
     <>
       <div
         onClick={handleClick}
-        className={`group relative flex items-start gap-2.5 border-b border-gray-200 dark:border-gray-800/50 py-2 px-3.5 transition-all duration-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 active:scale-[0.99] overflow-hidden before:absolute before:inset-0 before:bg-gray-300/20 dark:before:bg-gray-700/20 before:rounded-full before:scale-0 before:opacity-0 active:before:scale-[2.5] active:before:opacity-100 before:transition-all before:duration-500 ${
-          isPinned ? 'bg-blue-50/50 dark:bg-blue-950/10' : 'bg-white dark:bg-transparent'
-        }`}
+        data-clip-index={index}
+        className={`group relative flex items-start gap-2.5 border-b border-gray-200 dark:border-gray-800/50 py-2 px-3.5 transition-all duration-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 active:scale-[0.99] overflow-hidden before:absolute before:inset-0 before:bg-gray-300/20 dark:before:bg-gray-700/20 before:rounded-full before:scale-0 before:opacity-0 active:before:scale-[2.5] active:before:opacity-100 before:transition-all before:duration-500 ${isSelected
+            ? 'bg-blue-50 dark:bg-blue-950/30 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
+            : isPinned ? 'bg-blue-50/50 dark:bg-blue-950/10' : 'bg-white dark:bg-transparent'
+          }`}
       >
         {/* Accent border for pinned items */}
         {isPinned && (
