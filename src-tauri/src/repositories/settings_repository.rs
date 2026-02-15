@@ -16,8 +16,7 @@ impl SettingsRepository {
             .context("Failed to get app config directory")?;
 
         // Ensure config directory exists
-        fs::create_dir_all(&config_dir)
-            .context("Failed to create config directory")?;
+        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
         let config_path = config_dir.join("settings.json");
 
@@ -31,28 +30,26 @@ impl SettingsRepository {
             return Ok(AppSettings::default());
         }
 
-        let contents = fs::read_to_string(&self.config_path)
-            .context("Failed to read settings file")?;
+        let contents =
+            fs::read_to_string(&self.config_path).context("Failed to read settings file")?;
 
-        let settings: AppSettings = serde_json::from_str(&contents)
-            .context("Failed to parse settings JSON")?;
+        let settings: AppSettings =
+            serde_json::from_str(&contents).context("Failed to parse settings JSON")?;
 
         Ok(settings)
     }
 
     /// Save settings to file atomically (write to temp, then rename)
     pub fn save(&self, settings: &AppSettings) -> Result<()> {
-        let json = serde_json::to_string_pretty(settings)
-            .context("Failed to serialize settings")?;
+        let json =
+            serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
 
         // Write to temporary file first
         let temp_path = self.config_path.with_extension("json.tmp");
-        fs::write(&temp_path, json)
-            .context("Failed to write temporary settings file")?;
+        fs::write(&temp_path, json).context("Failed to write temporary settings file")?;
 
         // Atomic rename
-        fs::rename(&temp_path, &self.config_path)
-            .context("Failed to rename settings file")?;
+        fs::rename(&temp_path, &self.config_path).context("Failed to rename settings file")?;
 
         Ok(())
     }
@@ -97,13 +94,13 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         let (repo, _temp) = create_test_repo();
-        
+
         let mut settings = AppSettings::default();
         settings.enable_images = false;
         settings.theme = crate::models::Theme::Dark;
-        
+
         repo.save(&settings).unwrap();
-        
+
         let loaded = repo.load().unwrap();
         assert_eq!(loaded.enable_images, false);
     }
@@ -111,19 +108,21 @@ mod tests {
     #[test]
     fn test_update() {
         let (repo, _temp) = create_test_repo();
-        
+
         // Initial save
         repo.save(&AppSettings::default()).unwrap();
-        
+
         // Update
-        let updated = repo.update(|s| {
-            s.enable_images = false;
-            s.excluded_apps.push("TestApp".to_string());
-        }).unwrap();
-        
+        let updated = repo
+            .update(|s| {
+                s.enable_images = false;
+                s.excluded_apps.push("TestApp".to_string());
+            })
+            .unwrap();
+
         assert_eq!(updated.enable_images, false);
         assert_eq!(updated.excluded_apps.len(), 1);
-        
+
         // Verify persistence
         let loaded = repo.load().unwrap();
         assert_eq!(loaded.enable_images, false);

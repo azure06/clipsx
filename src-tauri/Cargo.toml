@@ -17,7 +17,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
@@ -30,11 +30,23 @@ anyhow = "1.0"
 thiserror = "2.0.18"
 chrono = "0.4"
 image = "0.25"  # For normalizing image data before hashing
+tauri-plugin-clipboard-manager = "2"
+regex = "1.12.3"
+lazy_static = "1.5.0"
+url = "2.5.8"
+tempfile = "3.25.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25"
 objc = "0.2"
+core-graphics = "0.24"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+

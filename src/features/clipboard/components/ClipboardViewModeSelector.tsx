@@ -18,11 +18,10 @@ export const ClipboardViewModeSelector = ({ mode, onChange }: ClipboardViewModeS
         <button
           key={m}
           onClick={() => onChange(m)}
-          className={`rounded p-1 transition-colors ${
-            mode === m
+          className={`rounded p-1 transition-colors cursor-pointer ${mode === m
               ? 'bg-linear-to-r from-violet-500 via-violet-400 to-violet-500 text-white'
               : 'text-gray-400 hover:bg-gray-800 hover:text-gray-300'
-          }`}
+            }`}
           title={label}
         >
           <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />

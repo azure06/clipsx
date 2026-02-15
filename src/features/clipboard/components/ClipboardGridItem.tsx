@@ -1,22 +1,34 @@
+import { memo } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatTimestamp } from '../../../shared/types'
 import { Star, Copy, Trash, MoreVertical, Sparkles, Pin, Folder, Hash } from 'lucide-react'
 import { getThumbnailPath, getAssetUrl } from '../utils'
 
+
+// Assuming formatClipPreview is a new utility function
+const formatClipPreview = (clip: ClipItem, maxLength: number) => {
+  if (clip.contentType === 'text') {
+    return clip.contentText?.slice(0, maxLength) || '(empty)'
+  }
+  return '(content)' // Or handle other content types as needed
+}
+
 type ClipboardGridItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
-  readonly onCopy: (text: string) => void
+  readonly onCopy: (text: string, id: string) => void
+  readonly onSelect?: (text: string, id: string) => void
   readonly onDelete: (id: string) => void
-  readonly onToggleFavorite: () => void
-  readonly onTogglePin: () => void
+  readonly onToggleFavorite: (id: string) => void
+  readonly onTogglePin: (id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
 }
 
-export const ClipboardGridItem = ({
+const ClipboardGridItemComponent = ({
   clip,
   onCopy,
+  onSelect,
   onDelete,
   onToggleFavorite,
   onTogglePin,
@@ -24,12 +36,25 @@ export const ClipboardGridItem = ({
   index,
 }: ClipboardGridItemProps) => {
   const timestamp = formatTimestamp(clip.createdAt)
+
   const thumbnailPath = getThumbnailPath(clip)
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
   const tags = clip.tags ?? []
   const collections = clip.collections ?? []
   const hasAttributes = isPinned || isFavorite || tags.length > 0 || collections.length > 0
+
+
+  // Added handleClick function
+  const handleClick = () => {
+    if (clip.contentText) {
+      if (onSelect) {
+        onSelect(clip.contentText, clip.id)
+      } else {
+        onCopy(clip.contentText, clip.id)
+      }
+    }
+  }
 
   const getContentPreview = () => {
     if (clip.contentType === 'image') {
@@ -57,7 +82,7 @@ export const ClipboardGridItem = ({
     }
 
     // Text content - show preview
-    const preview = clip.contentText?.slice(0, 120) || '(empty)'
+    const preview = formatClipPreview(clip, 120)
     return (
       <div className="flex aspect-square items-center justify-center rounded-lg bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-4 ring-1 ring-gray-200 dark:ring-gray-700/50">
         <p className="line-clamp-5 text-center text-xs font-medium text-gray-700 dark:text-gray-300 leading-relaxed">
@@ -69,12 +94,13 @@ export const ClipboardGridItem = ({
 
   return (
     <div
+      onClick={handleClick}
       data-clip-index={index}
       className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${isSelected
-          ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
-          : isPinned
-            ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
-            : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
+        ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
+        : isPinned
+          ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
+          : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
         }`}
     >
       {/* Pinned accent */}
@@ -104,7 +130,7 @@ export const ClipboardGridItem = ({
               <DropdownMenu.Item
                 onClick={() => {
                   if (clip.contentText) {
-                    onCopy(clip.contentText)
+                    onCopy(clip.contentText, clip.id)
                   }
                 }}
                 className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
@@ -114,7 +140,7 @@ export const ClipboardGridItem = ({
               </DropdownMenu.Item>
 
               <DropdownMenu.Item
-                onClick={onToggleFavorite}
+                onClick={() => onToggleFavorite(clip.id)}
                 className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
               >
                 <Star
@@ -125,7 +151,7 @@ export const ClipboardGridItem = ({
               </DropdownMenu.Item>
 
               <DropdownMenu.Item
-                onClick={onTogglePin}
+                onClick={() => onTogglePin(clip.id)}
                 className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
               >
                 <Pin
@@ -231,3 +257,5 @@ export const ClipboardGridItem = ({
     </div>
   )
 }
+
+export const ClipboardGridItem = memo(ClipboardGridItemComponent)

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
@@ -129,6 +130,14 @@ export const Settings = () => {
     }
   }, [settings?.global_shortcut])
 
+  useEffect(() => {
+    if (settings?.always_on_top !== undefined) {
+      getCurrentWindow().setAlwaysOnTop(settings.always_on_top).catch(err => {
+        console.error('Failed to set always on top:', err)
+      })
+    }
+  }, [settings?.always_on_top])
+
   const handleClearAllData = async () => {
     if (
       confirm(
@@ -232,7 +241,7 @@ export const Settings = () => {
                 await loadSettings()
               } catch (err) {
                 console.error('Failed to reset settings:', err)
-                alert('Failed to reset settings: ' + err)
+                alert('Failed to reset settings: ' + String(err))
               }
             }}
           >
@@ -288,31 +297,45 @@ export const Settings = () => {
 
   // --- Render ---
 
+  // --- Render ---
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Tabs */}
-      <div className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 px-3">
-        <div className="flex gap-0.5">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`group flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all duration-200 border-b-2 relative overflow-hidden cursor-pointer ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:scale-105 hover:shadow-sm'
-              }`}
-            >
-              <span className="transition-transform duration-200 group-hover:scale-110">{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
+    <div className="flex h-full overflow-hidden bg-transparent">
+      {/* Left Sidebar Menu */}
+      <div className="w-48 flex-shrink-0 flex flex-col border-r border-white/10 bg-gray-900/30">
+        <div className="p-4">
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Settings</h2>
+          <div className="space-y-1">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${activeTab === tab.id
+                  ? 'bg-blue-500/10 text-blue-400'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                  }`}
+              >
+                <div className={`${activeTab === tab.id ? 'text-blue-400' : 'text-gray-500 group-hover:text-gray-300'}`}>
+                  {tab.icon}
+                </div>
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar bg-gray-50 dark:bg-transparent">
-        <div className="px-4 pt-4 pb-6 space-y-5 max-w-4xl">
+      {/* Right Content Area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
+        <div className="p-8 space-y-6 max-w-3xl mx-auto">
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-gray-100">
+              {tabs.find(t => t.id === activeTab)?.label}
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Manage your {tabs.find(t => t.id === activeTab)?.label.toLowerCase()} preferences
+            </p>
+          </div>
           {/* GENERAL TAB */}
           {activeTab === 'general' && (
             <>
@@ -324,7 +347,7 @@ export const Settings = () => {
                 <SettingRow label="Theme" description="Choose your preferred color scheme">
                   <Select
                     value={settings.theme}
-                    onChange={value => updateSettings({ theme: value as Theme })}
+                    onChange={value => void updateSettings({ theme: value })}
                     options={themeOptions}
                     className="w-40"
                   />
@@ -333,7 +356,7 @@ export const Settings = () => {
                 <SettingRow label="View Mode" description="List or grid display">
                   <Select
                     value={settings.view_mode}
-                    onChange={value => updateSettings({ view_mode: value as ViewMode })}
+                    onChange={value => void updateSettings({ view_mode: value })}
                     options={viewModeOptions}
                     className="w-40"
                   />
@@ -342,7 +365,7 @@ export const Settings = () => {
                 <SettingRow label="Language" description="Select your preferred language">
                   <Select
                     value={settings.language}
-                    onChange={value => updateSettings({ language: value })}
+                    onChange={value => void updateSettings({ language: value })}
                     options={languageOptions}
                     className="w-40"
                   />
@@ -361,9 +384,35 @@ export const Settings = () => {
                   <input
                     type="text"
                     value={settings.global_shortcut}
-                    onChange={e => updateSettings({ global_shortcut: e.target.value })}
+                    onChange={e => void updateSettings({ global_shortcut: e.target.value })}
                     placeholder="Cmd+Shift+V"
                     className="w-48 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection
+                icon={<SettingsIcon className="h-4 w-4" />}
+                title="Window Behavior"
+                description="Control how the window behaves"
+              >
+                <SettingRow
+                  label="Hide on Blur"
+                  description="Hide window when it loses focus"
+                >
+                  <Switch
+                    checked={settings.hide_on_blur}
+                    onChange={value => void updateSettings({ hide_on_blur: value })}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Always on Top"
+                  description="Keep window floating above other apps"
+                >
+                  <Switch
+                    checked={settings.always_on_top}
+                    onChange={value => void updateSettings({ always_on_top: value })}
                   />
                 </SettingRow>
               </SettingsSection>
@@ -381,28 +430,60 @@ export const Settings = () => {
                 <SettingRow label="Capture Images" description="Save images from clipboard">
                   <Switch
                     checked={settings.enable_images}
-                    onChange={value => updateSettings({ enable_images: value })}
+                    onChange={value => void updateSettings({ enable_images: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Capture Files" description="Save file paths from clipboard">
                   <Switch
                     checked={settings.enable_files}
-                    onChange={value => updateSettings({ enable_files: value })}
+                    onChange={value => void updateSettings({ enable_files: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Capture Rich Text" description="Save HTML/RTF formatting">
                   <Switch
                     checked={settings.enable_rich_text}
-                    onChange={value => updateSettings({ enable_rich_text: value })}
+                    onChange={value => void updateSettings({ enable_rich_text: value })}
+                  />
+                </SettingRow>
+
+              </SettingsSection>
+
+              <SettingsSection
+                icon={<Clipboard className="h-4 w-4" />}
+                title="Clipboard Interactions"
+                description="Customize how you interact with clips"
+              >
+                <SettingRow
+                  label="Primary Action"
+                  description="Action to perform when clicking a clip or pressing Enter"
+                >
+                  <Select
+                    value={settings.paste_on_enter ? 'paste' : 'copy'}
+                    onChange={value => void updateSettings({ paste_on_enter: value === 'paste' })}
+                    options={[
+                      { value: 'paste', label: 'Paste to App' },
+                      { value: 'copy', label: 'Copy to Clipboard' },
+                    ]}
+                    className="w-48"
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="After Copying"
+                  description="Hide window after copying a clip"
+                >
+                  <Switch
+                    checked={settings.hide_on_copy}
+                    onChange={value => void updateSettings({ hide_on_copy: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Default Paste Format" description="Format to use when pasting">
                   <Select
                     value={settings.default_paste_format}
-                    onChange={value => updateSettings({ default_paste_format: value as PasteFormat })}
+                    onChange={value => void updateSettings({ default_paste_format: value })}
                     options={pasteFormatOptions}
                     className="w-48"
                   />
@@ -431,7 +512,7 @@ export const Settings = () => {
                             const input = e.currentTarget
                             const appName = input.value.trim()
                             if (appName && !settings.excluded_apps.includes(appName)) {
-                              updateSettings({
+                              void updateSettings({
                                 excluded_apps: [...settings.excluded_apps, appName]
                               })
                               input.value = ''
@@ -447,7 +528,7 @@ export const Settings = () => {
                           const input = btn.previousElementSibling as HTMLInputElement
                           const appName = input?.value.trim()
                           if (appName && !settings.excluded_apps.includes(appName)) {
-                            updateSettings({
+                            void updateSettings({
                               excluded_apps: [...settings.excluded_apps, appName]
                             })
                             input.value = ''
@@ -458,7 +539,7 @@ export const Settings = () => {
                       </Button>
                     </div>
                   </div>
-                  
+
                   {settings.excluded_apps.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {settings.excluded_apps.map(app => (
@@ -469,7 +550,7 @@ export const Settings = () => {
                           <span>{app}</span>
                           <button
                             onClick={() => {
-                              updateSettings({
+                              void updateSettings({
                                 excluded_apps: settings.excluded_apps.filter(a => a !== app)
                               })
                             }}
@@ -482,7 +563,7 @@ export const Settings = () => {
                       ))}
                     </div>
                   )}
-                  
+
                   {settings.excluded_apps.length === 0 && (
                     <p className="text-xs text-gray-400 dark:text-gray-600 italic">
                       No excluded apps. Add apps to prevent clipboard monitoring.
@@ -507,7 +588,7 @@ export const Settings = () => {
                 >
                   <ButtonGroup
                     value={settings.history_limit}
-                    onChange={value => updateSettings({ history_limit: value })}
+                    onChange={value => void updateSettings({ history_limit: value })}
                     options={[
                       { value: 100, label: '100' },
                       { value: 500, label: '500' },
@@ -521,7 +602,7 @@ export const Settings = () => {
                 <SettingRow label="Max Image Size" description="Maximum size for image clips">
                   <ButtonGroup
                     value={settings.max_image_size_mb}
-                    onChange={value => updateSettings({ max_image_size_mb: value })}
+                    onChange={value => void updateSettings({ max_image_size_mb: value })}
                     options={[
                       { value: 1, label: '1 MB' },
                       { value: 5, label: '5 MB' },
@@ -541,7 +622,7 @@ export const Settings = () => {
                 <SettingRow label="Retention Policy" description="Choose retention strategy">
                   <Select
                     value={settings.retention_policy}
-                    onChange={value => updateSettings({ retention_policy: value as RetentionPolicy })}
+                    onChange={value => void updateSettings({ retention_policy: value })}
                     options={retentionPolicyOptions}
                     className="w-48"
                   />
@@ -560,7 +641,7 @@ export const Settings = () => {
                       type="number"
                       min="1"
                       value={settings.retention_value}
-                      onChange={e => updateSettings({ retention_value: parseInt(e.target.value) || 0 })}
+                      onChange={e => void updateSettings({ retention_value: parseInt(e.target.value) || 0 })}
                       className="w-24 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </SettingRow>
@@ -572,7 +653,7 @@ export const Settings = () => {
                 >
                   <ButtonGroup
                     value={settings.auto_delete_days}
-                    onChange={value => updateSettings({ auto_delete_days: value })}
+                    onChange={value => void updateSettings({ auto_delete_days: value })}
                     options={[
                       { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
                       { value: 1, label: '24 hours', icon: <Clock className="h-3 w-3" /> },
@@ -612,7 +693,7 @@ export const Settings = () => {
               >
                 <ButtonGroup
                   value={settings.auto_clear_minutes}
-                  onChange={value => updateSettings({ auto_clear_minutes: value })}
+                  onChange={value => void updateSettings({ auto_clear_minutes: value })}
                   options={[
                     { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
                     { value: 5, label: '5 min', icon: <Zap className="h-3 w-3" /> },
@@ -623,15 +704,7 @@ export const Settings = () => {
                 />
               </SettingRow>
 
-              <SettingRow
-                label="Hide Window on Copy"
-                description="Automatically hide the app after copying a clip"
-              >
-                <Switch
-                  checked={settings.hide_on_copy}
-                  onChange={value => updateSettings({ hide_on_copy: value })}
-                />
-              </SettingRow>
+
 
               <SettingRow
                 label="Clear on Exit"
@@ -639,19 +712,11 @@ export const Settings = () => {
               >
                 <Switch
                   checked={settings.clear_on_exit}
-                  onChange={value => updateSettings({ clear_on_exit: value })}
+                  onChange={value => void updateSettings({ clear_on_exit: value })}
                 />
               </SettingRow>
 
-              <SettingRow
-                label="Auto-close After Paste"
-                description="Close window after pasting a clip"
-              >
-                <Switch
-                  checked={settings.auto_close_after_paste}
-                  onChange={value => updateSettings({ auto_close_after_paste: value })}
-                />
-              </SettingRow>
+
             </SettingsSection>
           )}
 
@@ -669,21 +734,21 @@ export const Settings = () => {
                 >
                   <Switch
                     checked={settings.auto_start}
-                    onChange={value => updateSettings({ auto_start: value })}
+                    onChange={value => void updateSettings({ auto_start: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Show Copy Toast" description="Display notification when copying">
                   <Switch
                     checked={settings.show_copy_toast}
-                    onChange={value => updateSettings({ show_copy_toast: value })}
+                    onChange={value => void updateSettings({ show_copy_toast: value })}
                   />
                 </SettingRow>
 
                 <SettingRow label="Toast Duration" description="How long notifications stay visible">
                   <ButtonGroup
                     value={settings.toast_duration_ms}
-                    onChange={value => updateSettings({ toast_duration_ms: value })}
+                    onChange={value => void updateSettings({ toast_duration_ms: value })}
                     options={[
                       { value: 1000, label: 'Quick (1s)' },
                       { value: 1500, label: 'Default (1.5s)' },

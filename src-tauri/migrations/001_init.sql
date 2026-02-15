@@ -11,7 +11,11 @@ CREATE TABLE IF NOT EXISTS clips (
     content_rtf TEXT,                  -- RTF format (if copied from Word/Pages)
     image_path TEXT,                   -- File path to saved image on disk
     file_paths TEXT,                   -- JSON array of file paths (e.g., from Finder drag-drop)
-    metadata TEXT,                     -- JSON object for extensibility (e.g., {"format":"image/png"})
+    
+    -- INTELLIGENCE FIELDS
+    detected_type TEXT DEFAULT 'text', -- 'url', 'email', 'color', 'code', 'jwt', 'image', 'file_list'
+    metadata TEXT,                     -- JSON object: {"color_hex": "#F00", "language": "rust", "jwt_expiry": 12345}
+    
     app_name TEXT,                     -- Source app name (e.g., "Safari", "VS Code")
     is_pinned INTEGER DEFAULT 0,       -- Pin to top (0=false, 1=true) - temporary priority
     is_favorite INTEGER DEFAULT 0,     -- Mark as favorite (0=false, 1=true) - permanent save

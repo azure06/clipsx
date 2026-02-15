@@ -2,6 +2,7 @@
 use crate::models::{AppSettings, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard::ClipboardService;
+use crate::services::paste;
 use std::sync::Arc;
 use tauri::State;
 
@@ -10,6 +11,10 @@ pub struct AppState {
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
 }
+
+// ============================================================================
+// Clip Commands
+// ============================================================================
 
 #[tauri::command]
 pub async fn get_recent_clips(
@@ -91,10 +96,7 @@ pub async fn search_clips_paginated(
 }
 
 #[tauri::command]
-pub async fn delete_clip(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn delete_clip(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
         .repository
         .delete(&id)
@@ -103,10 +105,7 @@ pub async fn delete_clip(
 }
 
 #[tauri::command]
-pub async fn toggle_favorite(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
+pub async fn toggle_favorite(id: String, state: State<'_, AppState>) -> Result<bool, String> {
     state
         .repository
         .toggle_favorite(&id)
@@ -115,10 +114,7 @@ pub async fn toggle_favorite(
 }
 
 #[tauri::command]
-pub async fn toggle_pin(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
+pub async fn toggle_pin(id: String, state: State<'_, AppState>) -> Result<bool, String> {
     state
         .repository
         .toggle_pin(&id)
@@ -127,15 +123,17 @@ pub async fn toggle_pin(
 }
 
 #[tauri::command]
-pub async fn clear_all_clips(
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn clear_all_clips(state: State<'_, AppState>) -> Result<(), String> {
     state
         .repository
         .clear_all()
         .await
         .map_err(|e| e.to_string())
 }
+
+// ============================================================================
+// Clipboard Commands
+// ============================================================================
 
 #[tauri::command]
 pub async fn copy_to_clipboard(
@@ -151,7 +149,7 @@ pub async fn copy_to_clipboard(
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
     }
-    
+
     state
         .clipboard_service
         .set_text(&text)
@@ -159,68 +157,109 @@ pub async fn copy_to_clipboard(
 }
 
 #[tauri::command]
-pub fn get_clipboard_text(
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub fn get_clipboard_text(state: State<'_, AppState>) -> Result<String, String> {
     state
         .clipboard_service
         .get_text()
         .map_err(|e: anyhow::Error| e.to_string())
 }
 
+/// Quick Paste: copy clip → hide window (OS refocuses previous app) → simulate Ctrl+V/⌘V
+#[tauri::command]
+pub async fn paste_clip(
+    text: String,
+    id: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    // 1. Copy text to clipboard
+    if let Some(ref clip_id) = id {
+        state
+            .repository
+            .touch(clip_id)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+    }
+    state
+        .clipboard_service
+        .set_text(&text)
+        .map_err(|e: anyhow::Error| e.to_string())?;
+
+    // 2. Hide the overlay window — OS auto-refocuses previous app
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    // 3. Wait for OS to settle the focus change
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // 4. Simulate paste keystroke (Ctrl+V / ⌘V)
+    paste::simulate_paste().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Window / Shortcut Commands
+// ============================================================================
+
+/// Register (or re-register) the global shortcut that toggles the overlay window.
+/// Called at startup from main.rs AND when user changes shortcut in Settings.
 #[tauri::command]
 pub async fn register_global_shortcut(
     app: tauri::AppHandle,
     shortcut: String,
 ) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    setup_global_shortcut(&app, &shortcut)
+}
+
+/// Shared helper: parse shortcut string, register with toggle behavior.
+/// Used by both the startup code (main.rs) and the `register_global_shortcut` command.
+pub fn setup_global_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(), String> {
     use tauri::Manager;
-    
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+
     // Unregister all existing shortcuts first
     app.global_shortcut()
         .unregister_all()
         .map_err(|e| e.to_string())?;
-    
-    // Parse string to Shortcut
-    let shortcut_parsed: Shortcut = shortcut.parse()
-        .map_err(|e| format!("Invalid shortcut format: {}", e))?;
-    
-    // Register new shortcut
+
+    // Parse shortcut string (e.g. "Ctrl+Shift+V")
+    let shortcut_parsed: Shortcut = shortcut
+        .parse()
+        .map_err(|e| format!("Invalid shortcut: {e}"))?;
+
+    // Register shortcut: toggle overlay visibility
     app.global_shortcut()
         .on_shortcut(shortcut_parsed, move |app, _event, _shortcut| {
-            if let Some(window) = app.get_webview_window("main") {
-                match window.is_visible() {
-                    Ok(true) => { let _ = window.hide(); }
-                    Ok(false) => { 
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                    Err(_) => {}
-                }
-            }
+            let _ = toggle_window(app);
         })
         .map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
-#[tauri::command]
-pub fn toggle_window_visibility(app: tauri::AppHandle) -> Result<(), String> {
+/// Helper to toggle the main window visibility (used by shortcut and tray)
+pub fn toggle_window(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
-    
+
     if let Some(window) = app.get_webview_window("main") {
-        match window.is_visible() {
-            Ok(true) => window.hide().map_err(|e| e.to_string())?,
-            Ok(false) => {
-                window.show().map_err(|e| e.to_string())?;
-                window.set_focus().map_err(|e| e.to_string())?;
+        match (window.is_visible(), window.is_focused()) {
+            (Ok(true), Ok(true)) => {
+                // Visible and focused -> Hide
+                let _ = window.hide();
             }
-            Err(e) => return Err(e.to_string()),
+            _ => {
+                // Hidden OR Visible but not focused -> Show and Focus
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
         }
     }
     Ok(())
 }
-
 
 // ============================================================================
 // Settings Commands
@@ -228,10 +267,7 @@ pub fn toggle_window_visibility(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
-    state
-        .settings_repository
-        .load()
-        .map_err(|e| e.to_string())
+    state.settings_repository.load().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

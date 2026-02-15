@@ -1,4 +1,4 @@
 pub mod commands;
-pub mod services;
-pub mod repositories;
 pub mod models;
+pub mod repositories;
+pub mod services;

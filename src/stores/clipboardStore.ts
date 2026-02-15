@@ -25,6 +25,7 @@ type ClipboardActions = {
   togglePin: (id: string) => Promise<void>
   clearAllClips: () => Promise<void>
   copyToClipboard: (text: string, id?: string) => Promise<Result<void>>
+  pasteClip: (text: string, id?: string) => Promise<Result<void>>
   resetPagination: () => void
 }
 
@@ -89,11 +90,10 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       const existingIndex = state.clips.findIndex(c => c.id === clip.id)
 
       if (existingIndex !== -1) {
-        // Duplicate - remove from old position and add at top with updated timestamp
-        const newClips = state.clips.filter((_, i) => i !== existingIndex)
+        // Duplicate - update in-place to avoid jarring reorder
+        // (e.g., when user copies a clip that's already in the list)
         return {
-          clips: [clip, ...newClips],
-          // Don't increment offset - total count unchanged
+          clips: state.clips.map((c, i) => (i === existingIndex ? clip : c)),
         }
       } else {
         // New clip - prepend and increment offset
@@ -216,6 +216,16 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       return { ok: true, value: undefined }
     } catch (error) {
       console.error('Failed to copy:', error)
+      return { ok: false, error: String(error) }
+    }
+  },
+
+  pasteClip: async (text: string, id?: string): Promise<Result<void>> => {
+    try {
+      await invoke('paste_clip', { text, id })
+      return { ok: true, value: undefined }
+    } catch (error) {
+      console.error('Failed to paste:', error)
       return { ok: false, error: String(error) }
     }
   },

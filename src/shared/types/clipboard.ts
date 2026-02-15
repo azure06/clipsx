@@ -12,6 +12,7 @@ export type ClipContent =
 export type ClipItem = {
   readonly id: string
   readonly contentType: ClipContentType
+  readonly detectedType: string
   readonly contentText: string | null
   readonly contentHtml: string | null
   readonly contentRtf: string | null

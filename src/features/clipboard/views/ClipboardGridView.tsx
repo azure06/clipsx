@@ -4,6 +4,7 @@ import { ClipboardGridItem } from '../components'
 type ClipboardGridViewProps = {
   readonly clips: ClipItem[]
   readonly onCopy: (text: string, clipId: string) => void
+  readonly onSelect?: (text: string, clipId: string) => void
   readonly onDelete: (id: string) => void
   readonly onToggleFavorite: (id: string) => void
   readonly onTogglePin: (id: string) => void
@@ -15,6 +16,7 @@ type ClipboardGridViewProps = {
 export const ClipboardGridView = ({
   clips,
   onCopy,
+  onSelect,
   onDelete,
   onToggleFavorite,
   onTogglePin,
@@ -28,10 +30,11 @@ export const ClipboardGridView = ({
         <ClipboardGridItem
           key={clip.id}
           clip={clip}
-          onCopy={text => void onCopy(text, clip.id)}
-          onDelete={() => void onDelete(clip.id)}
-          onToggleFavorite={() => void onToggleFavorite(clip.id)}
-          onTogglePin={() => void onTogglePin(clip.id)}
+          onCopy={onCopy}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          onToggleFavorite={onToggleFavorite}
+          onTogglePin={onTogglePin}
           isSelected={index === selectedIndex}
           index={index}
         />

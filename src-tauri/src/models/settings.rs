@@ -88,6 +88,12 @@ pub struct AppSettings {
     // Paste behavior
     pub default_paste_format: PasteFormat,
     pub auto_close_after_paste: bool,
+    #[serde(default = "default_true")]
+    pub paste_on_enter: bool,
+    #[serde(default = "default_true")]
+    pub hide_on_blur: bool,
+    #[serde(default = "default_false")]
+    pub always_on_top: bool,
 
     // Notifications
     pub show_copy_toast: bool,
@@ -120,8 +126,19 @@ impl Default for AppSettings {
             auto_start: false,
             default_paste_format: PasteFormat::default(),
             auto_close_after_paste: true,
+            paste_on_enter: true,
+            hide_on_blur: true,
+            always_on_top: false,
             show_copy_toast: true,
             toast_duration_ms: 1500,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
 }

@@ -34,6 +34,9 @@ export interface AppSettings {
   // Paste behavior
   default_paste_format: PasteFormat
   auto_close_after_paste: boolean
+  paste_on_enter: boolean
+  hide_on_blur: boolean
+  always_on_top: boolean
 
   // Notifications
   show_copy_toast: boolean
@@ -60,6 +63,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auto_start: false,
   default_paste_format: 'auto',
   auto_close_after_paste: true,
+  paste_on_enter: true,
+  hide_on_blur: true,
+  always_on_top: false,
   show_copy_toast: true,
   toast_duration_ms: 1500,
 }

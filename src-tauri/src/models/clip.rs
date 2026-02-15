@@ -10,12 +10,13 @@ pub struct ClipItem {
     pub content_rtf: Option<String>,
     pub image_path: Option<String>,
     pub file_paths: Option<String>, // JSON array
+    pub detected_type: String,      // New: 'url', 'code', 'text', etc.
     pub metadata: Option<String>,   // JSON object
     pub created_at: i64,            // Unix timestamp
     pub updated_at: i64,            // Last access timestamp
     pub app_name: Option<String>,
-    pub is_pinned: i32,             // SQLite uses INTEGER for boolean
-    pub is_favorite: i32,           // SQLite uses INTEGER for boolean
+    pub is_pinned: i32,   // SQLite uses INTEGER for boolean
+    pub is_favorite: i32, // SQLite uses INTEGER for boolean
     pub access_count: i32,
     pub content_hash: Option<String>,
 }
@@ -46,9 +47,9 @@ pub struct Collection {
 pub struct Embedding {
     pub id: i64,
     pub clip_id: String,
-    pub vector: Vec<u8>,            // Serialized float array (BLOB in DB)
-    pub model: String,              // E.g., "text-embedding-3-small"
-    pub dimensions: i32,            // Vector size (768, 1536, etc.)
+    pub vector: Vec<u8>, // Serialized float array (BLOB in DB)
+    pub model: String,   // E.g., "text-embedding-3-small"
+    pub dimensions: i32, // Vector size (768, 1536, etc.)
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -73,13 +74,13 @@ pub enum ClipContent {
 }
 
 impl ClipItem {
-    pub fn from_text(content: String) -> Self {
+    pub fn from_text(content: String, detected_type: String, metadata: Option<String>) -> Self {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
-        
+
         // Compute hash for duplicate detection
         let content_hash = Self::compute_hash(&content);
-        
+
         Self {
             id,
             content_type: "text".to_string(),
@@ -88,7 +89,8 @@ impl ClipItem {
             content_rtf: None,
             image_path: None,
             file_paths: None,
-            metadata: None,
+            detected_type,
+            metadata,
             created_at: now,
             updated_at: now,
             app_name: None,
@@ -98,12 +100,12 @@ impl ClipItem {
             content_hash: Some(content_hash),
         }
     }
-    
+
     /// Compute SHA-256 hash of content for duplicate detection
     fn compute_hash(content: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -111,9 +113,10 @@ impl ClipItem {
 
     pub fn content(&self) -> Option<ClipContent> {
         match self.content_type.as_str() {
-            "text" => self.content_text.as_ref().map(|c| ClipContent::Text {
-                content: c.clone(),
-            }),
+            "text" => self
+                .content_text
+                .as_ref()
+                .map(|c| ClipContent::Text { content: c.clone() }),
             "html" => {
                 if let (Some(html), Some(plain)) = (&self.content_html, &self.content_text) {
                     Some(ClipContent::Html {
@@ -134,9 +137,10 @@ impl ClipItem {
                     None
                 }
             }
-            "image" => self.image_path.as_ref().map(|p| ClipContent::Image {
-                path: p.clone(),
-            }),
+            "image" => self
+                .image_path
+                .as_ref()
+                .map(|p| ClipContent::Image { path: p.clone() }),
             "files" => self.file_paths.as_ref().and_then(|json| {
                 serde_json::from_str::<Vec<String>>(json)
                     .ok()

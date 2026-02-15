@@ -1,21 +1,22 @@
 import { Layers, Blocks, Settings, User } from 'lucide-react'
+import { useUIStore } from '../../stores'
 
 type SidebarProps = {
-  activeView: 'clips' | 'plugins' | 'settings'
-  onViewChange: (view: 'clips' | 'plugins' | 'settings') => void
+  // activeView and onViewChange handled by store now
   onLoginClick: () => void
 }
 
-export const Sidebar = ({ activeView, onViewChange, onLoginClick }: SidebarProps) => {
+export const Sidebar = ({ onLoginClick }: SidebarProps) => {
+  const { activeView, setActiveView } = useUIStore()
+
   return (
-    <div className="flex w-12 flex-shrink-0 flex-col items-center border-r border-gray-800/50 bg-gray-900/50 py-3">
+    <div className="flex w-12 shrink-0 flex-col items-center py-3">
       {/* Top Icons */}
       <div className="flex flex-col items-center gap-1">
         <button
-          onClick={() => onViewChange('clips')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-            activeView === 'clips' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-          }`}
+          onClick={() => setActiveView('clips')}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'clips' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+            }`}
           title="Clipboard History"
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
@@ -25,10 +26,9 @@ export const Sidebar = ({ activeView, onViewChange, onLoginClick }: SidebarProps
         </button>
 
         <button
-          onClick={() => onViewChange('plugins')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-            activeView === 'plugins' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-          }`}
+          onClick={() => setActiveView('plugins')}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'plugins' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+            }`}
           title="Plugins"
         >
           <Blocks className="h-4 w-4" strokeWidth={1.5} />
@@ -45,17 +45,16 @@ export const Sidebar = ({ activeView, onViewChange, onLoginClick }: SidebarProps
       <div className="flex flex-col items-center gap-1">
         <button
           onClick={onLoginClick}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-800/50 hover:text-gray-300"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors cursor-pointer hover:bg-gray-800/50 hover:text-gray-300"
           title="Account"
         >
           <User className="h-3.5 w-3.5" strokeWidth={1.5} />
         </button>
 
         <button
-          onClick={() => onViewChange('settings')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-            activeView === 'settings' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-          }`}
+          onClick={() => setActiveView('settings')}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'settings' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+            }`}
           title="Settings"
         >
           <Settings className="h-4 w-4" strokeWidth={1.5} />

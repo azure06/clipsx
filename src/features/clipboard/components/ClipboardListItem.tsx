@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Toast from '@radix-ui/react-toast'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
@@ -8,17 +8,19 @@ import { getThumbnailPath, getAssetUrl } from '../utils'
 
 type ClipboardListItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
-  readonly onCopy: (text: string) => void
+  readonly onCopy: (text: string, id: string) => void
+  readonly onSelect?: (text: string, id: string) => void
   readonly onDelete: (id: string) => void
-  readonly onToggleFavorite: () => void
-  readonly onTogglePin: () => void
+  readonly onToggleFavorite: (id: string) => void
+  readonly onTogglePin: (id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
 }
 
-export const ClipboardListItem = ({
+const ClipboardListItemComponent = ({
   clip,
   onCopy,
+  onSelect,
   onDelete,
   onToggleFavorite,
   onTogglePin,
@@ -39,8 +41,12 @@ export const ClipboardListItem = ({
 
   const handleClick = () => {
     if (clip.contentText) {
-      onCopy(clip.contentText)
-      setShowToast(true)
+      if (onSelect) {
+        onSelect(clip.contentText, clip.id)
+      } else {
+        onCopy(clip.contentText, clip.id)
+        setShowToast(true)
+      }
     }
   }
 
@@ -49,9 +55,11 @@ export const ClipboardListItem = ({
       <div
         onClick={handleClick}
         data-clip-index={index}
-        className={`group relative flex items-start gap-2.5 border-b border-gray-200 dark:border-gray-800/50 py-2 px-3.5 transition-all duration-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 active:scale-[0.99] overflow-hidden before:absolute before:inset-0 before:bg-gray-300/20 dark:before:bg-gray-700/20 before:rounded-full before:scale-0 before:opacity-0 active:before:scale-[2.5] active:before:opacity-100 before:transition-all before:duration-500 ${isSelected
-            ? 'bg-blue-50 dark:bg-blue-950/30 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
-            : isPinned ? 'bg-blue-50/50 dark:bg-blue-950/10' : 'bg-white dark:bg-transparent'
+        className={`group relative flex items-start gap-3 py-3 px-4 transition-all duration-200 cursor-pointer mx-2 my-1 rounded-xl border ${isSelected
+          ? 'bg-blue-50/80 dark:bg-blue-500/20 border-blue-200 dark:border-blue-500/30 ring-1 ring-blue-500/20'
+          : isPinned
+            ? 'bg-violet-50/50 dark:bg-violet-500/10 border-violet-100 dark:border-violet-500/20'
+            : 'bg-white/50 dark:bg-gray-800/40 border-transparent hover:bg-white dark:hover:bg-gray-800/80 hover:border-gray-200 dark:hover:border-gray-700 hover:shadow-sm'
           }`}
       >
         {/* Accent border for pinned items */}
@@ -178,7 +186,7 @@ export const ClipboardListItem = ({
                 <DropdownMenu.Item
                   onClick={() => {
                     if (clip.contentText) {
-                      onCopy(clip.contentText)
+                      onCopy(clip.contentText, clip.id)
                     }
                   }}
                   className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
@@ -188,7 +196,7 @@ export const ClipboardListItem = ({
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  onClick={onToggleFavorite}
+                  onClick={() => onToggleFavorite(clip.id)}
                   className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
                 >
                   <Star
@@ -199,7 +207,7 @@ export const ClipboardListItem = ({
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  onClick={onTogglePin}
+                  onClick={() => onTogglePin(clip.id)}
                   className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
                 >
                   <Pin
@@ -253,4 +261,5 @@ export const ClipboardListItem = ({
       </Toast.Provider>
     </>
   )
-}
+}  // Memoize the component to prevent re-renders when other items change
+export const ClipboardListItem = memo(ClipboardListItemComponent)
