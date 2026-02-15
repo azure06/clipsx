@@ -11,7 +11,7 @@ export type ButtonProps = {
   readonly disabled?: boolean
   readonly leftIcon?: ReactNode
   readonly rightIcon?: ReactNode
-  readonly children: ReactNode
+  readonly children?: ReactNode
   readonly onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   readonly className?: string
   readonly type?: 'button' | 'submit' | 'reset'

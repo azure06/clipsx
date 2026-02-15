@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useClipboardStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
 import { Star, Search, RefreshCw, Trash, MoreVertical } from 'lucide-react'
+import { Button } from '../../shared/components/ui'
 import { ClipboardListView, ClipboardGridView } from './views'
 import { ClipboardViewModeSelector } from './components'
 import type { ViewMode } from './utils'
@@ -181,57 +182,51 @@ export const ClipboardHistory = () => {
 
       {/* Filter Types - Grouped */}
       <div className="flex items-center gap-0.5 rounded border border-gray-700 bg-gray-900 p-0.5">
-        <button
+        <Button
+          variant={activeFilter === 'all' ? 'primary' : 'ghost'}
+          size="sm"
           onClick={() => setActiveFilter('all')}
-          className={`rounded px-1.5 py-1 text-[11px] font-medium transition-colors ${
-            activeFilter === 'all'
-              ? 'bg-linear-to-r from-blue-500 via-blue-400 to-blue-500 text-white'
-              : 'text-gray-400 hover:bg-gray-800'
-          }`}
+          className="!px-1.5 !py-1 !text-[11px]"
         >
           All
-        </button>
-        <button
+        </Button>
+        <Button
+          variant={activeFilter === 'favorites' ? 'primary' : 'ghost'}
+          size="sm"
           onClick={() => setActiveFilter('favorites')}
-          className={`rounded p-1 transition-colors ${
-            activeFilter === 'favorites'
-              ? 'bg-linear-to-r from-violet-500 via-violet-400 to-violet-500 text-white'
-              : 'text-gray-400 hover:bg-gray-800'
-          }`}
-          title="Favorites"
-        >
-          <Star className="h-3 w-3" strokeWidth={1.5} />
-        </button>
+          leftIcon={<Star className="h-3 w-3" strokeWidth={1.5} />}
+          className="!px-1 !py-1 !text-[11px] !gap-0"
+        />
       </div>
 
       <div className="h-4 w-px bg-gray-700"></div>
 
       {/* Trash */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => void handleClearAll()}
-        className="rounded p-1 text-gray-500 transition-colors hover:bg-red-950/20 hover:text-red-400"
-        title="Clear all"
-      >
-        <Trash className="h-3.5 w-3.5" strokeWidth={1.5} />
-      </button>
+        leftIcon={<Trash className="h-3.5 w-3.5" strokeWidth={1.5} />}
+        className="!p-1 text-gray-500 hover:!bg-red-950/20 hover:!text-red-400"
+      />
 
       {/* Sync */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={handleRefresh}
-        className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-400"
-        title="Sync"
-      >
-        <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />
-      </button>
+        leftIcon={<RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />}
+        className="!p-1 text-gray-500 hover:!text-gray-400"
+      />
 
       {/* Menu */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => alert('Menu coming soon!')}
-        className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-400"
-        title="More options"
-      >
-        <MoreVertical className="h-3.5 w-3.5" strokeWidth={1.5} />
-      </button>
+        leftIcon={<MoreVertical className="h-3.5 w-3.5" strokeWidth={1.5} />}
+        className="!p-1 text-gray-500 hover:!text-gray-400"
+      />
     </div>
   )
 
