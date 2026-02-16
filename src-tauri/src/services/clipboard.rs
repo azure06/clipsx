@@ -96,20 +96,27 @@ impl ClipboardService {
 
         let clip = match content {
             ClipboardContent::Text { content } => {
-                // INTELLIGENCE PRE-PROCESSING
+                // Intelligence: detect semantic type from text content
                 let detection =
                     crate::services::intelligence::IntelligenceService::detect(&content);
 
-                let mut clip =
-                    ClipItem::from_text(content, detection.detected_type, detection.metadata);
+                let mut clip = ClipItem::from_text(
+                    content,
+                    detection.detected_type_str().to_string(),
+                    detection.metadata_json(),
+                );
                 clip.content_hash = Some(content_hash.clone());
                 clip
             }
             ClipboardContent::Html { html, plain } => {
-                Self::create_html_clip(html, plain, &content_hash)
+                // Intelligence: analyze the plain text extracted from HTML
+                let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
+                Self::create_html_clip(html, plain, &content_hash, &detection)
             }
             ClipboardContent::Rtf { rtf, plain } => {
-                Self::create_rtf_clip(rtf, plain, &content_hash)
+                // Intelligence: analyze the plain text extracted from RTF
+                let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
+                Self::create_rtf_clip(rtf, plain, &content_hash, &detection)
             }
             ClipboardContent::Image { data, format } => {
                 self.create_image_clip(data, format, &content_hash).await?
@@ -144,7 +151,12 @@ impl ClipboardService {
         Ok(())
     }
 
-    fn create_html_clip(html: String, plain: String, hash: &str) -> ClipItem {
+    fn create_html_clip(
+        html: String,
+        plain: String,
+        hash: &str,
+        detection: &crate::services::intelligence::DetectionResult,
+    ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
 
@@ -156,8 +168,8 @@ impl ClipboardService {
             content_rtf: None,
             image_path: None,
             file_paths: None,
-            detected_type: "html".to_string(), // Default logic
-            metadata: None,
+            detected_type: detection.detected_type_str().to_string(),
+            metadata: detection.metadata_json(),
             created_at: now,
             updated_at: now,
             app_name: None,
@@ -168,7 +180,12 @@ impl ClipboardService {
         }
     }
 
-    fn create_rtf_clip(rtf: String, plain: String, hash: &str) -> ClipItem {
+    fn create_rtf_clip(
+        rtf: String,
+        plain: String,
+        hash: &str,
+        detection: &crate::services::intelligence::DetectionResult,
+    ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
 
@@ -180,8 +197,8 @@ impl ClipboardService {
             content_rtf: Some(rtf),
             image_path: None,
             file_paths: None,
-            detected_type: "rtf".to_string(),
-            metadata: None,
+            detected_type: detection.detected_type_str().to_string(),
+            metadata: detection.metadata_json(),
             created_at: now,
             updated_at: now,
             app_name: None,

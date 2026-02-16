@@ -218,8 +218,7 @@ pub async fn register_global_shortcut(
 /// Shared helper: parse shortcut string, register with toggle behavior.
 /// Used by both the startup code (main.rs) and the `register_global_shortcut` command.
 pub fn setup_global_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(), String> {
-    use tauri::Manager;
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
     // Unregister all existing shortcuts first
     app.global_shortcut()
@@ -231,10 +230,12 @@ pub fn setup_global_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(
         .parse()
         .map_err(|e| format!("Invalid shortcut: {e}"))?;
 
-    // Register shortcut: toggle overlay visibility
+    // Register shortcut: toggle on key-down only (ignore key-up)
     app.global_shortcut()
-        .on_shortcut(shortcut_parsed, move |app, _event, _shortcut| {
-            let _ = toggle_window(app);
+        .on_shortcut(shortcut_parsed, move |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                let _ = toggle_window(app);
+            }
         })
         .map_err(|e| e.to_string())?;
 

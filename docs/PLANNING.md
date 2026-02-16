@@ -130,6 +130,27 @@ AI is not just a chatbot; it's a **transformation engine**.
 
 ---
 
+## 🔍 Intelligence Engine — Detector Status
+
+*Last Updated: February 17, 2026*
+
+All detectors are implemented in Rust (`src-tauri/src/services/intelligence.rs`) as pure functions.
+Detection runs on **all text-bearing clips** (text, HTML plain text, RTF plain text) during clipboard ingestion.
+
+| Detector | Strategy | Confidence | Heuristic Limitations / TODO |
+| :--- | :--- | :--- | :--- |
+| **URL** | Regex + `url::Url::parse` | ✅ 1.0 | Fully parsed. No tracking-param stripping yet. |
+| **Color** | Regex (hex, rgb, rgba, hsl, hsla) | ✅ 1.0 | Could add named CSS colors (`red`, `blue`). |
+| **Email** | Regex | ✅ 1.0 | No MX record validation (by design — offline). |
+| **JSON** | `serde_json::from_str` | ✅ 1.0 | Real parser, zero false positives. |
+| **Path** | Regex (Unix + Windows) | ⚠️ 0.85 | **TODO:** Verify existence via Tauri FS API for higher confidence. |
+| **JWT** | Pattern match (`eyJ` + 3 base64url segments) | ⚠️ 0.9 | **TODO:** Decode header/payload with `base64` crate for expiry metadata. |
+| **Timestamp** | Numeric range check (2001–2040) | ⚠️ 0.75–0.80 | Heuristic. May false-positive on large IDs. |
+| **Code** | Keyword + structure scoring per language | ⚠️ 0.5–0.95 | **TODO:** Use tree-sitter for accurate language detection. |
+| **Text** | Fallback (always matches) | ✅ 1.0 | Default when no other detector matches. |
+
+---
+
 ## 🏗️ Architecture
 
 ```mermaid
