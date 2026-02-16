@@ -105,7 +105,31 @@ impl ClipRepository {
         Ok(clip)
     }
 
+    /// Escape user input for FTS5 MATCH queries.
+    ///
+    /// FTS5 has special characters that cause syntax errors if unescaped:
+    /// - Double quotes (") for phrase search
+    /// - Parentheses () for grouping
+    /// - AND, OR, NOT operators
+    /// - Asterisk (*) for prefix matching
+    ///
+    /// Strategy: Wrap the entire query in double quotes to treat it as a literal phrase,
+    /// and escape any internal double quotes by doubling them.
+    ///
+    /// Examples:
+    /// - `hello world` → `"hello world"` (phrase search)
+    /// - `user@example.com` → `"user@example.com"` (literal)
+    /// - `"quoted"` → `"""quoted"""` (escaped quotes)
+    /// - `C:\Users\foo` → `"C:\Users\foo"` (backslashes OK)
+    fn escape_fts5_query(query: &str) -> String {
+        // Escape internal double quotes by doubling them
+        let escaped = query.replace('"', "\"\"");
+        // Wrap in double quotes for literal phrase matching
+        format!("\"{}\"", escaped)
+    }
+
     pub async fn search(&self, query: &str, limit: i32) -> Result<Vec<ClipItem>> {
+        let escaped_query = Self::escape_fts5_query(query);
         let clips = sqlx::query_as::<_, ClipItem>(
             r#"
             SELECT clips.* FROM clips
@@ -115,7 +139,7 @@ impl ClipRepository {
             LIMIT ?
             "#,
         )
-        .bind(query)
+        .bind(escaped_query)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -132,6 +156,7 @@ impl ClipRepository {
         limit: i32,
         offset: i32,
     ) -> Result<Vec<ClipItem>> {
+        let escaped_query = Self::escape_fts5_query(query);
         let clips = sqlx::query_as::<_, ClipItem>(
             r#"
             SELECT clips.* FROM clips
@@ -141,7 +166,7 @@ impl ClipRepository {
             LIMIT ? OFFSET ?
             "#,
         )
-        .bind(query)
+        .bind(escaped_query)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
@@ -474,5 +499,41 @@ impl ClipRepository {
             .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_fts5_query_simple() {
+        let result = ClipRepository::escape_fts5_query("hello world");
+        assert_eq!(result, "\"hello world\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_with_quotes() {
+        let result = ClipRepository::escape_fts5_query("say \"hello\"");
+        assert_eq!(result, "\"say \"\"hello\"\"\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_email() {
+        let result = ClipRepository::escape_fts5_query("user@example.com");
+        assert_eq!(result, "\"user@example.com\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_path() {
+        let result = ClipRepository::escape_fts5_query("C:\\Users\\foo");
+        assert_eq!(result, "\"C:\\Users\\foo\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_special_chars() {
+        // Parentheses, asterisks, AND/OR operators should be treated as literals
+        let result = ClipRepository::escape_fts5_query("(foo AND bar) OR baz*");
+        assert_eq!(result, "\"(foo AND bar) OR baz*\"");
     }
 }
