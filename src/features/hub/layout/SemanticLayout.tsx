@@ -41,7 +41,7 @@ export const SemanticLayout = () => {
 
     return (
         // Main Container - Single Background Color/Gradient Source
-        <div className="flex h-screen w-screen flex-col overflow-hidden bg-gray-950/60 text-gray-100 font-sans selection:bg-blue-500/30">
+        <div className="flex h-screen w-screen flex-col overflow-hidden bg-gray-950/60 text-gray-100 font-sans selection:bg-blue-500/30 rounded-lg border border-gray-300/20">
 
             {/* 1. TitleBar (Top, Full Width) */}
             <TitleBar />

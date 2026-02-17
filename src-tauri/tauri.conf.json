@@ -42,9 +42,9 @@
         "windowEffects": {
           "effects": [
             "sidebar",
-            "acrylic"
-          ],
-          "state": "active"
+            "acrylic",
+            "hudWindow"
+          ]
         }
       }
     ],

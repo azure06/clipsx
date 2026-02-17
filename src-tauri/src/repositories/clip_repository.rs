@@ -105,7 +105,7 @@ impl ClipRepository {
         Ok(clip)
     }
 
-    /// Escape user input for FTS5 MATCH queries.
+    /// Escape user input for FTS5 MATCH queries with prefix matching.
     ///
     /// FTS5 has special characters that cause syntax errors if unescaped:
     /// - Double quotes (") for phrase search
@@ -113,19 +113,38 @@ impl ClipRepository {
     /// - AND, OR, NOT operators
     /// - Asterisk (*) for prefix matching
     ///
-    /// Strategy: Wrap the entire query in double quotes to treat it as a literal phrase,
-    /// and escape any internal double quotes by doubling them.
+    /// Strategy: Split into tokens, escape each, add prefix wildcard to last token
+    /// for autocomplete-style matching.
     ///
     /// Examples:
-    /// - `hello world` → `"hello world"` (phrase search)
-    /// - `user@example.com` → `"user@example.com"` (literal)
-    /// - `"quoted"` → `"""quoted"""` (escaped quotes)
-    /// - `C:\Users\foo` → `"C:\Users\foo"` (backslashes OK)
+    /// - `cli` → `"cli"*` (matches "cli", "clipboard", "click")
+    /// - `hello world` → `"hello"* AND "world"*` (both prefix match)
+    /// - `user@example.com` → `"user@example.com"*` (literal prefix)
+    /// - `"quoted"` → `"""quoted"""*` (escaped quotes with prefix)
     fn escape_fts5_query(query: &str) -> String {
-        // Escape internal double quotes by doubling them
-        let escaped = query.replace('"', "\"\"");
-        // Wrap in double quotes for literal phrase matching
-        format!("\"{}\"", escaped)
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return String::from("\"\"");
+        }
+
+        // Split by whitespace for multi-word queries
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        
+        if tokens.is_empty() {
+            return String::from("\"\"");
+        }
+
+        // Escape and add prefix wildcard to each token
+        let escaped_tokens: Vec<String> = tokens
+            .iter()
+            .map(|token| {
+                let escaped = token.replace('"', "\"\"");
+                format!("\"{}\"*", escaped)
+            })
+            .collect();
+
+        // Join with AND for multi-word search
+        escaped_tokens.join(" AND ")
     }
 
     pub async fn search(&self, query: &str, limit: i32) -> Result<Vec<ClipItem>> {
@@ -135,7 +154,7 @@ impl ClipRepository {
             SELECT clips.* FROM clips
             INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
             WHERE clips_fts MATCH ?
-            ORDER BY clips.updated_at DESC
+            ORDER BY clips_fts.rank, clips.updated_at DESC
             LIMIT ?
             "#,
         )
@@ -162,7 +181,7 @@ impl ClipRepository {
             SELECT clips.* FROM clips
             INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
             WHERE clips_fts MATCH ?
-            ORDER BY clips.updated_at DESC
+            ORDER BY clips_fts.rank, clips.updated_at DESC
             LIMIT ? OFFSET ?
             "#,
         )
@@ -509,31 +528,49 @@ mod tests {
     #[test]
     fn test_escape_fts5_query_simple() {
         let result = ClipRepository::escape_fts5_query("hello world");
-        assert_eq!(result, "\"hello world\"");
+        assert_eq!(result, "\"hello\"* AND \"world\"*");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_single_word() {
+        let result = ClipRepository::escape_fts5_query("cli");
+        assert_eq!(result, "\"cli\"*");
     }
 
     #[test]
     fn test_escape_fts5_query_with_quotes() {
         let result = ClipRepository::escape_fts5_query("say \"hello\"");
-        assert_eq!(result, "\"say \"\"hello\"\"\"");
+        assert_eq!(result, "\"say\"* AND \"\"\"hello\"\"\"*");
     }
 
     #[test]
     fn test_escape_fts5_query_email() {
         let result = ClipRepository::escape_fts5_query("user@example.com");
-        assert_eq!(result, "\"user@example.com\"");
+        assert_eq!(result, "\"user@example.com\"*");
     }
 
     #[test]
     fn test_escape_fts5_query_path() {
         let result = ClipRepository::escape_fts5_query("C:\\Users\\foo");
-        assert_eq!(result, "\"C:\\Users\\foo\"");
+        assert_eq!(result, "\"C:\\Users\\foo\"*");
     }
 
     #[test]
     fn test_escape_fts5_query_special_chars() {
-        // Parentheses, asterisks, AND/OR operators should be treated as literals
+        // Parentheses, asterisks, AND/OR operators should be treated as literals in each token
         let result = ClipRepository::escape_fts5_query("(foo AND bar) OR baz*");
-        assert_eq!(result, "\"(foo AND bar) OR baz*\"");
+        assert_eq!(result, "\"(foo\"* AND \"AND\"* AND \"bar)\"* AND \"OR\"* AND \"baz*\"*");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_empty() {
+        let result = ClipRepository::escape_fts5_query("");
+        assert_eq!(result, "\"\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_whitespace() {
+        let result = ClipRepository::escape_fts5_query("   ");
+        assert_eq!(result, "\"\"");
     }
 }

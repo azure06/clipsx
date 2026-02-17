@@ -27,17 +27,12 @@ export const TitleBar = () => {
     >
       {/* Left: Window dots + Title with accent bar */}
       <div className="flex items-center gap-3 text-[10px] text-gray-500 pointer-events-none">
-        <div className="flex items-center gap-1.5">
-          <span>●</span>
-          <span>●</span>
-          <span>●</span>
-        </div>
 
         {/* Title with top accent bar */}
-        <div className="absolute top-0 left-20 flex flex-col items-center gap-1">
+        <div className="absolute top-0 left-24 flex flex-col items-center gap-1">
           {/* Accent bar */}
           <div
-            className="h-1 bg-gradient-to-r from-blue-400 to-violet-400 shadow-lg shadow-blue-400/60 rounded-b-full"
+            className="h-1 bg-linear-to-r from-blue-400 to-violet-400 shadow-lg shadow-blue-400/60 rounded-b-full"
             style={{ width: '64px' }}
           />
           {/* Title text */}

@@ -9,8 +9,11 @@ use tauri::{Emitter, Manager};
 
 mod commands;
 mod models;
+mod plugins;
 mod repositories;
 mod services;
+
+use plugins::mac_rounded_corners;
 
 fn main() {
     tauri::Builder::default()
@@ -137,6 +140,9 @@ fn main() {
             commands::get_settings,
             commands::update_settings,
             commands::get_settings_path,
+            mac_rounded_corners::enable_rounded_corners,
+            mac_rounded_corners::enable_modern_window_style,
+            mac_rounded_corners::reposition_traffic_lights,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
