@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { Theme, ViewMode, RetentionPolicy, PasteFormat } from '../../shared/types'
+import type { Theme, ViewMode, RetentionPolicy, PasteFormat, AppSettings } from '../../shared/types'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   Palette,
@@ -110,12 +110,11 @@ export const Settings = () => {
   const [activeTab, setActiveTab] = useState<Tab>('general')
 
   useEffect(() => {
-    loadSettings()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    void loadSettings()
+  }, [loadSettings])
 
   useEffect(() => {
-    if (settings) {
+    if (settings?.theme) {
       setThemeMode(settings.theme)
     }
   }, [settings?.theme, setThemeMode])
@@ -170,10 +169,10 @@ export const Settings = () => {
       if (file) {
         try {
           const text = await file.text()
-          const imported = JSON.parse(text)
-          await updateSettings(imported)
+          const imported = JSON.parse(text) as unknown
+          await updateSettings(imported as Partial<AppSettings>)
           alert('Settings imported successfully!')
-        } catch (error) {
+        } catch (_error) {
           alert('Failed to import settings. Please check the file format.')
         }
       }
@@ -211,10 +210,11 @@ export const Settings = () => {
           </div>
           <Button
             variant="primary"
-            onClick={async () => {
-              try {
-                await invoke('update_settings', {
-                  settings: {
+            onClick={() => {
+              void (async () => {
+                try {
+                  await invoke('update_settings', {
+                    settings: {
                     theme: 'auto',
                     view_mode: 'list',
                     language: 'en',
@@ -243,6 +243,7 @@ export const Settings = () => {
                 console.error('Failed to reset settings:', err)
                 alert('Failed to reset settings: ' + String(err))
               }
+            })()
             }}
           >
             Reset to Default Settings

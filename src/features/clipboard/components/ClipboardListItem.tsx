@@ -4,7 +4,7 @@ import * as Toast from '@radix-ui/react-toast'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatClipPreview, formatTimestamp } from '../../../shared/types'
 import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Folder, Hash, Check } from 'lucide-react'
-import { getThumbnailPath, getAssetUrl } from '../utils'
+import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
@@ -29,7 +29,6 @@ const ClipboardListItemComponent = ({
 }: ClipboardListItemProps) => {
   const preview = formatClipPreview(clip, 100)
   const timestamp = formatTimestamp(clip.createdAt)
-  const thumbnailPath = getThumbnailPath(clip)
 
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
@@ -67,23 +66,15 @@ const ClipboardListItemComponent = ({
           <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-500 to-violet-600 dark:from-violet-400 dark:to-violet-500"></div>
         )}
 
-        {/* Thumbnail */}
-        {thumbnailPath && (
-          <div className="flex-shrink-0 mt-0.5">
-            <div className="h-10 w-10 overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700/50 shadow-sm">
-              <img
-                src={getAssetUrl(thumbnailPath)}
-                alt="Thumbnail"
-                className="h-full w-full object-cover"
-              />
-            </div>
-          </div>
-        )}
+        {/* Type icon */}
+        <div className="shrink-0 mt-0.5">
+          <ContentIcon content={clipToContent(clip)} size="md" />
+        </div>
 
         {/* Main content area */}
         <div className="flex-1 min-w-0">
           {/* Preview text */}
-          <div className="mb-1 break-words text-xs leading-normal text-gray-900 dark:text-gray-300 font-medium">
+          <div className="mb-1 wrap-break-word text-xs leading-normal text-gray-900 dark:text-gray-300 font-medium">
             {preview}
           </div>
 

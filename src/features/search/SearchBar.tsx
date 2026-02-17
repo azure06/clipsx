@@ -2,7 +2,7 @@ import { Search, Command, X } from 'lucide-react'
 import { useRef, useEffect } from 'react'
 
 
-interface InputBarProps {
+interface SearchBarProps {
     value: string
     onChange: (value: string) => void
     onClear: () => void
@@ -10,7 +10,7 @@ interface InputBarProps {
     autoFocus?: boolean
 }
 
-export const InputBar = ({ value, onChange, onClear, placeholder = "Type to search or paste...", autoFocus = true }: InputBarProps) => {
+export const SearchBar = ({ value, onChange, onClear, placeholder = "Type to search or paste...", autoFocus = true }: SearchBarProps) => {
     const inputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {

@@ -1,38 +1,71 @@
-import { Copy } from 'lucide-react'
+import { Copy, Star, Trash } from 'lucide-react'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { useIntelligence } from '../../intelligence/useIntelligence'
-import type { DetectedContent } from '../../intelligence/types'
+import type { Content, SmartAction } from '../content'
+import {
+  useOpenURLAction,
+  useSendEmailAction,
+  useCopyHexAction,
+  useCopyRGBAction,
+  useFormatCodeAction,
+} from '../content'
 
-interface ActionGridProps {
-    content: DetectedContent | null
+interface ClipActionsProps {
+    content: Content | null
 }
 
-import type { SmartAction } from '../../intelligence/types'
-
-interface ActionGridProps {
-    content: DetectedContent | null
-}
-
-// SmartAction is compatible with what we need
-type DisplayAction = SmartAction
-
-export const ActionGrid = ({ content }: ActionGridProps) => {
-    const { getActions } = useIntelligence()
+export const ClipActions = ({ content }: ClipActionsProps) => {
+    // ✅ Call all hooks unconditionally (before any returns)
+    const openURLAction = useOpenURLAction()
+    const sendEmailAction = useSendEmailAction()
+    const copyHexAction = useCopyHexAction()
+    const copyRGBAction = useCopyRGBAction()
+    const formatCodeAction = useFormatCodeAction()
 
     if (!content) return null
 
-    const contextActions: DisplayAction[] = getActions(content)
+    // Get type-specific actions that apply to current content
+    const contextActions: SmartAction[] = [
+        openURLAction,
+        sendEmailAction,
+        copyHexAction,
+        copyRGBAction,
+        formatCodeAction,
+    ].filter(action => action.check(content))
 
     // Common actions that are always available
-    const commonActions: DisplayAction[] = [
+    const commonActions: SmartAction[] = [
         {
             id: 'copy-text',
-            label: 'Copy Text',
-            icon: <Copy className="w-4 h-4" />,
+            label: 'Copy',
+            icon: <Copy size={16} />,
+            category: 'core',
             check: () => true,
-            execute: () => writeText(content.originalText)
+            execute: async () => {
+                await writeText(content.text)
+            }
         },
-        // Add more common actions here
+        {
+            id: 'favorite',
+            label: 'Favorite',
+            icon: <Star size={16} />,
+            category: 'core',
+            check: () => true,
+            execute: () => {
+                // TODO: Implement favorite toggle
+                console.log('Toggle favorite')
+            }
+        },
+        {
+            id: 'delete',
+            label: 'Delete',
+            icon: <Trash size={16} />,
+            category: 'core',
+            check: () => true,
+            execute: () => {
+                // TODO: Implement delete
+                console.log('Delete clip')
+            }
+        },
     ]
 
     return (
@@ -59,7 +92,7 @@ export const ActionGrid = ({ content }: ActionGridProps) => {
     )
 }
 
-const ActionCard = ({ action, content, index }: { action: DisplayAction, content: DetectedContent, index: number }) => (
+const ActionCard = ({ action, content, index }: { action: SmartAction, content: Content, index: number }) => (
     <button
         onClick={() => void action.execute(content)}
         className="group relative flex flex-col items-center justify-center gap-2 rounded-xl border border-white/5 bg-white/5 p-3 transition-all duration-200 hover:border-white/10 hover:bg-white/10 hover:shadow-lg hover:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-gray-400 hover:text-gray-100"

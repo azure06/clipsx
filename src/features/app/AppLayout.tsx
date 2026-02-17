@@ -1,17 +1,16 @@
 import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 
-import { InputBar } from '../components/InputBar'
+import { SearchBar } from '../search/SearchBar'
+import { ClipPreview } from '../clipboard/ClipPreview'
+import { Sidebar } from '../../shared/components/Sidebar'
+import { TitleBar } from '../../shared/components/TitleBar'
+import { BottomBar } from '../../shared/components/BottomBar'
+import { ClipboardHistory } from '../clipboard/ClipboardHistory'
+import { Settings } from '../settings/Settings'
+import { useClipboardStore, useUIStore } from '../../stores'
 
-import { ActiveClipPreview } from '../components/ActiveClipPreview'
-import { Sidebar } from '../../../shared/components/Sidebar'
-import { TitleBar } from '../../../shared/components/TitleBar'
-import { BottomBar } from '../../../shared/components/BottomBar'
-import { ClipboardHistory } from '../../clipboard/ClipboardHistory'
-import { Settings } from '../../settings/Settings'
-import { useClipboardStore, useUIStore } from '../../../stores'
-
-export const SemanticLayout = () => {
+export const AppLayout = () => {
     const {
         activeView, setActiveView,
         searchQuery, setSearchQuery,
@@ -61,9 +60,9 @@ export const SemanticLayout = () => {
                         {/* Content varies by View */}
                         {activeView === 'clips' && (
                             <div className="flex flex-col h-full p-6 overflow-hidden">
-                                {/* Input Bar - Always Top */}
+                                {/* Search Bar - Always Top */}
                                 <div className="w-full max-w-4xl mx-auto shrink-0 mb-6">
-                                    <InputBar value={searchQuery} onChange={setSearchQuery} onClear={handleClear} />
+                                    <SearchBar value={searchQuery} onChange={setSearchQuery} onClear={handleClear} />
                                 </div>
 
                                 {/* Split View Container */}
@@ -91,7 +90,7 @@ export const SemanticLayout = () => {
                                             if (displayedClip) {
                                                 return (
                                                     <>
-                                                        <ActiveClipPreview clip={displayedClip} />
+                                                        <ClipPreview clip={displayedClip} />
                                                     </>
                                                 )
                                             }

@@ -1,7 +1,7 @@
 import { useWindowBehavior } from './shared/hooks/useWindowBehavior'
 import { ErrorBoundary } from './shared/components/ErrorBoundary'
 import { ThemeProvider } from './shared/hooks/useTheme'
-import { SemanticLayout } from './features/hub/layout/SemanticLayout'
+import { AppLayout } from './features/app/AppLayout'
 
 const App = () => {
   useWindowBehavior()
@@ -9,7 +9,7 @@ const App = () => {
   return (
     <ThemeProvider>
       <ErrorBoundary>
-        <SemanticLayout />
+        <AppLayout />
       </ErrorBoundary>
     </ThemeProvider>
   )

@@ -3,16 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatTimestamp } from '../../../shared/types'
 import { Star, Copy, Trash, MoreVertical, Sparkles, Pin, Folder, Hash } from 'lucide-react'
-import { getThumbnailPath, getAssetUrl } from '../utils'
-
-
-// Assuming formatClipPreview is a new utility function
-const formatClipPreview = (clip: ClipItem, maxLength: number) => {
-  if (clip.contentType === 'text') {
-    return clip.contentText?.slice(0, maxLength) || '(empty)'
-  }
-  return '(content)' // Or handle other content types as needed
-}
+import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardGridItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
@@ -37,15 +28,12 @@ const ClipboardGridItemComponent = ({
 }: ClipboardGridItemProps) => {
   const timestamp = formatTimestamp(clip.createdAt)
 
-  const thumbnailPath = getThumbnailPath(clip)
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
   const tags = clip.tags ?? []
   const collections = clip.collections ?? []
   const hasAttributes = isPinned || isFavorite || tags.length > 0 || collections.length > 0
 
-
-  // Added handleClick function
   const handleClick = () => {
     if (clip.contentText) {
       if (onSelect) {
@@ -54,42 +42,6 @@ const ClipboardGridItemComponent = ({
         onCopy(clip.contentText, clip.id)
       }
     }
-  }
-
-  const getContentPreview = () => {
-    if (clip.contentType === 'image') {
-      return thumbnailPath ? (
-        <div className="relative aspect-square overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700/50">
-          <img
-            src={getAssetUrl(thumbnailPath)}
-            alt="Clipboard image"
-            className="h-full w-full object-cover"
-          />
-        </div>
-      ) : (
-        <div className="flex aspect-square items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700/50">
-          <span className="text-4xl">🖼️</span>
-        </div>
-      )
-    }
-
-    if (clip.contentType === 'files') {
-      return (
-        <div className="flex aspect-square items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800 ring-1 ring-gray-200 dark:ring-gray-700/50">
-          <span className="text-4xl">📁</span>
-        </div>
-      )
-    }
-
-    // Text content - show preview
-    const preview = formatClipPreview(clip, 120)
-    return (
-      <div className="flex aspect-square items-center justify-center rounded-lg bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-4 ring-1 ring-gray-200 dark:ring-gray-700/50">
-        <p className="line-clamp-5 text-center text-xs font-medium text-gray-700 dark:text-gray-300 leading-relaxed">
-          {preview}
-        </p>
-      </div>
-    )
   }
 
   return (
@@ -186,7 +138,9 @@ const ClipboardGridItemComponent = ({
       </div>
 
       {/* Content Preview */}
-      <div className="p-2.5 pb-0">{getContentPreview()}</div>
+      <div className="p-2.5 pb-0 flex items-center justify-center aspect-square">
+        <ContentIcon content={clipToContent(clip)} size="lg" />
+      </div>
 
       {/* Bottom section with metadata and attributes */}
       <div className="p-2.5 pt-2 space-y-1.5">
