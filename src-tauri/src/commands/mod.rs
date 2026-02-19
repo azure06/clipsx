@@ -68,12 +68,13 @@ pub async fn get_clip_by_id(
 #[tauri::command]
 pub async fn search_clips(
     query: String,
+    filter_types: Option<Vec<String>>,
     limit: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
     state
         .repository
-        .search(&query, limit.unwrap_or(50))
+        .search(&query, filter_types, limit.unwrap_or(50))
         .await
         .map_err(|e| e.to_string())
 }
@@ -84,13 +85,19 @@ pub async fn search_clips(
 #[tauri::command]
 pub async fn search_clips_paginated(
     query: String,
+    filter_types: Option<Vec<String>>,
     limit: Option<i32>,
     offset: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
     state
         .repository
-        .search_paginated(&query, limit.unwrap_or(50), offset.unwrap_or(0))
+        .search_paginated(
+            &query,
+            filter_types,
+            limit.unwrap_or(50),
+            offset.unwrap_or(0),
+        )
         .await
         .map_err(|e| e.to_string())
 }

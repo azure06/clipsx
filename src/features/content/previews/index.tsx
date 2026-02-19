@@ -16,24 +16,24 @@ const ContentPreviewComponent = ({ content }: ContentPreviewProps) => {
   switch (content.type) {
     case 'color':
       return <ColorPreview content={content} />
-    
+
     case 'url':
       return <URLPreview content={content} />
-    
+
     case 'code':
       return <CodePreview content={content} />
-    
+
     case 'email':
       return <EmailPreview content={content} />
-    
+
     case 'json':
       return <JSONPreview content={content} />
-    
+
     case 'image':
     case 'files':
       // TODO: Implement image/files preview
       return <TextPreview content={content} />
-    
+
     case 'csv':
     case 'jwt':
     case 'timestamp':
@@ -42,7 +42,7 @@ const ContentPreviewComponent = ({ content }: ContentPreviewProps) => {
       // For now, these fall back to text preview
       // Can be enhanced with specialized views later
       return <TextPreview content={content} />
-    
+
     case 'text':
     default:
       return <TextPreview content={content} />

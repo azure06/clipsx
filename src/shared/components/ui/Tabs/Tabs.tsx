@@ -27,7 +27,7 @@ export const Tabs = ({
   className = '',
 }: TabsProps) => {
   const isVertical = orientation === 'vertical'
-  
+
   return (
     <TabsPrimitive.Root
       defaultValue={defaultTab || tabs[0]?.id}
@@ -37,10 +37,11 @@ export const Tabs = ({
     >
       <TabsPrimitive.List
         className={`flex ${isVertical ? 'flex-col' : 'flex-row gap-0.5'} ${
-          !isVertical && 'border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 px-3'
+          !isVertical &&
+          'border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/30 px-3'
         }`}
       >
-        {tabs.map((tab) => (
+        {tabs.map(tab => (
           <TabsPrimitive.Trigger
             key={tab.id}
             value={tab.id}
@@ -61,12 +62,8 @@ export const Tabs = ({
       </TabsPrimitive.List>
 
       <div className="flex-1">
-        {tabs.map((tab) => (
-          <TabsPrimitive.Content
-            key={tab.id}
-            value={tab.id}
-            className="focus:outline-none"
-          >
+        {tabs.map(tab => (
+          <TabsPrimitive.Content key={tab.id} value={tab.id} className="focus:outline-none">
             {tab.content}
           </TabsPrimitive.Content>
         ))}

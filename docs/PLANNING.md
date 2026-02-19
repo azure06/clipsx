@@ -147,6 +147,11 @@ Detection runs on **all text-bearing clips** (text, HTML plain text, RTF plain t
 | **JWT** | Pattern match (`eyJ` + 3 base64url segments) | ⚠️ 0.9 | **TODO:** Decode header/payload with `base64` crate for expiry metadata. |
 | **Timestamp** | Numeric range check (2001–2040) | ⚠️ 0.75–0.80 | Heuristic. May false-positive on large IDs. |
 | **Code** | Keyword + structure scoring per language | ⚠️ 0.5–0.95 | **TODO:** Use tree-sitter for accurate language detection. |
+| **Secret** | Regex (AWS, GitHub, Stripe, Private Key) | ✅ 1.0 | Transient mode trigger. High confidence patterns. |
+| **CSV** | Delimiter consistency check (, ; \t \|) | ⚠️ 0.85 | Requires >= 2 lines and consistent columns. |
+| **Phone** | Regex (US + Intl E.164) | ✅ 0.95 | Validates length and common formats. |
+| **Math** | Regex (Simple arithmetic) | ✅ 0.9 | Detects basic expressions like `10 + 5 * 2`. |
+| **Date** | Regex (ISO 8601 + Slash formats) | ✅ 0.8–1.0 | ISO is 1.0. DD/MM/YYYY is ambiguous (0.8). |
 | **Text** | Fallback (always matches) | ✅ 1.0 | Default when no other detector matches. |
 
 ---

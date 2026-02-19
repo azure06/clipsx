@@ -15,8 +15,9 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
       <div className="flex flex-col items-center gap-1">
         <button
           onClick={() => setActiveView('clips')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'clips' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-            }`}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+            activeView === 'clips' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+          }`}
           title="Clipboard History"
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
@@ -27,8 +28,9 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
 
         <button
           onClick={() => setActiveView('plugins')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'plugins' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-            }`}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+            activeView === 'plugins' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+          }`}
           title="Plugins"
         >
           <Blocks className="h-4 w-4" strokeWidth={1.5} />
@@ -53,8 +55,9 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
 
         <button
           onClick={() => setActiveView('settings')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${activeView === 'settings' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
-            }`}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+            activeView === 'settings' ? 'text-gray-100' : 'text-gray-500 hover:text-gray-300'
+          }`}
           title="Settings"
         >
           <Settings className="h-4 w-4" strokeWidth={1.5} />

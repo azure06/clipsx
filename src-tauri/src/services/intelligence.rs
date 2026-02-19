@@ -23,6 +23,12 @@ pub enum ContentType {
     Json,
     Jwt,
     Timestamp,
+    // [New Variants]
+    Csv,
+    Secret,
+    Date,
+    Phone,
+    Math,
 }
 
 impl ContentType {
@@ -38,6 +44,12 @@ impl ContentType {
             ContentType::Json => "json",
             ContentType::Jwt => "jwt",
             ContentType::Timestamp => "timestamp",
+            // [New Variants]
+            ContentType::Csv => "csv",
+            ContentType::Secret => "secret",
+            ContentType::Date => "date",
+            ContentType::Phone => "phone",
+            ContentType::Math => "math",
         }
     }
 }
@@ -90,6 +102,12 @@ pub fn detect(text: &str) -> DetectionResult {
     // Priority order: most specific → least specific
     // Each detector is a pure function: &str → Option<DetectionResult>
 
+    // Priority 0: Safety/Secrets (STOP immediately if found)
+    if let Some(r) = detect_secrets(trimmed) {
+        return r;
+    }
+
+    // Priority 1: High-confidence specific formats
     if let Some(r) = detect_jwt(trimmed) {
         return r;
     }
@@ -102,15 +120,35 @@ pub fn detect(text: &str) -> DetectionResult {
     if let Some(r) = detect_color(trimmed) {
         return r;
     }
+
+    // Priority 2: Structured Data
     if let Some(r) = detect_json(trimmed) {
         return r;
     }
+    if let Some(r) = detect_csv(trimmed) {
+        return r;
+    }
+
+    // Priority 3: System/File
     if let Some(r) = detect_path(trimmed) {
+        return r;
+    }
+
+    // Priority 4: Parsed Values (Date, Phone, Math)
+    if let Some(r) = detect_date(trimmed) {
+        return r;
+    }
+    if let Some(r) = detect_phone(trimmed) {
+        return r;
+    }
+    if let Some(r) = detect_math(trimmed) {
         return r;
     }
     if let Some(r) = detect_timestamp(trimmed) {
         return r;
     }
+
+    // Priority 5: Code (Broadest heuristic)
     if let Some(r) = detect_code(trimmed) {
         return r;
     }
@@ -623,6 +661,219 @@ impl IntelligenceService {
     }
 }
 
+/// Detect sensitive secrets (API keys, private keys, etc.).
+///
+/// Returns high confidence result to trigger "Transient Mode".
+fn detect_secrets(text: &str) -> Option<DetectionResult> {
+    lazy_static! {
+        // AWS Access Key ID (AKIA...)
+        static ref AWS_KEY: Regex = Regex::new(r"(?i)\bAKIA[0-9A-Z]{16}\b").unwrap();
+        // GitHub Personal Access Token (ghp_...)
+        static ref GITHUB_TOKEN: Regex = Regex::new(r"(?i)\bghp_[a-zA-Z0-9]{36}\b").unwrap();
+        // Stripe Public/Secret Keys (pk_live_..., sk_live_...)
+        static ref STRIPE_KEY: Regex = Regex::new(r"(?i)\b[rs]k_(live|test)_[0-9a-zA-Z]{24,}\b").unwrap();
+        // RSA Private Key Header
+        static ref PRIVATE_KEY: Regex = Regex::new(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----").unwrap();
+    }
+
+    let kind = if AWS_KEY.is_match(text) {
+        "aws_access_key"
+    } else if GITHUB_TOKEN.is_match(text) {
+        "github_token"
+    } else if STRIPE_KEY.is_match(text) {
+        "stripe_key"
+    } else if PRIVATE_KEY.is_match(text) {
+        "private_key"
+    } else {
+        return None;
+    };
+
+    Some(DetectionResult {
+        detected_type: ContentType::Secret,
+        confidence: 1.0,
+        metadata: json!({
+            "kind": kind,
+            "warning": "Do not share this content.",
+        }),
+    })
+}
+
+/// Detect CSV/TSV content.
+///
+/// Heuristic:
+/// - Must have >= 2 lines
+/// - Must have consistent delimiter count (comma, semicolon, or tab)
+/// - Must have >= 2 columns
+fn detect_csv(text: &str) -> Option<DetectionResult> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 2 {
+        return None;
+    }
+
+    // Candidate delimiters
+    let delimiters = [',', ';', '\t', '|'];
+    let mut best_delimiter = None;
+    let mut best_cols = 0;
+
+    for &delimiter in &delimiters {
+        let mut lengths = Vec::new();
+        let mut consistent = true;
+
+        for (i, line) in lines.iter().enumerate() {
+            // Ignore empty last line
+            if i == lines.len() - 1 && line.trim().is_empty() {
+                continue;
+            }
+
+            let count = line.split(delimiter).count();
+            if count < 2 {
+                consistent = false;
+                break;
+            }
+            lengths.push(count);
+        }
+
+        if consistent && !lengths.is_empty() {
+            // Check if all lines have same column count
+            let first_len = lengths[0];
+            if lengths.iter().all(|&l| l == first_len) {
+                best_delimiter = Some(delimiter);
+                best_cols = first_len;
+                break; // Found a valid delimiter
+            }
+        }
+    }
+
+    if let Some(delimiter) = best_delimiter {
+        // Final heuristic: avoid false positives like "Hello, world.\nI am here."
+        // If delimiter is comma and columns are few (e.g. 2), it's risky.
+        // But for now, we trust the consistency check.
+
+        Some(DetectionResult {
+            detected_type: ContentType::Csv,
+            confidence: 0.85,
+            metadata: json!({
+                "delimiter": delimiter.to_string(),
+                "rows": lines.len(),
+                "columns": best_cols,
+            }),
+        })
+    } else {
+        None
+    }
+}
+
+/// Detect phone numbers.
+///
+/// Supports international E.164-ish (+1...) and US local formats.
+fn detect_phone(text: &str) -> Option<DetectionResult> {
+    lazy_static! {
+        // Helper regexes
+        // US: (555) 555-5555, 555-555-5555, 555.555.5555
+        static ref US_PHONE: Regex = Regex::new(r"^\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$").unwrap();
+        // Intl: +1 555 555 5555, +44 ...
+        static ref INTL_PHONE: Regex = Regex::new(r"^\+\d{1,3}[\s-]?\(?\d{1,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}$").unwrap();
+    }
+
+    // Strip whitespace for cleaner matching if needed, but regex handles some.
+    // For phone numbers, we usually want to match the *whole* string or close to it.
+
+    // Check length constraints (too short/long = not a phone number)
+    if text.len() < 7 || text.len() > 20 {
+        return None;
+    }
+
+    if US_PHONE.is_match(text) {
+        return Some(DetectionResult {
+            detected_type: ContentType::Phone,
+            confidence: 0.95,
+            metadata: json!({
+                "format": "us",
+                "original": text,
+            }),
+        });
+    }
+
+    if INTL_PHONE.is_match(text) {
+        return Some(DetectionResult {
+            detected_type: ContentType::Phone,
+            confidence: 0.95,
+            metadata: json!({
+                "format": "intl",
+                "original": text,
+            }),
+        });
+    }
+
+    None
+}
+
+/// Detect simple math expressions.
+///
+/// Heuristic:
+/// - Must contain numbers and operators (+, -, *, /)
+/// - Must be computable (simplified)
+fn detect_math(text: &str) -> Option<DetectionResult> {
+    // Basic regex for "number operator number ..."
+    lazy_static! {
+        static ref MATH_REGEX: Regex = Regex::new(
+            r"^\s*-?\d+(\.\d+)?\s*[\+\-\*\/]\s*-?\d+(\.\d+)?(\s*[\+\-\*\/]\s*-?\d+(\.\d+)?)*\s*$"
+        )
+        .unwrap();
+    }
+
+    if !MATH_REGEX.is_match(text) {
+        return None;
+    }
+
+    // Evaluate simple expression?
+    // For now, just detecting it is enough to show a "Calculate" action.
+
+    Some(DetectionResult {
+        detected_type: ContentType::Math,
+        confidence: 0.9,
+        metadata: json!({
+            "expression": text,
+        }),
+    })
+}
+
+/// Detect date strings.
+///
+/// Heuristic: ISO 8601 or common formats.
+fn detect_date(text: &str) -> Option<DetectionResult> {
+    // ISO 8601: YYYY-MM-DD
+    lazy_static! {
+        static ref ISO_DATE: Regex = Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+        // Common: MM/DD/YYYY or DD/MM/YYYY (ambiguous, but matches structure)
+        static ref SLASH_DATE: Regex = Regex::new(r"^\d{1,2}/\d{1,2}/\d{4}$").unwrap();
+    }
+
+    if ISO_DATE.is_match(text) {
+        return Some(DetectionResult {
+            detected_type: ContentType::Date,
+            confidence: 1.0,
+            metadata: json!({
+                "format": "iso8601",
+                "original": text,
+            }),
+        });
+    }
+
+    if SLASH_DATE.is_match(text) {
+        return Some(DetectionResult {
+            detected_type: ContentType::Date,
+            confidence: 0.8, // Ambiguous locale
+            metadata: json!({
+                "format": "slash",
+                "original": text,
+            }),
+        });
+    }
+
+    None
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -916,5 +1167,61 @@ const greeting = async () => {
         assert_eq!(ContentType::Text.as_str(), "text");
         assert_eq!(ContentType::Jwt.as_str(), "jwt");
         assert_eq!(ContentType::Timestamp.as_str(), "timestamp");
+    }
+
+    // --- New Detectors Verification ---
+
+    #[test]
+    fn detect_csv_simple() {
+        let csv = "name,age\nalice,30\nbob,25";
+        let r = detect(csv);
+        assert_eq!(r.detected_type, ContentType::Csv);
+        assert_eq!(r.metadata["rows"], 3);
+        assert_eq!(r.metadata["columns"], 2);
+    }
+
+    #[test]
+    fn detect_csv_semicolon() {
+        let csv = "id;value\n1;100\n2;200";
+        let r = detect(csv);
+        assert_eq!(r.detected_type, ContentType::Csv);
+        assert_eq!(r.metadata["delimiter"], ";");
+    }
+
+    #[test]
+    fn detect_csv_rejects_text() {
+        let text = "Hello, world.\nThis is just text.";
+        let r = detect(text);
+        assert_ne!(r.detected_type, ContentType::Csv);
+    }
+
+    #[test]
+    fn detect_secret_aws() {
+        let key = "AKIAIOSFODNN7EXAMPLE";
+        let r = detect(key);
+        assert_eq!(r.detected_type, ContentType::Secret);
+        assert_eq!(r.metadata["kind"], "aws_access_key");
+    }
+
+    #[test]
+    fn detect_phone_us() {
+        let phone = "(555) 123-4567";
+        let r = detect(phone);
+        assert_eq!(r.detected_type, ContentType::Phone);
+    }
+
+    #[test]
+    fn detect_math_simple() {
+        let math = "10 + 5 * 2";
+        let r = detect(math);
+        assert_eq!(r.detected_type, ContentType::Math);
+    }
+
+    #[test]
+    fn detect_date_iso() {
+        let date = "2026-02-17";
+        let r = detect(date);
+        assert_eq!(r.detected_type, ContentType::Date);
+        assert_eq!(r.metadata["format"], "iso8601");
     }
 }

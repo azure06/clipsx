@@ -2,14 +2,15 @@ import { useState, memo } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Toast from '@radix-ui/react-toast'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
-import { formatClipPreview, formatTimestamp } from '../../../shared/types'
-import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Folder, Hash, Check } from 'lucide-react'
+import { formatClipPreview } from '../../../shared/types'
+import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Hash, Check } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
+  readonly onDoubleClick?: (text: string, id: string) => void
   readonly onDelete: (id: string) => void
   readonly onToggleFavorite: (id: string) => void
   readonly onTogglePin: (id: string) => void
@@ -21,6 +22,7 @@ const ClipboardListItemComponent = ({
   clip,
   onCopy,
   onSelect,
+  onDoubleClick,
   onDelete,
   onToggleFavorite,
   onTogglePin,
@@ -28,7 +30,6 @@ const ClipboardListItemComponent = ({
   index,
 }: ClipboardListItemProps) => {
   const preview = formatClipPreview(clip, 100)
-  const timestamp = formatTimestamp(clip.createdAt)
 
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
@@ -53,106 +54,48 @@ const ClipboardListItemComponent = ({
     <>
       <div
         onClick={handleClick}
+        onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
         data-clip-index={index}
-        className={`group relative flex items-start gap-3 py-3 px-4 transition-all duration-200 cursor-pointer mx-2 my-1 rounded-xl border ${isSelected
-          ? 'bg-blue-50/80 dark:bg-blue-500/20 border-blue-200 dark:border-blue-500/30 ring-1 ring-blue-500/20'
+        className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${isSelected
+          ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
           : isPinned
-            ? 'bg-violet-50/50 dark:bg-violet-500/10 border-violet-100 dark:border-violet-500/20'
-            : 'bg-white/50 dark:bg-gray-800/40 border-transparent hover:bg-white dark:hover:bg-gray-800/80 hover:border-gray-200 dark:hover:border-gray-700 hover:shadow-sm'
+            ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
+            : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
           }`}
       >
         {/* Accent border for pinned items */}
         {isPinned && (
-          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-500 to-violet-600 dark:from-violet-400 dark:to-violet-500"></div>
+          <div className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-violet-400/50 dark:bg-violet-400/50"></div>
         )}
 
         {/* Type icon */}
-        <div className="shrink-0 mt-0.5">
-          <ContentIcon content={clipToContent(clip)} size="md" />
+        <div className="shrink-0 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors">
+          <ContentIcon content={clipToContent(clip)} size="sm" />
         </div>
 
-        {/* Main content area */}
-        <div className="flex-1 min-w-0">
-          {/* Preview text */}
-          <div className="mb-1 wrap-break-word text-xs leading-normal text-gray-900 dark:text-gray-300 font-medium">
+        {/* Main content area - Horizontal Flow */}
+        <div className="flex-1 min-w-0 flex items-center gap-3">
+          {/* Preview text - Strictly 1 line */}
+          <span className={`truncate text-xs ${isSelected ? 'font-medium text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}>
             {preview}
-          </div>
+          </span>
 
-          {/* Attributes row - always visible */}
+          {/* Spacer */}
+          <div className="flex-1"></div>
+
+          {/* Attributes - Horizontal Row */}
           {hasAttributes && (
-            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-              {isPinned && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-700 dark:text-blue-300 text-[10px] font-medium transition-colors">
-                  <Pin className="h-2.5 w-2.5" strokeWidth={2.5} />
-                  Pinned
-                </span>
-              )}
-
-              {isFavorite && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-medium transition-colors">
-                  <Star className="h-2.5 w-2.5 fill-current" strokeWidth={2.5} />
-                  Favorite
-                </span>
-              )}
-
-              {tags.slice(0, 3).map(tag => (
-                <span
-                  key={tag.id}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-[10px] font-medium transition-colors"
-                  style={{
-                    backgroundColor: tag.color ? `${tag.color}15` : undefined,
-                    color: tag.color ?? undefined,
-                  }}
-                >
-                  <Hash className="h-2.5 w-2.5" strokeWidth={2.5} />
-                  {tag.name}
-                </span>
-              ))}
-
-              {tags.length > 3 && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] font-medium">
-                  +{tags.length - 3}
-                </span>
-              )}
-
-              {collections.slice(0, 2).map(collection => (
-                <span
-                  key={collection.id}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-[10px] font-medium transition-colors"
-                >
-                  {collection.icon ? (
-                    <span className="text-[10px]">{collection.icon}</span>
-                  ) : (
-                    <Folder className="h-2.5 w-2.5" strokeWidth={2.5} />
-                  )}
-                  {collection.name}
-                </span>
-              ))}
-
-              {collections.length > 2 && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] font-medium">
-                  +{collections.length - 2}
-                </span>
-              )}
+            <div className="flex items-center gap-1 shrink-0">
+              {isPinned && <Pin className="h-3 w-3 text-violet-500" strokeWidth={2.5} />}
+              {isFavorite && <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />}
+              {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
             </div>
           )}
 
-          {/* Metadata row */}
-          <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-500">
-            <span className="font-medium">{timestamp}</span>
-            {clip.accessCount > 0 && (
-              <>
-                <span className="text-gray-300 dark:text-gray-700">•</span>
-                <span>Used {clip.accessCount}×</span>
-              </>
-            )}
-            {clip.appName && (
-              <>
-                <span className="text-gray-300 dark:text-gray-700">•</span>
-                <span className="truncate max-w-[120px]">{clip.appName}</span>
-              </>
-            )}
-          </div>
+          {/* Metadata - Timestamp */}
+          <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
+            {new Date(clip.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
         </div>
 
         {/* Actions menu - always visible */}
@@ -252,5 +195,5 @@ const ClipboardListItemComponent = ({
       </Toast.Provider>
     </>
   )
-}  // Memoize the component to prevent re-renders when other items change
+} // Memoize the component to prevent re-renders when other items change
 export const ClipboardListItem = memo(ClipboardListItemComponent)

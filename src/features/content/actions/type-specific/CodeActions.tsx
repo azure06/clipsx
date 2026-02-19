@@ -6,8 +6,8 @@ export const useFormatCodeAction = (): SmartAction => ({
   label: 'Format Code',
   icon: <Code2 size={16} />,
   category: 'transform',
-  check: (content) => content.type === 'code',
-  execute: async (content) => {
+  check: content => content.type === 'code',
+  execute: async content => {
     // Basic formatting - can be enhanced with prettier/etc
     try {
       if (content.metadata.language === 'json') {
@@ -28,8 +28,8 @@ export const useCopyCodeAction = (): SmartAction => ({
   label: 'Copy Code',
   icon: <FileCode size={16} />,
   category: 'core',
-  check: (content) => content.type === 'code',
-  execute: async (content) => {
+  check: content => content.type === 'code',
+  execute: async content => {
     await navigator.clipboard.writeText(content.text)
   },
 })
@@ -39,8 +39,8 @@ export const useDownloadCodeAction = (): SmartAction => ({
   label: 'Download File',
   icon: <Download size={16} />,
   category: 'utility',
-  check: (content) => content.type === 'code',
-  execute: (content) => {
+  check: content => content.type === 'code',
+  execute: content => {
     const lang = content.metadata.language || 'txt'
     const extension = lang === 'text' ? 'txt' : lang
     const blob = new Blob([content.text], { type: 'text/plain' })

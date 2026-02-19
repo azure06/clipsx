@@ -29,9 +29,9 @@ export const Card = ({
   const interactiveClasses = onClick
     ? 'cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md'
     : ''
-  
+
   const classes = `${baseClasses} ${variantClasses[variant]} ${interactiveClasses} ${className}`
-  
+
   return (
     <div className={classes} onClick={onClick}>
       {header && (
@@ -39,9 +39,9 @@ export const Card = ({
           {header}
         </div>
       )}
-      
+
       <div className="p-5">{children}</div>
-      
+
       {footer && (
         <div className="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-5 py-4">
           {footer}

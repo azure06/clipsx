@@ -1,2 +1,2 @@
-export { ClipboardListItem } from './ClipboardListItem'
+export * from './ClipboardListItem'
 export { ClipboardGridItem } from './ClipboardGridItem'

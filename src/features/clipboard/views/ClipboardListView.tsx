@@ -5,6 +5,7 @@ type ClipboardListViewProps = {
   readonly clips: ClipItem[]
   readonly onCopy: (text: string, clipId: string) => void
   readonly onSelect?: (text: string, clipId: string) => void
+  readonly onDoubleClick?: (text: string, clipId: string) => void
   readonly onDelete: (id: string) => void
   readonly onToggleFavorite: (id: string) => void
   readonly onTogglePin: (id: string) => void
@@ -17,6 +18,7 @@ export const ClipboardListView = ({
   clips,
   onCopy,
   onSelect,
+  onDoubleClick,
   onDelete,
   onToggleFavorite,
   onTogglePin,
@@ -31,6 +33,7 @@ export const ClipboardListView = ({
         clip={clip}
         onCopy={onCopy}
         onSelect={onSelect}
+        onDoubleClick={onDoubleClick}
         onDelete={onDelete}
         onToggleFavorite={onToggleFavorite}
         onTogglePin={onTogglePin}

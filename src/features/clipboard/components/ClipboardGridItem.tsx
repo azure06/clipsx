@@ -48,12 +48,13 @@ const ClipboardGridItemComponent = ({
     <div
       onClick={handleClick}
       data-clip-index={index}
-      className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${isSelected
-        ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
-        : isPinned
-          ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
-          : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
-        }`}
+      className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${
+        isSelected
+          ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
+          : isPinned
+            ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
+            : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
+      }`}
     >
       {/* Pinned accent */}
       {isPinned && (

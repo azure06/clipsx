@@ -43,4 +43,3 @@ export const ClipboardGridView = ({
     {infiniteScrollTrigger}
   </div>
 )
-

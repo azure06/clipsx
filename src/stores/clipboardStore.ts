@@ -41,6 +41,25 @@ const initialState: ClipboardState = {
   searchQuery: '',
 }
 
+// Helper to parse slash commands from query
+// Example: "apple /image" -> { query: "apple", filterTypes: ["image"] }
+const parseSearchQuery = (input: string): { query: string; filterTypes: string[] | null } => {
+  const typeRegex = /\/([a-z]+)/g
+  const matches = input.match(typeRegex)
+
+  if (!matches) {
+    return { query: input, filterTypes: null }
+  }
+
+  // Extract types (remove leading slash)
+  const filterTypes = matches.map(m => m.substring(1).toLowerCase())
+
+  // Remove types from query string
+  const query = input.replace(typeRegex, '').trim()
+
+  return { query, filterTypes }
+}
+
 export const useClipboardStore = create<ClipboardStore>(set => ({
   ...initialState,
 
@@ -57,9 +76,12 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       let newClips: ClipItem[]
 
       if (mode === 'search' && searchQuery) {
-        // Search mode: Use FTS paginated search
+        // Search mode: Use FTS paginated search with parsing
+        const { query, filterTypes } = parseSearchQuery(searchQuery)
+
         newClips = await invoke<ClipItem[]>('search_clips_paginated', {
-          query: searchQuery,
+          query,
+          filter_types: filterTypes,
           limit,
           offset: currentOffset,
         })
@@ -111,10 +133,10 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
 
   // Enter search mode with a new query
   // Resets pagination and loads first page of search results
-  enterSearchMode: async (query: string) => {
+  enterSearchMode: async (rawQuery: string) => {
     set({
       mode: 'search',
-      searchQuery: query,
+      searchQuery: rawQuery,
       clips: [],
       currentOffset: 0,
       hasMore: true,
@@ -123,8 +145,11 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     })
 
     try {
+      const { query, filterTypes } = parseSearchQuery(rawQuery)
+
       const clips = await invoke<ClipItem[]>('search_clips_paginated', {
         query,
+        filter_types: filterTypes,
         limit: 50,
         offset: 0,
       })
@@ -153,10 +178,15 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     void useClipboardStore.getState().loadMoreClips(50)
   },
 
-  searchClips: async (query: string, limit = 50) => {
+  searchClips: async (rawQuery: string, limit = 50) => {
     set({ loading: true, error: null })
     try {
-      const clips = await invoke<ClipItem[]>('search_clips', { query, limit })
+      const { query, filterTypes } = parseSearchQuery(rawQuery)
+      const clips = await invoke<ClipItem[]>('search_clips', {
+        query,
+        filter_types: filterTypes,
+        limit,
+      })
       set({ clips, loading: false })
     } catch (error) {
       set({ error: String(error), loading: false })

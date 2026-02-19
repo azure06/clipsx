@@ -131,9 +131,11 @@ export const Settings = () => {
 
   useEffect(() => {
     if (settings?.always_on_top !== undefined) {
-      getCurrentWindow().setAlwaysOnTop(settings.always_on_top).catch(err => {
-        console.error('Failed to set always on top:', err)
-      })
+      getCurrentWindow()
+        .setAlwaysOnTop(settings.always_on_top)
+        .catch(err => {
+          console.error('Failed to set always on top:', err)
+        })
     }
   }, [settings?.always_on_top])
 
@@ -215,35 +217,35 @@ export const Settings = () => {
                 try {
                   await invoke('update_settings', {
                     settings: {
-                    theme: 'auto',
-                    view_mode: 'list',
-                    language: 'en',
-                    global_shortcut: 'Cmd+Shift+V',
-                    enable_images: true,
-                    enable_files: true,
-                    enable_rich_text: true,
-                    excluded_apps: [],
-                    history_limit: 1000,
-                    retention_policy: 'unlimited',
-                    retention_value: 0,
-                    auto_delete_days: 0,
-                    max_image_size_mb: 10,
-                    auto_clear_minutes: 0,
-                    hide_on_copy: false,
-                    clear_on_exit: false,
-                    auto_start: false,
-                    default_paste_format: 'auto',
-                    auto_close_after_paste: true,
-                    show_copy_toast: true,
-                    toast_duration_ms: 1500,
-                  }
-                })
-                await loadSettings()
-              } catch (err) {
-                console.error('Failed to reset settings:', err)
-                alert('Failed to reset settings: ' + String(err))
-              }
-            })()
+                      theme: 'auto',
+                      view_mode: 'list',
+                      language: 'en',
+                      global_shortcut: 'Cmd+Shift+V',
+                      enable_images: true,
+                      enable_files: true,
+                      enable_rich_text: true,
+                      excluded_apps: [],
+                      history_limit: 1000,
+                      retention_policy: 'unlimited',
+                      retention_value: 0,
+                      auto_delete_days: 0,
+                      max_image_size_mb: 10,
+                      auto_clear_minutes: 0,
+                      hide_on_copy: false,
+                      clear_on_exit: false,
+                      auto_start: false,
+                      default_paste_format: 'auto',
+                      auto_close_after_paste: true,
+                      show_copy_toast: true,
+                      toast_duration_ms: 1500,
+                    },
+                  })
+                  await loadSettings()
+                } catch (err) {
+                  console.error('Failed to reset settings:', err)
+                  alert('Failed to reset settings: ' + String(err))
+                }
+              })()
             }}
           >
             Reset to Default Settings
@@ -305,18 +307,23 @@ export const Settings = () => {
       {/* Left Sidebar Menu */}
       <div className="w-48 flex-shrink-0 flex flex-col border-r border-white/10 bg-gray-900/30">
         <div className="p-4">
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">Settings</h2>
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">
+            Settings
+          </h2>
           <div className="space-y-1">
             {tabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${activeTab === tab.id
-                  ? 'bg-blue-500/10 text-blue-400'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                  }`}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${
+                  activeTab === tab.id
+                    ? 'bg-blue-500/10 text-blue-400'
+                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                }`}
               >
-                <div className={`${activeTab === tab.id ? 'text-blue-400' : 'text-gray-500 group-hover:text-gray-300'}`}>
+                <div
+                  className={`${activeTab === tab.id ? 'text-blue-400' : 'text-gray-500 group-hover:text-gray-300'}`}
+                >
                   {tab.icon}
                 </div>
                 {tab.label}
@@ -397,10 +404,7 @@ export const Settings = () => {
                 title="Window Behavior"
                 description="Control how the window behaves"
               >
-                <SettingRow
-                  label="Hide on Blur"
-                  description="Hide window when it loses focus"
-                >
+                <SettingRow label="Hide on Blur" description="Hide window when it loses focus">
                   <Switch
                     checked={settings.hide_on_blur}
                     onChange={value => void updateSettings({ hide_on_blur: value })}
@@ -448,7 +452,6 @@ export const Settings = () => {
                     onChange={value => void updateSettings({ enable_rich_text: value })}
                   />
                 </SettingRow>
-
               </SettingsSection>
 
               <SettingsSection
@@ -471,10 +474,7 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow
-                  label="After Copying"
-                  description="Hide window after copying a clip"
-                >
+                <SettingRow label="After Copying" description="Hide window after copying a clip">
                   <Switch
                     checked={settings.hide_on_copy}
                     onChange={value => void updateSettings({ hide_on_copy: value })}
@@ -508,13 +508,13 @@ export const Settings = () => {
                       <input
                         type="text"
                         placeholder="Enter app name..."
-                        onKeyDown={(e) => {
+                        onKeyDown={e => {
                           if (e.key === 'Enter') {
                             const input = e.currentTarget
                             const appName = input.value.trim()
                             if (appName && !settings.excluded_apps.includes(appName)) {
                               void updateSettings({
-                                excluded_apps: [...settings.excluded_apps, appName]
+                                excluded_apps: [...settings.excluded_apps, appName],
                               })
                               input.value = ''
                             }
@@ -524,13 +524,13 @@ export const Settings = () => {
                       />
                       <Button
                         size="sm"
-                        onClick={(e) => {
+                        onClick={e => {
                           const btn = e.currentTarget as HTMLButtonElement
                           const input = btn.previousElementSibling as HTMLInputElement
                           const appName = input?.value.trim()
                           if (appName && !settings.excluded_apps.includes(appName)) {
                             void updateSettings({
-                              excluded_apps: [...settings.excluded_apps, appName]
+                              excluded_apps: [...settings.excluded_apps, appName],
                             })
                             input.value = ''
                           }
@@ -552,7 +552,7 @@ export const Settings = () => {
                           <button
                             onClick={() => {
                               void updateSettings({
-                                excluded_apps: settings.excluded_apps.filter(a => a !== app)
+                                excluded_apps: settings.excluded_apps.filter(a => a !== app),
                               })
                             }}
                             className="text-gray-500 hover:text-red-500 transition-colors cursor-pointer"
@@ -583,10 +583,7 @@ export const Settings = () => {
                 title="History Limits"
                 description="Control memory usage"
               >
-                <SettingRow
-                  label="History Limit"
-                  description="Maximum clips to keep in memory"
-                >
+                <SettingRow label="History Limit" description="Maximum clips to keep in memory">
                   <ButtonGroup
                     value={settings.history_limit}
                     onChange={value => void updateSettings({ history_limit: value })}
@@ -631,7 +628,9 @@ export const Settings = () => {
 
                 {settings.retention_policy !== 'unlimited' && (
                   <SettingRow
-                    label={settings.retention_policy === 'days' ? 'Days to Keep' : 'Number of Clips'}
+                    label={
+                      settings.retention_policy === 'days' ? 'Days to Keep' : 'Number of Clips'
+                    }
                     description={
                       settings.retention_policy === 'days'
                         ? 'Delete clips older than this many days'
@@ -642,7 +641,9 @@ export const Settings = () => {
                       type="number"
                       min="1"
                       value={settings.retention_value}
-                      onChange={e => void updateSettings({ retention_value: parseInt(e.target.value) || 0 })}
+                      onChange={e =>
+                        void updateSettings({ retention_value: parseInt(e.target.value) || 0 })
+                      }
                       className="w-24 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </SettingRow>
@@ -705,8 +706,6 @@ export const Settings = () => {
                 />
               </SettingRow>
 
-
-
               <SettingRow
                 label="Clear on Exit"
                 description="Delete all clipboard history when closing the app"
@@ -716,8 +715,6 @@ export const Settings = () => {
                   onChange={value => void updateSettings({ clear_on_exit: value })}
                 />
               </SettingRow>
-
-
             </SettingsSection>
           )}
 
@@ -746,7 +743,10 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow label="Toast Duration" description="How long notifications stay visible">
+                <SettingRow
+                  label="Toast Duration"
+                  description="How long notifications stay visible"
+                >
                   <ButtonGroup
                     value={settings.toast_duration_ms}
                     onChange={value => void updateSettings({ toast_duration_ms: value })}

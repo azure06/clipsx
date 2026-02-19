@@ -129,7 +129,7 @@ impl ClipRepository {
 
         // Split by whitespace for multi-word queries
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
-        
+
         if tokens.is_empty() {
             return String::from("\"\"");
         }
@@ -147,21 +147,49 @@ impl ClipRepository {
         escaped_tokens.join(" AND ")
     }
 
-    pub async fn search(&self, query: &str, limit: i32) -> Result<Vec<ClipItem>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        filter_types: Option<Vec<String>>,
+        limit: i32,
+    ) -> Result<Vec<ClipItem>> {
         let escaped_query = Self::escape_fts5_query(query);
-        let clips = sqlx::query_as::<_, ClipItem>(
+
+        // Build base query
+        let mut sql = String::from(
             r#"
             SELECT clips.* FROM clips
             INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
             WHERE clips_fts MATCH ?
-            ORDER BY clips_fts.rank, clips.updated_at DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(escaped_query)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        "#,
+        );
+
+        // Add filter types if present
+        if let Some(types) = &filter_types {
+            if !types.is_empty() {
+                sql.push_str(" AND clips.detected_type IN (");
+                for (i, _) in types.iter().enumerate() {
+                    if i > 0 {
+                        sql.push_str(", ");
+                    }
+                    sql.push('?');
+                }
+                sql.push(')');
+            }
+        }
+
+        sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ?");
+
+        // Bind parameters
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql).bind(escaped_query);
+
+        if let Some(types) = &filter_types {
+            for t in types {
+                query_builder = query_builder.bind(t);
+            }
+        }
+
+        let clips = query_builder.bind(limit).fetch_all(&self.pool).await?;
 
         Ok(clips)
     }
@@ -172,24 +200,48 @@ impl ClipRepository {
     pub async fn search_paginated(
         &self,
         query: &str,
+        filter_types: Option<Vec<String>>,
         limit: i32,
         offset: i32,
     ) -> Result<Vec<ClipItem>> {
         let escaped_query = Self::escape_fts5_query(query);
-        let clips = sqlx::query_as::<_, ClipItem>(
+
+        let mut sql = String::from(
             r#"
             SELECT clips.* FROM clips
             INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
             WHERE clips_fts MATCH ?
-            ORDER BY clips_fts.rank, clips.updated_at DESC
-            LIMIT ? OFFSET ?
-            "#,
-        )
-        .bind(escaped_query)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+        "#,
+        );
+
+        if let Some(types) = &filter_types {
+            if !types.is_empty() {
+                sql.push_str(" AND clips.detected_type IN (");
+                for (i, _) in types.iter().enumerate() {
+                    if i > 0 {
+                        sql.push_str(", ");
+                    }
+                    sql.push('?');
+                }
+                sql.push(')');
+            }
+        }
+
+        sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ? OFFSET ?");
+
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql).bind(escaped_query);
+
+        if let Some(types) = &filter_types {
+            for t in types {
+                query_builder = query_builder.bind(t);
+            }
+        }
+
+        let clips = query_builder
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(clips)
     }
@@ -559,7 +611,10 @@ mod tests {
     fn test_escape_fts5_query_special_chars() {
         // Parentheses, asterisks, AND/OR operators should be treated as literals in each token
         let result = ClipRepository::escape_fts5_query("(foo AND bar) OR baz*");
-        assert_eq!(result, "\"(foo\"* AND \"AND\"* AND \"bar)\"* AND \"OR\"* AND \"baz*\"*");
+        assert_eq!(
+            result,
+            "\"(foo\"* AND \"AND\"* AND \"bar)\"* AND \"OR\"* AND \"baz*\"*"
+        );
     }
 
     #[test]

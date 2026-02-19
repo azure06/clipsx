@@ -17,7 +17,11 @@ interface ClipboardHistoryProps {
   onPreviewItem?: (clip: ClipItem) => void
 }
 
-export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }: ClipboardHistoryProps) => {
+export const ClipboardHistory = ({
+  searchQuery = '',
+  className,
+  onPreviewItem,
+}: ClipboardHistoryProps) => {
   const {
     clips,
     loading,
@@ -125,69 +129,107 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
     return () => observer.disconnect()
   }, [loadMoreClips, viewMode, clips.length])
 
-
-
   // Unified action handler for Click and Enter
-  const handleAction = useCallback(async (text: string, clipId: string) => {
-    // Primary Action: Paste (default)
-    if (settings?.paste_on_enter) {
-      await pasteClip(text, clipId)
-    } else {
-      // Primary Action: Copy
+  const handleAction = useCallback(
+    async (text: string, clipId: string) => {
+      // Primary Action: Paste (default)
+      if (settings?.paste_on_enter) {
+        await pasteClip(text, clipId)
+      } else {
+        // Primary Action: Copy
+        await copyToClipboard(text, clipId)
+        // Hide if "Hide after Copy" is enabled
+        if (settings?.hide_on_copy) {
+          void getCurrentWindow().hide()
+        }
+      }
+    },
+    [settings, pasteClip, copyToClipboard]
+  )
+
+  // Explicit Copy handler (always copies, never pastes)
+  const handleExplicitCopy = useCallback(
+    async (text: string, clipId: string) => {
       await copyToClipboard(text, clipId)
-      // Hide if "Hide after Copy" is enabled
+      // Optional: Hide after explicit copy? User settings might apply here too.
+      // If "Hide after Copy" is ON, we should probably hide.
       if (settings?.hide_on_copy) {
         void getCurrentWindow().hide()
       }
-    }
-  }, [settings, pasteClip, copyToClipboard])
+    },
+    [settings, copyToClipboard]
+  )
 
-  // Explicit Copy handler (always copies, never pastes)
-  const handleExplicitCopy = useCallback(async (text: string, clipId: string) => {
-    await copyToClipboard(text, clipId)
-    // Optional: Hide after explicit copy? User settings might apply here too.
-    // If "Hide after Copy" is ON, we should probably hide.
-    if (settings?.hide_on_copy) {
-      void getCurrentWindow().hide()
-    }
-  }, [settings, copyToClipboard])
+  const handleDelete = useCallback(
+    async (id: string) => {
+      await deleteClip(id)
+    },
+    [deleteClip]
+  )
 
-  const handleDelete = useCallback(async (id: string) => {
-    await deleteClip(id)
-  }, [deleteClip])
+  const handleToggleFavorite = useCallback(
+    (id: string) => {
+      void toggleFavorite(id)
+    },
+    [toggleFavorite]
+  )
 
-  const handleToggleFavorite = useCallback((id: string) => {
-    void toggleFavorite(id)
-  }, [toggleFavorite])
-
-  const handleTogglePin = useCallback((id: string) => {
-    void togglePin(id)
-  }, [togglePin])
+  const handleTogglePin = useCallback(
+    (id: string) => {
+      void togglePin(id)
+    },
+    [togglePin]
+  )
 
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
-  const onSelectHandler = useCallback((text: string, clipId: string) => {
-    void handleAction(text, clipId)
-  }, [handleAction])
+  // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
+  const onSelectHandler = useCallback(
+    (text: string, clipId: string) => {
+      // Single Click: Just select for preview
+      const index = clips.findIndex(c => c.id === clipId)
+      if (index !== -1) {
+        setSelectedIndex(index)
+      }
+    },
+    [clips]
+  )
 
-  const onCopyHandler = useCallback((text: string, clipId: string) => {
-    void handleExplicitCopy(text, clipId)
-  }, [handleExplicitCopy])
+  const onDoubleClickHandler = useCallback(
+    (text: string, clipId: string) => {
+      // Double Click: Perform primary action (Copy/Paste)
+      void handleAction(text, clipId)
+    },
+    [handleAction]
+  )
 
-  const onDeleteHandler = useCallback((id: string) => {
-    void handleDelete(id)
-  }, [handleDelete])
+  const onCopyHandler = useCallback(
+    (text: string, clipId: string) => {
+      void handleExplicitCopy(text, clipId)
+    },
+    [handleExplicitCopy]
+  )
 
+  const onDeleteHandler = useCallback(
+    (id: string) => {
+      void handleDelete(id)
+    },
+    [handleDelete]
+  )
 
   // Filter clips - only by activeFilter now, search is handled by backend FTS
   // NOTE: Clips array already contains search results if in search mode
   // Filter clips - only by activeFilter now, search is handled by backend FTS
   // NOTE: Clips array already contains search results if in search mode
-  const filteredClips = useMemo(() => clips.filter(clip => {
-    const matchesFilter =
-      activeFilter === 'all' || (activeFilter === 'favorites' && clip.isFavorite)
+  const filteredClips = useMemo(
+    () =>
+      clips.filter(clip => {
+        const matchesFilter =
+          activeFilter === 'all' || (activeFilter === 'favorites' && clip.isFavorite)
 
-    return matchesFilter
-  }), [clips, activeFilter])
+        return matchesFilter
+      }),
+    [clips, activeFilter]
+  )
 
   // Reset selection when filtered clips change
   // Removed causing setState warning and activeFitler is constant 'all' anyway
@@ -205,7 +247,6 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
     }
   }, [])
 
-
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -218,7 +259,7 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
       ) {
         // Allow Escape to blur and return to navigation
         if (e.key === 'Escape') {
-          ; (active as HTMLElement).blur()
+          ;(active as HTMLElement).blur()
           e.preventDefault()
         }
         return
@@ -290,7 +331,15 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
     return () => window.removeEventListener('keydown', handleKeyDown)
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredClips, selectedIndex, scrollSelectedIntoView, handleAction, handleDelete, handleToggleFavorite, handleTogglePin])
+  }, [
+    filteredClips,
+    selectedIndex,
+    scrollSelectedIntoView,
+    handleAction,
+    handleDelete,
+    handleToggleFavorite,
+    handleTogglePin,
+  ])
 
   // ADDED: Notify parent of selection change for preview
   useEffect(() => {
@@ -381,6 +430,7 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
           <ClipboardListView
             clips={filteredClips}
             onSelect={onSelectHandler}
+            onDoubleClick={onDoubleClickHandler}
             onCopy={onCopyHandler}
             onDelete={onDeleteHandler}
             onToggleFavorite={handleToggleFavorite}
@@ -390,14 +440,9 @@ export const ClipboardHistory = ({ searchQuery = '', className, onPreviewItem }:
             selectedIndex={selectedIndex}
           />
         )}
-
       </>
     )
   }
 
-  return (
-    <div className={`flex h-full max-h-screen flex-col ${className}`}>
-      {renderContent()}
-    </div>
-  )
+  return <div className={`flex h-full max-h-screen flex-col ${className}`}>{renderContent()}</div>
 }

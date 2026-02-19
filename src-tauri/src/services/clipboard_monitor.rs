@@ -210,7 +210,6 @@ fn compute_content_hash(content: &ClipboardContent) -> String {
 /// NOTE: `&[u8]` is a slice (view into array) of bytes
 /// JS equivalent: function computeImageHash(imageBytes: Uint8Array): string
 fn compute_image_hash(image_bytes: &[u8]) -> String {
-    use image::GenericImageView;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 

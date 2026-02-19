@@ -4,7 +4,7 @@ import type { Content, ContentMetadata, ContentType } from './types'
 // Parse backend metadata JSON string
 export const parseMetadata = (metadataJson?: string | null): ContentMetadata => {
   if (!metadataJson) return {}
-  
+
   try {
     return JSON.parse(metadataJson) as ContentMetadata
   } catch {
@@ -16,7 +16,7 @@ export const parseMetadata = (metadataJson?: string | null): ContentMetadata => 
 export const getContentType = (clip: ClipItem): ContentType => {
   if (clip.contentType === 'image') return 'image'
   if (clip.contentType === 'files') return 'files'
-  
+
   const detected = clip.detectedType?.toLowerCase() || 'text'
   return detected as ContentType
 }
@@ -45,6 +45,9 @@ export const getTypeColor = (type: ContentType): string => {
     path: 'bg-indigo-500',
     image: 'bg-pink-500',
     files: 'bg-blue-600',
+    math: 'bg-orange-500',
+    phone: 'bg-teal-500',
+    date: 'bg-rose-500',
   }
   return colors[type] || colors.text
 }
@@ -65,6 +68,9 @@ export const getTypeIcon = (type: ContentType): string => {
     path: '📁',
     image: '🖼️',
     files: '📦',
+    math: '🧮',
+    phone: '📞',
+    date: '📅',
   }
   return icons[type] || icons.text
 }

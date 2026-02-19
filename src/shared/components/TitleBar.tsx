@@ -1,7 +1,5 @@
 import { useUIStore, useClipboardStore } from '../../stores'
 
-
-
 const getViewTitle = (view: string): string => {
   switch (view) {
     case 'clips':
@@ -27,7 +25,6 @@ export const TitleBar = () => {
     >
       {/* Left: Window dots + Title with accent bar */}
       <div className="flex items-center gap-3 text-[10px] text-gray-500 pointer-events-none">
-
         {/* Title with top accent bar */}
         <div className="absolute top-0 left-24 flex flex-col items-center gap-1">
           {/* Accent bar */}

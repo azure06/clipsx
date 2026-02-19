@@ -42,7 +42,7 @@ export const Select = <T extends string = string>({
           sideOffset={4}
         >
           <SelectPrimitive.Viewport className="p-1">
-            {options.map((option) => (
+            {options.map(option => (
               <SelectPrimitive.Item
                 key={option.value}
                 value={option.value}

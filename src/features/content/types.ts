@@ -7,7 +7,7 @@ export type ContentType =
   | 'url'
   | 'email'
   | 'color'
-  | 'code' 
+  | 'code'
   | 'json'
   | 'csv'
   | 'jwt'
@@ -16,6 +16,9 @@ export type ContentType =
   | 'path'
   | 'image'
   | 'files'
+  | 'math'
+  | 'phone'
+  | 'date'
 
 // Parsed metadata from clip.metadata (JSON string from backend)
 export type ContentMetadata = {
@@ -30,6 +33,14 @@ export type ContentMetadata = {
   readonly word_count?: number
   readonly line_count?: number
   readonly original?: string
+
+  // New fields
+  readonly iso?: string
+  readonly unit?: string
+  readonly delimiter?: string
+  readonly rows?: number
+  readonly columns?: number
+  readonly format?: string
 }
 
 // Unified content representation

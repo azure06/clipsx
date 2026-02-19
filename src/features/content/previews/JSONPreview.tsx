@@ -9,11 +9,11 @@ type JSONPreviewProps = {
 
 const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
   const [copied, setCopied] = useState(false)
-  
+
   let parsed: unknown = null
   let formatted = content.text
   let keyCount = 0
-  
+
   try {
     parsed = JSON.parse(content.text)
     formatted = JSON.stringify(parsed, null, 2)
@@ -39,11 +39,13 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
             <Braces size={16} strokeWidth={2.5} />
           </div>
           <div className="flex flex-col">
-            <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">JSON</span>
+            <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+              JSON
+            </span>
             {keyCount > 0 && <span className="text-[10px] text-gray-500">{keyCount} keys</span>}
           </div>
         </div>
-        
+
         <button
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-200 group"
@@ -56,7 +58,9 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
           ) : (
             <>
               <Copy size={14} className="text-gray-400 group-hover:text-white/80" />
-              <span className="text-xs text-gray-400 group-hover:text-white/80 font-medium">Copy</span>
+              <span className="text-xs text-gray-400 group-hover:text-white/80 font-medium">
+                Copy
+              </span>
             </>
           )}
         </button>
@@ -65,7 +69,7 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
       {/* Compact JSON viewer */}
       <div className="relative group">
         <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-teal-500/5 to-emerald-500/5 rounded-xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-        
+
         <div className="relative rounded-xl bg-black/40 border border-emerald-500/20 shadow-xl overflow-hidden">
           <div className="overflow-x-auto custom-scrollbar max-h-96 overflow-y-auto">
             <pre className="p-3 text-sm leading-relaxed">

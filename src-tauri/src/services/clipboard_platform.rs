@@ -258,52 +258,6 @@ unsafe fn read_files(pasteboard: id) -> Option<Vec<String>> {
     }
 }
 
-/// Fallback: strip HTML tags to get plain text
-fn strip_html(html: &str) -> String {
-    // Simple HTML stripping - in production, use a proper HTML parser
-    html.replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("<p>", "\n")
-        .replace("</p>", "\n")
-        .chars()
-        .fold(
-            (String::new(), false),
-            |(mut text, mut in_tag), c| match c {
-                '<' => {
-                    in_tag = true;
-                    (text, in_tag)
-                }
-                '>' => {
-                    in_tag = false;
-                    (text, in_tag)
-                }
-                _ if !in_tag => {
-                    text.push(c);
-                    (text, in_tag)
-                }
-                _ => (text, in_tag),
-            },
-        )
-        .0
-        .trim()
-        .to_string()
-}
-
-/// Fallback: extract plain text from RTF
-fn extract_rtf_text(rtf: &str) -> String {
-    // Very basic RTF text extraction
-    // In production, use a proper RTF parser
-    rtf.lines()
-        .filter(|line| !line.starts_with("\\"))
-        .filter(|line| !line.starts_with("{"))
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
 // ===== NON-MACOS PLATFORMS (Windows, Linux, etc.) =====
 //
 // Windows/Linux don't have a reliable clipboard change detection API like macOS's changeCount.
