@@ -20,6 +20,15 @@ export type ContentType =
   | 'phone'
   | 'date'
 
+export type FileMetadata = {
+  readonly path: string
+  readonly name: string
+  readonly size: number
+  readonly created: number
+  readonly modified: number
+  readonly error?: string
+}
+
 // Parsed metadata from clip.metadata (JSON string from backend)
 export type ContentMetadata = {
   readonly url?: string
@@ -41,6 +50,7 @@ export type ContentMetadata = {
   readonly rows?: number
   readonly columns?: number
   readonly format?: string
+  readonly files?: FileMetadata[]
 }
 
 // Unified content representation

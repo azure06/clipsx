@@ -344,3 +344,9 @@ pub async fn open_text_in_editor(text: String, extension: Option<String>) -> Res
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn open_path(path: String) -> Result<(), String> {
+    open::that(&path).map_err(|e| format!("Failed to open path: {}", e))?;
+    Ok(())
+}

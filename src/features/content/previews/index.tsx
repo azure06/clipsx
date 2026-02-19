@@ -9,6 +9,7 @@ import { TextPreview } from './TextPreview'
 import { CSVPreview } from './CSVPreview'
 import { MathPreview } from './MathPreview'
 import { ImagePreview } from './ImagePreview'
+import { FilePreview } from './FilePreview'
 
 type ContentPreviewProps = {
   readonly content: Content
@@ -42,8 +43,7 @@ const ContentPreviewComponent = ({ content }: ContentPreviewProps) => {
       return <ImagePreview content={content} />
 
     case 'files':
-      // TODO: Implement image/files preview
-      return <TextPreview content={content} />
+      return <FilePreview content={content} />
 
     case 'jwt':
     case 'timestamp':
@@ -71,3 +71,4 @@ export { TextPreview } from './TextPreview'
 export { CSVPreview } from './CSVPreview'
 export { MathPreview } from './MathPreview'
 export { ImagePreview } from './ImagePreview'
+export { FilePreview } from './FilePreview'
