@@ -14,12 +14,15 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
 
-  const actionContext = useMemo(() => ({
-    onCopy: async (text: string) => await navigator.clipboard.writeText(text),
-    onDelete: (id: string) => deleteClip(id),
-    onTogglePin: (id: string) => togglePin(id),
-    onToggleFavorite: (id: string) => toggleFavorite(id),
-  }), [deleteClip, togglePin, toggleFavorite])
+  const actionContext = useMemo(
+    () => ({
+      onCopy: async (text: string) => await navigator.clipboard.writeText(text),
+      onDelete: (id: string) => deleteClip(id),
+      onTogglePin: (id: string) => togglePin(id),
+      onToggleFavorite: (id: string) => toggleFavorite(id),
+    }),
+    [deleteClip, togglePin, toggleFavorite]
+  )
 
   return (
     <div className="flex flex-col h-full bg-white/5 border border-white/5 rounded-lg overflow-hidden my-0.5 mr-2">
@@ -56,9 +59,7 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
           {content.metadata.language && <span>{content.metadata.language}</span>}
         </div>
-        <div>
-          {/* Optional: right-aligned status info */}
-        </div>
+        <div>{/* Optional: right-aligned status info */}</div>
       </div>
     </div>
   )

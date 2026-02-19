@@ -298,3 +298,49 @@ pub fn get_settings_path(state: State<'_, AppState>) -> Result<String, String> {
         .to_string_lossy()
         .to_string())
 }
+// ============================================================================
+// IO / External Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn open_text_in_editor(text: String, extension: Option<String>) -> Result<(), String> {
+    // 1. Determine extension (default to .txt)
+    let ext = extension.unwrap_or_else(|| "txt".to_string());
+    // Ensure it starts with a dot if missing, though Builder::suffix handles this usually
+    let suffix = if ext.starts_with('.') {
+        ext
+    } else {
+        format!(".{}", ext)
+    };
+
+    // 2. Create a temporary file with the given extension
+    // We use Builder to set the suffix
+    let mut temp_file = tempfile::Builder::new()
+        .suffix(&suffix)
+        .tempfile()
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    // 3. Write content to file
+    use std::io::Write;
+    temp_file
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("Failed to write to temp file: {}", e))?;
+
+    // 4. Persist the file so it outlives the function scope (otherwise it's deleted immediately)
+    // The tempfile crate deletes on drop by default. We want it to persist so the editor can open it.
+    // 'persist' keeps the file. We should rely on OS temp cleanup or implement our own cleanup logic later.
+    // However, usually editors lock the file or read it quickly.
+    // A better approach for "Open With" is to use `.keep()` or similar, BUT `tempfile::NamedTempFile`
+    // deletes on drop. To keep it, we use `.keep()`.
+    let (_file, path) = temp_file
+        .keep()
+        .map_err(|e| format!("Failed to persist temp file: {}", e))?;
+
+    // Close the file handle explicitly before opening to avoid locking issues on Windows
+    drop(_file);
+
+    // 5. Open the file with default application
+    open::that(&path).map_err(|e| format!("Failed to open file: {}", e))?;
+
+    Ok(())
+}

@@ -518,6 +518,7 @@ dependencies = [
  "image",
  "lazy_static",
  "objc",
+ "open",
  "regex",
  "reqwest",
  "serde",

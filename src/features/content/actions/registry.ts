@@ -3,9 +3,11 @@ import type { Content, SmartAction, ActionContext } from '../types'
 
 // Core Actions
 import { useCopyAction } from './shared/CopyAction'
+import { useCopyAsPlainTextAction } from './shared/CopyAsPlainTextAction'
 import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
+import { useOpenInDefaultEditorAction } from './shared/OpenInDefaultEditorAction'
 
 // Type-Specific Actions
 import {
@@ -28,9 +30,11 @@ export const useActionRegistry = (context?: ActionContext) => {
   // 1. Initialize all action hooks
   // Core
   const copyAction = useCopyAction()
+  const copyPlainText = useCopyAsPlainTextAction()
   const deleteAction = useDeleteAction(context?.onDelete)
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
+  const openDefaultEditor = useOpenInDefaultEditorAction()
 
   // Type Specific
   const openUrl = useOpenURLAction()
@@ -38,8 +42,6 @@ export const useActionRegistry = (context?: ActionContext) => {
   const copyDomain = useCopyDomainAction()
 
   const sendEmail = useSendEmailAction()
-
-
 
   const formatCode = useFormatCodeAction()
 
@@ -59,32 +61,35 @@ export const useActionRegistry = (context?: ActionContext) => {
   // 2. Define the master list of all available actions
   const allActions: SmartAction[] = useMemo(
     () => [
-      // Transform/External - High Priority
+      // 1. Primary Copy (Result/Formatted)
+      copyMathResult, // Math result takes precedence if it exists
+      copyAction, // Standard copy
+
+      // 2. Secondary Copy
+      copyPlainText, // Explicit plain text copy
+
+      // 3. Open / External
       openUrl,
+      openDefaultEditor, // Generic open action
+
+      // 4. Specific Actions
       searchUrl,
       sendEmail,
       callPhone,
       sms,
-      copyMathResult,
 
-      // Data Transforms
-      csvToJson,
-      csvToMd,
-      formatCode,
-
-      // Copy Utilities
+      // 5. Transforms & Utilities
       copyDomain,
       copyIsoDate,
       copyTimestamp,
-
-      // Secrets
+      csvToJson,
+      csvToMd,
+      formatCode,
       revealSecret,
 
-      // Core (fallback/always available)
-      copyAction,
       favoriteAction,
       pinAction,
-      deleteAction
+      deleteAction,
     ],
     [
       openUrl,
@@ -100,10 +105,12 @@ export const useActionRegistry = (context?: ActionContext) => {
       copyIsoDate,
       copyTimestamp,
       revealSecret,
+      openDefaultEditor,
+      copyPlainText,
       copyAction,
       favoriteAction,
       pinAction,
-      deleteAction
+      deleteAction,
     ]
   )
 

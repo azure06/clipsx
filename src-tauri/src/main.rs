@@ -143,6 +143,7 @@ fn main() {
             mac_rounded_corners::enable_rounded_corners,
             mac_rounded_corners::enable_modern_window_style,
             mac_rounded_corners::reposition_traffic_lights,
+            commands::open_text_in_editor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

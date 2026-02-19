@@ -17,7 +17,6 @@ import { useCallPhoneAction } from './type-specific/PhoneActions'
 import { useCsvToJsonAction } from './type-specific/CSVActions'
 
 describe('Smart Actions Logic', () => {
-
   it('Phone action checks correctly', () => {
     const action = useCallPhoneAction()
     const content: Content = { type: 'phone', text: '123', metadata: {}, clip: {} as any }

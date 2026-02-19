@@ -1,10 +1,10 @@
-import { ExternalLink, Globe, Search } from 'lucide-react'
+import { Copy, Globe, Search } from 'lucide-react'
 import type { SmartAction } from '../../types'
 
 export const useOpenURLAction = (): SmartAction => ({
   id: 'open-url',
   label: 'Open Link',
-  icon: <ExternalLink size={16} />,
+  icon: <Globe size={16} />,
   category: 'external',
   shortcut: '⌘O',
   check: content => content.type === 'url',
@@ -29,7 +29,7 @@ export const useSearchURLAction = (): SmartAction => ({
 export const useCopyDomainAction = (): SmartAction => ({
   id: 'copy-domain',
   label: 'Copy Domain',
-  icon: <Globe size={16} />,
+  icon: <Copy size={16} />,
   category: 'utility',
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: async content => {

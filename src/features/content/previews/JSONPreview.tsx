@@ -1,6 +1,5 @@
 import { memo } from 'react'
-import { Braces, Copy, Check } from 'lucide-react'
-import { useState } from 'react'
+import { Braces } from 'lucide-react'
 import type { Content } from '../types'
 
 type JSONPreviewProps = {
@@ -8,8 +7,6 @@ type JSONPreviewProps = {
 }
 
 const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
-  const [copied, setCopied] = useState(false)
-
   let parsed: unknown = null
   let formatted = content.text
   let keyCount = 0
@@ -22,12 +19,6 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
     }
   } catch {
     // Invalid JSON, show as-is
-  }
-
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(formatted)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
   }
 
   return (
@@ -45,25 +36,6 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
             {keyCount > 0 && <span className="text-[10px] text-gray-500">{keyCount} keys</span>}
           </div>
         </div>
-
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-200 group"
-        >
-          {copied ? (
-            <>
-              <Check size={14} className="text-green-400" />
-              <span className="text-xs text-green-400 font-medium">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy size={14} className="text-gray-400 group-hover:text-white/80" />
-              <span className="text-xs text-gray-400 group-hover:text-white/80 font-medium">
-                Copy
-              </span>
-            </>
-          )}
-        </button>
       </div>
 
       {/* Compact JSON viewer */}
