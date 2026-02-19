@@ -8,19 +8,39 @@ interface ClipActionsToolbarProps {
 }
 
 export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps) => {
-  const { getActionsForContent } = useActionRegistry(context)
+  const { getActionGroups } = useActionRegistry(context)
 
   if (!content) return null
 
-  // Get top 3 actions for toolbar to keep it minimal
-  const actions = getActionsForContent(content).slice(0, 3)
+  // Get grouped actions
+  const { standard, smart, meta } = getActionGroups(content)
 
-  if (actions.length === 0) return null
+  const hasAnyActions = standard.length > 0 || smart.length > 0 || meta.length > 0
+  if (!hasAnyActions) return null
 
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
-        {actions.map(action => (
+        {/* Standard Actions */}
+        {standard.map(action => (
+          <ActionIconButton key={action.id} action={action} content={content} />
+        ))}
+
+        {/* Separator if we have smart actions */}
+        {standard.length > 0 && smart.length > 0 && <div className="w-px h-3 bg-white/10 mx-1" />}
+
+        {/* Smart Actions */}
+        {smart.map(action => (
+          <ActionIconButton key={action.id} action={action} content={content} />
+        ))}
+
+        {/* Separator if we have meta actions */}
+        {(standard.length > 0 || smart.length > 0) && meta.length > 0 && (
+          <div className="w-px h-3 bg-white/10 mx-1" />
+        )}
+
+        {/* Meta Actions */}
+        {meta.map(action => (
           <ActionIconButton key={action.id} action={action} content={content} />
         ))}
       </div>
@@ -40,7 +60,7 @@ const ActionIconButton = ({ action, content }: { action: SmartAction; content: C
     </Tooltip.Trigger>
     <Tooltip.Portal>
       <Tooltip.Content
-        className="z-[100] px-2 py-1 text-[10px] bg-gray-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
+        className="z-100 px-2 py-1 text-[10px] bg-gray-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
         sideOffset={5}
       >
         {action.label}

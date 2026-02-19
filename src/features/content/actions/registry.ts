@@ -59,26 +59,34 @@ export const useActionRegistry = (context?: ActionContext) => {
   const revealSecret = useRevealSecretAction()
 
   // 2. Define the master list of all available actions
-  const allActions: SmartAction[] = useMemo(
+  // Group 1: Standard Actions (Copy, Open)
+  const standardActions = useMemo(
+    () => [copyAction, copyPlainText, openDefaultEditor],
+    [copyAction, copyPlainText, openDefaultEditor]
+  )
+
+  // Group 2: Meta Actions (Fav, Pin, Delete)
+  const metaActions = useMemo(
+    () => [favoriteAction, pinAction, deleteAction],
+    [favoriteAction, pinAction, deleteAction]
+  )
+
+  // Group 3: Smart Actions (Type-specific)
+  const smartActions = useMemo(
     () => [
-      // 1. Primary Copy (Result/Formatted)
+      // Primary Copy (Result/Formatted)
       copyMathResult, // Math result takes precedence if it exists
-      copyAction, // Standard copy
 
-      // 2. Secondary Copy
-      copyPlainText, // Explicit plain text copy
-
-      // 3. Open / External
+      // Open / External
       openUrl,
-      openDefaultEditor, // Generic open action
 
-      // 4. Specific Actions
+      // Specific Actions
       searchUrl,
       sendEmail,
       callPhone,
       sms,
 
-      // 5. Transforms & Utilities
+      // Transforms & Utilities
       copyDomain,
       copyIsoDate,
       copyTimestamp,
@@ -86,41 +94,56 @@ export const useActionRegistry = (context?: ActionContext) => {
       csvToMd,
       formatCode,
       revealSecret,
-
-      favoriteAction,
-      pinAction,
-      deleteAction,
     ],
     [
+      copyMathResult,
       openUrl,
       searchUrl,
       sendEmail,
       callPhone,
       sms,
-      copyMathResult,
-      csvToJson,
-      csvToMd,
-      formatCode,
       copyDomain,
       copyIsoDate,
       copyTimestamp,
+      csvToJson,
+      csvToMd,
+      formatCode,
       revealSecret,
-      openDefaultEditor,
-      copyPlainText,
-      copyAction,
-      favoriteAction,
-      pinAction,
-      deleteAction,
     ]
   )
 
+  const allActions = useMemo(
+    () => [...standardActions, ...smartActions, ...metaActions],
+    [standardActions, smartActions, metaActions]
+  )
+
+  // Helper types for grouped return
+  type ActionGroups = {
+    standard: SmartAction[]
+    smart: SmartAction[]
+    meta: SmartAction[]
+  }
+
   // 3. Helper to get actions for specific content
+  // Returns grouped actions
+  const getActionGroups = (content: Content | null): ActionGroups => {
+    if (!content) return { standard: [], smart: [], meta: [] }
+
+    return {
+      standard: standardActions.filter(action => action.check(content)),
+      smart: smartActions.filter(action => action.check(content)),
+      meta: metaActions.filter(action => action.check(content)),
+    }
+  }
+
+  // Legacy helper for flat list (if needed elsewhere)
   const getActionsForContent = (content: Content | null): SmartAction[] => {
-    if (!content) return []
-    return allActions.filter(action => action.check(content))
+    const groups = getActionGroups(content)
+    return [...groups.standard, ...groups.smart, ...groups.meta]
   }
 
   return {
+    getActionGroups,
     getActionsForContent,
     allActions,
   }
