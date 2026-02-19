@@ -534,6 +534,7 @@ dependencies = [
  "tokio",
  "url",
  "windows",
+ "x11rb",
 ]
 
 [[package]]

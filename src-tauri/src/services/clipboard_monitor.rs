@@ -1,4 +1,5 @@
 use super::clipboard_platform::{self, ClipboardContent};
+use super::clipboard_provider_trait::ClipboardProvider;
 use anyhow::Result;
 
 /// Result of checking clipboard: either unchanged, or new content with hash
@@ -11,6 +12,7 @@ pub enum ClipboardCheckResult {
     Changed {
         content: ClipboardContent,
         hash: String,
+        source_app: Option<String>,
     },
 }
 
@@ -45,14 +47,16 @@ pub trait ClipboardMonitor: Send + Sync {
 /// }
 pub struct MacOSMonitor {
     last_change_count: i64,
+    provider: Box<dyn ClipboardProvider>,
 }
 
 impl MacOSMonitor {
-    pub fn new() -> Self {
+    pub fn new(provider: Box<dyn ClipboardProvider>) -> Self {
         // NOTE: `Self` is shorthand for `MacOSMonitor`
         // JS equivalent: constructor() { this.lastChangeCount = 0 }
         Self {
             last_change_count: 0,
+            provider,
         }
     }
 }
@@ -64,7 +68,10 @@ impl ClipboardMonitor for MacOSMonitor {
         // Fast path: check changeCount first (1 syscall, ~1μs)
         // NOTE: `?` is error propagation - if error, return early
         // JS equivalent: const current = await getChangeCount() (but with try/catch)
-        let current = clipboard_platform::get_change_count()?;
+        // Fast path: check changeCount first (1 syscall, ~1μs)
+        // NOTE: `?` is error propagation - if error, return early
+        // JS equivalent: const current = await getChangeCount() (but with try/catch)
+        let current = self.provider.get_change_count()?;
 
         if current > 0 && current == self.last_change_count {
             // NOTE: Early return with Ok() wraps the value in Result
@@ -72,7 +79,7 @@ impl ClipboardMonitor for MacOSMonitor {
             return Ok(ClipboardCheckResult::Unchanged);
         }
 
-        let content = match clipboard_platform::read_clipboard()? {
+        let content = match self.provider.read_clipboard()? {
             Some(c) => c,
             None => return Ok(ClipboardCheckResult::Unchanged),
         };
@@ -83,7 +90,11 @@ impl ClipboardMonitor for MacOSMonitor {
 
         // NOTE: Return enum variant with named fields
         // JS equivalent: return { type: 'changed', content, hash }
-        Ok(ClipboardCheckResult::Changed { content, hash })
+        Ok(ClipboardCheckResult::Changed {
+            content,
+            hash,
+            source_app: self.provider.get_active_app_name(),
+        })
     }
 
     fn platform_name(&self) -> &'static str {
@@ -105,19 +116,23 @@ pub struct PollingMonitor {
     // NOTE: `Option<String>` is like `string | null` in TypeScript
     // None = no hash yet, Some(hash) = we have a hash
     last_hash: Option<String>,
+    provider: Box<dyn ClipboardProvider>,
 }
 
 impl PollingMonitor {
-    pub fn new() -> Self {
+    pub fn new(provider: Box<dyn ClipboardProvider>) -> Self {
         // NOTE: Start with None (no hash stored yet)
-        Self { last_hash: None }
+        Self {
+            last_hash: None,
+            provider,
+        }
     }
 }
 
 impl ClipboardMonitor for PollingMonitor {
     fn check(&mut self) -> Result<ClipboardCheckResult> {
         // No fast path: must read clipboard every time (Windows/Linux limitation)
-        let content = match clipboard_platform::read_clipboard()? {
+        let content = match self.provider.read_clipboard()? {
             Some(c) => c,
             None => return Ok(ClipboardCheckResult::Unchanged),
         };
@@ -144,7 +159,11 @@ impl ClipboardMonitor for PollingMonitor {
         // JS equivalent: this.lastHash = hash (JS copies automatically)
         self.last_hash = Some(hash.clone());
 
-        Ok(ClipboardCheckResult::Changed { content, hash })
+        Ok(ClipboardCheckResult::Changed {
+            content,
+            hash,
+            source_app: self.provider.get_active_app_name(),
+        })
     }
 
     fn platform_name(&self) -> &'static str {
@@ -242,17 +261,172 @@ fn compute_image_hash(image_bytes: &[u8]) -> String {
 ///
 /// `dyn` means "dynamic dispatch" - runtime polymorphism
 /// Without `dyn`, Rust uses static dispatch (compile-time, faster)
+/// Implementation of ClipboardProvider that uses real system calls
+pub struct RealClipboardProvider;
+
+impl ClipboardProvider for RealClipboardProvider {
+    fn read_clipboard(&self) -> Result<Option<ClipboardContent>> {
+        clipboard_platform::read_clipboard()
+    }
+
+    fn get_active_app_name(&self) -> Option<String> {
+        clipboard_platform::get_active_app_name()
+    }
+
+    fn get_change_count(&self) -> Result<i64> {
+        clipboard_platform::get_change_count()
+    }
+
+    fn platform_name(&self) -> &'static str {
+        #[cfg(target_os = "macos")]
+        return "macOS";
+        #[cfg(target_os = "windows")]
+        return "Windows";
+        #[cfg(target_os = "linux")]
+        return "Linux";
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        return "Unknown";
+    }
+}
+
 pub fn create_monitor() -> Box<dyn ClipboardMonitor> {
+    let provider = Box::new(RealClipboardProvider);
+
     // NOTE: `#[cfg(...)]` is compile-time conditional compilation
     // JS equivalent: if (process.platform === 'darwin') { ... }
     // But this happens at compile time, not runtime
     #[cfg(target_os = "macos")]
     {
-        Box::new(MacOSMonitor::new())
+        Box::new(MacOSMonitor::new(provider))
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        Box::new(PollingMonitor::new())
+        Box::new(PollingMonitor::new(provider))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    // Thread-safe interior mutability for mock state
+    #[derive(Clone)]
+    struct MockState {
+        content: Option<ClipboardContent>,
+        app_name: Option<String>,
+        change_count: i64,
+        read_calls: usize,
+    }
+
+    struct MockClipboardProvider {
+        state: Arc<Mutex<MockState>>,
+    }
+
+    impl MockClipboardProvider {
+        fn new() -> Self {
+            Self {
+                state: Arc::new(Mutex::new(MockState {
+                    content: None,
+                    app_name: None,
+                    change_count: 0,
+                    read_calls: 0,
+                })),
+            }
+        }
+
+        fn set_content(&self, content: Option<ClipboardContent>) {
+            let mut state = self.state.lock().unwrap();
+            state.content = content;
+        }
+
+        fn get_read_calls(&self) -> usize {
+            self.state.lock().unwrap().read_calls
+        }
+    }
+
+    impl ClipboardProvider for MockClipboardProvider {
+        fn read_clipboard(&self) -> Result<Option<ClipboardContent>> {
+            let mut state = self.state.lock().unwrap();
+            state.read_calls += 1;
+            // Clone content to return
+            Ok(state.content.clone())
+        }
+
+        fn get_active_app_name(&self) -> Option<String> {
+            self.state.lock().unwrap().app_name.clone()
+        }
+
+        fn get_change_count(&self) -> Result<i64> {
+            Ok(self.state.lock().unwrap().change_count)
+        }
+
+        fn platform_name(&self) -> &'static str {
+            "Mock"
+        }
+    }
+
+    #[test]
+    fn test_polling_monitor_unchanged_initially() {
+        let provider = Box::new(MockClipboardProvider::new());
+        let mut monitor = PollingMonitor::new(provider);
+
+        // First check with empty clipboard
+        let result = monitor.check().unwrap();
+        assert!(matches!(result, ClipboardCheckResult::Unchanged));
+    }
+
+    #[test]
+    fn test_polling_monitor_detects_change() {
+        // Setup mock with initial content
+        let mock = MockClipboardProvider::new();
+        mock.set_content(Some(ClipboardContent::Text {
+            content: "hello".to_string(),
+        }));
+
+        // We need to clone the state or ref to keep access for assertion,
+        // but provider takes ownership.
+        // Pattern: Keep a reference to the shared state "backend"
+        let state_ref = mock.state.clone();
+
+        let mut monitor = PollingMonitor::new(Box::new(mock));
+
+        // First check: should be "changed" because it's new
+        let result = monitor.check().unwrap();
+        match result {
+            ClipboardCheckResult::Changed { content, .. } => {
+                if let ClipboardContent::Text { content } = content {
+                    assert_eq!(content, "hello");
+                } else {
+                    panic!("Wrong content type");
+                }
+            }
+            _ => panic!("Expected Changed"),
+        }
+
+        // Second check with same content: should be "unchanged" (hash match)
+        let result = monitor.check().unwrap();
+        assert!(matches!(result, ClipboardCheckResult::Unchanged));
+
+        // Third check with new content
+        {
+            let mut state = state_ref.lock().unwrap();
+            state.content = Some(ClipboardContent::Text {
+                content: "world".to_string(),
+            });
+        }
+
+        let result = monitor.check().unwrap();
+        match result {
+            ClipboardCheckResult::Changed { content, .. } => {
+                if let ClipboardContent::Text { content } = content {
+                    assert_eq!(content, "world");
+                } else {
+                    panic!("Wrong content type");
+                }
+            }
+            _ => panic!("Expected Changed"),
+        }
     }
 }

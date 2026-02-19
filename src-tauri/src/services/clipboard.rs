@@ -83,9 +83,13 @@ impl ClipboardService {
         let platform = monitor.platform_name();
         drop(monitor);
 
-        let (content, content_hash) = match result {
+        let (content, content_hash, source_app) = match result {
             ClipboardCheckResult::Unchanged => return Ok(()),
-            ClipboardCheckResult::Changed { content, hash } => (content, hash),
+            ClipboardCheckResult::Changed {
+                content,
+                hash,
+                source_app,
+            } => (content, hash, source_app),
         };
 
         eprintln!(
@@ -106,22 +110,26 @@ impl ClipboardService {
                     detection.metadata_json(),
                 );
                 clip.content_hash = Some(content_hash.clone());
+                clip.app_name = source_app.clone();
                 clip
             }
             ClipboardContent::Html { html, plain } => {
                 // Intelligence: analyze the plain text extracted from HTML
                 let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
-                Self::create_html_clip(html, plain, &content_hash, &detection)
+                Self::create_html_clip(html, plain, &content_hash, &detection, source_app.clone())
             }
             ClipboardContent::Rtf { rtf, plain } => {
                 // Intelligence: analyze the plain text extracted from RTF
                 let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
-                Self::create_rtf_clip(rtf, plain, &content_hash, &detection)
+                Self::create_rtf_clip(rtf, plain, &content_hash, &detection, source_app.clone())
             }
             ClipboardContent::Image { data, format } => {
-                self.create_image_clip(data, format, &content_hash).await?
+                self.create_image_clip(data, format, &content_hash, source_app.clone())
+                    .await?
             }
-            ClipboardContent::Files { paths } => Self::create_files_clip(paths, &content_hash),
+            ClipboardContent::Files { paths } => {
+                Self::create_files_clip(paths, &content_hash, source_app.clone())
+            }
         };
 
         match self.repository.find_by_hash(&content_hash).await? {
@@ -156,6 +164,7 @@ impl ClipboardService {
         plain: String,
         hash: &str,
         detection: &crate::services::intelligence::DetectionResult,
+        app_name: Option<String>,
     ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
@@ -172,7 +181,7 @@ impl ClipboardService {
             metadata: detection.metadata_json(),
             created_at: now,
             updated_at: now,
-            app_name: None,
+            app_name,
             is_pinned: 0,
             is_favorite: 0,
             access_count: 0,
@@ -185,6 +194,7 @@ impl ClipboardService {
         plain: String,
         hash: &str,
         detection: &crate::services::intelligence::DetectionResult,
+        app_name: Option<String>,
     ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
@@ -201,7 +211,7 @@ impl ClipboardService {
             metadata: detection.metadata_json(),
             created_at: now,
             updated_at: now,
-            app_name: None,
+            app_name,
             is_pinned: 0,
             is_favorite: 0,
             access_count: 0,
@@ -214,6 +224,7 @@ impl ClipboardService {
         data: Vec<u8>,
         format: clipboard_platform::ImageFormat,
         hash: &str,
+        app_name: Option<String>,
     ) -> Result<ClipItem> {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
@@ -235,7 +246,7 @@ impl ClipboardService {
             metadata: Some(format!(r#"{{"format":"{}"}}"#, format.mime_type())),
             created_at: now,
             updated_at: now,
-            app_name: None,
+            app_name,
             is_pinned: 0,
             is_favorite: 0,
             access_count: 0,
@@ -243,7 +254,7 @@ impl ClipboardService {
         })
     }
 
-    fn create_files_clip(paths: Vec<String>, hash: &str) -> ClipItem {
+    fn create_files_clip(paths: Vec<String>, hash: &str, app_name: Option<String>) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
 
@@ -258,6 +269,45 @@ impl ClipboardService {
             format!("{} files", file_count)
         };
 
+        // Collect metadata
+        let mut files_meta = Vec::new();
+        for path in &paths {
+            let meta_map = if let Ok(meta) = std::fs::metadata(path) {
+                let size = meta.len();
+                let created = meta
+                    .created()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                serde_json::json!({
+                    "path": path,
+                    "name": std::path::Path::new(path).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                    "size": size,
+                    "created": created,
+                    "modified": modified
+                })
+            } else {
+                serde_json::json!({
+                    "path": path,
+                    "error": "Failed to read metadata"
+                })
+            };
+            files_meta.push(meta_map);
+        }
+
+        let metadata_json = serde_json::json!({
+            "count": file_count,
+            "files": files_meta
+        });
+
         ClipItem {
             id,
             content_type: "files".to_string(),
@@ -267,10 +317,10 @@ impl ClipboardService {
             image_path: None,
             file_paths: Some(serde_json::to_string(&paths).unwrap_or_default()),
             detected_type: "files".to_string(),
-            metadata: Some(format!(r#"{{"count":{}}}"#, file_count)),
+            metadata: Some(metadata_json.to_string()),
             created_at: now,
             updated_at: now,
-            app_name: None,
+            app_name,
             is_pinned: 0,
             is_favorite: 0,
             access_count: 0,

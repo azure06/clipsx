@@ -22,7 +22,6 @@
 /// macOS stores clipboard data in multiple formats simultaneously.
 /// We check all formats and prioritize based on richness.
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
 
 #[cfg(target_os = "macos")]
 use cocoa::{
@@ -36,6 +35,21 @@ use cocoa::{
 
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
+
+#[cfg(target_os = "windows")]
+use windows::Win32::{
+    Foundation::{HANDLE, HGLOBAL, MAX_PATH},
+    System::{
+        DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        Memory::{GlobalLock, GlobalUnlock},
+        ProcessStatus::GetModuleFileNameExW,
+        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+    },
+    UI::{
+        Shell::{DragQueryFileW, HDROP},
+        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+    },
+};
 
 #[derive(Debug, Clone)]
 pub enum ClipboardContent {
@@ -285,6 +299,12 @@ pub fn read_clipboard() -> Result<Option<ClipboardContent>> {
     // For non-macOS platforms, use arboard (cross-platform)
     use arboard::Clipboard;
 
+    // Check for files first (CF_HDROP)
+    // NOTE: This uses native Windows API because arboard doesn't support files
+    if let Some(files) = unsafe { read_files() } {
+        return Ok(Some(ClipboardContent::Files { paths: files }));
+    }
+
     let mut clipboard = Clipboard::new()?;
 
     // Try to get image first
@@ -313,8 +333,262 @@ pub fn read_clipboard() -> Result<Option<ClipboardContent>> {
 
     // Fallback to text
     if let Ok(text) = clipboard.get_text() {
+        // Check if text is actually a list of files (common on Linux/Nautilus/Dolphin)
+        if let Some(paths) = parse_file_uris(&text) {
+            return Ok(Some(ClipboardContent::Files { paths }));
+        }
         return Ok(Some(ClipboardContent::Text { content: text }));
     }
 
     Ok(None)
+}
+
+fn parse_file_uris(text: &str) -> Option<Vec<String>> {
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut paths = Vec::new();
+    for line in lines {
+        // Check for file:// URI
+        if line.starts_with("file://") {
+            if let Ok(url) = url::Url::parse(line) {
+                if let Ok(path) = url.to_file_path() {
+                    paths.push(path.to_string_lossy().into_owned());
+                    continue;
+                }
+            }
+        }
+
+        // Check for absolute path
+        let path = std::path::Path::new(line);
+        if path.is_absolute() && path.exists() {
+            paths.push(line.to_string());
+            continue;
+        }
+
+        // If any line is NOT a file, treat whole thing as text
+        return None;
+    }
+
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_active_app_name() -> Option<String> {
+    unsafe { get_active_app_name_windows() }
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_active_app_name() -> Option<String> {
+    crate::services::clipboard_platform_linux::get_active_app_name()
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_active_app_name() -> Option<String> {
+    use cocoa::appkit::NSWorkspace;
+    use cocoa::base::{id, nil};
+    use cocoa::foundation::NSString;
+
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let front_app: id = msg_send![workspace, frontmostApplication];
+
+        if front_app == nil {
+            return None;
+        }
+
+        let app_name: id = msg_send![front_app, localizedName];
+        if app_name == nil {
+            return None;
+        }
+
+        let c_str: *const i8 = msg_send![app_name, UTF8String];
+        if c_str.is_null() {
+            return None;
+        }
+
+        Some(
+            std::ffi::CStr::from_ptr(c_str)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn read_files() -> Option<Vec<String>> {
+    // 1. Open Clipboard
+    // NOTE: passing None means we associate with current task
+    if OpenClipboard(None).is_err() {
+        return None;
+    }
+
+    // Ensure we close clipboard even if we return early
+    let _cleanup = CloseClipboardGuard;
+
+    // 2. Get Data for CF_HDROP (15)
+    // CF_HDROP is the standard format for file lists
+    let handle = match GetClipboardData(15) {
+        Ok(h) => h,
+        Err(_) => return None,
+    };
+
+    if handle.is_invalid() {
+        return None;
+    }
+
+    // 3. Lock Global Memory to get pointer
+    // GetClipboardData returns HANDLE, GlobalLock expects HGLOBAL
+    let hglobal = std::mem::transmute::<HANDLE, HGLOBAL>(handle);
+    let ptr = GlobalLock(hglobal);
+    if ptr.is_null() {
+        return None;
+    }
+
+    // 4. Use DragQueryFileW to get file count
+    // 0xFFFFFFFF means "return count of files"
+    // ptr as *mut _ casts void* to HDROP
+    let hdrop = std::mem::transmute::<*mut std::ffi::c_void, HDROP>(ptr);
+    let file_count = DragQueryFileW(hdrop, 0xFFFFFFFF, None);
+
+    if file_count == 0 {
+        GlobalUnlock(hglobal).ok();
+        return None;
+    }
+
+    let mut paths = Vec::new();
+    for i in 0..file_count {
+        // Get length of filename first (passing None)
+        let len = DragQueryFileW(hdrop, i, None);
+        if len > 0 {
+            // Allocate buffer (+1 for null terminator)
+            let mut buffer = vec![0u16; (len + 1) as usize];
+            // Read filename into buffer
+            let copied = DragQueryFileW(hdrop, i, Some(&mut buffer));
+            if copied > 0 {
+                // Convert UTF-16 to String
+                if let Ok(path) = String::from_utf16(&buffer[0..copied as usize]) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+
+    GlobalUnlock(hglobal).ok();
+
+    // cleanup guard drops here, calling CloseClipboard
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn get_active_app_name_windows() -> Option<String> {
+    let hwnd = GetForegroundWindow();
+    if hwnd.0.is_null() {
+        return None;
+    }
+
+    let mut pid = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid == 0 {
+        return None;
+    }
+
+    let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+
+    let handle = match process_handle {
+        Ok(h) => h,
+        Err(_) => return None,
+    };
+
+    let mut buffer = [0u16; MAX_PATH as usize];
+    // GetModuleFileNameExW expects Option<HANDLE> and Option<HMODULE>
+    let len = GetModuleFileNameExW(Some(handle), None, &mut buffer);
+    let _ = windows::Win32::Foundation::CloseHandle(handle);
+
+    if len == 0 {
+        return None;
+    }
+
+    let full_path = String::from_utf16_lossy(&buffer[..len as usize]);
+    std::path::Path::new(&full_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+}
+
+#[cfg(target_os = "windows")]
+struct CloseClipboardGuard;
+
+#[cfg(target_os = "windows")]
+impl Drop for CloseClipboardGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_file_uris() {
+        // Test valid file URIs
+        #[cfg(not(target_os = "windows"))]
+        let input = "file:///home/user/test.txt\nfile:///home/user/image.png";
+
+        #[cfg(target_os = "windows")]
+        let input = "file:///C:/Users/test.txt\nfile:///C:/Users/image.png";
+
+        let paths = parse_file_uris(input).unwrap();
+        assert_eq!(paths.len(), 2);
+
+        // Test absolute paths
+        // We use forward slashes for generic test, assuming platform agnostic handling or linux style
+        // On Windows checking if absolute
+        let valid_path = std::env::current_exe().unwrap();
+        let valid_path_str = valid_path.to_string_lossy();
+
+        // Only run absolute path test if the path exists (which current_exe does)
+        // parse_file_uris checks for existence for raw paths
+        if std::path::Path::new(&*valid_path_str).is_absolute() {
+            let paths = parse_file_uris(&valid_path_str).unwrap();
+            assert_eq!(paths.len(), 1);
+
+            // Test mixed text (should fail)
+            let input = format!("{}\nSome random text", valid_path_str);
+            assert!(parse_file_uris(&input).is_none());
+        }
+
+        // Test just text
+        let input = "Hello world";
+        assert!(parse_file_uris(input).is_none());
+    }
+
+    #[test]
+    fn test_parse_file_uris_with_temp_file() {
+        use std::io::Write;
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        write!(temp_file, "content").unwrap();
+        let path = temp_file.path().to_str().unwrap().to_string();
+
+        let input = path.clone();
+
+        // On Windows checking if absolute
+        if std::path::Path::new(&input).is_absolute() {
+            let paths = parse_file_uris(&input).unwrap();
+            assert_eq!(paths[0], path);
+        }
+    }
 }
