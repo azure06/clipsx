@@ -184,7 +184,7 @@ export const ClipboardHistory = ({
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
-    (text: string, clipId: string) => {
+    (_text: string, clipId: string) => {
       // Single Click: Just select for preview
       const index = clips.findIndex(c => c.id === clipId)
       if (index !== -1) {

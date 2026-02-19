@@ -1,7 +1,7 @@
 import { Star } from 'lucide-react'
 import type { SmartAction, Content } from '../../types'
 
-export const useFavoriteAction = (onToggle: (clipId: string) => void): SmartAction => ({
+export const useFavoriteAction = (onToggle?: (clipId: string) => void): SmartAction => ({
   id: 'favorite',
   label: 'Favorite',
   icon: <Star size={16} />,
@@ -9,6 +9,6 @@ export const useFavoriteAction = (onToggle: (clipId: string) => void): SmartActi
   shortcut: '⌘F',
   check: () => true, // Available for all content
   execute: (content: Content) => {
-    onToggle(content.clip.id)
+    onToggle?.(content.clip.id)
   },
 })

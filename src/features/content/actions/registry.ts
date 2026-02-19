@@ -1,8 +1,11 @@
 import { useMemo } from 'react'
-import type { Content, SmartAction } from '../types'
+import type { Content, SmartAction, ActionContext } from '../types'
 
 // Core Actions
 import { useCopyAction } from './shared/CopyAction'
+import { useDeleteAction } from './shared/DeleteAction'
+import { useFavoriteAction } from './shared/FavoriteAction'
+import { usePinAction } from './shared/PinAction'
 
 // Type-Specific Actions
 import {
@@ -11,22 +14,23 @@ import {
   useCopyDomainAction,
 } from './type-specific/URLActions'
 import { useSendEmailAction } from './type-specific/EmailActions'
-import { useCopyHexAction, useCopyRGBAction } from './type-specific/ColorActions'
+
 import { useFormatCodeAction } from './type-specific/CodeActions'
 
 // New Actions
-import { useCalculateAction } from './type-specific/MathActions'
+import { useCopyResultAction } from './type-specific/MathActions'
 import { useCallPhoneAction, useSmsAction } from './type-specific/PhoneActions'
 import { useCopyIsoDateAction, useCopyTimestampAction } from './type-specific/DateActions'
 import { useCsvToJsonAction, useCsvToMarkdownAction } from './type-specific/CSVActions'
 import { useRevealSecretAction } from './type-specific/SecretActions'
 
-export const useActionRegistry = () => {
+export const useActionRegistry = (context?: ActionContext) => {
   // 1. Initialize all action hooks
   // Core
   const copyAction = useCopyAction()
-  // const deleteAction = useDeleteAction() // TODO: Implement delete logic
-  // const favoriteAction = useFavoriteAction() // TODO: Implement favorite logic
+  const deleteAction = useDeleteAction(context?.onDelete)
+  const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
+  const pinAction = usePinAction(context?.onTogglePin)
 
   // Type Specific
   const openUrl = useOpenURLAction()
@@ -35,12 +39,11 @@ export const useActionRegistry = () => {
 
   const sendEmail = useSendEmailAction()
 
-  const copyHex = useCopyHexAction()
-  const copyRgb = useCopyRGBAction()
+
 
   const formatCode = useFormatCodeAction()
 
-  const calculate = useCalculateAction()
+  const copyMathResult = useCopyResultAction()
 
   const callPhone = useCallPhoneAction()
   const sms = useSmsAction()
@@ -62,7 +65,7 @@ export const useActionRegistry = () => {
       sendEmail,
       callPhone,
       sms,
-      calculate,
+      copyMathResult,
 
       // Data Transforms
       csvToJson,
@@ -71,8 +74,6 @@ export const useActionRegistry = () => {
 
       // Copy Utilities
       copyDomain,
-      copyHex,
-      copyRgb,
       copyIsoDate,
       copyTimestamp,
 
@@ -81,8 +82,9 @@ export const useActionRegistry = () => {
 
       // Core (fallback/always available)
       copyAction,
-      // favoriteAction,
-      // deleteAction
+      favoriteAction,
+      pinAction,
+      deleteAction
     ],
     [
       openUrl,
@@ -90,17 +92,18 @@ export const useActionRegistry = () => {
       sendEmail,
       callPhone,
       sms,
-      calculate,
+      copyMathResult,
       csvToJson,
       csvToMd,
       formatCode,
       copyDomain,
-      copyHex,
-      copyRgb,
       copyIsoDate,
       copyTimestamp,
       revealSecret,
       copyAction,
+      favoriteAction,
+      pinAction,
+      deleteAction
     ]
   )
 

@@ -63,3 +63,10 @@ export type SmartAction = {
   readonly check: (content: Content) => boolean
   readonly execute: (content: Content) => Promise<void> | void
 }
+
+export interface ActionContext {
+  onCopy: (text: string) => void
+  onDelete: (id: string) => void
+  onTogglePin: (id: string) => void
+  onToggleFavorite: (id: string) => void
+}

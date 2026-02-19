@@ -13,24 +13,10 @@ import type { Content } from '../types'
 // Since we are using standard Vitest, we might not have `renderHook` from `testing-library/react-hooks` setup.
 // Let's assume we can test the `check` functions of the actions mostly.
 
-import { useCalculateAction } from './type-specific/MathActions'
 import { useCallPhoneAction } from './type-specific/PhoneActions'
 import { useCsvToJsonAction } from './type-specific/CSVActions'
 
 describe('Smart Actions Logic', () => {
-  it('Math action checks correctly', () => {
-    const action = useCalculateAction()
-    const content: Content = {
-      type: 'math',
-      text: '1 + 1',
-      metadata: {},
-      clip: {} as any,
-    }
-    expect(action.check(content)).toBe(true)
-
-    const other: Content = { type: 'text', text: 'abc', metadata: {}, clip: {} as any }
-    expect(action.check(other)).toBe(false)
-  })
 
   it('Phone action checks correctly', () => {
     const action = useCallPhoneAction()

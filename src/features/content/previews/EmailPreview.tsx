@@ -16,7 +16,7 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 p-4">
       {/* Compact email card */}
       <div
         onClick={handleSend}

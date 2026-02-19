@@ -56,12 +56,13 @@ const ClipboardListItemComponent = ({
         onClick={handleClick}
         onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
         data-clip-index={index}
-        className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${isSelected
-          ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
-          : isPinned
-            ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
-            : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
-          }`}
+        className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${
+          isSelected
+            ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
+            : isPinned
+              ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
+              : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
+        }`}
       >
         {/* Accent border for pinned items */}
         {isPinned && (
@@ -76,7 +77,9 @@ const ClipboardListItemComponent = ({
         {/* Main content area - Horizontal Flow */}
         <div className="flex-1 min-w-0 flex items-center gap-3">
           {/* Preview text - Strictly 1 line */}
-          <span className={`truncate text-xs ${isSelected ? 'font-medium text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}>
+          <span
+            className={`truncate text-xs ${isSelected ? 'font-medium text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
+          >
             {preview}
           </span>
 
@@ -87,14 +90,19 @@ const ClipboardListItemComponent = ({
           {hasAttributes && (
             <div className="flex items-center gap-1 shrink-0">
               {isPinned && <Pin className="h-3 w-3 text-violet-500" strokeWidth={2.5} />}
-              {isFavorite && <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />}
+              {isFavorite && (
+                <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />
+              )}
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
             </div>
           )}
 
           {/* Metadata - Timestamp */}
           <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-            {new Date(clip.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {new Date(clip.createdAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
           </span>
         </div>
 

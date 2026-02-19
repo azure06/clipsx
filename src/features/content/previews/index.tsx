@@ -6,6 +6,8 @@ import { CodePreview } from './CodePreview'
 import { EmailPreview } from './EmailPreview'
 import { JSONPreview } from './JSONPreview'
 import { TextPreview } from './TextPreview'
+import { CSVPreview } from './CSVPreview'
+import { MathPreview } from './MathPreview'
 
 type ContentPreviewProps = {
   readonly content: Content
@@ -29,12 +31,17 @@ const ContentPreviewComponent = ({ content }: ContentPreviewProps) => {
     case 'json':
       return <JSONPreview content={content} />
 
+    case 'csv':
+      return <CSVPreview content={content} />
+
+    case 'math':
+      return <MathPreview content={content} />
+
     case 'image':
     case 'files':
       // TODO: Implement image/files preview
       return <TextPreview content={content} />
 
-    case 'csv':
     case 'jwt':
     case 'timestamp':
     case 'secret':
@@ -58,3 +65,5 @@ export { CodePreview } from './CodePreview'
 export { EmailPreview } from './EmailPreview'
 export { JSONPreview } from './JSONPreview'
 export { TextPreview } from './TextPreview'
+export { CSVPreview } from './CSVPreview'
+export { MathPreview } from './MathPreview'

@@ -1,28 +1,28 @@
-import { Calculator } from 'lucide-react'
+import { Calculator, Equal } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { safeEval } from '../../utils/math'
 
-const safeEval = (expr: string): number | null => {
-  // Very strict regex: only numbers, whitespace, and basic operators
-
-  if (!/^[\d\s+\-*/().]+$/.test(expr)) return null
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return
-    return new Function(`return ${expr}`)()
-  } catch {
-    return null
-  }
-}
-
-export const useCalculateAction = (): SmartAction => ({
-  id: 'calculate-math',
-  label: 'Calculate',
-  icon: <Calculator size={16} />,
-  category: 'transform',
+export const useCopyResultAction = (): SmartAction => ({
+  id: 'copy-math-result',
+  label: 'Copy Result',
+  icon: <Equal size={16} />,
+  category: 'core', // Changed to core so it appears prominently if needed, or transform
   check: content => content.type === 'math',
   execute: async content => {
     const result = safeEval(content.text)
     if (result !== null) {
       await navigator.clipboard.writeText(result.toString())
     }
+  },
+})
+
+export const useCopyEquationAction = (): SmartAction => ({
+  id: 'copy-equation',
+  label: 'Copy Equation',
+  icon: <Calculator size={16} />, // reuse calculator or use specific icon
+  category: 'core',
+  check: content => content.type === 'math',
+  execute: async content => {
+    await navigator.clipboard.writeText(content.text)
   },
 })

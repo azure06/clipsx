@@ -1,43 +1,64 @@
 import { useMemo } from 'react'
 import type { ClipItem } from '../../shared/types'
 import { ContentPreview, clipToContent, getTypeColor } from '../content'
-import { ClipActions } from './ClipActions'
+import { ClipActionsToolbar } from './ClipActionsToolbar'
+import { useClipboardStore } from '../../stores/clipboardStore'
 
 interface ClipPreviewProps {
   clip: ClipItem
 }
 
 export const ClipPreview = ({ clip }: ClipPreviewProps) => {
+  const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
+
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
 
+  const actionContext = useMemo(() => ({
+    onCopy: async (text: string) => await navigator.clipboard.writeText(text),
+    onDelete: (id: string) => deleteClip(id),
+    onTogglePin: (id: string) => togglePin(id),
+    onToggleFavorite: (id: string) => toggleFavorite(id),
+  }), [deleteClip, togglePin, toggleFavorite])
+
   return (
-    <div className="flex flex-col h-full gap-4">
-      <div className="w-full flex-1 flex flex-col min-h-0 border border-white/5 rounded-2xl bg-white/5 shadow-xl shadow-black/20 overflow-hidden">
-        {/* Compact Header with inline metadata */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 shrink-0 bg-white/[0.02]">
-          <div className="flex items-center gap-2">
+    <div className="flex flex-col h-full bg-white/5 border border-white/5 rounded-lg overflow-hidden my-0.5 mr-2">
+      {/* Unified Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 shrink-0 bg-white/[0.02]">
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 px-2 py-1 rounded-md bg-white/5`}>
             <span className={`w-1.5 h-1.5 rounded-full ${getTypeColor(content.type)}`} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
               {content.type}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-[10px] text-gray-500">
-            <span>{new Date(clip.createdAt).toLocaleString()}</span>
-            <span className="text-gray-600">·</span>
-            <span className="text-gray-600">{content.text.length} chars</span>
-          </div>
+          <span className="text-xs text-gray-500 tabular-nums">
+            {new Date(clip.createdAt).toLocaleString()}
+          </span>
         </div>
 
-        {/* Main Content Preview (Scrollable) - More space for content */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-          <ContentPreview content={content} />
+        {/* Actions Toolbar - Replaces bottom grid */}
+        <div className="flex items-center gap-1">
+          <ClipActionsToolbar content={content} context={actionContext} />
         </div>
       </div>
 
-      {/* Smart Actions Grid - Fixed at bottom */}
-      <div className="shrink-0">
-        <ClipActions content={content} />
+      {/* Main Content Body - Maximized */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-0 relative">
+        <ContentPreview content={content} />
+      </div>
+
+      {/* Status Bar */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-black/20 border-t border-white/5 text-[10px] text-gray-500 font-mono">
+        <div className="flex items-center gap-4">
+          {/* Common stats calculated from content */}
+          <span>{content.text.length} chars</span>
+          {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
+          {content.metadata.language && <span>{content.metadata.language}</span>}
+        </div>
+        <div>
+          {/* Optional: right-aligned status info */}
+        </div>
       </div>
     </div>
   )
