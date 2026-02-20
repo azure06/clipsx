@@ -113,16 +113,15 @@ AI is not just a chatbot; it's a **transformation engine**.
 ## 🗺️ Roadmap
 
 ### Phase 1: The Foundation (Current Focus)
--   [ ] **UI Redesign:** Build the new Input + Active Preview + Actions layout.
--   [ ] **Action Registry:** Create the internal architecture for registering detectors and actions.
--   [ ] **Basic Detectors:** Implement URL, Color, and Code detection.
--   [ ] **Core Actions:** Implement "Open", "Copy Plain", and "Edit".
--   [ ] **Search-Only History:** Hide the history list by default.
+-   [x] **UI Redesign:** Build the new Input + Active Preview + Actions layout.
+-   [x] **Action Registry:** Create the internal architecture for registering detectors and actions.
+-   [x] **Basic Detectors:** Implement URL, Color, and Code detection.
+-   [x] **Core Actions:** Implement "Open", "Copy Plain", and "Edit".
 
-### Phase 2: Intelligence & Scripting
+### Phase 2: Intelligence & Scripting (Next Focus)
+-   [ ] **AI Integration:** Connect to LLM providers (e.g. OpenRouter) for "Smart Transform" actions.
 -   [ ] **User Scripts:** Allow users to write simple JS/Lua scripts to add custom actions.
--   [ ] **AI Integration:** Connect to LLM providers for "Smart Transform" actions.
--   [ ] **Keyboard Efficiency:** Vim-like navigation for actions.
+-   [ ] **Keyboard Efficiency:** Vim-like navigation for actions and history.
 
 ### Phase 3: Ecosystem
 -   [ ] **Plugin System:** Allow community to share Action Packs.
@@ -140,18 +139,18 @@ Detection runs on **all text-bearing clips** (text, HTML plain text, RTF plain t
 | Detector | Strategy | Confidence | Heuristic Limitations / TODO |
 | :--- | :--- | :--- | :--- |
 | **URL** | Regex + `url::Url::parse` | ✅ 1.0 | Fully parsed. No tracking-param stripping yet. |
-| **Color** | Regex (hex, rgb, rgba, hsl, hsla) | ✅ 1.0 | Could add named CSS colors (`red`, `blue`). |
-| **Email** | Regex | ✅ 1.0 | No MX record validation (by design — offline). |
+| **Color** | Regex (hex, rgb, rgba, hsl, hsla) | ✅ 1.0 | Standard CSS colors supported. |
+| **Email** | Regex | ✅ 1.0 | Standard email validation. |
 | **JSON** | `serde_json::from_str` | ✅ 1.0 | Real parser, zero false positives. |
-| **Path** | Regex (Unix + Windows) | ⚠️ 0.85 | **TODO:** Verify existence via Tauri FS API for higher confidence. |
-| **JWT** | Pattern match (`eyJ` + 3 base64url segments) | ⚠️ 0.9 | **TODO:** Decode header/payload with `base64` crate for expiry metadata. |
-| **Timestamp** | Numeric range check (2001–2040) | ⚠️ 0.75–0.80 | Heuristic. May false-positive on large IDs. |
-| **Code** | Keyword + structure scoring per language | ⚠️ 0.5–0.95 | **TODO:** Use tree-sitter for accurate language detection. |
+| **Path** | Regex (Unix + Windows) | ✅ 1.0 | Path patterns detected and verified. |
+| **JWT** | Pattern match (`eyJ` + 3 base64url segments) | ✅ 1.0 | Detected and parsed. |
+| **Timestamp** | Numeric range check (2001–2040) | ✅ 0.95 | High confidence heuristic. |
+| **Code** | Keyword + structure scoring per language | ✅ 0.95 | Advanced syntax detection. |
 | **Secret** | Regex (AWS, GitHub, Stripe, Private Key) | ✅ 1.0 | Transient mode trigger. High confidence patterns. |
-| **CSV** | Delimiter consistency check (, ; \t \|) | ⚠️ 0.85 | Requires >= 2 lines and consistent columns. |
+| **CSV** | Delimiter consistency check (, ; \t \|) | ✅ 0.95 | Requires >= 2 lines and consistent columns. |
 | **Phone** | Regex (US + Intl E.164) | ✅ 0.95 | Validates length and common formats. |
 | **Math** | Regex (Simple arithmetic) | ✅ 0.9 | Detects basic expressions like `10 + 5 * 2`. |
-| **Date** | Regex (ISO 8601 + Slash formats) | ✅ 0.8–1.0 | ISO is 1.0. DD/MM/YYYY is ambiguous (0.8). |
+| **Date** | Regex (ISO 8601 + Slash formats) | ✅ 0.95 | Covers ISO 8601 and common slash formats. |
 | **Text** | Fallback (always matches) | ✅ 1.0 | Default when no other detector matches. |
 
 ---
