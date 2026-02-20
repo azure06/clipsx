@@ -102,6 +102,16 @@ pub struct AppSettings {
     // Onboarding
     #[serde(default = "default_false")]
     pub has_seen_welcome: bool,
+
+    // Plugins
+    #[serde(default = "default_false")]
+    pub semantic_search_enabled: bool,
+    #[serde(default = "default_semantic_model")]
+    pub semantic_model: String,
+}
+
+fn default_semantic_model() -> String {
+    "all-MiniLM-L6-v2".to_string()
 }
 
 impl Default for AppSettings {
@@ -136,6 +146,8 @@ impl Default for AppSettings {
             show_copy_toast: true,
             toast_duration_ms: 1500,
             has_seen_welcome: false,
+            semantic_search_enabled: false,
+            semantic_model: default_semantic_model(),
         }
     }
 }

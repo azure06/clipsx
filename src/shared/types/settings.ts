@@ -44,6 +44,10 @@ export interface AppSettings {
 
   // Onboarding
   has_seen_welcome: boolean
+
+  // Plugins
+  semantic_search_enabled: boolean
+  semantic_model: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,4 +76,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   show_copy_toast: true,
   toast_duration_ms: 1500,
   has_seen_welcome: false,
+  semantic_search_enabled: false,
+  semantic_model: 'all-MiniLM-L6-v2',
 }

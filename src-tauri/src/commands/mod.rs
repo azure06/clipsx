@@ -3,6 +3,7 @@ use crate::models::{AppSettings, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard::ClipboardService;
 use crate::services::paste;
+use crate::services::semantic::SemanticService;
 use std::sync::Arc;
 use tauri::State;
 
@@ -10,6 +11,7 @@ pub struct AppState {
     pub repository: Arc<ClipRepository>,
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
+    pub semantic_service: Arc<SemanticService>,
 }
 
 // ============================================================================
@@ -70,34 +72,115 @@ pub async fn search_clips(
     query: String,
     filter_types: Option<Vec<String>>,
     limit: Option<i32>,
+    use_semantic_search: bool,
+    similarity_threshold: Option<f32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
-    state
-        .repository
-        .search(&query, filter_types, limit.unwrap_or(50))
-        .await
-        .map_err(|e| e.to_string())
+    let limit_val = limit.unwrap_or(50);
+    search_clips_paginated(
+        query,
+        filter_types,
+        Some(limit_val),
+        Some(0),
+        use_semantic_search,
+        similarity_threshold,
+        state,
+    )
+    .await
 }
 
-/// Search clips with FTS pagination
-/// NOTE: For future semantic search integration, add a new command:
-/// search_clips_semantic(query, limit, offset, use_embeddings)
 #[tauri::command]
 pub async fn search_clips_paginated(
     query: String,
     filter_types: Option<Vec<String>>,
     limit: Option<i32>,
     offset: Option<i32>,
+    use_semantic_search: bool,
+    similarity_threshold: Option<f32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
+    let limit_val = limit.unwrap_or(50);
+    let offset_val = offset.unwrap_or(0);
+    let threshold = similarity_threshold.unwrap_or(0.3); // Default threshold
+
+    if use_semantic_search && state.semantic_service.is_ready() && !query.trim().is_empty() {
+        // Run semantic search
+        let query_vector = state
+            .semantic_service
+            .embed(query.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Fetch embeddings with filters
+        let all_embeddings = state
+            .repository
+            .get_embeddings_with_filters(filter_types.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Score all embeddings against query and filter by threshold
+        let mut scored_clips: Vec<(String, f32)> = all_embeddings
+            .into_iter()
+            .filter_map(|emb| {
+                let vec_float =
+                    crate::services::semantic::SemanticService::bytes_to_vector(&emb.vector);
+                let score = crate::services::semantic::SemanticService::cosine_similarity(
+                    &query_vector,
+                    &vec_float,
+                );
+
+                if score >= threshold {
+                    Some((emb.clip_id, score))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by score DESC
+        scored_clips.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Paginate in memory
+        let start = offset_val as usize;
+        let end = (start + limit_val as usize).min(scored_clips.len());
+
+        if start >= scored_clips.len() {
+            return Ok(Vec::new());
+        }
+
+        let page_ids: Vec<String> = scored_clips[start..end]
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Fetch actual clips
+        let mut clips = state
+            .repository
+            .get_clips_by_ids(&page_ids)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+
+        // Sort clips to match the scored order and assign scores
+        clips.sort_by_key(|c| {
+            page_ids
+                .iter()
+                .position(|id| id == &c.id)
+                .unwrap_or(std::usize::MAX)
+        });
+
+        for clip in &mut clips {
+            if let Some((_, score)) = scored_clips.iter().find(|(id, _)| id == &clip.id) {
+                clip.similarity_score = Some(*score);
+            }
+        }
+
+        return Ok(clips);
+    }
+
+    // Fallback to Full Text Search (FTS)
     state
         .repository
-        .search_paginated(
-            &query,
-            filter_types,
-            limit.unwrap_or(50),
-            offset.unwrap_or(0),
-        )
+        .search_paginated(&query, filter_types, limit_val, offset_val)
         .await
         .map_err(|e| e.to_string())
 }
@@ -349,4 +432,77 @@ pub async fn open_text_in_editor(text: String, extension: Option<String>) -> Res
 pub async fn open_path(path: String) -> Result<(), String> {
     open::that(&path).map_err(|e| format!("Failed to open path: {}", e))?;
     Ok(())
+}
+
+// ============================================================================
+// Semantic Search Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn init_semantic_search(state: State<'_, AppState>) -> Result<(), String> {
+    let settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    state
+        .semantic_service
+        .init_model(settings.semantic_model)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn change_semantic_model(
+    model_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Unload the existing model first to free memory
+    state.semantic_service.unload_model();
+
+    // Load the new model
+    state
+        .semantic_service
+        .init_model(model_name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_semantic_search_status(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.semantic_service.is_ready())
+}
+
+#[tauri::command]
+pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    if !state.semantic_service.is_ready() {
+        return Err("Semantic model is not loaded yet.".to_string());
+    }
+
+    let clip = state
+        .repository
+        .get_by_id(&id)
+        .await
+        .map_err(|e: anyhow::Error| e.to_string())?
+        .ok_or_else(|| "Clip not found".to_string())?;
+
+    if let Some(text) = clip.content_text {
+        let vector = state
+            .semantic_service
+            .embed(text)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+
+        let vector_bytes = crate::services::semantic::SemanticService::vector_to_bytes(&vector);
+
+        state
+            .repository
+            .create_embedding(&id, vector_bytes, "all-MiniLM-L6-v2", 384)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+
+        Ok(())
+    } else {
+        Err("Clip does not have text content to embed".to_string())
+    }
 }

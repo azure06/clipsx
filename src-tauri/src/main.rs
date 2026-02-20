@@ -4,6 +4,7 @@
 use commands::AppState;
 use repositories::{ClipRepository, SettingsRepository};
 use services::clipboard::ClipboardService;
+use services::semantic::SemanticService;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -87,15 +88,19 @@ fn main() {
                         .expect("Failed to initialize database"),
                 );
 
-                let clipboard_service = Arc::new(ClipboardService::new(
-                    repository.clone(),
-                    app_handle.clone(),
-                ));
-
                 let settings_repository = Arc::new(
                     SettingsRepository::new(&app_handle)
                         .expect("Failed to initialize settings repository"),
                 );
+
+                let semantic_service = Arc::new(SemanticService::new(app_dir.clone()));
+
+                let clipboard_service = Arc::new(ClipboardService::new(
+                    repository.clone(),
+                    settings_repository.clone(),
+                    semantic_service.clone(),
+                    app_handle.clone(),
+                ));
 
                 // Start clipboard monitoring in background
                 let clipboard_monitor = clipboard_service.clone();
@@ -106,7 +111,8 @@ fn main() {
                 let app_state = AppState {
                     repository,
                     clipboard_service,
-                    settings_repository,
+                    settings_repository: settings_repository.clone(),
+                    semantic_service: semantic_service.clone(),
                 };
 
                 // Handle first launch
@@ -155,6 +161,10 @@ fn main() {
             mac_rounded_corners::reposition_traffic_lights,
             commands::open_text_in_editor,
             commands::open_path,
+            commands::init_semantic_search,
+            commands::get_semantic_search_status,
+            commands::change_semantic_model,
+            commands::generate_embedding,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

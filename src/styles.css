@@ -1,6 +1,20 @@
 @import 'tailwindcss';
 
-/* Custom scrollbar - no Tailwind alternative */
+@layer base {
+  button,
+  [role='button'],
+  input[type='button'],
+  input[type='submit'],
+  input[type='reset'] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  input:disabled,
+  [disabled] {
+    cursor: not-allowed;
+  }
+} /* Custom scrollbar - no Tailwind alternative */
 .custom-scrollbar::-webkit-scrollbar {
   width: 0.5rem;
 }
