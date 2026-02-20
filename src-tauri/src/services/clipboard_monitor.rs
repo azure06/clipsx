@@ -262,11 +262,19 @@ fn compute_image_hash(image_bytes: &[u8]) -> String {
 /// `dyn` means "dynamic dispatch" - runtime polymorphism
 /// Without `dyn`, Rust uses static dispatch (compile-time, faster)
 /// Implementation of ClipboardProvider that uses real system calls
-pub struct RealClipboardProvider;
+pub struct RealClipboardProvider {
+    app_handle: tauri::AppHandle,
+}
+
+impl RealClipboardProvider {
+    pub fn new(app_handle: tauri::AppHandle) -> Self {
+        Self { app_handle }
+    }
+}
 
 impl ClipboardProvider for RealClipboardProvider {
     fn read_clipboard(&self) -> Result<Option<ClipboardContent>> {
-        clipboard_platform::read_clipboard()
+        clipboard_platform::read_clipboard(&self.app_handle)
     }
 
     fn get_active_app_name(&self) -> Option<String> {
@@ -289,8 +297,8 @@ impl ClipboardProvider for RealClipboardProvider {
     }
 }
 
-pub fn create_monitor() -> Box<dyn ClipboardMonitor> {
-    let provider = Box::new(RealClipboardProvider);
+pub fn create_monitor(app_handle: tauri::AppHandle) -> Box<dyn ClipboardMonitor> {
+    let provider = Box::new(RealClipboardProvider::new(app_handle));
 
     // NOTE: `#[cfg(...)]` is compile-time conditional compilation
     // JS equivalent: if (process.platform === 'darwin') { ... }

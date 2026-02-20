@@ -41,6 +41,9 @@ export interface AppSettings {
   // Notifications
   show_copy_toast: boolean
   toast_duration_ms: number
+
+  // Onboarding
+  has_seen_welcome: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -68,4 +71,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   always_on_top: false,
   show_copy_toast: true,
   toast_duration_ms: 1500,
+  has_seen_welcome: false,
 }

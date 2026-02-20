@@ -95,7 +95,7 @@ pub fn get_change_count() -> Result<i64> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn read_clipboard() -> Result<Option<ClipboardContent>> {
+pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
     unsafe {
         let pasteboard: id = msg_send![class!(NSPasteboard), generalPasteboard];
 
@@ -295,7 +295,7 @@ pub fn get_change_count() -> Result<i64> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn read_clipboard() -> Result<Option<ClipboardContent>> {
+pub fn read_clipboard(app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
     // For non-macOS platforms, use arboard (cross-platform)
     use arboard::Clipboard;
 
@@ -329,6 +329,41 @@ pub fn read_clipboard() -> Result<Option<ClipboardContent>> {
             data: png_data,
             format: ImageFormat::Png,
         }));
+    }
+
+    // Check for HTML via Win32
+    #[cfg(target_os = "windows")]
+    if let Some(html_data) = unsafe { get_format_windows("HTML Format") } {
+        // Find null terminator if present
+        let html_len = html_data
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(html_data.len());
+        let html_string = String::from_utf8_lossy(&html_data[..html_len]).to_string();
+        if !html_string.trim().is_empty() {
+            let plain = clipboard.get_text().unwrap_or_default();
+            return Ok(Some(ClipboardContent::Html {
+                html: html_string,
+                plain,
+            }));
+        }
+    }
+
+    // Check for RTF via Win32
+    #[cfg(target_os = "windows")]
+    if let Some(rtf_data) = unsafe { get_format_windows("Rich Text Format") } {
+        let rtf_len = rtf_data
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(rtf_data.len());
+        let rtf_string = String::from_utf8_lossy(&rtf_data[..rtf_len]).to_string();
+        if !rtf_string.trim().is_empty() {
+            let plain = clipboard.get_text().unwrap_or_default();
+            return Ok(Some(ClipboardContent::Rtf {
+                rtf: rtf_string,
+                plain,
+            }));
+        }
     }
 
     // Fallback to text
@@ -536,6 +571,59 @@ impl Drop for CloseClipboardGuard {
             let _ = CloseClipboard();
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn get_format_windows(format_name: &str) -> Option<Vec<u8>> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    let wide_name: Vec<u16> = format_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let format = RegisterClipboardFormatW(PCWSTR::from_raw(wide_name.as_ptr()));
+    if format == 0 {
+        return None;
+    }
+
+    if OpenClipboard(None).is_err() {
+        return None;
+    }
+
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+    let _guard = ClipboardGuard;
+
+    let handle = match GetClipboardData(format) {
+        Ok(h) => h,
+        Err(_) => return None,
+    };
+    if handle.is_invalid() {
+        return None;
+    }
+
+    let hglobal = std::mem::transmute::<HANDLE, HGLOBAL>(handle);
+    let ptr = GlobalLock(hglobal);
+    if ptr.is_null() {
+        return None;
+    }
+
+    let size = GlobalSize(hglobal);
+    let data = std::slice::from_raw_parts(ptr as *const u8, size as usize).to_vec();
+    GlobalUnlock(hglobal).ok();
+
+    Some(data)
 }
 
 #[cfg(test)]

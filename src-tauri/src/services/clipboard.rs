@@ -42,7 +42,9 @@ impl ClipboardService {
         Self {
             repository,
             // NOTE: Create platform-specific monitor (macOS vs Windows/Linux)
-            monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor())),
+            monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(
+                app_handle.clone(),
+            ))),
             app_handle,
             storage_dir,
         }

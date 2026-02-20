@@ -109,8 +109,18 @@ fn main() {
                     settings_repository,
                 };
 
+                // Handle first launch
+                let mut settings = app_state.settings_repository.load().unwrap_or_default();
+                if !settings.has_seen_welcome {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    settings.has_seen_welcome = true;
+                    let _ = app_state.settings_repository.save(&settings);
+                }
+
                 // Register global shortcut on startup
-                let settings = app_state.settings_repository.load().unwrap_or_default();
                 if let Err(e) =
                     commands::setup_global_shortcut(&app_handle, &settings.global_shortcut)
                 {

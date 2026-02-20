@@ -98,6 +98,10 @@ pub struct AppSettings {
     // Notifications
     pub show_copy_toast: bool,
     pub toast_duration_ms: u32,
+
+    // Onboarding
+    #[serde(default = "default_false")]
+    pub has_seen_welcome: bool,
 }
 
 impl Default for AppSettings {
@@ -131,6 +135,7 @@ impl Default for AppSettings {
             always_on_top: false,
             show_copy_toast: true,
             toast_duration_ms: 1500,
+            has_seen_welcome: false,
         }
     }
 }
