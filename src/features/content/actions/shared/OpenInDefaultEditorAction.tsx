@@ -41,26 +41,32 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
     // Exclude image/files if they are handled differently, but text preview of them (e.g. base64) might be valid?
     // For now, allow all, but maybe prioritize text-based.
     // Actually, files type usually is a list of paths. If it's a list of paths, we might want to open them differently.
-    // But for 'text', 'code', 'json', 'sql' etc., this is perfect.
-    return content.type !== 'image' && content.type !== 'files'
+    // But for 'text', 'code', 'json', 'sql', and 'image' etc., this is perfect.
+    return content.type !== 'files' // allow images
   },
   execute: async content => {
-    let extension = 'txt'
-
-    if (content.type === 'code' && content.metadata.language) {
-      const lang = content.metadata.language.toLowerCase()
-      extension = LANGUAGE_TO_EXTENSION[lang] || lang
-    } else if (content.type === 'json') {
-      extension = 'json'
-    } else if (content.type === 'csv') {
-      extension = 'csv'
-    } else if (content.metadata.language) {
-      // Fallback for text/other types if they have language metadata (e.g. html, markdown)
-      const lang = content.metadata.language.toLowerCase()
-      extension = LANGUAGE_TO_EXTENSION[lang] || 'txt'
-    }
-
     try {
+      // If it's an image, we should have a local path already saved
+      if (content.type === 'image' && content.clip.imagePath) {
+        await invoke('open_path', { path: content.clip.imagePath })
+        return
+      }
+
+      let extension = 'txt'
+
+      if (content.type === 'code' && content.metadata.language) {
+        const lang = content.metadata.language.toLowerCase()
+        extension = LANGUAGE_TO_EXTENSION[lang] || lang
+      } else if (content.type === 'json') {
+        extension = 'json'
+      } else if (content.type === 'csv') {
+        extension = 'csv'
+      } else if (content.metadata.language) {
+        // Fallback for text/other types if they have language metadata (e.g. html, markdown)
+        const lang = content.metadata.language.toLowerCase()
+        extension = LANGUAGE_TO_EXTENSION[lang] || 'txt'
+      }
+
       await invoke('open_text_in_editor', {
         text: content.text,
         extension,

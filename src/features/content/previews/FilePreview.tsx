@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { Content, FileMetadata } from '../types'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import {
   File,
   FileText,
@@ -103,32 +103,64 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
     }
   }
 
+  const ext = file.path.split('.').pop()?.toLowerCase() || ''
+  const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'].includes(ext)
+  const isVideo = ['mp4', 'mov', 'avi', 'webm', 'ogg'].includes(ext)
+
   return (
-    <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors group">
-      <div className="flex items-center gap-3 overflow-hidden">
-        <div className="shrink-0">{getFileIcon(file.path)}</div>
-        <div className="flex flex-col min-w-0">
-          <div className="font-medium text-white/90 truncate" title={file.name}>
-            {file.name}
-          </div>
-          <div className="text-xs text-white/50 truncate font-mono" title={file.path}>
-            {file.path}
-          </div>
-          <div className="flex gap-3 text-xs text-white/40 mt-1">
-            <span>{formatBytes(file.size)}</span>
-            <span>•</span>
-            <span>{formatDate(file.modified)}</span>
+    <div className="flex flex-col p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors group">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 overflow-hidden">
+          <div className="shrink-0">{getFileIcon(file.path)}</div>
+          <div className="flex flex-col min-w-0">
+            <div className="font-medium text-white/90 truncate" title={file.name}>
+              {file.name}
+            </div>
+            <div className="text-xs text-white/50 truncate font-mono" title={file.path}>
+              {file.path}
+            </div>
+            <div className="flex gap-3 text-xs text-white/40 mt-1">
+              <span>{formatBytes(file.size)}</span>
+              <span>•</span>
+              <span>{formatDate(file.modified)}</span>
+            </div>
           </div>
         </div>
+
+        <button
+          onClick={() => void handleOpen()}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-white/10 rounded text-xs text-white/60 hover:text-white shrink-0"
+          title="Open File"
+        >
+          Open
+        </button>
       </div>
 
-      <button
-        onClick={() => void handleOpen()}
-        className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-white/10 rounded text-xs text-white/60 hover:text-white"
-        title="Open File"
-      >
-        Open
-      </button>
+      {(isImage || isVideo) && (
+        <div className="mt-3 rounded-lg overflow-hidden bg-black/20 flex items-center justify-center max-h-64 border border-white/5">
+          {isImage ? (
+            <img
+              src={convertFileSrc(file.path)}
+              alt={file.name}
+              className="max-h-64 w-auto object-contain"
+              onError={e => {
+                console.error('Failed to load image preview:', convertFileSrc(file.path))
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          ) : (
+            <video
+              src={convertFileSrc(file.path)}
+              controls
+              className="max-h-64 w-full object-contain"
+              onError={e => {
+                console.error('Failed to load video preview:', convertFileSrc(file.path))
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

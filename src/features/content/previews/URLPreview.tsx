@@ -15,6 +15,9 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const isImage = url.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)
+  const isVideo = url.match(/\.(mp4|webm|ogg)$/i)
+
   return (
     <div className="flex flex-col gap-4 p-4">
       {/* Compact URL display */}
@@ -45,6 +48,30 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
           </div>
         </div>
       </div>
+
+      {(isImage || isVideo) && (
+        <div className="rounded-lg overflow-hidden bg-black/20 flex items-center justify-center border border-white/5">
+          {isImage ? (
+            <img
+              src={url}
+              alt="URL Preview"
+              className="max-w-full max-h-64 object-contain"
+              onError={e => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          ) : (
+            <video
+              src={url}
+              controls
+              className="max-w-full max-h-64 object-contain"
+              onError={e => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Compact metadata badges */}
       <div className="flex items-center gap-2 flex-wrap">
