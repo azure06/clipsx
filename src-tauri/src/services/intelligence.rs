@@ -134,17 +134,17 @@ pub fn detect(text: &str) -> DetectionResult {
         return r;
     }
 
-    // Priority 4: Parsed Values (Date, Phone, Math)
+    // Priority 4: Parsed Values (Date, Timestamp, Phone, Math)
     if let Some(r) = detect_date(trimmed) {
+        return r;
+    }
+    if let Some(r) = detect_timestamp(trimmed) {
         return r;
     }
     if let Some(r) = detect_phone(trimmed) {
         return r;
     }
     if let Some(r) = detect_math(trimmed) {
-        return r;
-    }
-    if let Some(r) = detect_timestamp(trimmed) {
         return r;
     }
 
