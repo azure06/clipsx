@@ -42,17 +42,17 @@ fn main() {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
-            let show_i = MenuItem::with_id(app, "show", "Show/Hide Clips", true, None::<&str>)?;
+            let open_i = MenuItem::with_id(app, "open", "Open Clips", true, None::<&str>)?;
             let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &settings_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&open_i, &settings_i, &quit_i])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
+                    "open" => {
                         let _ = commands::toggle_window(app);
                     }
                     "settings" => {
@@ -74,8 +74,13 @@ fn main() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        // Just show the window on tray click to avoid conflict with hide_on_blur
+                        // Always show — tray click should never hide the window.
+                        // (toggle_window caused a flash because the click can briefly
+                        //  focus the window right as the handler fires, making it hide.)
                         if let Some(window) = app.get_webview_window("main") {
+                            if window.is_minimized().unwrap_or(false) {
+                                let _ = window.unminimize();
+                            }
                             let _ = window.show();
                             let _ = window.set_focus();
                         }

@@ -332,23 +332,36 @@ pub fn setup_global_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(
     Ok(())
 }
 
-/// Helper to toggle the main window visibility (used by shortcut and tray)
+/// Helper to show/focus/hide the main window, used by global shortcut and tray.
+///
+/// Window state machine:
+///   hidden                        → show + unminimize + focus
+///   minimized (visible on taskbar)→ unminimize + show + focus
+///   visible but not focused       → focus
+///   visible + focused             → hide  (toggle off)
 pub fn toggle_window(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
 
-    if let Some(window) = app.get_webview_window("main") {
-        match (window.is_visible(), window.is_focused()) {
-            (Ok(true), Ok(true)) => {
-                // Visible and focused -> Hide
-                let _ = window.hide();
-            }
-            _ => {
-                // Hidden OR Visible but not focused -> Show and Focus
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    let is_visible = window.is_visible().unwrap_or(false);
+    let is_focused = window.is_focused().unwrap_or(false);
+    let is_minimized = window.is_minimized().unwrap_or(false);
+
+    if is_visible && is_focused && !is_minimized {
+        // Fully visible and focused → toggle off
+        let _ = window.hide();
+    } else {
+        // Any other state (hidden / minimized / visible-but-unfocused) → bring forward
+        if is_minimized {
+            let _ = window.unminimize();
         }
+        let _ = window.show();
+        let _ = window.set_focus();
     }
+
     Ok(())
 }
 

@@ -316,10 +316,11 @@ export const Settings = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${activeTab === tab.id
-                  ? 'bg-blue-500/10 text-blue-400'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-                  }`}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${
+                  activeTab === tab.id
+                    ? 'bg-blue-500/10 text-blue-400'
+                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                }`}
               >
                 <div
                   className={`${activeTab === tab.id ? 'text-blue-400' : 'text-gray-500 group-hover:text-gray-300'}`}
