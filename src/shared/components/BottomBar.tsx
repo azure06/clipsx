@@ -1,52 +1,56 @@
-import { Wifi, WifiOff, Cloud, CloudOff } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Lightbulb } from 'lucide-react'
 import { useUIStore } from '../../stores'
 
-type BottomBarProps = {
-  // activeView handled by store
-  status?: string
-  isOnline?: boolean
-  isSynced?: boolean
-}
+// Array of helpful tips for the user
+const TIPS = [
+  'Press Enter to paste the selected clip.',
+  'Use ↑ and ↓ arrows or J and K to navigate.',
+  'Type /image, /url, or /text to instantly filter clips.',
+  'Press F to favorite a clip or P to pin it.',
+  'Press Delete or Backspace to remove a clip.',
+]
 
-export const BottomBar = ({
-  status = 'Ready',
-  isOnline = true,
-  isSynced = true,
-}: BottomBarProps) => {
+export const BottomBar = () => {
   const { activeView } = useUIStore()
+  const [currentTipIndex, setCurrentTipIndex] = useState(0)
+  const [isFading, setIsFading] = useState(false)
+
+  // Rotate tips every 10 seconds
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      // Start fade out
+      setIsFading(true)
+
+      // Change tip after fade out completes (500ms)
+      setTimeout(() => {
+        setCurrentTipIndex(prev => (prev + 1) % TIPS.length)
+        // Start fade in
+        setIsFading(false)
+      }, 500)
+    }, 10000)
+
+    return () => clearInterval(intervalId)
+  }, [])
+
   return (
-    <div className="flex h-6 w-full shrink-0 select-none items-center justify-between px-3 text-[10px] text-gray-500 bg-transparent">
-      {/* Left: Status Message */}
-      <div className="flex items-center gap-2">
-        <span className="opacity-70">{status}</span>
+    <div className="flex h-8 w-full shrink-0 select-none items-center justify-between px-4 text-[11px] text-gray-500 bg-black/20 border-t border-white/5">
+      {/* Left: Rotating Tips */}
+      <div className="flex items-center gap-2 overflow-hidden flex-1">
+        <Lightbulb className="h-3.5 w-3.5 text-yellow-500/80 shrink-0" />
+        <span className="font-medium text-gray-400">Pro Tip:</span>
+        <span
+          className={`text-gray-300 truncate transition-opacity duration-500 ease-in-out ${
+            isFading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          {TIPS[currentTipIndex]}
+        </span>
       </div>
 
-      {/* Center: Active View Indicator (Optional, maybe redundant if sidebar highlights) */}
-      <div className="font-medium opacity-50 uppercase tracking-widest hidden md:block">
+      {/* Right: Active View Indicator (Only visible if space permits) */}
+      <div className="font-medium opacity-40 uppercase tracking-widest hidden sm:block shrink-0 pl-4">
         {activeView}
-      </div>
-
-      {/* Right: System Status Icons */}
-      <div className="flex items-center gap-3">
-        {isSynced ? (
-          <div className="flex items-center gap-1 text-gray-500" title="Synced">
-            <Cloud className="h-3 w-3" />
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 text-gray-500" title="Sync Paused">
-            <CloudOff className="h-3 w-3" />
-          </div>
-        )}
-
-        {isOnline ? (
-          <div className="flex items-center gap-1 text-gray-500" title="Online">
-            <Wifi className="h-3 w-3" />
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 text-gray-500" title="Offline">
-            <WifiOff className="h-3 w-3" />
-          </div>
-        )}
       </div>
     </div>
   )
