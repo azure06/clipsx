@@ -1,5 +1,4 @@
 import { useUIStore, useClipboardStore } from '../../stores'
-import { Paperclip } from 'lucide-react'
 
 const getViewTitle = (view: string): string => {
   switch (view) {
@@ -36,11 +35,10 @@ export const TitleBar = () => {
             className="h-1 bg-linear-to-r from-blue-400 to-violet-400 shadow-lg shadow-blue-400/60 rounded-b-full"
             style={{ width: '64px' }}
           />
-          {/* Title text with Icon */}
-          <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300 tracking-wider">
-            {activeView === 'clips' && <Paperclip className="w-3 h-3" />}
-            <span>{getViewTitle(activeView)}</span>
-          </div>
+          {/* Title text */}
+          <span className="text-[10px] font-bold text-gray-300 tracking-wider">
+            {getViewTitle(activeView)}
+          </span>
         </div>
       </div>
 
