@@ -38,6 +38,11 @@ pub trait ClipboardMonitor: Send + Sync {
     /// NOTE: `&'static str` is a string literal that lives for entire program
     /// JS equivalent: platformName(): string (but the string is hardcoded)
     fn platform_name(&self) -> &'static str;
+
+    /// Called after ClipsX programmatically writes plain text to the clipboard
+    /// so the next monitor tick treats it as "unchanged" and doesn't create a
+    /// duplicate entry.
+    fn notify_wrote(&mut self, plain_text: &str);
 }
 
 /// macOS monitor using NSPasteboard.changeCount (fast path)
@@ -47,6 +52,9 @@ pub trait ClipboardMonitor: Send + Sync {
 /// }
 pub struct MacOSMonitor {
     last_change_count: i64,
+    /// Hash of the content we expect to see on the next tick after a programmatic
+    /// write. If it matches we return Unchanged to suppress phantom new entries.
+    last_wrote_hash: Option<String>,
     provider: Box<dyn ClipboardProvider>,
 }
 
@@ -56,6 +64,7 @@ impl MacOSMonitor {
         // JS equivalent: constructor() { this.lastChangeCount = 0 }
         Self {
             last_change_count: 0,
+            last_wrote_hash: None,
             provider,
         }
     }
@@ -66,16 +75,9 @@ impl MacOSMonitor {
 impl ClipboardMonitor for MacOSMonitor {
     fn check(&mut self) -> Result<ClipboardCheckResult> {
         // Fast path: check changeCount first (1 syscall, ~1μs)
-        // NOTE: `?` is error propagation - if error, return early
-        // JS equivalent: const current = await getChangeCount() (but with try/catch)
-        // Fast path: check changeCount first (1 syscall, ~1μs)
-        // NOTE: `?` is error propagation - if error, return early
-        // JS equivalent: const current = await getChangeCount() (but with try/catch)
         let current = self.provider.get_change_count()?;
 
         if current > 0 && current == self.last_change_count {
-            // NOTE: Early return with Ok() wraps the value in Result
-            // JS equivalent: return { type: 'unchanged' }
             return Ok(ClipboardCheckResult::Unchanged);
         }
 
@@ -85,11 +87,19 @@ impl ClipboardMonitor for MacOSMonitor {
         };
 
         let hash = compute_content_hash(&content);
-        // NOTE: Direct assignment, no `this.` needed
+
+        // If ClipsX just wrote this content, suppress re-ingestion
+        if let Some(ref wrote_hash) = self.last_wrote_hash {
+            if &hash == wrote_hash {
+                self.last_change_count = current;
+                self.last_wrote_hash = None;
+                return Ok(ClipboardCheckResult::Unchanged);
+            }
+        }
+        self.last_wrote_hash = None;
+
         self.last_change_count = current;
 
-        // NOTE: Return enum variant with named fields
-        // JS equivalent: return { type: 'changed', content, hash }
         Ok(ClipboardCheckResult::Changed {
             content,
             hash,
@@ -99,6 +109,28 @@ impl ClipboardMonitor for MacOSMonitor {
 
     fn platform_name(&self) -> &'static str {
         "macOS"
+    }
+
+    fn notify_wrote(&mut self, plain_text: &str) {
+        // Force the next tick to re-read by invalidating the change count.
+        // We can't predict what changeCount will be after the write, so set
+        // it to -1 (impossible real value) so it always mismatches and we
+        // fall through to hash comparison via last_hash check below.
+        // Instead, store the expected hash so the next content read dedupes.
+        // We mimic PollingMonitor: if hash matches we return Unchanged.
+        // MacOSMonitor doesn't store last_hash normally, so we abuse
+        // last_change_count = 0 to trigger a re-read, then rely on
+        // the DB hash check. The real fix is to also keep a last_hash here.
+        // Simpler approach: just invalidate last_change_count so we *always*
+        // re-read, but pre-set the expected plain hash via a stored field.
+        // For now use last_change_count = -1 to force re-read every time
+        // after a write, and let the DB dedup handle it (touch not insert).
+        self.last_change_count = -1;
+        // Store the expected hash so we can return Unchanged on the next tick
+        // if the clipboard content matches what we wrote.
+        self.last_wrote_hash = Some(compute_content_hash(&ClipboardContent::Text {
+            content: plain_text.to_string(),
+        }));
     }
 }
 
@@ -176,6 +208,14 @@ impl ClipboardMonitor for PollingMonitor {
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         return "Unknown";
     }
+
+    fn notify_wrote(&mut self, plain_text: &str) {
+        // Pre-seed last_hash with the hash of the text we just wrote.
+        // The next check() call will compute the same hash and return Unchanged.
+        self.last_hash = Some(compute_content_hash(&ClipboardContent::Text {
+            content: plain_text.to_string(),
+        }));
+    }
 }
 
 /// Compute hash for clipboard content
@@ -191,22 +231,23 @@ fn compute_content_hash(content: &ClipboardContent) -> String {
     // JS equivalent: switch(content.type) { ... } but type-safe
     match content {
         // NOTE: Destructuring enum variants
-        // `..` means "ignore other fields" (like `plain` in Html/Rtf)
         ClipboardContent::Text { content } => {
             let mut hasher = DefaultHasher::new();
             content.hash(&mut hasher);
             // NOTE: `{:x}` formats as hexadecimal
-            // JS equivalent: hasher.finish().toString(16)
             format!("{:x}", hasher.finish())
         }
-        ClipboardContent::Html { html, .. } => {
+        // Hash the plain text, NOT the raw HTML/RTF markup.
+        // This ensures the same human-readable content produces the same hash
+        // regardless of whether it was copied from a rich-text or plain-text source.
+        ClipboardContent::Html { plain, .. } => {
             let mut hasher = DefaultHasher::new();
-            html.hash(&mut hasher);
+            plain.hash(&mut hasher);
             format!("{:x}", hasher.finish())
         }
-        ClipboardContent::Rtf { rtf, .. } => {
+        ClipboardContent::Rtf { plain, .. } => {
             let mut hasher = DefaultHasher::new();
-            rtf.hash(&mut hasher);
+            plain.hash(&mut hasher);
             format!("{:x}", hasher.finish())
         }
         ClipboardContent::Image { data, .. } => {
@@ -373,6 +414,84 @@ mod tests {
         fn platform_name(&self) -> &'static str {
             "Mock"
         }
+    }
+
+    #[test]
+    fn test_html_and_text_same_plain_dedup() {
+        // Html with the same plain text as a subsequent Text entry should dedup
+        let mock = MockClipboardProvider::new();
+        mock.set_content(Some(ClipboardContent::Html {
+            html: "<b>Hello</b>".to_string(),
+            plain: "Hello".to_string(),
+        }));
+        let state_ref = mock.state.clone();
+        let mut monitor = PollingMonitor::new(Box::new(mock));
+
+        // First check: new Html content
+        let result = monitor.check().unwrap();
+        assert!(matches!(result, ClipboardCheckResult::Changed { .. }));
+
+        // Now swap to plain Text with same content
+        {
+            let mut state = state_ref.lock().unwrap();
+            state.content = Some(ClipboardContent::Text {
+                content: "Hello".to_string(),
+            });
+        }
+
+        // Second check: same plain text → should be Unchanged
+        let result = monitor.check().unwrap();
+        assert!(
+            matches!(result, ClipboardCheckResult::Unchanged),
+            "Same plain text via different format should be treated as unchanged"
+        );
+    }
+
+    #[test]
+    fn test_notify_wrote_suppresses_next_tick() {
+        let mock = MockClipboardProvider::new();
+        mock.set_content(Some(ClipboardContent::Text {
+            content: "Hello".to_string(),
+        }));
+        let mut monitor = PollingMonitor::new(Box::new(mock));
+
+        // Simulate ClipsX writing "Hello" to the clipboard
+        monitor.notify_wrote("Hello");
+
+        // Next check should be suppressed
+        let result = monitor.check().unwrap();
+        assert!(
+            matches!(result, ClipboardCheckResult::Unchanged),
+            "notify_wrote should suppress the next tick for the same content"
+        );
+    }
+
+    #[test]
+    fn test_rtf_and_text_same_plain_dedup() {
+        let mock = MockClipboardProvider::new();
+        mock.set_content(Some(ClipboardContent::Rtf {
+            rtf: r"{\rtf1 Hello}".to_string(),
+            plain: "Hello".to_string(),
+        }));
+        let state_ref = mock.state.clone();
+        let mut monitor = PollingMonitor::new(Box::new(mock));
+
+        let result = monitor.check().unwrap();
+        assert!(matches!(result, ClipboardCheckResult::Changed { .. }));
+
+        // Switch to plain Text
+        {
+            let mut state = state_ref.lock().unwrap();
+            state.content = Some(ClipboardContent::Text {
+                content: "Hello".to_string(),
+            });
+        }
+
+        let result = monitor.check().unwrap();
+        assert!(
+            matches!(result, ClipboardCheckResult::Unchanged),
+            "Same plain text via RTF→Text should be treated as unchanged"
+        );
     }
 
     #[test]

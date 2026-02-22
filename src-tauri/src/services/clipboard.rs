@@ -382,6 +382,10 @@ impl ClipboardService {
     pub fn set_text(&self, text: &str) -> Result<()> {
         let mut clipboard = Clipboard::new()?;
         clipboard.set_text(text)?;
+        // Pre-seed the monitor's last-known hash so the next poll tick
+        // sees this content as "already known" and won't create a duplicate entry.
+        let mut monitor = self.monitor.blocking_lock();
+        monitor.notify_wrote(text);
         Ok(())
     }
 
