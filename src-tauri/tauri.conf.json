@@ -36,7 +36,7 @@
         "decorations": false,
         "transparent": true,
         "acceptFirstMouse": true,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "visible": false,
         "focus": true,
         "windowEffects": {
