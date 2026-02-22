@@ -19,6 +19,12 @@ pub struct ClipItem {
     pub is_favorite: i32, // SQLite uses INTEGER for boolean
     pub access_count: i32,
     pub content_hash: Option<String>,
+
+    #[sqlx(default)]
+    pub has_embedding: Option<bool>,
+
+    #[sqlx(default)]
+    pub similarity_score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -98,6 +104,8 @@ impl ClipItem {
             is_favorite: 0,
             access_count: 0,
             content_hash: Some(content_hash),
+            has_embedding: Some(false),
+            similarity_score: None,
         }
     }
 

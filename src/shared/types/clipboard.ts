@@ -26,6 +26,8 @@ export type ClipItem = {
   readonly isFavorite: boolean
   readonly accessCount: number
   readonly contentHash: string | null
+  readonly hasEmbedding?: boolean
+  readonly similarityScore?: number
 }
 
 export type Tag = {

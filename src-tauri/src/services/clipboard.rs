@@ -1,7 +1,8 @@
 use crate::models::ClipItem;
-use crate::repositories::ClipRepository;
+use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
+use crate::services::semantic::SemanticService;
 use anyhow::Result;
 use arboard::Clipboard;
 use std::path::PathBuf;
@@ -20,6 +21,8 @@ use tokio::time::{sleep, Duration};
 /// }
 pub struct ClipboardService {
     repository: Arc<ClipRepository>,
+    settings_repository: Arc<SettingsRepository>,
+    semantic_service: Arc<SemanticService>,
     // NOTE: `Arc<Mutex<T>>` is like a thread-safe shared reference
     // Arc = Atomic Reference Counted (like shared_ptr in C++)
     // Mutex = Mutual exclusion lock (prevents concurrent access)
@@ -30,7 +33,12 @@ pub struct ClipboardService {
 }
 
 impl ClipboardService {
-    pub fn new(repository: Arc<ClipRepository>, app_handle: AppHandle) -> Self {
+    pub fn new(
+        repository: Arc<ClipRepository>,
+        settings_repository: Arc<SettingsRepository>,
+        semantic_service: Arc<SemanticService>,
+        app_handle: AppHandle,
+    ) -> Self {
         let storage_dir = app_handle
             .path()
             .app_data_dir()
@@ -41,6 +49,8 @@ impl ClipboardService {
 
         Self {
             repository,
+            settings_repository,
+            semantic_service,
             // NOTE: Create platform-specific monitor (macOS vs Windows/Linux)
             monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(
                 app_handle.clone(),
@@ -145,6 +155,36 @@ impl ClipboardService {
                     platform, clip.content_type
                 );
                 self.repository.insert(&clip).await?;
+
+                // Trigger background embedding generation if enabled
+                if let Some(text) = &clip.content_text {
+                    let settings = self.settings_repository.load().unwrap_or_default();
+                    if settings.semantic_search_enabled && self.semantic_service.is_ready() {
+                        let text_clone = text.clone();
+                        let clip_id = clip.id.clone();
+                        let repo = self.repository.clone();
+                        let semantic = self.semantic_service.clone();
+
+                        tokio::spawn(async move {
+                            match semantic.embed(text_clone).await {
+                                Ok(vector) => {
+                                    if let Err(e) = repo
+                                        .create_embedding(
+                                            &clip_id,
+                                            SemanticService::vector_to_bytes(&vector),
+                                            "all-MiniLM-L6-v2",
+                                            384,
+                                        )
+                                        .await
+                                    {
+                                        eprintln!("[ERROR] Failed to save embedding: {}", e);
+                                    }
+                                }
+                                Err(e) => eprintln!("[ERROR] Failed to generate embedding: {}", e),
+                            }
+                        });
+                    }
+                }
             }
         }
 
@@ -188,6 +228,8 @@ impl ClipboardService {
             is_favorite: 0,
             access_count: 0,
             content_hash: Some(hash.to_string()),
+            has_embedding: Some(false),
+            similarity_score: None,
         }
     }
 
@@ -218,6 +260,8 @@ impl ClipboardService {
             is_favorite: 0,
             access_count: 0,
             content_hash: Some(hash.to_string()),
+            has_embedding: Some(false),
+            similarity_score: None,
         }
     }
 
@@ -253,6 +297,8 @@ impl ClipboardService {
             is_favorite: 0,
             access_count: 0,
             content_hash: Some(hash.to_string()),
+            has_embedding: Some(false),
+            similarity_score: None,
         })
     }
 
@@ -327,6 +373,8 @@ impl ClipboardService {
             is_favorite: 0,
             access_count: 0,
             content_hash: Some(hash.to_string()),
+            has_embedding: Some(false),
+            similarity_score: None,
         }
     }
 

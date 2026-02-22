@@ -1,4 +1,4 @@
-import { Search, Command, X } from 'lucide-react'
+import { Search, Command, X, Sparkles } from 'lucide-react'
 import { useRef, useEffect } from 'react'
 
 interface SearchBarProps {
@@ -7,6 +7,7 @@ interface SearchBarProps {
   onClear: () => void
   placeholder?: string
   autoFocus?: boolean
+  isSemanticSearch?: boolean
 }
 
 export const SearchBar = ({
@@ -15,6 +16,7 @@ export const SearchBar = ({
   onClear,
   placeholder = 'Type to search or paste...',
   autoFocus = true,
+  isSemanticSearch = false,
 }: SearchBarProps) => {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -44,6 +46,16 @@ export const SearchBar = ({
           placeholder={placeholder}
           className="flex-1 bg-transparent border-none outline-none px-4 py-4 text-lg text-white placeholder-gray-500 focus:ring-0"
         />
+
+        {/* Semantic Search Indicator */}
+        {isSemanticSearch && value.trim() !== '' && (
+          <div className="absolute top-0 right-16 bottom-0 flex items-center pr-4">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="text-xs font-medium">Semantic</span>
+            </div>
+          </div>
+        )}
 
         {/* Right Actions */}
         <div className="pr-4 flex items-center gap-2">

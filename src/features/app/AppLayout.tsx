@@ -8,7 +8,8 @@ import { TitleBar } from '../../shared/components/TitleBar'
 import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings } from '../settings/Settings'
-import { useClipboardStore, useUIStore } from '../../stores'
+import { Plugins } from '../settings/Plugins'
+import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 
 export const AppLayout = () => {
   const {
@@ -21,6 +22,12 @@ export const AppLayout = () => {
     resetSearch,
   } = useUIStore()
   const { clips } = useClipboardStore()
+  const { settings, loadSettings } = useSettingsStore()
+
+  // Load settings on app start
+  useEffect(() => {
+    void loadSettings()
+  }, [loadSettings])
 
   // Derived state for active clip (first in list)
   const activeClip = clips[0]
@@ -60,7 +67,12 @@ export const AppLayout = () => {
               <div className="flex flex-col h-full p-6 overflow-hidden">
                 {/* Search Bar - Always Top */}
                 <div className="w-full max-w-4xl mx-auto shrink-0 mb-6">
-                  <SearchBar value={searchQuery} onChange={setSearchQuery} onClear={handleClear} />
+                  <SearchBar
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    onClear={handleClear}
+                    isSemanticSearch={settings?.semantic_search_enabled}
+                  />
                 </div>
 
                 {/* Split View Container */}
@@ -94,11 +106,7 @@ export const AppLayout = () => {
 
             {activeView === 'settings' && <Settings />}
 
-            {activeView === 'plugins' && (
-              <div className="w-full flex-1 flex items-center justify-center text-gray-500">
-                <p>Plugins coming soon...</p>
-              </div>
-            )}
+            {activeView === 'plugins' && <Plugins />}
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
+import { useSettingsStore } from './settingsStore'
 import type { ClipItem, Result } from '../shared/types'
 
 type ClipboardState = {
@@ -27,6 +28,7 @@ type ClipboardActions = {
   copyToClipboard: (text: string, id?: string) => Promise<Result<void>>
   pasteClip: (text: string, id?: string) => Promise<Result<void>>
   resetPagination: () => void
+  generateEmbedding: (id: string) => Promise<void>
 }
 
 type ClipboardStore = ClipboardState & ClipboardActions
@@ -79,11 +81,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         // Search mode: Use FTS paginated search with parsing
         const { query, filterTypes } = parseSearchQuery(searchQuery)
 
+        const settings = useSettingsStore.getState().settings
         newClips = await invoke<ClipItem[]>('search_clips_paginated', {
           query,
           filter_types: filterTypes,
           limit,
           offset: currentOffset,
+          use_semantic_search: settings?.semantic_search_enabled ?? false,
         })
       } else {
         // Browse mode: Standard chronological pagination
@@ -147,11 +151,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       const { query, filterTypes } = parseSearchQuery(rawQuery)
 
+      const settings = useSettingsStore.getState().settings
       const clips = await invoke<ClipItem[]>('search_clips_paginated', {
         query,
-        filter_types: filterTypes,
+        filterTypes,
         limit: 50,
         offset: 0,
+        useSemanticSearch: settings?.semantic_search_enabled ?? false,
+        similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
       })
       set({
         clips,
@@ -182,10 +189,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set({ loading: true, error: null })
     try {
       const { query, filterTypes } = parseSearchQuery(rawQuery)
+      const settings = useSettingsStore.getState().settings
       const clips = await invoke<ClipItem[]>('search_clips', {
         query,
-        filter_types: filterTypes,
+        filterTypes,
         limit,
+        useSemanticSearch: settings?.semantic_search_enabled ?? false,
+        similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
       })
       set({ clips, loading: false })
     } catch (error) {
@@ -257,6 +267,18 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     } catch (error) {
       console.error('Failed to paste:', error)
       return { ok: false, error: String(error) }
+    }
+  },
+
+  generateEmbedding: async (id: string) => {
+    try {
+      await invoke('generate_embedding', { id })
+      // Update local state to reflect the change visually immediately
+      set(state => ({
+        clips: state.clips.map(c => (c.id === id ? { ...c, hasEmbedding: true } : c)),
+      }))
+    } catch (error) {
+      console.error('Failed to generate embedding:', error)
     }
   },
 }))

@@ -53,9 +53,10 @@ impl ClipRepository {
     }
 
     pub async fn get_recent(&self, limit: i32) -> Result<Vec<ClipItem>> {
-        let clips =
-            sqlx::query_as::<_, ClipItem>("SELECT * FROM clips ORDER BY updated_at DESC LIMIT ?")
-                .bind(limit)
+        let clips = sqlx::query_as::<_, ClipItem>(
+            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips ORDER BY updated_at DESC LIMIT ?"
+        )
+        .bind(limit)
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -64,7 +65,7 @@ impl ClipRepository {
 
     pub async fn get_recent_paginated(&self, limit: i32, offset: i32) -> Result<Vec<ClipItem>> {
         let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT * FROM clips ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips ORDER BY updated_at DESC LIMIT ? OFFSET ?",
         )
         .bind(limit)
         .bind(offset)
@@ -76,7 +77,7 @@ impl ClipRepository {
 
     pub async fn get_after_timestamp(&self, timestamp: i64) -> Result<Vec<ClipItem>> {
         let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT * FROM clips WHERE updated_at > ? ORDER BY updated_at DESC",
+            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE updated_at > ? ORDER BY updated_at DESC",
         )
         .bind(timestamp)
         .fetch_all(&self.pool)
@@ -97,12 +98,41 @@ impl ClipRepository {
     }
 
     pub async fn get_by_id(&self, id: &str) -> Result<Option<ClipItem>> {
-        let clip = sqlx::query_as::<_, ClipItem>("SELECT * FROM clips WHERE id = ?")
+        let clip = sqlx::query_as::<_, ClipItem>(
+            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE id = ?"
+        )
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
 
         Ok(clip)
+    }
+
+    /// Retrieve multiple clips by ID, maintaining the order of the provided IDs
+    pub async fn get_clips_by_ids(&self, ids: &[String]) -> Result<Vec<ClipItem>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!("SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE id IN ({})", placeholders);
+
+        let mut query = sqlx::query_as::<_, ClipItem>(&sql);
+        for id in ids {
+            query = query.bind(id);
+        }
+
+        let clips = query.fetch_all(&self.pool).await?;
+
+        // Sort clips to match the order of the input IDs
+        let mut sorted_clips = Vec::with_capacity(clips.len());
+        for id in ids {
+            if let Some(clip) = clips.iter().find(|c| &c.id == id) {
+                sorted_clips.push(clip.clone());
+            }
+        }
+
+        Ok(sorted_clips)
     }
 
     /// Escape user input for FTS5 MATCH queries with prefix matching.
@@ -208,7 +238,7 @@ impl ClipRepository {
 
         let mut sql = String::from(
             r#"
-            SELECT clips.* FROM clips
+            SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips
             INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
             WHERE clips_fts MATCH ?
         "#,
@@ -559,6 +589,39 @@ impl ClipRepository {
                 .fetch_all(&self.pool)
                 .await?;
 
+        Ok(embeddings)
+    }
+
+    /// Get embeddings, optionally filtering by clip type
+    pub async fn get_embeddings_with_filters(
+        &self,
+        filter_types: Option<Vec<String>>,
+    ) -> Result<Vec<Embedding>> {
+        let mut sql =
+            String::from("SELECT e.* FROM embeddings e INNER JOIN clips c ON e.clip_id = c.id");
+
+        if let Some(types) = &filter_types {
+            if !types.is_empty() {
+                sql.push_str(" WHERE c.detected_type IN (");
+                for (i, _) in types.iter().enumerate() {
+                    if i > 0 {
+                        sql.push_str(", ");
+                    }
+                    sql.push('?');
+                }
+                sql.push(')');
+            }
+        }
+
+        let mut query_builder = sqlx::query_as::<_, Embedding>(&sql);
+
+        if let Some(types) = &filter_types {
+            for t in types {
+                query_builder = query_builder.bind(t);
+            }
+        }
+
+        let embeddings = query_builder.fetch_all(&self.pool).await?;
         Ok(embeddings)
     }
 

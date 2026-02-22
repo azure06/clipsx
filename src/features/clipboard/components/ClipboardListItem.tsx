@@ -38,7 +38,11 @@ const ClipboardListItemComponent = ({
   const tags = clip.tags ?? []
   const collections = clip.collections ?? []
   const hasAttributes =
-    isPinned || isFavorite || tags.length > 0 || collections.length > 0 || Boolean(clip.hasEmbedding)
+    isPinned ||
+    isFavorite ||
+    tags.length > 0 ||
+    collections.length > 0 ||
+    Boolean(clip.hasEmbedding)
 
   const [showToast, setShowToast] = useState(false)
 
@@ -59,12 +63,13 @@ const ClipboardListItemComponent = ({
         onClick={handleClick}
         onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
         data-clip-index={index}
-        className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${isSelected
-          ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
-          : isPinned
-            ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
-            : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
-          }`}
+        className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${
+          isSelected
+            ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
+            : isPinned
+              ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
+              : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
+        }`}
       >
         {/* Accent border for pinned items */}
         {isPinned && (
@@ -99,7 +104,13 @@ const ClipboardListItemComponent = ({
               {clip.hasEmbedding && (
                 <span title="Semantic Search Indexed">
                   <svg width="0" height="0" className="absolute">
-                    <linearGradient id={`sparkle-grad-${clip.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                    <linearGradient
+                      id={`sparkle-grad-${clip.id}`}
+                      x1="0%"
+                      y1="0%"
+                      x2="100%"
+                      y2="100%"
+                    >
                       <stop stopColor="#3b82f6" offset="0%" />
                       <stop stopColor="#8b5cf6" offset="50%" />
                       <stop stopColor="#ec4899" offset="100%" />

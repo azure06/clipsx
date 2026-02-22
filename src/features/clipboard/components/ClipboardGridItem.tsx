@@ -34,7 +34,12 @@ const ClipboardGridItemComponent = ({
   const isPinned = Boolean(clip.isPinned)
   const tags = clip.tags ?? []
   const collections = clip.collections ?? []
-  const hasAttributes = isPinned || isFavorite || tags.length > 0 || collections.length > 0 || Boolean(clip.hasEmbedding)
+  const hasAttributes =
+    isPinned ||
+    isFavorite ||
+    tags.length > 0 ||
+    collections.length > 0 ||
+    Boolean(clip.hasEmbedding)
 
   const handleClick = () => {
     if (clip.contentText) {
@@ -50,12 +55,13 @@ const ClipboardGridItemComponent = ({
     <div
       onClick={handleClick}
       data-clip-index={index}
-      className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${isSelected
-        ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
-        : isPinned
-          ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
-          : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
-        }`}
+      className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${
+        isSelected
+          ? 'border-blue-400 dark:border-blue-500/50 bg-blue-50/50 dark:bg-blue-950/20 ring-1 ring-blue-400/50 dark:ring-blue-500/30'
+          : isPinned
+            ? 'border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/10'
+            : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/50 hover:border-gray-300 dark:hover:border-gray-700'
+      }`}
     >
       {/* Pinned accent */}
       {isPinned && (
@@ -173,15 +179,28 @@ const ClipboardGridItemComponent = ({
             )}
 
             {clip.hasEmbedding && (
-              <span title="Semantic Search Indexed" className="inline-flex relative items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-100/50 dark:bg-indigo-900/20 text-[9px] font-medium border border-indigo-200/50 dark:border-indigo-500/20">
+              <span
+                title="Semantic Search Indexed"
+                className="inline-flex relative items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-100/50 dark:bg-indigo-900/20 text-[9px] font-medium border border-indigo-200/50 dark:border-indigo-500/20"
+              >
                 <svg width="0" height="0" className="absolute">
-                  <linearGradient id={`sparkle-grad-grid-${clip.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                  <linearGradient
+                    id={`sparkle-grad-grid-${clip.id}`}
+                    x1="0%"
+                    y1="0%"
+                    x2="100%"
+                    y2="100%"
+                  >
                     <stop stopColor="#3b82f6" offset="0%" />
                     <stop stopColor="#8b5cf6" offset="50%" />
                     <stop stopColor="#ec4899" offset="100%" />
                   </linearGradient>
                 </svg>
-                <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} style={{ stroke: `url(#sparkle-grad-grid-${clip.id})` }} />
+                <Sparkles
+                  className="h-2.5 w-2.5"
+                  strokeWidth={2.5}
+                  style={{ stroke: `url(#sparkle-grad-grid-${clip.id})` }}
+                />
               </span>
             )}
 
@@ -190,7 +209,8 @@ const ClipboardGridItemComponent = ({
                 title={`Semantic Match Score: ${Math.round(clip.similarityScore * 100)}%`}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold"
                 style={{
-                  background: 'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
+                  background:
+                    'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
                   borderColor: 'rgba(236,72,153,0.2)',
                   borderWidth: '1px',
                   color: '#ec4899',

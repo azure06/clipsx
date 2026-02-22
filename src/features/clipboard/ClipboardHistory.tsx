@@ -181,6 +181,13 @@ export const ClipboardHistory = ({
     [togglePin]
   )
 
+  const handleGenerateEmbedding = useCallback((id: string) => {
+    const { generateEmbedding } = useClipboardStore.getState()
+    if (generateEmbedding) {
+      void generateEmbedding(id)
+    }
+  }, [])
+
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
@@ -435,6 +442,7 @@ export const ClipboardHistory = ({
             onDelete={onDeleteHandler}
             onToggleFavorite={handleToggleFavorite}
             onTogglePin={handleTogglePin}
+            onGenerateEmbedding={handleGenerateEmbedding}
             infiniteScrollTrigger={infiniteScrollTrigger}
             scrollContainerRef={scrollContainerRef}
             selectedIndex={selectedIndex}

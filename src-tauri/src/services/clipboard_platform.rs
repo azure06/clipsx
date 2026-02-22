@@ -295,7 +295,7 @@ pub fn get_change_count() -> Result<i64> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn read_clipboard(app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
+pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
     // For non-macOS platforms, use arboard (cross-platform)
     use arboard::Clipboard;
 
