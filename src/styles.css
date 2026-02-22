@@ -84,13 +84,13 @@ button.decorum-tb-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 32px;
-  background: transparent;
-  border: none;
-  outline: none;
-  cursor: pointer;
-  color: rgba(156, 163, 175, 0.7); /* gray-400 at 70% */
+  width: 46px !important;
+  height: 32px !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  cursor: pointer !important;
+  color: rgba(156, 163, 175, 0.7) !important; /* gray-400 at 70% */
   transition:
     background 0.15s ease,
     color 0.15s ease;
@@ -99,22 +99,23 @@ button.decorum-tb-btn {
 }
 
 button.decorum-tb-btn:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #e5e7eb; /* gray-200 */
+  background: rgba(255, 255, 255, 0.07) !important;
+  color: #e5e7eb !important; /* gray-200 */
 }
 
 button.decorum-tb-btn:active {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.12) !important;
 }
 
-/* Close button: red on hover (Windows convention) */
+/* Close button: red on hover (Standard Windows red) */
 button#decorum-tb-close:hover {
-  background: rgba(239, 68, 68, 0.85); /* red-500 */
-  color: #ffffff;
+  background: #e81123 !important;
+  color: #ffffff !important;
 }
 
 button#decorum-tb-close:active {
-  background: rgba(220, 38, 38, 0.95); /* red-600 */
+  background: #e81123 !important;
+  opacity: 0.8 !important;
 }
 
 /* Scale icons slightly for visual balance */
