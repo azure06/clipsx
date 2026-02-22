@@ -7,6 +7,8 @@ use services::clipboard::ClipboardService;
 use services::semantic::SemanticService;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+#[cfg(target_os = "windows")]
+use tauri_plugin_decorum::WebviewWindowExt;
 
 mod commands;
 mod models;
@@ -18,6 +20,7 @@ use plugins::mac_rounded_corners;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -135,6 +138,14 @@ fn main() {
 
                 app_handle.manage(app_state);
             });
+
+            // Create custom overlay titlebar on Windows
+            // macOS titlebar is handled by mac_rounded_corners plugin separately
+            #[cfg(target_os = "windows")]
+            {
+                let main_window = app.get_webview_window("main").unwrap();
+                main_window.create_overlay_titlebar().unwrap();
+            }
 
             Ok(())
         })

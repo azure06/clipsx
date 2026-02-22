@@ -37,6 +37,7 @@ url = "2.5.8"
 tempfile = "3.25.0"
 open = "5.3.3"
 fastembed = "5.11.0"
+tauri-plugin-decorum = "1.1.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

@@ -13,6 +13,9 @@ const getViewTitle = (view: string): string => {
   }
 }
 
+// Decorum injects 3 buttons × 40px = 120px of window controls on the right on Windows
+const isWindows = navigator.platform.includes('Win')
+
 export const TitleBar = () => {
   const { activeView } = useUIStore()
   const { clips } = useClipboardStore()
@@ -23,7 +26,7 @@ export const TitleBar = () => {
       data-tauri-drag-region
       className="relative flex h-8 shrink-0 select-none items-center px-3"
     >
-      {/* Left: Window dots + Title with accent bar */}
+      {/* Left: Title with accent bar */}
       <div className="flex items-center gap-3 text-[10px] text-gray-500 pointer-events-none">
         {/* Title with top accent bar */}
         <div className="absolute top-0 left-24 flex flex-col items-center gap-1">
@@ -39,8 +42,11 @@ export const TitleBar = () => {
         </div>
       </div>
 
-      {/* Right: Clip count */}
-      <div className="ml-auto text-[11px] font-semibold text-gray-400 pointer-events-none">
+      {/* Right: Clip count — inset extra on Windows so it clears the decorum buttons */}
+      <div
+        className="ml-auto text-[11px] font-semibold text-gray-400 pointer-events-none"
+        style={isWindows ? { marginRight: '128px' } : undefined}
+      >
         {clipCount} {clipCount === 1 ? 'clip' : 'clips'}
       </div>
     </div>

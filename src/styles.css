@@ -61,3 +61,64 @@
     --border-color: #3d3d3d;
   }
 }
+
+/* ============================================================
+   tauri-plugin-decorum: Windows overlay titlebar button styles
+   The plugin injects these buttons automatically on Windows.
+   We override them to match the app's dark glassmorphic theme.
+   ============================================================ */
+div[data-tauri-decorum-tb] {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  /* Sit in the top-right corner above everything */
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 9999;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+button.decorum-tb-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: rgba(156, 163, 175, 0.7); /* gray-400 at 70% */
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+  padding: 0;
+  margin: 0;
+}
+
+button.decorum-tb-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #e5e7eb; /* gray-200 */
+}
+
+button.decorum-tb-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Close button: red on hover (Windows convention) */
+button#decorum-tb-close:hover {
+  background: rgba(239, 68, 68, 0.85); /* red-500 */
+  color: #ffffff;
+}
+
+button#decorum-tb-close:active {
+  background: rgba(220, 38, 38, 0.95); /* red-600 */
+}
+
+/* Scale icons slightly for visual balance */
+button.decorum-tb-btn svg {
+  width: 10px;
+  height: 10px;
+}
