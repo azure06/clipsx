@@ -87,7 +87,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
           filter_types: filterTypes,
           limit,
           offset: currentOffset,
-          use_semantic_search: settings?.semantic_search_enabled ?? false,
+          use_semantic_search:
+            (settings?.semantic_search_enabled ?? false) &&
+            (!filterTypes || filterTypes.length === 0),
         })
       } else {
         // Browse mode: Standard chronological pagination
@@ -157,7 +159,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         filterTypes,
         limit: 50,
         offset: 0,
-        useSemanticSearch: settings?.semantic_search_enabled ?? false,
+        useSemanticSearch:
+          (settings?.semantic_search_enabled ?? false) &&
+          (!filterTypes || filterTypes.length === 0),
         similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
       })
       set({
@@ -194,7 +198,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         query,
         filterTypes,
         limit,
-        useSemanticSearch: settings?.semantic_search_enabled ?? false,
+        useSemanticSearch:
+          (settings?.semantic_search_enabled ?? false) &&
+          (!filterTypes || filterTypes.length === 0),
         similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
       })
       set({ clips, loading: false })

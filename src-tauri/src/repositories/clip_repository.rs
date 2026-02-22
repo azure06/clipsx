@@ -186,13 +186,20 @@ impl ClipRepository {
         let escaped_query = Self::escape_fts5_query(query);
 
         // Build base query
-        let mut sql = String::from(
-            r#"
-            SELECT clips.* FROM clips
-            INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
-            WHERE clips_fts MATCH ?
-        "#,
-        );
+        let mut sql = String::new();
+        let has_text_query = escaped_query != "\"\"";
+
+        if has_text_query {
+            sql.push_str(
+                r#"
+                SELECT clips.* FROM clips
+                INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
+                WHERE clips_fts MATCH ?
+            "#,
+            );
+        } else {
+            sql.push_str("SELECT clips.* FROM clips WHERE 1=1");
+        }
 
         // Add filter types if present
         if let Some(types) = &filter_types {
@@ -208,10 +215,18 @@ impl ClipRepository {
             }
         }
 
-        sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ?");
+        if has_text_query {
+            sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ?");
+        } else {
+            sql.push_str(" ORDER BY clips.updated_at DESC LIMIT ?");
+        }
 
         // Bind parameters
-        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql).bind(escaped_query);
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql);
+
+        if has_text_query {
+            query_builder = query_builder.bind(escaped_query);
+        }
 
         if let Some(types) = &filter_types {
             for t in types {
@@ -236,13 +251,20 @@ impl ClipRepository {
     ) -> Result<Vec<ClipItem>> {
         let escaped_query = Self::escape_fts5_query(query);
 
-        let mut sql = String::from(
-            r#"
-            SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips
-            INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
-            WHERE clips_fts MATCH ?
-        "#,
-        );
+        let mut sql = String::new();
+        let has_text_query = escaped_query != "\"\"";
+
+        if has_text_query {
+            sql.push_str(
+                r#"
+                SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips
+                INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
+                WHERE clips_fts MATCH ?
+            "#,
+            );
+        } else {
+            sql.push_str("SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1");
+        }
 
         if let Some(types) = &filter_types {
             if !types.is_empty() {
@@ -257,9 +279,17 @@ impl ClipRepository {
             }
         }
 
-        sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ? OFFSET ?");
+        if has_text_query {
+            sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ? OFFSET ?");
+        } else {
+            sql.push_str(" ORDER BY clips.updated_at DESC LIMIT ? OFFSET ?");
+        }
 
-        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql).bind(escaped_query);
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql);
+
+        if has_text_query {
+            query_builder = query_builder.bind(escaped_query);
+        }
 
         if let Some(types) = &filter_types {
             for t in types {
