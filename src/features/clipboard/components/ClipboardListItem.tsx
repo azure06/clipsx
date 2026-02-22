@@ -143,7 +143,7 @@ const ClipboardListItemComponent = ({
 
           {/* Metadata - Timestamp */}
           <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-            {new Date(clip.createdAt).toLocaleTimeString([], {
+            {new Date(clip.createdAt * 1000).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
             })}

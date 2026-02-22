@@ -36,7 +36,7 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
             </span>
           </div>
           <span className="text-xs text-gray-500 tabular-nums">
-            {new Date(clip.createdAt).toLocaleString()}
+            {new Date(clip.createdAt * 1000).toLocaleString()}
           </span>
         </div>
 
