@@ -27,6 +27,7 @@ pub struct ClipItem {
     pub similarity_score: Option<f32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Tag {
@@ -37,6 +38,7 @@ pub struct Tag {
     pub updated_at: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Collection {
@@ -60,6 +62,7 @@ pub struct Embedding {
     pub updated_at: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipWithTags {
@@ -69,6 +72,7 @@ pub struct ClipWithTags {
     pub collections: Vec<Collection>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ClipContent {
@@ -119,6 +123,7 @@ impl ClipItem {
         format!("{:x}", hasher.finish())
     }
 
+    #[allow(dead_code)]
     pub fn content(&self) -> Option<ClipContent> {
         match self.content_type.as_str() {
             "text" => self

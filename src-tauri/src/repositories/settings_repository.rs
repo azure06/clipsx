@@ -55,6 +55,7 @@ impl SettingsRepository {
     }
 
     /// Update specific settings fields (partial update)
+    #[allow(dead_code)]
     pub fn update<F>(&self, updater: F) -> Result<AppSettings>
     where
         F: FnOnce(&mut AppSettings),
@@ -97,7 +98,7 @@ mod tests {
 
         let mut settings = AppSettings::default();
         settings.enable_images = false;
-        settings.theme = crate::models::Theme::Dark;
+        settings.theme = crate::models::settings::Theme::Dark;
 
         repo.save(&settings).unwrap();
 

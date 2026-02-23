@@ -28,4 +28,3 @@ export const useUIStore = create<UIState>(set => ({
   resetSearch: () => set({ searchQuery: '', previewClip: null }),
   toggleSemantic: () => set(state => ({ isSemanticActive: !state.isSemanticActive })),
 }))
-

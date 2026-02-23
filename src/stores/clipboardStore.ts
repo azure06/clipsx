@@ -88,9 +88,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
           filter_types: filterTypes,
           limit,
           offset: currentOffset,
-          use_semantic_search:
-            isSemanticActive &&
-            (!filterTypes || filterTypes.length === 0),
+          use_semantic_search: isSemanticActive && (!filterTypes || filterTypes.length === 0),
         })
       } else {
         // Browse mode: Standard chronological pagination
@@ -160,9 +158,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         filterTypes,
         limit: 50,
         offset: 0,
-        useSemanticSearch:
-          isSemanticActive &&
-          (!filterTypes || filterTypes.length === 0),
+        useSemanticSearch: isSemanticActive && (!filterTypes || filterTypes.length === 0),
         similarityThreshold: 0.3,
       })
       set({

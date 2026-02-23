@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::models::{ClipItem, Collection, Embedding, Tag};
 use anyhow::Result;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};

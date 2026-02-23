@@ -57,6 +57,7 @@ impl ContentType {
 /// Result of intelligence analysis on clipboard text.
 pub struct DetectionResult {
     pub detected_type: ContentType,
+    #[allow(dead_code)]
     pub confidence: f32,
     pub metadata: Value,
 }

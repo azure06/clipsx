@@ -50,6 +50,7 @@ pub trait ClipboardMonitor: Send + Sync {
 /// JS/TS equivalent: class MacOSMonitor {
 ///   private lastChangeCount: number = 0
 /// }
+#[allow(dead_code)]
 pub struct MacOSMonitor {
     last_change_count: i64,
     /// Hash of the content we expect to see on the next tick after a programmatic
@@ -58,6 +59,7 @@ pub struct MacOSMonitor {
     provider: Box<dyn ClipboardProvider>,
 }
 
+#[allow(dead_code)]
 impl MacOSMonitor {
     pub fn new(provider: Box<dyn ClipboardProvider>) -> Self {
         // NOTE: `Self` is shorthand for `MacOSMonitor`
@@ -365,7 +367,7 @@ mod tests {
     struct MockState {
         content: Option<ClipboardContent>,
         app_name: Option<String>,
-        change_count: i64,
+        _change_count: i64,
         read_calls: usize,
     }
 
@@ -379,7 +381,7 @@ mod tests {
                 state: Arc::new(Mutex::new(MockState {
                     content: None,
                     app_name: None,
-                    change_count: 0,
+                    _change_count: 0,
                     read_calls: 0,
                 })),
             }
@@ -390,6 +392,7 @@ mod tests {
             state.content = content;
         }
 
+        #[allow(dead_code)]
         fn get_read_calls(&self) -> usize {
             self.state.lock().unwrap().read_calls
         }
@@ -408,7 +411,7 @@ mod tests {
         }
 
         fn get_change_count(&self) -> Result<i64> {
-            Ok(self.state.lock().unwrap().change_count)
+            Ok(self.state.lock().unwrap()._change_count)
         }
 
         fn platform_name(&self) -> &'static str {

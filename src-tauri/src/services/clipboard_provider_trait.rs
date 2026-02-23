@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::services::clipboard_platform::ClipboardContent;
 use anyhow::Result;
 

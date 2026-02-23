@@ -21,7 +21,7 @@ use tokio::time::{sleep, Duration};
 /// }
 pub struct ClipboardService {
     repository: Arc<ClipRepository>,
-    settings_repository: Arc<SettingsRepository>,
+    _settings_repository: Arc<SettingsRepository>,
     semantic_service: Arc<SemanticService>,
     // NOTE: `Arc<Mutex<T>>` is like a thread-safe shared reference
     // Arc = Atomic Reference Counted (like shared_ptr in C++)
@@ -49,7 +49,7 @@ impl ClipboardService {
 
         Self {
             repository,
-            settings_repository,
+            _settings_repository: settings_repository,
             semantic_service,
             // NOTE: Create platform-specific monitor (macOS vs Windows/Linux)
             monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(

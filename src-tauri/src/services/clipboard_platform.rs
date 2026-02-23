@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Platform-specific clipboard utilities
 ///
 /// **macOS (NSPasteboard):**
@@ -60,6 +61,7 @@ pub enum ClipboardContent {
     Files { paths: Vec<String> },
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum ImageFormat {
     Png,
