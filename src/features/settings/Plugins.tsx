@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from '../../stores'
-import { Switch } from '../../shared/components/ui/Switch'
 
 const AVAILABLE_MODELS = [
   {
@@ -101,10 +100,6 @@ export const Plugins = () => {
 
       setIsReady(true)
       await fetchDownloadedModels()
-
-      if (settings && !settings.semantic_search_enabled) {
-        handleToggleSemanticSearch(true)
-      }
     } catch (err) {
       setError(String(err))
       console.error('Failed to swap semantic model:', err)
@@ -125,16 +120,11 @@ export const Plugins = () => {
       // We should update UI state accordingly.
       if (settings?.semantic_model === modelId) {
         setIsReady(false)
-        await updateSettings({ semantic_search_enabled: false })
       }
     } catch (err) {
       setError(String(err))
       console.error('Failed to delete semantic model:', err)
     }
-  }
-
-  const handleToggleSemanticSearch = (enabled: boolean) => {
-    void updateSettings({ semantic_search_enabled: enabled })
   }
 
   return (
@@ -144,20 +134,9 @@ export const Plugins = () => {
           <div>
             <h1 className="text-2xl font-bold mb-1">AI Search Engines</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Manage local AI models for privacy-first semantic search.
+              Install and manage local AI models for semantic search. Toggle AI mode directly from
+              the search bar.
             </p>
-          </div>
-
-          {/* Master Switch */}
-          <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-              {settings?.semantic_search_enabled ? 'Semantic Search: On' : 'Semantic Search: Off'}
-            </span>
-            <Switch
-              checked={settings?.semantic_search_enabled ?? false}
-              onChange={handleToggleSemanticSearch}
-              disabled={!isReady || downloadedModels.length === 0}
-            />
           </div>
         </div>
 

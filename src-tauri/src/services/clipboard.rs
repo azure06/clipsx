@@ -156,10 +156,9 @@ impl ClipboardService {
                 );
                 self.repository.insert(&clip).await?;
 
-                // Trigger background embedding generation if enabled
+                // Trigger background embedding generation if a model is loaded
                 if let Some(text) = &clip.content_text {
-                    let settings = self.settings_repository.load().unwrap_or_default();
-                    if settings.semantic_search_enabled && self.semantic_service.is_ready() {
+                    if self.semantic_service.is_ready() {
                         let text_clone = text.clone();
                         let clip_id = clip.id.clone();
                         let repo = self.repository.clone();

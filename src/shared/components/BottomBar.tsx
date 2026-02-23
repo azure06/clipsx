@@ -1,14 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Lightbulb } from 'lucide-react'
 import { useUIStore } from '../../stores'
 
+const Kbd = ({ children }: { children: ReactNode }) => (
+  <span className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-white/10 border border-white/10 text-[10px] font-mono font-semibold text-gray-200 leading-none">
+    {children}
+  </span>
+)
+
 // Array of helpful tips for the user
-const TIPS = [
-  'Press Enter to paste the selected clip.',
-  'Use ↑ and ↓ arrows or J and K to navigate.',
-  'Type /image, /url, or /text to instantly filter clips.',
-  'Press F to favorite a clip or P to pin it.',
-  'Press Delete or Backspace to remove a clip.',
+const TIPS: ReactNode[] = [
+  <>
+    Press <Kbd>Enter</Kbd> to paste the selected clip.
+  </>,
+  <>
+    Use <Kbd>↑</Kbd> <Kbd>↓</Kbd> arrows or <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate.
+  </>,
+  <>
+    Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/text</Kbd> to filter clips.
+  </>,
+  <>
+    Press <Kbd>F</Kbd> to favorite a clip or <Kbd>P</Kbd> to pin it.
+  </>,
+  <>
+    Press <Kbd>Delete</Kbd> or <Kbd>Backspace</Kbd> to remove a clip.
+  </>,
 ]
 
 export const BottomBar = () => {

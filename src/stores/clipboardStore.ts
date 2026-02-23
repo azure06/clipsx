@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from './settingsStore'
+import { useUIStore } from './uiStore'
 import type { ClipItem, Result } from '../shared/types'
 
 type ClipboardState = {
@@ -81,14 +82,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         // Search mode: Use FTS paginated search with parsing
         const { query, filterTypes } = parseSearchQuery(searchQuery)
 
-        const settings = useSettingsStore.getState().settings
+        const isSemanticActive = useUIStore.getState().isSemanticActive
         newClips = await invoke<ClipItem[]>('search_clips_paginated', {
           query,
           filter_types: filterTypes,
           limit,
           offset: currentOffset,
           use_semantic_search:
-            (settings?.semantic_search_enabled ?? false) &&
+            isSemanticActive &&
             (!filterTypes || filterTypes.length === 0),
         })
       } else {
@@ -153,16 +154,16 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       const { query, filterTypes } = parseSearchQuery(rawQuery)
 
-      const settings = useSettingsStore.getState().settings
+      const isSemanticActive = useUIStore.getState().isSemanticActive
       const clips = await invoke<ClipItem[]>('search_clips_paginated', {
         query,
         filterTypes,
         limit: 50,
         offset: 0,
         useSemanticSearch:
-          (settings?.semantic_search_enabled ?? false) &&
+          isSemanticActive &&
           (!filterTypes || filterTypes.length === 0),
-        similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
+        similarityThreshold: 0.3,
       })
       set({
         clips,

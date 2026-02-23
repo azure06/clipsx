@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 
 import { SearchBar } from '../search/SearchBar'
 import { ClipPreview } from '../clipboard/ClipPreview'
@@ -20,14 +21,32 @@ export const AppLayout = () => {
     previewClip,
     setPreviewClip,
     resetSearch,
+    isSemanticActive,
+    toggleSemantic,
   } = useUIStore()
   const { clips } = useClipboardStore()
-  const { settings, loadSettings } = useSettingsStore()
+  const { loadSettings } = useSettingsStore()
+  const [isModelReady, setIsModelReady] = useState(false)
 
   // Load settings on app start
   useEffect(() => {
     void loadSettings()
   }, [loadSettings])
+
+  // Check if an AI model is loaded (poll periodically)
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const ready = await invoke<boolean>('get_semantic_search_status')
+        setIsModelReady(ready)
+      } catch {
+        setIsModelReady(false)
+      }
+    }
+    void check()
+    const interval = setInterval(() => void check(), 5000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Derived state for active clip (first in list)
   const activeClip = clips[0]
@@ -37,7 +56,6 @@ export const AppLayout = () => {
     const unlisten = listen('open-settings', () => {
       setActiveView('settings')
       resetSearch()
-      // Ensure window comes to front (handled by Rust, but good practice to be ready)
     })
     return () => {
       void unlisten.then(f => f())
@@ -71,7 +89,9 @@ export const AppLayout = () => {
                     value={searchQuery}
                     onChange={setSearchQuery}
                     onClear={handleClear}
-                    isSemanticSearch={settings?.semantic_search_enabled}
+                    isSemanticAvailable={isModelReady}
+                    isSemanticActive={isSemanticActive}
+                    onToggleSemantic={toggleSemantic}
                   />
                 </div>
 
