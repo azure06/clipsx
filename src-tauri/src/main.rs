@@ -134,6 +134,30 @@ fn main() {
                     let _ = app_state.settings_repository.save(&settings);
                 }
 
+                // Robust Startup Check for Semantic Models
+                if settings.semantic_search_enabled {
+                    let downloaded_models = app_state.semantic_service.get_downloaded_models();
+                    if downloaded_models.contains(&settings.semantic_model) {
+                        // Model is available on disk, load it
+                        let semantic_service = app_state.semantic_service.clone();
+                        let model_name = settings.semantic_model.clone();
+                        let app_handle_clone = app_handle.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = semantic_service.init_model(model_name, Some(app_handle_clone)).await {
+                                eprintln!("Failed to initialize semantic model on startup: {}", e);
+                            }
+                        });
+                    } else {
+                        // Model was deleted or not fully downloaded: Self-heal the state
+                        eprintln!(
+                            "Semantic model {} is enabled but missing from disk. Self-healing state...",
+                            settings.semantic_model
+                        );
+                        settings.semantic_search_enabled = false;
+                        let _ = app_state.settings_repository.save(&settings);
+                    }
+                }
+
                 // Register global shortcut on startup
                 if let Err(e) =
                     commands::setup_global_shortcut(&app_handle, &settings.global_shortcut)
@@ -180,6 +204,8 @@ fn main() {
             commands::init_semantic_search,
             commands::get_semantic_search_status,
             commands::change_semantic_model,
+            commands::get_downloaded_models,
+            commands::delete_semantic_model,
             commands::generate_embedding,
         ])
         .run(tauri::generate_context!())

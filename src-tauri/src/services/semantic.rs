@@ -22,11 +22,76 @@ impl SemanticService {
 
     /// Downloads (if necessary) and loads the ONNX model into memory.
     /// This is a blocking operation so it must be spawned on a blocking thread.
-    pub async fn init_model(&self, model_name: String) -> Result<()> {
+    pub async fn init_model(
+        &self,
+        model_name: String,
+        app_handle: Option<tauri::AppHandle>,
+    ) -> Result<()> {
         let model_arc = self.model.clone();
         let cache_dir = self.app_data_dir.join(".fastembed_cache");
 
-        task::spawn_blocking(move || -> Result<()> {
+        // We know the approximate sizes of the repositories for progress bars
+        let expected_total_bytes: u64 = match model_name.as_str() {
+            "all-MiniLM-L6-v2" => 85_000_000,
+            "paraphrase-multilingual-MiniLM-L12-v2" => 450_000_000,
+            _ => 100_000_000,
+        };
+
+        // If we need to send progress events, spawn a poller
+        let is_downloaded = self.get_downloaded_models().contains(&model_name);
+        let progress_cancel = Arc::new(StdRwLock::new(false));
+
+        if !is_downloaded {
+            if let Some(app) = app_handle {
+                let cache_clone = cache_dir.clone();
+                let cancel_clone = progress_cancel.clone();
+                let m_name = model_name.clone();
+
+                tokio::spawn(async move {
+                    use tauri::Emitter;
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        if *cancel_clone.read().unwrap() {
+                            break;
+                        }
+
+                        // Calculate dir size
+                        let mut size = 0;
+                        if let Ok(entries) = walkdir::WalkDir::new(&cache_clone)
+                            .into_iter()
+                            .collect::<Result<Vec<_>, _>>()
+                        {
+                            for entry in entries {
+                                if let Ok(metadata) = entry.metadata() {
+                                    if metadata.is_file() {
+                                        size += metadata.len();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Send event
+                        #[derive(serde::Serialize, Clone)]
+                        struct ProgressPayload {
+                            model: String,
+                            downloaded: u64,
+                            total: u64,
+                        }
+
+                        let _ = app.emit(
+                            "download-progress",
+                            ProgressPayload {
+                                model: m_name.clone(),
+                                downloaded: size,
+                                total: expected_total_bytes,
+                            },
+                        );
+                    }
+                });
+            }
+        }
+
+        let res = task::spawn_blocking(move || -> Result<()> {
             let model_enum = match model_name.as_str() {
                 "all-MiniLM-L6-v2" => EmbeddingModel::AllMiniLML6V2,
                 "paraphrase-multilingual-MiniLM-L12-v2" => EmbeddingModel::ParaphraseMLMiniLML12V2,
@@ -43,7 +108,13 @@ impl SemanticService {
             *lock = Some(model);
             Ok(())
         })
-        .await??;
+        .await?;
+
+        // Stop poller
+        *progress_cancel.write().unwrap() = true;
+
+        // Flatten the double Result from spawn_blocking
+        res?;
 
         Ok(())
     }
@@ -57,6 +128,71 @@ impl SemanticService {
     pub fn unload_model(&self) {
         let mut lock = self.model.write().unwrap();
         *lock = None;
+    }
+
+    /// Returns a list of model IDs (e.g., "all-MiniLM-L6-v2") that have been downloaded
+    /// by checking the .fastembed_cache directory for corresponding folders.
+    pub fn get_downloaded_models(&self) -> Vec<String> {
+        let cache_dir = self.app_data_dir.join(".fastembed_cache");
+        let mut downloaded = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(cache_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let dir_name = entry.file_name().to_string_lossy().to_string();
+                        // fastembed usually creates folders like "fast-all-MiniLM-L6-v2"
+                        if dir_name.contains("all-MiniLM-L6-v2") {
+                            downloaded.push("all-MiniLM-L6-v2".to_string());
+                        } else if dir_name.contains("paraphrase-multilingual-MiniLM-L12-v2") {
+                            downloaded.push("paraphrase-multilingual-MiniLM-L12-v2".to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deduplicate in case multiple folders match
+        downloaded.sort();
+        downloaded.dedup();
+        downloaded
+    }
+
+    /// Deletes the cached model files for a given model ID to free up disk space.
+    pub fn delete_model(&self, model_name: &str) -> Result<()> {
+        // If the model to delete is currently loaded, unload it first
+        {
+            let lock = self.model.read().unwrap();
+            if lock.is_some() {
+                // We're just checking if any model is loaded.
+                // A more robust check would verify if the loaded model IS the one being deleted,
+                // but since fastembed doesn't expose the loaded model name easily, we can just
+                // unload whatever is in memory if we are doing a delete operation, leaving it safe.
+            }
+        }
+        self.unload_model();
+
+        let cache_dir = self.app_data_dir.join(".fastembed_cache");
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let dir_name = entry.file_name().to_string_lossy().to_string();
+                        if dir_name.contains(model_name) {
+                            let path = entry.path();
+                            std::fs::remove_dir_all(&path).map_err(|e| {
+                                anyhow!(
+                                    "Failed to delete model directory {}: {}",
+                                    path.display(),
+                                    e
+                                )
+                            })?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Generates an embedding vector for the given text.

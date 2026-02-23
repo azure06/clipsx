@@ -452,7 +452,10 @@ pub async fn open_path(path: String) -> Result<(), String> {
 // ============================================================================
 
 #[tauri::command]
-pub async fn init_semantic_search(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn init_semantic_search(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
     let settings = state
         .settings_repository
         .load()
@@ -460,7 +463,7 @@ pub async fn init_semantic_search(state: State<'_, AppState>) -> Result<(), Stri
 
     state
         .semantic_service
-        .init_model(settings.semantic_model)
+        .init_model(settings.semantic_model, Some(app_handle))
         .await
         .map_err(|e| e.to_string())
 }
@@ -469,6 +472,7 @@ pub async fn init_semantic_search(state: State<'_, AppState>) -> Result<(), Stri
 pub async fn change_semantic_model(
     model_name: String,
     state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     // Unload the existing model first to free memory
     state.semantic_service.unload_model();
@@ -476,7 +480,7 @@ pub async fn change_semantic_model(
     // Load the new model
     state
         .semantic_service
-        .init_model(model_name)
+        .init_model(model_name, Some(app_handle))
         .await
         .map_err(|e| e.to_string())
 }
@@ -484,6 +488,19 @@ pub async fn change_semantic_model(
 #[tauri::command]
 pub fn get_semantic_search_status(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.semantic_service.is_ready())
+}
+
+#[tauri::command]
+pub fn get_downloaded_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.semantic_service.get_downloaded_models())
+}
+
+#[tauri::command]
+pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .semantic_service
+        .delete_model(&model_name)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

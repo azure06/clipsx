@@ -49,11 +49,15 @@ export const BottomBar = () => {
       </div>
 
       {/* Right: Icon and Active View Indicator */}
-      <div className="hidden sm:flex items-center gap-2 font-medium opacity-40 uppercase tracking-widest shrink-0 pl-4">
+      <div className="hidden sm:flex items-center gap-1 opacity-40 uppercase shrink-0 pl-4">
         {activeView === 'clips' && (
-          <img src="/monochromatic.svg" alt="Clips Icon" className="w-5 h-5 opacity-70" />
+          <img
+            src="/monochromatic.svg"
+            alt="Clips Icon"
+            className="w-5 h-5 opacity-70 mt-[0.12rem]"
+          />
         )}
-        <span>{activeView}</span>
+        <span className="font-bold tracking-widest text-xs">{activeView}</span>
       </div>
     </div>
   )
