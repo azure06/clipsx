@@ -26,12 +26,8 @@ use anyhow::{anyhow, Result};
 
 #[cfg(target_os = "macos")]
 use cocoa::{
-    appkit::{
-        NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeRTF,
-        NSPasteboardTypeString, NSPasteboardTypeTIFF,
-    },
+    appkit::{NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypeString},
     base::{id, nil},
-    foundation::NSString,
 };
 
 #[cfg(target_os = "macos")]
@@ -148,6 +144,56 @@ unsafe fn read_text(pasteboard: id) -> Option<String> {
     Some(text)
 }
 
+/// Strip HTML tags to extract plain text (basic implementation)
+fn strip_html(html: &str) -> String {
+    html.replace("<br>", "\n")
+        .replace("<BR>", "\n")
+        .replace("</p>", "\n")
+        .replace("</P>", "\n")
+        .chars()
+        .fold((String::new(), false), |(mut acc, mut in_tag), c| match c {
+            '<' => {
+                in_tag = true;
+                (acc, in_tag)
+            }
+            '>' => {
+                in_tag = false;
+                (acc, in_tag)
+            }
+            _ if !in_tag => {
+                acc.push(c);
+                (acc, in_tag)
+            }
+            _ => (acc, in_tag),
+        })
+        .0
+        .trim()
+        .to_string()
+}
+
+/// Extract plain text from RTF (basic implementation)
+fn extract_rtf_text(rtf: &str) -> String {
+    // Very basic RTF text extraction
+    // RTF format: {\rtf1...text...}
+    // Remove control words and braces
+    let mut result = String::new();
+    let mut in_control_word = false;
+    let mut depth = 0;
+
+    for c in rtf.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '\\' => in_control_word = true,
+            ' ' | '\n' | '\r' if in_control_word => in_control_word = false,
+            _ if !in_control_word && depth > 0 => result.push(c),
+            _ => {}
+        }
+    }
+
+    result.trim().to_string()
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn read_html(pasteboard: id) -> Option<(String, String)> {
     let ns_html: id = msg_send![pasteboard, stringForType: NSPasteboardTypeHTML];
@@ -192,23 +238,28 @@ unsafe fn read_rtf(pasteboard: id) -> Option<(String, String)> {
 #[cfg(target_os = "macos")]
 unsafe fn read_image(pasteboard: id) -> Option<(Vec<u8>, ImageFormat)> {
     use cocoa::base::nil;
-    use cocoa::foundation::NSString;
+    use std::ffi::CString;
 
     // Try PNG first (most compatible)
-    let png_str = NSString::alloc(nil).init_str("public.png");
-    if let Some(data) = read_image_data(pasteboard, png_str) {
-        let _: () = msg_send![png_str, release];
-        return Some((data, ImageFormat::Png));
+    // Use stringWithUTF8String to create NSString from C string
+    if let Ok(png_c_str) = CString::new("public.png") {
+        let png_ns: id = msg_send![class!(NSString), stringWithUTF8String: png_c_str.as_ptr()];
+        if png_ns != nil {
+            if let Some(data) = read_image_data(pasteboard, png_ns) {
+                return Some((data, ImageFormat::Png));
+            }
+        }
     }
-    let _: () = msg_send![png_str, release];
 
     // Try TIFF (common on macOS screenshots)
-    let tiff_str = NSString::alloc(nil).init_str("public.tiff");
-    if let Some(data) = read_image_data(pasteboard, tiff_str) {
-        let _: () = msg_send![tiff_str, release];
-        return Some((data, ImageFormat::Tiff));
+    if let Ok(tiff_c_str) = CString::new("public.tiff") {
+        let tiff_ns: id = msg_send![class!(NSString), stringWithUTF8String: tiff_c_str.as_ptr()];
+        if tiff_ns != nil {
+            if let Some(data) = read_image_data(pasteboard, tiff_ns) {
+                return Some((data, ImageFormat::Tiff));
+            }
+        }
     }
-    let _: () = msg_send![tiff_str, release];
 
     None
 }
@@ -235,12 +286,18 @@ unsafe fn read_image_data(pasteboard: id, ns_type: id) -> Option<Vec<u8>> {
 #[cfg(target_os = "macos")]
 unsafe fn read_files(pasteboard: id) -> Option<Vec<String>> {
     use cocoa::base::nil;
-    use cocoa::foundation::NSString;
+    use std::ffi::CString;
 
     // Try reading file URLs using NSFilenamesPboardType (legacy approach)
-    let filenames_type = NSString::alloc(nil).init_str("NSFilenamesPboardType");
+    let filenames_c_str = CString::new("NSFilenamesPboardType").ok()?;
+    let filenames_type: id =
+        msg_send![class!(NSString), stringWithUTF8String: filenames_c_str.as_ptr()];
+
+    if filenames_type == nil {
+        return None;
+    }
+
     let property_list: id = msg_send![pasteboard, propertyListForType: filenames_type];
-    let _: () = msg_send![filenames_type, release];
 
     if property_list == nil {
         return None;
@@ -428,33 +485,24 @@ pub fn get_active_app_name() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn get_active_app_name() -> Option<String> {
-    use cocoa::appkit::NSWorkspace;
-    use cocoa::base::{id, nil};
-    use cocoa::foundation::NSString;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSRunningApplication, NSWorkspace};
+    use objc2_foundation::NSString;
 
     unsafe {
-        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let front_app: id = msg_send![workspace, frontmostApplication];
+        let workspace = NSWorkspace::sharedWorkspace();
 
-        if front_app == nil {
-            return None;
-        }
+        // Get frontmost application - this returns Option<Retained<NSRunningApplication>>
+        let front_app: Option<Retained<NSRunningApplication>> = workspace.frontmostApplication();
 
-        let app_name: id = msg_send![front_app, localizedName];
-        if app_name == nil {
-            return None;
-        }
+        // Check if we got a valid app
+        let app = front_app?;
 
-        let c_str: *const i8 = msg_send![app_name, UTF8String];
-        if c_str.is_null() {
-            return None;
-        }
+        // Get localized name - this returns Option<Retained<NSString>>
+        let app_name: Option<Retained<NSString>> = app.localizedName();
 
-        Some(
-            std::ffi::CStr::from_ptr(c_str)
-                .to_string_lossy()
-                .into_owned(),
-        )
+        // Convert to String
+        app_name.map(|name| name.to_string())
     }
 }
 

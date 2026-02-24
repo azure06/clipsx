@@ -1,7 +1,6 @@
 // Unterdrücke Warnings von veralteten Cocoa APIs
 #![allow(unexpected_cfgs)]
 #![allow(deprecated)]
-#![allow(dead_code, unused_variables)]
 
 use tauri::{AppHandle, Runtime, WebviewWindow};
 

@@ -41,6 +41,11 @@ tauri-plugin-decorum = "1.1.1"
 walkdir = "2.5.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Modern objc2 for clipboard_platform.rs
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSString", "NSArray", "NSData"] }
+objc2-app-kit = { version = "0.2", features = ["NSPasteboard", "NSRunningApplication", "NSWorkspace"] }
+# Legacy cocoa/objc for mac_rounded_corners.rs (working version)
 cocoa = "0.26"
 objc = "0.2.7"
 core-graphics = "0.24"

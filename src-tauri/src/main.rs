@@ -19,8 +19,15 @@ mod services;
 use plugins::mac_rounded_corners;
 
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_decorum::init())
+    let mut builder = tauri::Builder::default();
+
+    // Only use decorum plugin on Windows (macOS uses custom mac_rounded_corners plugin)
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(tauri_plugin_decorum::init());
+    }
+
+    builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

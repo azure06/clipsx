@@ -40,20 +40,14 @@
         "visible": false,
         "focus": true,
         "windowEffects": {
-          "effects": [
-            "sidebar",
-            "acrylic",
-            "hudWindow"
-          ]
+          "effects": ["acrylic", "underWindowBackground"]
         }
       }
     ],
     "security": {
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "**"
-        ]
+        "scope": ["**"]
       },
       "csp": "default-src 'self' http://localhost:5173; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost; media-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost; connect-src 'self' http://localhost:5173 ipc://localhost https://api.openrouter.ai; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     },
