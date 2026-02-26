@@ -1,9 +1,11 @@
 import { Copy, Check } from 'lucide-react'
 import { useState } from 'react'
 import type { SmartAction, Content } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useCopyAction = (): SmartAction => {
   const [copied, setCopied] = useState(false)
+  const { copyToClipboard } = useClipboardStore()
 
   return {
     id: 'copy',
@@ -13,7 +15,7 @@ export const useCopyAction = (): SmartAction => {
     shortcut: '⌘C',
     check: () => true, // Available for all content
     execute: async (content: Content) => {
-      await navigator.clipboard.writeText(content.text)
+      await copyToClipboard(content.text, content.clip.id)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     },

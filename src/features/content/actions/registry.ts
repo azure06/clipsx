@@ -3,7 +3,6 @@ import type { Content, SmartAction, ActionContext } from '../types'
 
 // Core Actions
 import { useCopyAction } from './shared/CopyAction'
-import { useCopyAsPlainTextAction } from './shared/CopyAsPlainTextAction'
 import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
@@ -30,7 +29,6 @@ export const useActionRegistry = (context?: ActionContext) => {
   // 1. Initialize all action hooks
   // Core
   const copyAction = useCopyAction()
-  const copyPlainText = useCopyAsPlainTextAction()
   const deleteAction = useDeleteAction(context?.onDelete)
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
@@ -61,8 +59,8 @@ export const useActionRegistry = (context?: ActionContext) => {
   // 2. Define the master list of all available actions
   // Group 1: Standard Actions (Copy, Open)
   const standardActions = useMemo(
-    () => [copyAction, copyPlainText, openDefaultEditor],
-    [copyAction, copyPlainText, openDefaultEditor]
+    () => [copyAction, openDefaultEditor],
+    [copyAction, openDefaultEditor]
   )
 
   // Group 2: Meta Actions (Fav, Pin, Delete)

@@ -187,6 +187,22 @@ pub async fn search_clips_paginated(
 
 #[tauri::command]
 pub async fn delete_clip(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // 1. Fetch clip to get file paths
+    let clip = state
+        .repository
+        .get_by_id(&id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Clip not found".to_string())?;
+
+    // 2. Delete files FIRST (before DB record)
+    state
+        .clipboard_service
+        .cleanup_clip_files(&clip)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 3. Delete DB record
     state
         .repository
         .delete(&id)
@@ -214,6 +230,23 @@ pub async fn toggle_pin(id: String, state: State<'_, AppState>) -> Result<bool, 
 
 #[tauri::command]
 pub async fn clear_all_clips(state: State<'_, AppState>) -> Result<(), String> {
+    // 1. Fetch ALL clips to get file paths
+    let clips = state
+        .repository
+        .get_recent(i32::MAX)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. Delete all files
+    for clip in clips {
+        state
+            .clipboard_service
+            .cleanup_clip_files(&clip)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 3. Clear DB
     state
         .repository
         .clear_all()
@@ -231,19 +264,210 @@ pub async fn copy_to_clipboard(
     id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Update timestamp when copying existing clip
-    if let Some(clip_id) = id {
+    // If no ID, just copy plain text (for non-clip text)
+    if id.is_none() {
         state
-            .repository
-            .touch(&clip_id)
+            .clipboard_service
+            .set_text(&text)
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
+        return Ok(());
     }
 
+    let clip_id = id.unwrap();
+
+    eprintln!("[COPY] Starting copy_to_clipboard for clip_id: {}", clip_id);
+
+    // 1. Update timestamp (bump to top)
     state
-        .clipboard_service
-        .set_text(&text)
-        .map_err(|e: anyhow::Error| e.to_string())
+        .repository
+        .touch(&clip_id)
+        .await
+        .map_err(|e: anyhow::Error| e.to_string())?;
+
+    // 2. Fetch full ClipItem from database
+    let clip = state
+        .repository
+        .get_by_id(&clip_id)
+        .await
+        .map_err(|e: anyhow::Error| e.to_string())?
+        .ok_or_else(|| "Clip not found".to_string())?;
+
+    eprintln!("[COPY] Fetched clip: content_type={}, attachment_path={:?}, svg_path={:?}, pdf_path={:?}, image_path={:?}",
+              clip.content_type,
+              clip.attachment_path.as_ref().map(|_| "set"),
+              clip.svg_path.as_ref().map(|_| "set"),
+              clip.pdf_path.as_ref().map(|_| "set"),
+              clip.image_path.as_ref().map(|_| "set"));
+
+    // 3. Reconstruct ClipboardContent based on content_type
+    use crate::services::clipboard_platform::ClipboardContent;
+
+    let content = match clip.content_type.as_str() {
+        "text" => ClipboardContent::Text {
+            content: clip.content_text.unwrap_or_default(),
+        },
+
+        "html" => ClipboardContent::Html {
+            html: clip.content_html.unwrap_or_default(),
+            plain: clip.content_text.unwrap_or_default(),
+        },
+
+        "rtf" => ClipboardContent::Rtf {
+            rtf: clip.content_rtf.unwrap_or_default(),
+            plain: clip.content_text.unwrap_or_default(),
+        },
+
+        "image" => {
+            // Read image file from disk
+            let image_data = if let Some(path) = &clip.image_path {
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|e| format!("Failed to read image: {}", e))?
+            } else {
+                return Err("Image clip has no image_path".to_string());
+            };
+
+            // Determine format from file extension
+            let format = if let Some(path) = &clip.image_path {
+                if path.ends_with(".png") {
+                    crate::services::clipboard_platform::ImageFormat::Png
+                } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+                    crate::services::clipboard_platform::ImageFormat::Jpeg
+                } else {
+                    crate::services::clipboard_platform::ImageFormat::Tiff
+                }
+            } else {
+                crate::services::clipboard_platform::ImageFormat::Png
+            };
+
+            ClipboardContent::Image {
+                data: image_data,
+                format,
+            }
+        }
+
+        "files" => ClipboardContent::Files {
+            paths: serde_json::from_str(&clip.file_paths.unwrap_or_default())
+                .unwrap_or_default(),
+        },
+
+        "office" => {
+            // Read all Office files from disk
+            eprintln!("[COPY] Reading Office files from disk...");
+
+            let ole_data = if let Some(path) = &clip.attachment_path {
+                eprintln!("[COPY]   Attempting to read OLE from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[COPY]   ✓ OLE read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[COPY]   ✗ OLE read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[COPY]   No OLE path in clip");
+                None
+            };
+
+            let svg_data = if let Some(path) = &clip.svg_path {
+                eprintln!("[COPY]   Attempting to read SVG from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[COPY]   ✓ SVG read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[COPY]   ✗ SVG read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[COPY]   No SVG path in clip");
+                None
+            };
+
+            let pdf_data = if let Some(path) = &clip.pdf_path {
+                eprintln!("[COPY]   Attempting to read PDF from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[COPY]   ✓ PDF read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[COPY]   ✗ PDF read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[COPY]   No PDF path in clip");
+                None
+            };
+
+            let png_data = if let Some(path) = &clip.image_path {
+                eprintln!("[COPY]   Attempting to read PNG from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[COPY]   ✓ PNG read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[COPY]   ✗ PNG read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[COPY]   No PNG path in clip");
+                None
+            };
+
+            eprintln!(
+                "[COPY] Office content reconstructed - OLE: {}, SVG: {}, PDF: {}, PNG: {}",
+                ole_data.is_some(),
+                svg_data.is_some(),
+                pdf_data.is_some(),
+                png_data.is_some()
+            );
+
+            ClipboardContent::Office {
+                ole_data,
+                ole_type: clip.attachment_type.clone(), // Use stored UTI for accurate pasteboard write
+                svg_data,
+                pdf_data,
+                png_data,
+                extracted_text: clip.content_text.unwrap_or_default(),
+                source_app: clip.app_name.unwrap_or_else(|| "Microsoft Office".to_string()),
+            }
+        }
+
+        _ => {
+            // Fallback to plain text
+            ClipboardContent::Text {
+                content: text,
+            }
+        }
+    };
+
+    // 4. Write all formats to clipboard
+    eprintln!("[COPY] Writing content to clipboard...");
+    crate::services::clipboard_platform::write_clipboard(&content)
+        .map_err(|e| format!("Failed to write clipboard: {}", e))?;
+    eprintln!("[COPY] ✓ Clipboard write complete");
+
+    // 5. Pre-seed monitor hash to prevent re-capturing our own paste
+    eprintln!("[COPY] Pre-seeding monitor hash...");
+    {
+        let monitor = state.clipboard_service.get_monitor();
+        let mut monitor = monitor.lock().await;
+        monitor.notify_wrote(&content);
+    }
+    eprintln!("[COPY] ✓ Monitor notified");
+
+    eprintln!("[COPY] copy_to_clipboard complete");
+    Ok(())
 }
 
 #[tauri::command]
@@ -275,6 +499,7 @@ pub async fn paste_clip(
     state
         .clipboard_service
         .set_text(&text)
+        .await
         .map_err(|e: anyhow::Error| e.to_string())?;
 
     // 2. Hide the overlay window — OS auto-refocuses previous app

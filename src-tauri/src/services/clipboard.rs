@@ -39,13 +39,18 @@ impl ClipboardService {
         semantic_service: Arc<SemanticService>,
         app_handle: AppHandle,
     ) -> Self {
+        // Base directory for all clipboard data
         let storage_dir = app_handle
             .path()
             .app_data_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
-            .join("clipboard_images");
+            .join("clipboard_data");
 
-        std::fs::create_dir_all(&storage_dir).ok();
+        // Create per-type subdirectories (professional organization)
+        std::fs::create_dir_all(&storage_dir.join("images")).ok();
+        std::fs::create_dir_all(&storage_dir.join("svg")).ok();
+        std::fs::create_dir_all(&storage_dir.join("pdf")).ok();
+        std::fs::create_dir_all(&storage_dir.join("office")).ok();
 
         Self {
             repository,
@@ -142,6 +147,28 @@ impl ClipboardService {
             ClipboardContent::Files { paths } => {
                 Self::create_files_clip(paths, &content_hash, source_app.clone())
             }
+            ClipboardContent::Office {
+                ole_data,
+                ole_type,
+                svg_data,
+                pdf_data,
+                png_data,
+                extracted_text,
+                source_app: office_app,
+            } => {
+                self.create_office_clip(
+                    ole_data,
+                    ole_type,
+                    svg_data,
+                    pdf_data,
+                    png_data,
+                    extracted_text,
+                    office_app,
+                    &content_hash,
+                    source_app.clone(),
+                )
+                .await?
+            }
         };
 
         match self.repository.find_by_hash(&content_hash).await? {
@@ -216,7 +243,11 @@ impl ClipboardService {
             content_text: Some(plain),
             content_html: Some(html),
             content_rtf: None,
+            svg_path: None,
+            pdf_path: None,
             image_path: None,
+            attachment_path: None,
+            attachment_type: None,
             file_paths: None,
             detected_type: detection.detected_type_str().to_string(),
             metadata: detection.metadata_json(),
@@ -248,7 +279,11 @@ impl ClipboardService {
             content_text: Some(plain),
             content_html: None,
             content_rtf: Some(rtf),
+            svg_path: None,
+            pdf_path: None,
             image_path: None,
+            attachment_path: None,
+            attachment_type: None,
             file_paths: None,
             detected_type: detection.detected_type_str().to_string(),
             metadata: detection.metadata_json(),
@@ -275,7 +310,7 @@ impl ClipboardService {
         let now = chrono::Utc::now().timestamp();
 
         let filename = format!("{}.{}", id, format.extension());
-        let image_path = self.storage_dir.join(&filename);
+        let image_path = self.storage_dir.join("images").join(&filename);
 
         tokio::fs::write(&image_path, data).await?;
 
@@ -285,7 +320,11 @@ impl ClipboardService {
             content_text: Some(format!("[Image: {}]", filename)),
             content_html: None,
             content_rtf: None,
+            svg_path: None,
+            pdf_path: None,
             image_path: Some(image_path.to_string_lossy().to_string()),
+            attachment_path: None,
+            attachment_type: None,
             file_paths: None,
             detected_type: "image".to_string(),
             metadata: Some(format!(r#"{{"format":"{}"}}"#, format.mime_type())),
@@ -361,7 +400,11 @@ impl ClipboardService {
             content_text: Some(preview),
             content_html: None,
             content_rtf: None,
+            svg_path: None,
+            pdf_path: None,
             image_path: None,
+            attachment_path: None,
+            attachment_type: None,
             file_paths: Some(serde_json::to_string(&paths).unwrap_or_default()),
             detected_type: "files".to_string(),
             metadata: Some(metadata_json.to_string()),
@@ -377,14 +420,97 @@ impl ClipboardService {
         }
     }
 
+    async fn create_office_clip(
+        &self,
+        ole_data: Option<Vec<u8>>,
+        ole_type: Option<String>,
+        svg_data: Option<Vec<u8>>,
+        pdf_data: Option<Vec<u8>>,
+        png_data: Option<Vec<u8>>,
+        extracted_text: String,
+        source_app: String,
+        hash: &str,
+        app_name: Option<String>,
+    ) -> Result<ClipItem> {
+        let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let now = chrono::Utc::now().timestamp();
+
+        // Directories are already created in new() with per-type structure
+        // storage_dir = clipboard_data/ with subdirs: images/, svg/, pdf/, office/
+
+        // Save OLE/Office package file → clipboard_data/office/{id}.bin
+        let attachment_path = if let Some(ole) = ole_data {
+            let path = self.storage_dir.join("office").join(format!("{}.bin", id));
+            tokio::fs::write(&path, ole).await?;
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        // Save SVG file → clipboard_data/svg/{id}.svg
+        let svg_path = if let Some(svg) = svg_data {
+            let path = self.storage_dir.join("svg").join(format!("{}.svg", id));
+            tokio::fs::write(&path, svg).await?;
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        // Save PDF file → clipboard_data/pdf/{id}.pdf
+        let pdf_path = if let Some(pdf) = pdf_data {
+            let path = self.storage_dir.join("pdf").join(format!("{}.pdf", id));
+            tokio::fs::write(&path, pdf).await?;
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        // Save PNG file → clipboard_data/images/{id}.png
+        let image_path = if let Some(png) = png_data {
+            let path = self.storage_dir.join("images").join(format!("{}.png", id));
+            tokio::fs::write(&path, png).await?;
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        Ok(ClipItem {
+            id,
+            content_type: "office".to_string(),
+            content_text: Some(extracted_text), // Text from pasteboard/SVG/PDF → searchable via FTS5
+            content_html: None,
+            content_rtf: None,
+            svg_path,                          // SVG file: clipboard_data/svg/{id}.svg
+            pdf_path,                          // PDF file: clipboard_data/pdf/{id}.pdf
+            image_path,                        // PNG file: clipboard_data/images/{id}.png
+            attachment_path,                   // Office native format: clipboard_data/office/{id}.bin
+            attachment_type: ole_type,         // UTI type for restoring OLE to pasteboard
+            file_paths: None,
+            detected_type: "office".to_string(),
+            metadata: Some(format!(r#"{{"source_app":"{}"}}"#, source_app)),
+            created_at: now,
+            updated_at: now,
+            app_name,
+            is_pinned: 0,
+            is_favorite: 0,
+            access_count: 0,
+            content_hash: Some(hash.to_string()),
+            has_embedding: Some(false),
+            similarity_score: None,
+        })
+    }
+
     /// Manually copy text to clipboard
-    pub fn set_text(&self, text: &str) -> Result<()> {
+    pub async fn set_text(&self, text: &str) -> Result<()> {
         let mut clipboard = Clipboard::new()?;
         clipboard.set_text(text)?;
         // Pre-seed the monitor's last-known hash so the next poll tick
         // sees this content as "already known" and won't create a duplicate entry.
-        let mut monitor = self.monitor.blocking_lock();
-        monitor.notify_wrote(text);
+        let mut monitor = self.monitor.lock().await;
+        let content = crate::services::clipboard_platform::ClipboardContent::Text {
+            content: text.to_string(),
+        };
+        monitor.notify_wrote(&content);
         Ok(())
     }
 
@@ -392,5 +518,46 @@ impl ClipboardService {
     pub fn get_text(&self) -> Result<String> {
         let mut clipboard = Clipboard::new()?;
         Ok(clipboard.get_text()?)
+    }
+
+    /// Get access to the monitor (for notify_wrote)
+    pub fn get_monitor(&self) -> Arc<Mutex<Box<dyn clipboard_monitor::ClipboardMonitor>>> {
+        Arc::clone(&self.monitor)
+    }
+
+    /// Delete all files associated with a clip (images, attachments)
+    /// Returns Ok even if some files are missing (idempotent cleanup)
+    pub async fn cleanup_clip_files(&self, clip: &ClipItem) -> Result<()> {
+        // Helper: delete file and log warnings instead of failing
+        async fn delete_file(path: &str) {
+            if let Err(e) = tokio::fs::remove_file(path).await {
+                // Only log if file exists but can't be deleted (not if already missing)
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[WARN] Failed to delete {}: {}", path, e);
+                }
+            }
+        }
+
+        // Clean up image file
+        if let Some(path) = &clip.image_path {
+            delete_file(path).await;
+        }
+
+        // Clean up attachment file (Office OLE, PDF, etc.)
+        if let Some(path) = &clip.attachment_path {
+            delete_file(path).await;
+        }
+
+        // Clean up SVG file
+        if let Some(path) = &clip.svg_path {
+            delete_file(path).await;
+        }
+
+        // Clean up PDF file
+        if let Some(path) = &clip.pdf_path {
+            delete_file(path).await;
+        }
+
+        Ok(())
     }
 }

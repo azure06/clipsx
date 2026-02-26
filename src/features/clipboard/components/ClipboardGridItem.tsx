@@ -42,12 +42,10 @@ const ClipboardGridItemComponent = ({
     Boolean(clip.hasEmbedding)
 
   const handleClick = () => {
-    if (clip.contentText) {
-      if (onSelect) {
-        onSelect(clip.contentText, clip.id)
-      } else {
-        onCopy(clip.contentText, clip.id)
-      }
+    if (onSelect) {
+      onSelect(clip.contentText ?? '', clip.id)
+    } else {
+      onCopy(clip.contentText ?? '', clip.id)
     }
   }
 
@@ -89,9 +87,7 @@ const ClipboardGridItemComponent = ({
             >
               <DropdownMenu.Item
                 onClick={() => {
-                  if (clip.contentText) {
-                    onCopy(clip.contentText, clip.id)
-                  }
+                  onCopy(clip.contentText ?? '', clip.id)
                 }}
                 className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
               >

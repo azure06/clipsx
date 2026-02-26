@@ -16,7 +16,6 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
 
   const actionContext = useMemo(
     () => ({
-      onCopy: async (text: string) => await navigator.clipboard.writeText(text),
       onDelete: (id: string) => deleteClip(id),
       onTogglePin: (id: string) => togglePin(id),
       onToggleFavorite: (id: string) => toggleFavorite(id),

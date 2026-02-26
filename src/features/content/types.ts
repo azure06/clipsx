@@ -16,6 +16,7 @@ export type ContentType =
   | 'path'
   | 'image'
   | 'files'
+  | 'office'
   | 'math'
   | 'phone'
   | 'date'
@@ -51,6 +52,12 @@ export type ContentMetadata = {
   readonly columns?: number
   readonly format?: string
   readonly files?: FileMetadata[]
+
+  // Office content fields
+  readonly svg?: string
+  readonly pdf?: string
+  readonly attachment_path?: string
+  readonly source_app?: string
 }
 
 // Unified content representation
@@ -75,7 +82,6 @@ export type SmartAction = {
 }
 
 export interface ActionContext {
-  onCopy: (text: string) => void
   onDelete: (id: string) => void
   onTogglePin: (id: string) => void
   onToggleFavorite: (id: string) => void

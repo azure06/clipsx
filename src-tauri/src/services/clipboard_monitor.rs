@@ -39,10 +39,10 @@ pub trait ClipboardMonitor: Send + Sync {
     /// JS equivalent: platformName(): string (but the string is hardcoded)
     fn platform_name(&self) -> &'static str;
 
-    /// Called after ClipsX programmatically writes plain text to the clipboard
+    /// Called after ClipsX programmatically writes content to the clipboard
     /// so the next monitor tick treats it as "unchanged" and doesn't create a
     /// duplicate entry.
-    fn notify_wrote(&mut self, plain_text: &str);
+    fn notify_wrote(&mut self, content: &ClipboardContent);
 }
 
 /// macOS monitor using NSPasteboard.changeCount (fast path)
@@ -113,26 +113,21 @@ impl ClipboardMonitor for MacOSMonitor {
         "macOS"
     }
 
-    fn notify_wrote(&mut self, plain_text: &str) {
-        // Force the next tick to re-read by invalidating the change count.
-        // We can't predict what changeCount will be after the write, so set
-        // it to -1 (impossible real value) so it always mismatches and we
-        // fall through to hash comparison via last_hash check below.
-        // Instead, store the expected hash so the next content read dedupes.
-        // We mimic PollingMonitor: if hash matches we return Unchanged.
-        // MacOSMonitor doesn't store last_hash normally, so we abuse
-        // last_change_count = 0 to trigger a re-read, then rely on
-        // the DB hash check. The real fix is to also keep a last_hash here.
-        // Simpler approach: just invalidate last_change_count so we *always*
-        // re-read, but pre-set the expected plain hash via a stored field.
-        // For now use last_change_count = -1 to force re-read every time
-        // after a write, and let the DB dedup handle it (touch not insert).
-        self.last_change_count = -1;
-        // Store the expected hash so we can return Unchanged on the next tick
-        // if the clipboard content matches what we wrote.
-        self.last_wrote_hash = Some(compute_content_hash(&ClipboardContent::Text {
-            content: plain_text.to_string(),
-        }));
+    fn notify_wrote(&mut self, content: &ClipboardContent) {
+        // Read the changeCount AFTER the write just completed.
+        // The next monitor tick will see current == last_change_count and return
+        // Unchanged immediately — no clipboard read, no hash comparison needed.
+        // This is more reliable than the old -1/hash approach for complex formats
+        // like Office where the read-back hash may differ from what we wrote.
+        if let Ok(new_count) = self.provider.get_change_count() {
+            self.last_change_count = new_count;
+        } else {
+            // Fallback: -1 forces re-read; hash comparison will suppress re-capture
+            self.last_change_count = -1;
+        }
+
+        // Keep hash as backup for the -1 fallback case
+        self.last_wrote_hash = Some(compute_content_hash(content));
     }
 }
 
@@ -211,12 +206,11 @@ impl ClipboardMonitor for PollingMonitor {
         return "Unknown";
     }
 
-    fn notify_wrote(&mut self, plain_text: &str) {
-        // Pre-seed last_hash with the hash of the text we just wrote.
+    fn notify_wrote(&mut self, content: &ClipboardContent) {
+        // Pre-seed last_hash with the hash of the content we just wrote.
         // The next check() call will compute the same hash and return Unchanged.
-        self.last_hash = Some(compute_content_hash(&ClipboardContent::Text {
-            content: plain_text.to_string(),
-        }));
+        // This works for all content types (text, HTML, images, Office, etc.)
+        self.last_hash = Some(compute_content_hash(content));
     }
 }
 
@@ -260,6 +254,50 @@ fn compute_content_hash(content: &ClipboardContent) -> String {
             let mut hasher = DefaultHasher::new();
             paths.join("|").hash(&mut hasher);
             format!("{:x}", hasher.finish())
+        }
+        // Hash Office content with priority (richest format first):
+        // 1. Text (semantic deduplication)
+        // 2. PDF (document with text layer)
+        // 3. SVG (vector graphics)
+        // 4. PNG (raster image)
+        // 5. OLE (binary fallback)
+        ClipboardContent::Office {
+            extracted_text,
+            pdf_data,
+            svg_data,
+            png_data,
+            ole_data,
+            ..
+        } => {
+            if !extracted_text.is_empty() {
+                // Priority 1: Hash text for semantic deduplication
+                let mut hasher = DefaultHasher::new();
+                extracted_text.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            } else if let Some(pdf) = pdf_data {
+                // Priority 2: Hash PDF (richer than SVG/PNG)
+                let mut hasher = DefaultHasher::new();
+                pdf.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            } else if let Some(svg) = svg_data {
+                // Priority 3: Hash SVG (vector graphics)
+                let mut hasher = DefaultHasher::new();
+                svg.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            } else if let Some(png) = png_data {
+                // Priority 4: Hash PNG pixels (visual deduplication)
+                compute_image_hash(png)
+            } else if let Some(ole) = ole_data {
+                // Priority 5: Hash OLE binary data (fallback)
+                let mut hasher = DefaultHasher::new();
+                ole.hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            } else {
+                // No data at all (shouldn't happen): hash empty string
+                let mut hasher = DefaultHasher::new();
+                "".hash(&mut hasher);
+                format!("{:x}", hasher.finish())
+            }
         }
     }
 }

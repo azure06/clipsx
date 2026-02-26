@@ -299,8 +299,8 @@ export const ClipboardHistory = ({
         case 'Enter': {
           e.preventDefault()
           const clip = filteredClips[selectedIndex]
-          if (clip?.contentText) {
-            void handleAction(clip.contentText, clip.id)
+          if (clip) {
+            void handleAction(clip.contentText ?? '', clip.id)
           }
           break
         }

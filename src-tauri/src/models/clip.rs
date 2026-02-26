@@ -8,8 +8,12 @@ pub struct ClipItem {
     pub content_text: Option<String>,
     pub content_html: Option<String>,
     pub content_rtf: Option<String>,
-    pub image_path: Option<String>,
-    pub file_paths: Option<String>, // JSON array
+    pub svg_path: Option<String>,         // SVG file path: clipboard_data/svg/{id}.svg
+    pub pdf_path: Option<String>,         // PDF file path: clipboard_data/pdf/{id}.pdf
+    pub image_path: Option<String>,       // Image file path: clipboard_data/images/{id}.{ext}
+    pub attachment_path: Option<String>,  // Office native format: clipboard_data/office/{id}.bin
+    pub attachment_type: Option<String>,  // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
+    pub file_paths: Option<String>,       // JSON array
     pub detected_type: String,      // New: 'url', 'code', 'text', etc.
     pub metadata: Option<String>,   // JSON object
     pub created_at: i64,            // Unix timestamp
@@ -81,6 +85,13 @@ pub enum ClipContent {
     Rtf { rtf: String, plain: String },
     Image { path: String },
     Files { paths: Vec<String> },
+    Office {
+        svg_path: Option<String>,
+        pdf_path: Option<String>,
+        attachment_path: Option<String>,
+        png_path: Option<String>,
+        text: String,
+    },
 }
 
 impl ClipItem {
@@ -97,7 +108,11 @@ impl ClipItem {
             content_text: Some(content),
             content_html: None,
             content_rtf: None,
+            svg_path: None,
+            pdf_path: None,
             image_path: None,
+            attachment_path: None,
+            attachment_type: None,
             file_paths: None,
             detected_type,
             metadata,
@@ -158,6 +173,13 @@ impl ClipItem {
                 serde_json::from_str::<Vec<String>>(json)
                     .ok()
                     .map(|paths| ClipContent::Files { paths })
+            }),
+            "office" => Some(ClipContent::Office {
+                svg_path: self.svg_path.clone(),
+                pdf_path: self.pdf_path.clone(),
+                attachment_path: self.attachment_path.clone(),
+                png_path: self.image_path.clone(),
+                text: self.content_text.clone().unwrap_or_default(),
             }),
             _ => None,
         }

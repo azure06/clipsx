@@ -50,11 +50,33 @@ use windows::Win32::{
 
 #[derive(Debug, Clone)]
 pub enum ClipboardContent {
-    Text { content: String },
-    Html { html: String, plain: String },
-    Rtf { rtf: String, plain: String },
-    Image { data: Vec<u8>, format: ImageFormat },
-    Files { paths: Vec<String> },
+    Text {
+        content: String,
+    },
+    Html {
+        html: String,
+        plain: String,
+    },
+    Rtf {
+        rtf: String,
+        plain: String,
+    },
+    Image {
+        data: Vec<u8>,
+        format: ImageFormat,
+    },
+    Files {
+        paths: Vec<String>,
+    },
+    Office {
+        ole_data: Option<Vec<u8>>, // OLE/Office package → clipboard_data/office/{id}.bin
+        ole_type: Option<String>, // UTI type name of the OLE data, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
+        svg_data: Option<Vec<u8>>, // SVG vector graphics → clipboard_data/svg/{id}.svg
+        pdf_data: Option<Vec<u8>>, // PDF document → clipboard_data/pdf/{id}.pdf
+        png_data: Option<Vec<u8>>, // PNG raster image → clipboard_data/images/{id}.png
+        extracted_text: String,   // Text from pasteboard/SVG/PDF → content_text (FTS5 indexed)
+        source_app: String,       // "Microsoft Word", "Microsoft Excel", etc.
+    },
 }
 
 #[allow(dead_code)]
@@ -97,10 +119,22 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
     unsafe {
         let pasteboard: id = msg_send![class!(NSPasteboard), generalPasteboard];
 
+        eprintln!("[DEBUG] read_clipboard() called");
+
         // Check for files first (highest priority for drag-drop)
         if let Some(files) = read_files(pasteboard) {
+            eprintln!("[DEBUG] Detected as Files content");
             return Ok(Some(ClipboardContent::Files { paths: files }));
         }
+
+        // Check for Office content (BEFORE generic images)
+        // Office apps provide PNG, but we want Office-specific handling
+        eprintln!("[DEBUG] Checking for Office content...");
+        if let Some(office_content) = read_office_content(pasteboard) {
+            eprintln!("[DEBUG] Detected as Office content");
+            return Ok(Some(office_content));
+        }
+        eprintln!("[DEBUG] Not Office content, continuing with other checks");
 
         // Check for images
         if let Some((data, format)) = read_image(pasteboard) {
@@ -123,6 +157,192 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
         }
 
         Ok(None)
+    }
+}
+
+/// Write clipboard content (all formats) back to the system clipboard
+/// This restores the original multi-format clipboard data
+#[cfg(target_os = "macos")]
+pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
+    use cocoa::base::nil;
+    use std::ffi::CString;
+
+    unsafe {
+        let pasteboard: id = msg_send![class!(NSPasteboard), generalPasteboard];
+
+        // Clear existing clipboard data
+        let _: () = msg_send![pasteboard, clearContents];
+
+        match content {
+            ClipboardContent::Text { content } => {
+                // Write plain text
+                let ns_string = NSString::from_str(content);
+                let _: bool =
+                    msg_send![pasteboard, setString:ns_string forType:NSPasteboardTypeString];
+            }
+
+            ClipboardContent::Html { html, plain } => {
+                // Write HTML + plain text fallback
+                let html_ns = NSString::from_str(html);
+                let plain_ns = NSString::from_str(plain);
+                let _: bool = msg_send![pasteboard, setString:html_ns forType:NSPasteboardTypeHTML];
+                let _: bool =
+                    msg_send![pasteboard, setString:plain_ns forType:NSPasteboardTypeString];
+            }
+
+            ClipboardContent::Rtf { rtf, plain } => {
+                // Write RTF + plain text fallback
+                let rtf_data = NSData::from_vec(rtf.as_bytes().to_vec());
+                let plain_ns = NSString::from_str(plain);
+                let _: bool = msg_send![pasteboard, setData:rtf_data forType:NSPasteboardTypeRTF];
+                let _: bool =
+                    msg_send![pasteboard, setString:plain_ns forType:NSPasteboardTypeString];
+            }
+
+            ClipboardContent::Image { data, format } => {
+                // Write image in its original format
+                let image_data = NSData::from_vec(data.clone());
+                let type_str = match format {
+                    ImageFormat::Png => "public.png",
+                    ImageFormat::Jpeg => "public.jpeg",
+                    ImageFormat::Tiff => "public.tiff",
+                };
+
+                if let Ok(type_c_str) = CString::new(type_str) {
+                    let ns_type: id =
+                        msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                    if ns_type != nil {
+                        let _: bool = msg_send![pasteboard, setData:image_data forType:ns_type];
+                    }
+                }
+            }
+
+            ClipboardContent::Files { paths } => {
+                // Write file paths (not implemented yet - complex on macOS)
+                eprintln!("[WARN] Writing file paths to clipboard not yet implemented");
+                // For now, just write the paths as text
+                let paths_text = paths.join("\n");
+                let ns_string = NSString::from_str(&paths_text);
+                let _: bool =
+                    msg_send![pasteboard, setString:ns_string forType:NSPasteboardTypeString];
+            }
+
+            ClipboardContent::Office {
+                ole_data,
+                ole_type,
+                svg_data,
+                pdf_data,
+                png_data,
+                extracted_text,
+                source_app: _,
+            } => {
+                eprintln!("[DEBUG] Writing Office content to clipboard:");
+
+                // Write OLE first (highest fidelity — must be declared before previews so
+                // Office apps find their native type at the top of the pasteboard)
+                if let Some(ole) = ole_data {
+                    let uti = ole_type
+                        .as_deref()
+                        .unwrap_or("com.microsoft.PowerPoint-14.0-Slides-Package");
+                    if let Ok(type_c_str) = CString::new(uti) {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let ole_ns_data = NSData::from_vec(ole.clone());
+                            let _: bool =
+                                msg_send![pasteboard, setData:ole_ns_data forType:ns_type];
+                            eprintln!(
+                                "[DEBUG]   ✓ OLE written ({} bytes, type={})",
+                                ole.len(),
+                                uti
+                            );
+                        }
+                    }
+                }
+
+                // Write SVG
+                if let Some(svg) = svg_data {
+                    if let Ok(type_c_str) = CString::new("com.microsoft.image-svg-xml") {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let svg_ns_data = NSData::from_vec(svg.clone());
+                            let _: bool =
+                                msg_send![pasteboard, setData:svg_ns_data forType:ns_type];
+                            eprintln!("[DEBUG]   ✓ SVG written ({} bytes)", svg.len());
+                        }
+                    }
+                }
+
+                // Write PDF
+                if let Some(pdf) = pdf_data {
+                    if let Ok(type_c_str) = CString::new("com.adobe.pdf") {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let pdf_ns_data = NSData::from_vec(pdf.clone());
+                            let _: bool =
+                                msg_send![pasteboard, setData:pdf_ns_data forType:ns_type];
+                            eprintln!("[DEBUG]   ✓ PDF written ({} bytes)", pdf.len());
+                        }
+                    }
+                }
+
+                // Write PNG (raster fallback — written last so OLE/SVG take precedence)
+                if let Some(png) = png_data {
+                    if let Ok(type_c_str) = CString::new("public.png") {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let png_ns_data = NSData::from_vec(png.clone());
+                            let _: bool =
+                                msg_send![pasteboard, setData:png_ns_data forType:ns_type];
+                            eprintln!("[DEBUG]   ✓ PNG written ({} bytes)", png.len());
+                        }
+                    }
+                }
+
+                // Write plain text fallback
+                if !extracted_text.is_empty() {
+                    let ns_string = NSString::from_str(extracted_text);
+                    let _: bool =
+                        msg_send![pasteboard, setString:ns_string forType:NSPasteboardTypeString];
+                    eprintln!("[DEBUG]   ✓ Text written ({} chars)", extracted_text.len());
+                }
+
+                eprintln!("[DEBUG] Office content write complete");
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// Helper: Create NSString from Rust string
+#[cfg(target_os = "macos")]
+struct NSString;
+
+#[cfg(target_os = "macos")]
+impl NSString {
+    unsafe fn from_str(s: &str) -> id {
+        // Use initWithBytes:length:encoding: (NSUTF8StringEncoding = 4)
+        // This accepts an explicit byte count so embedded null bytes never panic.
+        let bytes_ptr = s.as_ptr() as *const std::ffi::c_void;
+        let ns_string: id = msg_send![class!(NSString), alloc];
+        msg_send![ns_string, initWithBytes:bytes_ptr length:s.len() encoding:4usize]
+    }
+}
+
+// Helper: Create NSData from Vec<u8>
+#[cfg(target_os = "macos")]
+struct NSData;
+
+#[cfg(target_os = "macos")]
+impl NSData {
+    unsafe fn from_vec(data: Vec<u8>) -> id {
+        let bytes_ptr = data.as_ptr() as *const std::ffi::c_void;
+        let length = data.len();
+        msg_send![class!(NSData), dataWithBytes:bytes_ptr length:length]
     }
 }
 
@@ -266,20 +486,41 @@ unsafe fn read_image(pasteboard: id) -> Option<(Vec<u8>, ImageFormat)> {
 
 #[cfg(target_os = "macos")]
 unsafe fn read_image_data(pasteboard: id, ns_type: id) -> Option<Vec<u8>> {
+    // Get type name for debugging
+    let c_str: *const i8 = msg_send![ns_type, UTF8String];
+    let type_name = if !c_str.is_null() {
+        std::ffi::CStr::from_ptr(c_str)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        "unknown".to_string()
+    };
+
+    eprintln!("[DEBUG] read_image_data() called for type: {}", type_name);
+
     let ns_data: id = msg_send![pasteboard, dataForType: ns_type];
 
     if ns_data == nil {
+        eprintln!("[DEBUG]   dataForType returned nil for {}", type_name);
         return None;
     }
 
     let length: usize = msg_send![ns_data, length];
     let bytes: *const u8 = msg_send![ns_data, bytes];
 
+    eprintln!(
+        "[DEBUG]   dataForType returned data - length: {}, bytes ptr null: {}",
+        length,
+        bytes.is_null()
+    );
+
     if bytes.is_null() || length == 0 {
+        eprintln!("[DEBUG]   Rejecting data (null pointer or zero length)");
         return None;
     }
 
     let data = std::slice::from_raw_parts(bytes, length).to_vec();
+    eprintln!("[DEBUG]   Successfully extracted {} bytes", data.len());
     Some(data)
 }
 
@@ -331,6 +572,341 @@ unsafe fn read_files(pasteboard: id) -> Option<Vec<String>> {
     }
 }
 
+/// Extract text content from SVG XML by parsing <text> elements
+fn extract_svg_text(svg: &str) -> String {
+    // Simple regex-based extraction of <text> elements
+    // For production, consider using quick-xml crate for robust parsing
+    let mut extracted = String::new();
+
+    // Match <text>...</text> tags and extract content
+    if let Ok(re) = regex::Regex::new(r"<text[^>]*>(.*?)</text>") {
+        for cap in re.captures_iter(svg) {
+            if let Some(text_match) = cap.get(1) {
+                let text = text_match.as_str();
+                // Basic HTML entity decoding
+                let decoded = text
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'");
+                extracted.push_str(&decoded);
+                extracted.push(' ');
+            }
+        }
+    }
+
+    extracted.trim().to_string()
+}
+
+/// Extract text content from PDF data
+///
+/// Uses pdf-extract crate to parse PDF and extract text layer
+fn extract_pdf_text(pdf_data: &[u8]) -> String {
+    // Try to extract text using pdf-extract
+    match pdf_extract::extract_text_from_mem(pdf_data) {
+        Ok(text) => {
+            eprintln!(
+                "[DEBUG] PDF text extraction successful: {} chars",
+                text.len()
+            );
+            text
+        }
+        Err(e) => {
+            eprintln!("[DEBUG] PDF text extraction failed: {}", e);
+            String::new()
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
+    use cocoa::base::nil;
+    use std::ffi::CString;
+
+    // Check for Office-specific pasteboard types
+    // Office apps provide OLE object, SVG, and PNG formats
+
+    eprintln!("[DEBUG] read_office_content() called");
+
+    // Helper: Check if pasteboard has a specific type
+    let has_type = |type_str: &str| -> bool {
+        if let Ok(type_c_str) = CString::new(type_str) {
+            let ns_type: id =
+                msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+            if ns_type != nil {
+                let types: id = msg_send![pasteboard, types];
+                if types != nil {
+                    let contains: bool = msg_send![types, containsObject: ns_type];
+                    return contains;
+                }
+            }
+        }
+        false
+    };
+
+    // Get all pasteboard types as strings
+    let types: id = msg_send![pasteboard, types];
+    if types == nil {
+        eprintln!("[DEBUG] No pasteboard types available (types == nil)");
+        return None;
+    }
+
+    let count: usize = msg_send![types, count];
+    eprintln!("[DEBUG] Found {} pasteboard types", count);
+
+    // Log ALL available types for debugging
+    eprintln!("[DEBUG] Available pasteboard types:");
+    for i in 0..count {
+        let ns_type: id = msg_send![types, objectAtIndex: i];
+        if ns_type != nil {
+            let c_str: *const i8 = msg_send![ns_type, UTF8String];
+            if !c_str.is_null() {
+                let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
+                eprintln!("[DEBUG]   [{}] {}", i, type_str);
+            }
+        }
+    }
+
+    let mut ole_type: Option<String> = None;
+    let mut source_app = String::from("Microsoft Office");
+
+    // Find any type containing "ole.source" (substring matching)
+    for i in 0..count {
+        let ns_type: id = msg_send![types, objectAtIndex: i];
+        if ns_type != nil {
+            let c_str: *const i8 = msg_send![ns_type, UTF8String];
+            if !c_str.is_null() {
+                let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
+                if type_str.contains("ole.source") {
+                    eprintln!("[DEBUG] Found OLE type: {}", type_str);
+                    // Determine source app from OLE type
+                    if type_str.contains("word") {
+                        source_app = String::from("Microsoft Word");
+                    } else if type_str.contains("excel") {
+                        source_app = String::from("Microsoft Excel");
+                    } else if type_str.contains("powerpoint") {
+                        source_app = String::from("Microsoft PowerPoint");
+                    }
+                    ole_type = Some(type_str.to_string());
+                    eprintln!("[DEBUG] Detected source app: {}", source_app);
+                    break;
+                }
+            }
+        }
+    }
+
+    let has_svg = has_type("com.microsoft.image-svg-xml");
+    eprintln!(
+        "[DEBUG] Has SVG type (com.microsoft.image-svg-xml): {}",
+        has_svg
+    );
+
+    // Must have at least OLE or SVG to be considered Office content
+    if ole_type.is_none() && !has_svg {
+        eprintln!("[DEBUG] No OLE or SVG found - not Office content");
+        return None;
+    }
+
+    eprintln!(
+        "[DEBUG] Office content detected! OLE: {}, SVG: {}",
+        ole_type.is_some(),
+        has_svg
+    );
+
+    // Dynamically enumerate ALL com.microsoft.* binary types on the pasteboard
+    // and pick the one with the most data as the OLE package.
+    //
+    // WHY dynamic instead of hardcoded:
+    // - PowerPoint 14.x uses "com.microsoft.PowerPoint-14.0-Slides-Package"
+    // - PowerPoint 15.x/16.x uses "com.microsoft.PowerPoint-16.0-Slides-Package"
+    // - Word/Excel have their own version-specific types
+    // Hardcoding version numbers breaks paste for any version not in the list.
+    //
+    // WHY pick largest:
+    // - Native package formats (the actual content) are large (~50-500 KB)
+    // - OLE2 reference types ("ole.source.*") are typically small (~1-10 KB)
+    // Picking the largest reliably selects the format Office uses when pasting.
+    eprintln!("[DEBUG] Scanning all com.microsoft.* types for OLE data...");
+    let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
+
+    for i in 0..count {
+        let ns_type_obj: id = msg_send![types, objectAtIndex: i];
+        if ns_type_obj != nil {
+            let c_str: *const i8 = msg_send![ns_type_obj, UTF8String];
+            if !c_str.is_null() {
+                let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
+                let t = type_str.as_ref();
+                // Only try native binary types — skip image previews and text
+                if t.starts_with("com.microsoft.")
+                    && !t.contains("image-svg")
+                    && !t.contains("image-gif")
+                    && !t.contains("image-jpeg")
+                    && !t.contains("image-png")
+                    && !t.contains("html-clipboard")
+                    && !t.contains("string")
+                    && !t.contains("text")
+                {
+                    eprintln!("[DEBUG]   Trying: {}", t);
+                    if let Some(d) = read_image_data(pasteboard, ns_type_obj) {
+                        eprintln!("[DEBUG]     -> Got {} bytes", d.len());
+                        candidates.push((t.to_string(), d));
+                    } else {
+                        eprintln!("[DEBUG]     -> No data");
+                    }
+                }
+            }
+        }
+    }
+
+    let ole_result = candidates
+        .into_iter()
+        .max_by_key(|(_, d)| d.len())
+        .map(|(uti, d)| {
+            eprintln!("[DEBUG] Selected OLE: '{}' ({} bytes)", uti, d.len());
+            (d, uti)
+        });
+
+    if ole_result.is_none() {
+        eprintln!("[DEBUG] No com.microsoft.* binary data found on pasteboard");
+    }
+
+    // Split data and type string
+    let (ole_data, selected_ole_type) = match ole_result {
+        Some((data, uti)) => (Some(data), Some(uti)),
+        None => (None, None),
+    };
+
+    // Extract SVG data (as bytes to save as file)
+    let svg_data = if has_svg {
+        eprintln!("[DEBUG] Attempting to extract SVG data");
+        let data = CString::new("com.microsoft.image-svg-xml")
+            .ok()
+            .and_then(|c| {
+                let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+                if ns_type != nil {
+                    read_image_data(pasteboard, ns_type)
+                } else {
+                    None
+                }
+            });
+        if let Some(ref d) = data {
+            eprintln!("[DEBUG] SVG data extracted: {} bytes", d.len());
+        } else {
+            eprintln!("[DEBUG] SVG data extraction failed (returned None)");
+        }
+        data
+    } else {
+        eprintln!("[DEBUG] No SVG type to extract");
+        None
+    };
+
+    // Extract PDF data (Office often provides PDF, especially from thumbnails)
+    eprintln!("[DEBUG] Attempting to extract PDF data");
+    let pdf_data = {
+        // Try "com.adobe.pdf" first (most common)
+        let mut data = CString::new("com.adobe.pdf").ok().and_then(|c| {
+            let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+            if ns_type != nil {
+                eprintln!("[DEBUG]   Trying com.adobe.pdf");
+                read_image_data(pasteboard, ns_type)
+            } else {
+                None
+            }
+        });
+
+        // Fallback to "Apple PDF pasteboard type" if needed
+        if data.is_none() {
+            data = CString::new("Apple PDF pasteboard type")
+                .ok()
+                .and_then(|c| {
+                    let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+                    if ns_type != nil {
+                        eprintln!("[DEBUG]   Trying Apple PDF pasteboard type");
+                        read_image_data(pasteboard, ns_type)
+                    } else {
+                        None
+                    }
+                });
+        }
+
+        if let Some(ref d) = data {
+            eprintln!("[DEBUG] PDF data extracted: {} bytes", d.len());
+        } else {
+            eprintln!("[DEBUG] PDF data extraction failed (returned None)");
+        }
+        data
+    };
+
+    // Extract PNG data (Office always provides PNG fallback)
+    eprintln!("[DEBUG] Attempting to extract PNG data");
+    let png_data = CString::new("public.png").ok().and_then(|c| {
+        let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+        if ns_type != nil {
+            read_image_data(pasteboard, ns_type)
+        } else {
+            None
+        }
+    });
+    if let Some(ref d) = png_data {
+        eprintln!("[DEBUG] PNG data extracted: {} bytes", d.len());
+    } else {
+        eprintln!("[DEBUG] PNG data extraction failed (returned None)");
+    }
+
+    // Extract text with priority: plain text -> SVG text -> PDF text
+    let extracted_text = {
+        // Priority 1: Plain text from pasteboard (fastest, most reliable)
+        let plain_text = read_text(pasteboard).unwrap_or_default();
+        if !plain_text.is_empty() {
+            eprintln!(
+                "[DEBUG] Using plain text from pasteboard: {} chars",
+                plain_text.len()
+            );
+            plain_text
+        } else if let Some(ref svg) = svg_data {
+            // Priority 2: Extract text from SVG
+            eprintln!("[DEBUG] Extracting text from SVG");
+            let svg_str = String::from_utf8_lossy(svg);
+            let text = extract_svg_text(&svg_str);
+            eprintln!("[DEBUG] SVG text extracted: {} chars", text.len());
+            if !text.is_empty() {
+                text
+            } else if let Some(ref pdf) = pdf_data {
+                // Priority 3: Extract text from PDF (will implement extraction function)
+                eprintln!("[DEBUG] Extracting text from PDF");
+                let pdf_text = extract_pdf_text(pdf);
+                eprintln!("[DEBUG] PDF text extracted: {} chars", pdf_text.len());
+                pdf_text
+            } else {
+                String::new()
+            }
+        } else if let Some(ref pdf) = pdf_data {
+            // No plain text or SVG, try PDF
+            eprintln!("[DEBUG] Extracting text from PDF");
+            let pdf_text = extract_pdf_text(pdf);
+            eprintln!("[DEBUG] PDF text extracted: {} chars", pdf_text.len());
+            pdf_text
+        } else {
+            eprintln!("[DEBUG] No text source available");
+            String::new()
+        }
+    };
+
+    eprintln!("[DEBUG] Returning Office content - OLE: {} (type: {:?}), SVG: {}, PDF: {}, PNG: {}, Text: {}",
+              ole_data.is_some(), selected_ole_type, svg_data.is_some(), pdf_data.is_some(), png_data.is_some(), extracted_text.len());
+
+    Some(ClipboardContent::Office {
+        ole_data,
+        ole_type: selected_ole_type,
+        svg_data,
+        pdf_data,
+        png_data,
+        extracted_text,
+        source_app,
+    })
+}
+
 // ===== NON-MACOS PLATFORMS (Windows, Linux, etc.) =====
 //
 // Windows/Linux don't have a reliable clipboard change detection API like macOS's changeCount.
@@ -355,6 +931,11 @@ pub fn get_change_count() -> Result<i64> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
+    #[cfg(target_os = "windows")]
+    if let Some(office_content) = unsafe { read_office_content_windows() } {
+        return Ok(Some(office_content));
+    }
+
     // For non-macOS platforms, use arboard (cross-platform)
     use arboard::Clipboard;
 
@@ -435,6 +1016,86 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
     }
 
     Ok(None)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        if let ClipboardContent::Office {
+            ole_data,
+            ole_type,
+            svg_data,
+            png_data,
+            pdf_data,
+            ..
+        } = content
+        {
+            use windows::Win32::System::DataExchange::{
+                CloseClipboard, EmptyClipboard, OpenClipboard,
+            };
+
+            unsafe {
+                if OpenClipboard(None).is_ok() {
+                    let _ = EmptyClipboard();
+
+                    if let Some(ole) = ole_data {
+                        let t = ole_type.as_deref().unwrap_or("Art::GVML ClipFormat");
+                        set_format_windows(t, ole);
+                    }
+                    if let Some(svg) = svg_data {
+                        set_format_windows("image/svg+xml", svg);
+                    }
+                    if let Some(png) = png_data {
+                        set_format_windows("PNG", png);
+                    }
+                    if let Some(pdf) = pdf_data {
+                        set_format_windows("Portable Document Format", pdf);
+                    }
+
+                    let _ = CloseClipboard();
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    use arboard::Clipboard;
+    let mut clipboard = Clipboard::new()?;
+
+    match content {
+        ClipboardContent::Text { content } => {
+            clipboard.set_text(content)?;
+        }
+        ClipboardContent::Html { plain, .. } => {
+            clipboard.set_text(plain)?;
+        }
+        ClipboardContent::Rtf { plain, .. } => {
+            clipboard.set_text(plain)?;
+        }
+        ClipboardContent::Image { data, .. } => {
+            if let Ok(img) = image::load_from_memory(data) {
+                let rgba = img.into_rgba8();
+                let dimensions = rgba.dimensions();
+                let image_data = arboard::ImageData {
+                    width: dimensions.0 as usize,
+                    height: dimensions.1 as usize,
+                    bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+                };
+                clipboard.set_image(image_data)?;
+            }
+        }
+        ClipboardContent::Files { paths } => {
+            clipboard.set_text(paths.join("\n"))?;
+        }
+        ClipboardContent::Office { extracted_text, .. } => {
+            if !extracted_text.is_empty() {
+                clipboard.set_text(extracted_text)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_file_uris(text: &str) -> Option<Vec<String>> {
@@ -674,6 +1335,101 @@ unsafe fn get_format_windows(format_name: &str) -> Option<Vec<u8>> {
     GlobalUnlock(hglobal).ok();
 
     Some(data)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
+    let mut ole_type = None;
+    let mut ole_data = None;
+    let mut svg_data = None;
+    let mut pdf_data = None;
+    let mut png_data = None;
+    let mut source_app = String::from("Microsoft Office");
+
+    // Check for Art::GVML ClipFormat (PowerPoint shapes)
+    if let Some(data) = get_format_windows("Art::GVML ClipFormat") {
+        ole_data = Some(data);
+        ole_type = Some("Art::GVML ClipFormat".to_string());
+        source_app = String::from("Microsoft PowerPoint");
+    }
+
+    if let Some(data) = get_format_windows("image/svg+xml") {
+        svg_data = Some(data);
+    }
+
+    if let Some(data) = get_format_windows("PNG") {
+        png_data = Some(data);
+    }
+
+    if let Some(data) = get_format_windows("Portable Document Format") {
+        pdf_data = Some(data);
+    }
+
+    if ole_data.is_none() && svg_data.is_none() {
+        return None;
+    }
+
+    // Extract text
+    let extracted_text = {
+        if let Some(ref svg) = svg_data {
+            let svg_str = String::from_utf8_lossy(svg);
+            let text = extract_svg_text(&svg_str);
+            if !text.is_empty() {
+                text
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    };
+
+    Some(ClipboardContent::Office {
+        ole_data,
+        ole_type,
+        svg_data,
+        pdf_data,
+        png_data,
+        extracted_text,
+        source_app,
+    })
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn set_format_windows(format_name: &str, data: &[u8]) -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{RegisterClipboardFormatW, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
+
+    let wide_name: Vec<u16> = format_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let format = RegisterClipboardFormatW(PCWSTR::from_raw(wide_name.as_ptr()));
+    if format == 0 {
+        return false;
+    }
+
+    let hglobal = match GlobalAlloc(GHND, data.len()) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    if hglobal.is_invalid() {
+        return false;
+    }
+
+    let ptr = GlobalLock(hglobal);
+    if !ptr.is_null() {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
+        GlobalUnlock(hglobal).ok();
+
+        // Ownership of the HGLOBAL is passed to the clipboard. We should not free it.
+        let handle = std::mem::transmute::<HGLOBAL, HANDLE>(hglobal);
+        SetClipboardData(format, Some(handle)).is_ok()
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]

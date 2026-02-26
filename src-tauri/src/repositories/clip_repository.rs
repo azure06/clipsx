@@ -25,10 +25,11 @@ impl ClipRepository {
             r#"
             INSERT INTO clips (
                 id, content_type, content_text, content_html, content_rtf,
-                image_path, file_paths, detected_type, metadata, created_at, updated_at, app_name,
+                svg_path, pdf_path, image_path, attachment_path, attachment_type,
+                file_paths, detected_type, metadata, created_at, updated_at, app_name,
                 is_pinned, is_favorite, access_count, content_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&clip.id)
@@ -36,7 +37,11 @@ impl ClipRepository {
         .bind(&clip.content_text)
         .bind(&clip.content_html)
         .bind(&clip.content_rtf)
+        .bind(&clip.svg_path)
+        .bind(&clip.pdf_path)
         .bind(&clip.image_path)
+        .bind(&clip.attachment_path)
+        .bind(&clip.attachment_type)
         .bind(&clip.file_paths)
         .bind(&clip.detected_type)
         .bind(&clip.metadata)

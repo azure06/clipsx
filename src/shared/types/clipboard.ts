@@ -1,6 +1,6 @@
 // Clipboard data types using discriminated unions
 
-export type ClipContentType = 'text' | 'html' | 'rtf' | 'image' | 'files'
+export type ClipContentType = 'text' | 'html' | 'rtf' | 'image' | 'files' | 'office'
 
 export type ClipContent =
   | { type: 'text'; content: string }
@@ -16,7 +16,11 @@ export type ClipItem = {
   readonly contentText: string | null
   readonly contentHtml: string | null
   readonly contentRtf: string | null
+  readonly svgPath: string | null // SVG XML from Office apps
+  readonly pdfPath: string | null // PDF document from Office apps
   readonly imagePath: string | null
+  readonly attachmentPath: string | null // OLE/binary attachments
+  readonly attachmentType: string | null // UTI type for OLE write-back, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
   readonly filePaths: string | null // JSON array
   readonly metadata: string | null // JSON object
   readonly createdAt: number // Unix timestamp

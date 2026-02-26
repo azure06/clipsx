@@ -14,6 +14,7 @@ export const parseMetadata = (metadataJson?: string | null): ContentMetadata => 
 
 // Get content type from clip
 export const getContentType = (clip: ClipItem): ContentType => {
+  if (clip.contentType === 'office') return 'office'
   if (clip.contentType === 'image') return 'image'
   if (clip.contentType === 'files') return 'files'
 
@@ -22,12 +23,28 @@ export const getContentType = (clip: ClipItem): ContentType => {
 }
 
 // Convert ClipItem to unified Content
-export const clipToContent = (clip: ClipItem): Content => ({
-  type: getContentType(clip),
-  text: clip.contentText || '',
-  metadata: parseMetadata(clip.metadata),
-  clip,
-})
+export const clipToContent = (clip: ClipItem): Content => {
+  const baseMetadata = parseMetadata(clip.metadata)
+
+  // Add Office-specific fields to metadata if present
+  const metadata: ContentMetadata =
+    clip.contentType === 'office'
+      ? {
+          ...baseMetadata,
+          svg: clip.svgPath ?? undefined,
+          pdf: clip.pdfPath ?? undefined,
+          attachment_path: clip.attachmentPath ?? undefined,
+          source_app: clip.appName ?? undefined,
+        }
+      : baseMetadata
+
+  return {
+    type: getContentType(clip),
+    text: clip.contentText || '',
+    metadata,
+    clip,
+  }
+}
 
 // Get type color for UI
 export const getTypeColor = (type: ContentType): string => {
@@ -45,6 +62,7 @@ export const getTypeColor = (type: ContentType): string => {
     path: 'bg-indigo-500',
     image: 'bg-pink-500',
     files: 'bg-blue-600',
+    office: 'bg-blue-400',
     math: 'bg-orange-500',
     phone: 'bg-teal-500',
     date: 'bg-rose-500',
@@ -68,6 +86,7 @@ export const getTypeIcon = (type: ContentType): string => {
     path: '📁',
     image: '🖼️',
     files: '📦',
+    office: '📊',
     math: '🧮',
     phone: '📞',
     date: '📅',
