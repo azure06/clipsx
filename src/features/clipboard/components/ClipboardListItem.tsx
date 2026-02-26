@@ -156,8 +156,39 @@ const ClipboardListItemComponent = ({
           </div>
         )}
 
+        {/* Quick Hover Actions */}
+        <div className="hidden group-hover:flex items-center gap-1 ml-2 transition-opacity opacity-0 group-hover:opacity-100">
+          <button
+            onClick={e => {
+              e.stopPropagation()
+              onToggleFavorite(clip.id)
+            }}
+            className="rounded-lg p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-500 active:scale-95"
+            title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+          >
+            <Star
+              className={`h-4 w-4 ${isFavorite ? 'fill-amber-500 text-amber-500' : ''}`}
+              strokeWidth={2}
+            />
+          </button>
+
+          <button
+            onClick={e => {
+              e.stopPropagation()
+              onTogglePin(clip.id)
+            }}
+            className="rounded-lg p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-500 active:scale-95"
+            title={isPinned ? 'Unpin' : 'Pin to Top'}
+          >
+            <Pin
+              className={`h-4 w-4 ${isPinned ? 'fill-blue-500 text-blue-500' : ''}`}
+              strokeWidth={2}
+            />
+          </button>
+        </div>
+
         {/* Actions menu - always visible */}
-        <div className="flex items-start flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start shrink-0 ml-1" onClick={e => e.stopPropagation()}>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button

@@ -40,9 +40,8 @@ export const ClipboardHistory = ({
 
   const settings = useSettingsStore(state => state.settings)
 
-  // const [searchQuery, setSearchQuery] = useState('') // Controlled via props now
-  // Hardcoded for now as UI controls were removed
-  const activeFilter = 'all'
+  type FilterType = 'all' | 'favorites' | 'pinned'
+  const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const viewMode: ViewMode = 'list'
 
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -230,10 +229,9 @@ export const ClipboardHistory = ({
   const filteredClips = useMemo(
     () =>
       clips.filter(clip => {
-        const matchesFilter =
-          activeFilter === 'all' || (activeFilter === 'favorites' && clip.isFavorite)
-
-        return matchesFilter
+        if (activeFilter === 'favorites') return clip.isFavorite
+        if (activeFilter === 'pinned') return clip.isPinned
+        return true
       }),
     [clips, activeFilter]
   )
@@ -485,6 +483,27 @@ export const ClipboardHistory = ({
       </>
     )
   }
-
-  return <div className={`flex h-full max-h-screen flex-col ${className}`}>{renderContent()}</div>
+  return (
+    <div className={`flex h-full max-h-screen flex-col ${className}`}>
+      {/* Quick Filters */}
+      {clips.length > 0 && (
+        <div className="flex items-center gap-2 px-1 pb-3 shrink-0 relative z-20">
+          {(['all', 'favorites', 'pinned'] as const).map(filter => (
+            <button
+              key={filter}
+              onClick={() => setActiveFilter(filter)}
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                activeFilter === filter
+                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shadow-sm'
+                  : 'text-gray-400 border border-transparent hover:text-gray-200 hover:bg-white/5'
+              }`}
+            >
+              {filter.charAt(0).toUpperCase() + filter.slice(1)}
+            </button>
+          ))}
+        </div>
+      )}
+      {renderContent()}
+    </div>
+  )
 }
