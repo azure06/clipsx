@@ -1,4 +1,15 @@
-import { Search, Command, X, Sparkles, Image, Link, Type, Code, FileText } from 'lucide-react'
+import {
+  Search,
+  Command,
+  X,
+  Sparkles,
+  Image,
+  Link,
+  Type,
+  Code,
+  FileText,
+  Briefcase,
+} from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 
 const FILTER_OPTIONS = [
@@ -7,6 +18,7 @@ const FILTER_OPTIONS = [
   { prefix: '/text', label: 'Text', description: 'Plain text clips', icon: Type },
   { prefix: '/code', label: 'Code', description: 'Code snippets', icon: Code },
   { prefix: '/file', label: 'Files', description: 'File paths', icon: FileText },
+  { prefix: '/office', label: 'Office', description: 'Word, Excel, PPT', icon: Briefcase },
 ]
 
 interface SearchBarProps {
@@ -40,7 +52,8 @@ export const SearchBar = ({
   }, [autoFocus])
 
   // Derive filter menu visibility from value (no useEffect needed)
-  const slashMatch = value.match(/^(\/\S*)/)
+  // Only show menu if the ENTIRE value is a slash command (no trailing string/space yet)
+  const slashMatch = value.match(/^(\/\S*)$/)
   const currentSlash = slashMatch ? slashMatch[1] : null
 
   const filteredOptions = currentSlash
@@ -49,22 +62,42 @@ export const SearchBar = ({
 
   const showFilterMenu = currentSlash !== null && filteredOptions.length > 0
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!showFilterMenu) return
+  // Calculate Active Pill Information
+  const trimmedValue = value.trimStart()
+  const firstWordMatch = trimmedValue.match(/^(\/\S+)/)
+  const firstWord = firstWordMatch?.[1] ? firstWordMatch[1].toLowerCase() : null
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setSelectedFilterIndex(prev => Math.min(prev + 1, filteredOptions.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setSelectedFilterIndex(prev => Math.max(prev - 1, 0))
-    } else if (e.key === 'Enter' || e.key === 'Tab') {
-      if (filteredOptions[selectedFilterIndex]) {
+  const activeFilter = firstWord ? FILTER_OPTIONS.find(opt => opt.prefix === firstWord) : undefined
+
+  const displayValue = activeFilter
+    ? value.slice(value.indexOf(activeFilter.prefix) + activeFilter.prefix.length).trimStart()
+    : value
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showFilterMenu) {
+      if (e.key === 'ArrowDown') {
         e.preventDefault()
-        const selected = filteredOptions[selectedFilterIndex]
-        const rest = value.replace(/^\/\S*/, '').trim()
-        onChange(selected.prefix + ' ' + rest)
+        setSelectedFilterIndex(prev => Math.min(prev + 1, filteredOptions.length - 1))
+        return
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedFilterIndex(prev => Math.max(prev - 1, 0))
+        return
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (filteredOptions[selectedFilterIndex]) {
+          e.preventDefault()
+          const selected = filteredOptions[selectedFilterIndex]
+          const rest = value.replace(/^\/\S*/, '').trim()
+          onChange(selected.prefix + ' ' + rest)
+        }
+        return
       }
+    }
+
+    if (e.key === 'Backspace' && displayValue === '' && activeFilter) {
+      e.preventDefault()
+      // Remove pill, leave just the prefix minus last char so they can keep editing or deleting
+      onChange(activeFilter.prefix.slice(0, -1))
     } else if (e.key === 'Escape') {
       onClear()
     }
@@ -84,15 +117,29 @@ export const SearchBar = ({
           <Search className="w-5 h-5" />
         </div>
 
+        {/* Active Pill */}
+        {activeFilter && (
+          <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-500/20 text-blue-300 rounded-md border border-blue-500/30 whitespace-nowrap shadow-sm">
+            <activeFilter.icon className="w-4 h-4" />
+            <span className="text-sm font-medium">{activeFilter.label}</span>
+          </div>
+        )}
+
         {/* The Input */}
         <input
           ref={inputRef}
           type="text"
-          value={value}
-          onChange={e => onChange(e.target.value)}
+          value={displayValue}
+          onChange={e => {
+            if (activeFilter) {
+              onChange(`${activeFilter.prefix} ${e.target.value}`)
+            } else {
+              onChange(e.target.value)
+            }
+          }}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          className="flex-1 bg-transparent border-none outline-none px-4 py-4 text-lg text-white placeholder-gray-500 focus:ring-0"
+          placeholder={activeFilter ? `Search in ${activeFilter.label}...` : placeholder}
+          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-white placeholder-gray-500 focus:ring-0 ${activeFilter ? 'px-3' : 'px-4'}`}
         />
 
         {/* Right Actions */}
