@@ -14,7 +14,7 @@ export { ClipboardListItem } from './components'
 interface ClipboardHistoryProps {
   searchQuery?: string
   className?: string
-  onPreviewItem?: (clip: ClipItem) => void
+  onPreviewItem?: (clip: ClipItem | null) => void
 }
 
 export const ClipboardHistory = ({
@@ -45,7 +45,7 @@ export const ClipboardHistory = ({
   const activeFilter = 'all'
   const viewMode: ViewMode = 'list'
 
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
 
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -350,10 +350,16 @@ export const ClipboardHistory = ({
 
   // ADDED: Notify parent of selection change for preview
   useEffect(() => {
-    if (onPreviewItem && filteredClips.length > 0) {
-      const selectedClip = filteredClips[selectedIndex]
-      if (selectedClip) {
-        onPreviewItem(selectedClip)
+    if (onPreviewItem) {
+      if (filteredClips.length > 0 && selectedIndex >= 0) {
+        const selectedClip = filteredClips[selectedIndex]
+        if (selectedClip) {
+          onPreviewItem(selectedClip)
+        } else {
+          onPreviewItem(null) // If index is out of bounds
+        }
+      } else {
+        onPreviewItem(null)
       }
     }
   }, [selectedIndex, filteredClips, onPreviewItem])

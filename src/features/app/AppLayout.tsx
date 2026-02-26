@@ -10,7 +10,7 @@ import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
-import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
+import { useUIStore, useSettingsStore } from '../../stores'
 
 export const AppLayout = () => {
   const {
@@ -24,7 +24,6 @@ export const AppLayout = () => {
     isSemanticActive,
     toggleSemantic,
   } = useUIStore()
-  const { clips } = useClipboardStore()
   const { loadSettings } = useSettingsStore()
   const [isModelReady, setIsModelReady] = useState(false)
 
@@ -47,9 +46,6 @@ export const AppLayout = () => {
     const interval = setInterval(() => void check(), 5000)
     return () => clearInterval(interval)
   }, [])
-
-  // Derived state for active clip (first in list)
-  const activeClip = clips[0]
 
   // Event Listener for Tray "Settings" click
   useEffect(() => {
@@ -105,11 +101,10 @@ export const AppLayout = () => {
                       onPreviewItem={setPreviewClip}
                     />
                   </div>
-
                   {/* RIGHT PANEL: Preview & Actions */}
                   <div className="w-1/2 shrink-0 flex flex-col gap-6 overflow-hidden">
                     {(() => {
-                      const displayedClip = previewClip ?? activeClip
+                      const displayedClip = previewClip
                       if (displayedClip) {
                         return <ClipPreview clip={displayedClip} />
                       }
