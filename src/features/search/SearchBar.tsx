@@ -77,15 +77,18 @@ export const SearchBar = ({
     if (showFilterMenu) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
+        e.stopPropagation()
         setSelectedFilterIndex(prev => Math.min(prev + 1, filteredOptions.length - 1))
         return
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
+        e.stopPropagation()
         setSelectedFilterIndex(prev => Math.max(prev - 1, 0))
         return
       } else if (e.key === 'Enter' || e.key === 'Tab') {
         if (filteredOptions[selectedFilterIndex]) {
           e.preventDefault()
+          e.stopPropagation()
           const selected = filteredOptions[selectedFilterIndex]
           const rest = value.replace(/^\/\S*/, '').trim()
           onChange(selected.prefix + ' ' + rest)

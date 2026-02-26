@@ -260,6 +260,9 @@ export const ClipboardHistory = ({
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // If another component (like SearchBar) already handled and prevented this event, ignore it.
+      if (e.defaultPrevented) return
+
       // Skip if focus is inside any text input EXCEPT for the main search input
       const active = document.activeElement
       const isInput = active instanceof HTMLInputElement
