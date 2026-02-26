@@ -185,7 +185,7 @@ impl ClipboardService {
 
                 // Trigger background embedding generation if a model is loaded
                 if let Some(text) = &clip.content_text {
-                    if self.semantic_service.is_ready() {
+                    if let Some((model_name, dimensions)) = self.semantic_service.get_model_info() {
                         let text_clone = text.clone();
                         let clip_id = clip.id.clone();
                         let repo = self.repository.clone();
@@ -198,8 +198,8 @@ impl ClipboardService {
                                         .create_embedding(
                                             &clip_id,
                                             SemanticService::vector_to_bytes(&vector),
-                                            "all-MiniLM-L6-v2",
-                                            384,
+                                            &model_name,
+                                            dimensions,
                                         )
                                         .await
                                     {
@@ -480,11 +480,11 @@ impl ClipboardService {
             content_text: Some(extracted_text), // Text from pasteboard/SVG/PDF → searchable via FTS5
             content_html: None,
             content_rtf: None,
-            svg_path,                          // SVG file: clipboard_data/svg/{id}.svg
-            pdf_path,                          // PDF file: clipboard_data/pdf/{id}.pdf
-            image_path,                        // PNG file: clipboard_data/images/{id}.png
-            attachment_path,                   // Office native format: clipboard_data/office/{id}.bin
-            attachment_type: ole_type,         // UTI type for restoring OLE to pasteboard
+            svg_path,                  // SVG file: clipboard_data/svg/{id}.svg
+            pdf_path,                  // PDF file: clipboard_data/pdf/{id}.pdf
+            image_path,                // PNG file: clipboard_data/images/{id}.png
+            attachment_path,           // Office native format: clipboard_data/office/{id}.bin
+            attachment_type: ole_type, // UTI type for restoring OLE to pasteboard
             file_paths: None,
             detected_type: "office".to_string(),
             metadata: Some(format!(r#"{{"source_app":"{}"}}"#, source_app)),

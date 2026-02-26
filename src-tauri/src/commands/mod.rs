@@ -348,8 +348,7 @@ pub async fn copy_to_clipboard(
         }
 
         "files" => ClipboardContent::Files {
-            paths: serde_json::from_str(&clip.file_paths.unwrap_or_default())
-                .unwrap_or_default(),
+            paths: serde_json::from_str(&clip.file_paths.unwrap_or_default()).unwrap_or_default(),
         },
 
         "office" => {
@@ -439,15 +438,15 @@ pub async fn copy_to_clipboard(
                 pdf_data,
                 png_data,
                 extracted_text: clip.content_text.unwrap_or_default(),
-                source_app: clip.app_name.unwrap_or_else(|| "Microsoft Office".to_string()),
+                source_app: clip
+                    .app_name
+                    .unwrap_or_else(|| "Microsoft Office".to_string()),
             }
         }
 
         _ => {
             // Fallback to plain text
-            ClipboardContent::Text {
-                content: text,
-            }
+            ClipboardContent::Text { content: text }
         }
     };
 
@@ -730,9 +729,10 @@ pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> 
 
 #[tauri::command]
 pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    if !state.semantic_service.is_ready() {
-        return Err("Semantic model is not loaded yet.".to_string());
-    }
+    let (model_name, dimensions) = match state.semantic_service.get_model_info() {
+        Some(info) => info,
+        None => return Err("Semantic model is not loaded yet.".to_string()),
+    };
 
     let clip = state
         .repository
@@ -752,7 +752,7 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
 
         state
             .repository
-            .create_embedding(&id, vector_bytes, "all-MiniLM-L6-v2", 384)
+            .create_embedding(&id, vector_bytes, &model_name, dimensions)
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
 

@@ -9,6 +9,8 @@ pub struct SemanticService {
     /// Note: We use std::sync::RwLock because fastembed operations are blocking
     /// and should be run inside task::spawn_blocking anyway.
     model: Arc<StdRwLock<Option<TextEmbedding>>>,
+    // Track the name of the currently loaded model
+    loaded_model_name: Arc<StdRwLock<Option<String>>>,
     app_data_dir: std::path::PathBuf,
 }
 
@@ -16,6 +18,7 @@ impl SemanticService {
     pub fn new(app_data_dir: std::path::PathBuf) -> Self {
         Self {
             model: Arc::new(StdRwLock::new(None)),
+            loaded_model_name: Arc::new(StdRwLock::new(None)),
             app_data_dir,
         }
     }
@@ -28,6 +31,7 @@ impl SemanticService {
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<()> {
         let model_arc = self.model.clone();
+        let name_arc = self.loaded_model_name.clone();
         let cache_dir = self.app_data_dir.join(".fastembed_cache");
 
         // We know the approximate sizes of the repositories for progress bars
@@ -106,6 +110,10 @@ impl SemanticService {
 
             let mut lock = model_arc.write().unwrap();
             *lock = Some(model);
+
+            let mut name_lock = name_arc.write().unwrap();
+            *name_lock = Some(model_name.clone());
+
             Ok(())
         })
         .await?;
@@ -128,6 +136,23 @@ impl SemanticService {
     pub fn unload_model(&self) {
         let mut lock = self.model.write().unwrap();
         *lock = None;
+        let mut name_lock = self.loaded_model_name.write().unwrap();
+        *name_lock = None;
+    }
+
+    /// Returns the currently loaded model name and its dimension size.
+    pub fn get_model_info(&self) -> Option<(String, i32)> {
+        let lock = self.loaded_model_name.read().unwrap();
+        if let Some(name) = lock.as_ref() {
+            let dim = match name.as_str() {
+                "paraphrase-multilingual-MiniLM-L12-v2" => 384,
+                "all-MiniLM-L6-v2" => 384,
+                _ => 384, // Default fallback dimension
+            };
+            Some((name.clone(), dim))
+        } else {
+            None
+        }
     }
 
     /// Returns a list of model IDs (e.g., "all-MiniLM-L6-v2") that have been downloaded
