@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useClipboardStore } from '../../stores'
@@ -40,8 +40,8 @@ export const ClipboardHistory = ({
 
   const settings = useSettingsStore(state => state.settings)
 
-  type FilterType = 'all' | 'favorites' | 'pinned'
-  const [activeFilter, setActiveFilter] = useState<FilterType>('all')
+  const activeTab = useClipboardStore(state => state.activeTab)
+  const setActiveTab = useClipboardStore(state => state.setActiveTab)
   const viewMode: ViewMode = 'list'
 
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -226,24 +226,15 @@ export const ClipboardHistory = ({
   // NOTE: Clips array already contains search results if in search mode
   // Filter clips - only by activeFilter now, search is handled by backend FTS
   // NOTE: Clips array already contains search results if in search mode
-  const filteredClips = useMemo(
-    () =>
-      clips.filter(clip => {
-        if (activeFilter === 'favorites') return clip.isFavorite
-        if (activeFilter === 'pinned') return clip.isPinned
-        return true
-      }),
-    [clips, activeFilter]
-  )
 
-  // Reset selection when filtered clips change
+  // Reset selection when clips change
   useEffect(() => {
-    if (filteredClips.length > 0 && selectedIndex >= filteredClips.length) {
+    if (clips.length > 0 && selectedIndex >= clips.length) {
       setSelectedIndex(0) // Reset if out of bounds
-    } else if (filteredClips.length > 0 && selectedIndex === -1) {
+    } else if (clips.length > 0 && selectedIndex === -1) {
       setSelectedIndex(0)
     }
-  }, [filteredClips, selectedIndex])
+  }, [clips, selectedIndex])
 
   // Auto-scroll selected item into view
   const scrollSelectedIntoView = useCallback((index: number) => {
@@ -291,14 +282,14 @@ export const ClipboardHistory = ({
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
         e.preventDefault()
         const index = parseInt(e.key, 10) - 1
-        const clip = filteredClips[index]
+        const clip = clips[index]
         if (clip) {
           void handleAction(clip.contentText ?? '', clip.id)
         }
         return
       }
 
-      const maxIndex = filteredClips.length - 1
+      const maxIndex = clips.length - 1
       if (maxIndex < 0) return
 
       switch (e.key) {
@@ -324,7 +315,7 @@ export const ClipboardHistory = ({
         }
         case 'Enter': {
           e.preventDefault()
-          const clip = filteredClips[selectedIndex]
+          const clip = clips[selectedIndex]
           if (clip) {
             void handleAction(clip.contentText ?? '', clip.id)
           }
@@ -333,7 +324,7 @@ export const ClipboardHistory = ({
         case 'Delete':
         case 'Backspace': {
           e.preventDefault()
-          const clip = filteredClips[selectedIndex]
+          const clip = clips[selectedIndex]
           if (clip) {
             void handleDelete(clip.id)
             // Adjust index if we deleted the last item
@@ -342,12 +333,12 @@ export const ClipboardHistory = ({
           break
         }
         case 'f': {
-          const clip = filteredClips[selectedIndex]
+          const clip = clips[selectedIndex]
           if (clip) handleToggleFavorite(clip.id)
           break
         }
         case 'p': {
-          const clip = filteredClips[selectedIndex]
+          const clip = clips[selectedIndex]
           if (clip) handleTogglePin(clip.id)
           break
         }
@@ -365,7 +356,7 @@ export const ClipboardHistory = ({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
-    filteredClips,
+    clips,
     selectedIndex,
     scrollSelectedIntoView,
     handleAction,
@@ -377,8 +368,8 @@ export const ClipboardHistory = ({
   // ADDED: Notify parent of selection change for preview
   useEffect(() => {
     if (onPreviewItem) {
-      if (filteredClips.length > 0 && selectedIndex >= 0) {
-        const selectedClip = filteredClips[selectedIndex]
+      if (clips.length > 0 && selectedIndex >= 0) {
+        const selectedClip = clips[selectedIndex]
         if (selectedClip) {
           onPreviewItem(selectedClip)
         } else {
@@ -388,7 +379,7 @@ export const ClipboardHistory = ({
         onPreviewItem(null)
       }
     }
-  }, [selectedIndex, filteredClips, onPreviewItem])
+  }, [selectedIndex, clips, onPreviewItem])
 
   // Infinite scroll trigger element
   const infiniteScrollTrigger = (
@@ -441,7 +432,7 @@ export const ClipboardHistory = ({
       )
     }
 
-    if (filteredClips.length === 0) {
+    if (clips.length === 0) {
       return (
         <div className="flex flex-1 items-center justify-center p-12 relative overflow-hidden">
           <div className="text-center relative z-10 flex flex-col items-center">
@@ -467,7 +458,7 @@ export const ClipboardHistory = ({
       <>
         {viewMode === 'list' && (
           <ClipboardListView
-            clips={filteredClips}
+            clips={clips}
             onSelect={onSelectHandler}
             onDoubleClick={onDoubleClickHandler}
             onCopy={onCopyHandler}
@@ -485,24 +476,23 @@ export const ClipboardHistory = ({
   }
   return (
     <div className={`flex h-full max-h-screen flex-col ${className}`}>
-      {/* Quick Filters */}
-      {clips.length > 0 && (
-        <div className="flex items-center gap-2 px-1 pb-3 shrink-0 relative z-20">
-          {(['all', 'favorites', 'pinned'] as const).map(filter => (
-            <button
-              key={filter}
-              onClick={() => setActiveFilter(filter)}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                activeFilter === filter
-                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shadow-sm'
-                  : 'text-gray-400 border border-transparent hover:text-gray-200 hover:bg-white/5'
-              }`}
-            >
-              {filter.charAt(0).toUpperCase() + filter.slice(1)}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Quick Filters - always visible above the list */}
+      <div className="flex gap-2 px-3 pt-2 pb-2 shrink-0 relative z-20">
+        {(['all', 'favorites', 'pinned'] as const).map(filter => (
+          <button
+            key={filter}
+            type="button"
+            onClick={() => void setActiveTab(filter)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              activeTab === filter
+                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                : 'text-gray-400 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+            }`}
+          >
+            {filter.charAt(0).toUpperCase() + filter.slice(1)}
+          </button>
+        ))}
+      </div>
       {renderContent()}
     </div>
   )

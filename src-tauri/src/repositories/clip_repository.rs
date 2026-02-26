@@ -69,14 +69,31 @@ impl ClipRepository {
         Ok(clips)
     }
 
-    pub async fn get_recent_paginated(&self, limit: i32, offset: i32) -> Result<Vec<ClipItem>> {
-        let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+    pub async fn get_recent_paginated(
+        &self,
+        limit: i32,
+        offset: i32,
+        favorites_only: bool,
+        pinned_only: bool,
+    ) -> Result<Vec<ClipItem>> {
+        let mut sql = String::from(
+            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1"
+        );
+
+        if favorites_only {
+            sql.push_str(" AND clips.is_favorite = 1");
+        }
+        if pinned_only {
+            sql.push_str(" AND clips.is_pinned = 1");
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
+
+        let clips = sqlx::query_as::<_, ClipItem>(&sql)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(clips)
     }
@@ -254,6 +271,8 @@ impl ClipRepository {
         filter_types: Option<Vec<String>>,
         limit: i32,
         offset: i32,
+        favorites_only: bool,
+        pinned_only: bool,
     ) -> Result<Vec<ClipItem>> {
         let escaped_query = Self::escape_fts5_query(query);
 
@@ -283,6 +302,14 @@ impl ClipRepository {
                 }
                 sql.push(')');
             }
+        }
+
+        // Add favorites and pinned filters
+        if favorites_only {
+            sql.push_str(" AND clips.is_favorite = 1");
+        }
+        if pinned_only {
+            sql.push_str(" AND clips.is_pinned = 1");
         }
 
         if has_text_query {
@@ -618,27 +645,19 @@ impl ClipRepository {
         Ok(embedding)
     }
 
-    /// Get all embeddings (for similarity search)
-    pub async fn get_all_embeddings(&self) -> Result<Vec<Embedding>> {
-        let embeddings =
-            sqlx::query_as::<_, Embedding>("SELECT * FROM embeddings ORDER BY created_at DESC")
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(embeddings)
-    }
-
-    /// Get embeddings, optionally filtering by clip type
     pub async fn get_embeddings_with_filters(
         &self,
         filter_types: Option<Vec<String>>,
+        favorites_only: bool,
+        pinned_only: bool,
     ) -> Result<Vec<Embedding>> {
-        let mut sql =
-            String::from("SELECT e.* FROM embeddings e INNER JOIN clips c ON e.clip_id = c.id");
+        let mut sql = String::from(
+            "SELECT e.* FROM embeddings e INNER JOIN clips c ON e.clip_id = c.id WHERE 1=1",
+        );
 
         if let Some(types) = &filter_types {
             if !types.is_empty() {
-                sql.push_str(" WHERE c.detected_type IN (");
+                sql.push_str(" AND c.detected_type IN (");
                 for (i, _) in types.iter().enumerate() {
                     if i > 0 {
                         sql.push_str(", ");
@@ -647,6 +666,13 @@ impl ClipRepository {
                 }
                 sql.push(')');
             }
+        }
+
+        if favorites_only {
+            sql.push_str(" AND c.is_favorite = 1");
+        }
+        if pinned_only {
+            sql.push_str(" AND c.is_pinned = 1");
         }
 
         let mut query_builder = sqlx::query_as::<_, Embedding>(&sql);

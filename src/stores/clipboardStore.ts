@@ -13,6 +13,7 @@ type ClipboardState = {
   // Search mode state
   mode: 'browse' | 'search' // Track whether we're browsing or searching
   searchQuery: string // Current search query (empty = browse mode)
+  activeTab: 'all' | 'favorites' | 'pinned'
 }
 
 type ClipboardActions = {
@@ -22,6 +23,7 @@ type ClipboardActions = {
   // NEW: Search with pagination (for infinite scroll)
   enterSearchMode: (query: string) => Promise<void>
   exitSearchMode: () => void
+  setActiveTab: (tab: 'all' | 'favorites' | 'pinned') => Promise<void>
   deleteClip: (id: string) => Promise<void>
   toggleFavorite: (id: string) => Promise<void>
   togglePin: (id: string) => Promise<void>
@@ -42,6 +44,7 @@ const initialState: ClipboardState = {
   currentOffset: 0,
   mode: 'browse',
   searchQuery: '',
+  activeTab: 'all',
 }
 
 // Helper to parse slash commands from query
@@ -71,12 +74,15 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   // - if searchQuery starts with "semantic:" -> use semantic_search_paginated
   // - otherwise -> use FTS search_clips_paginated
   loadMoreClips: async (limit = 50) => {
-    const { currentOffset, hasMore, loading, mode, searchQuery } = useClipboardStore.getState()
+    const { currentOffset, hasMore, loading, mode, searchQuery, activeTab } =
+      useClipboardStore.getState()
     if (!hasMore || loading) return
 
     set({ loading: true, error: null })
     try {
       let newClips: ClipItem[]
+      const favoritesOnly = activeTab === 'favorites'
+      const pinnedOnly = activeTab === 'pinned'
 
       if (mode === 'search' && searchQuery) {
         // Search mode: Use FTS paginated search with parsing
@@ -85,16 +91,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         const isSemanticActive = useUIStore.getState().isSemanticActive
         newClips = await invoke<ClipItem[]>('search_clips_paginated', {
           query,
-          filter_types: filterTypes,
+          filterTypes,
           limit,
           offset: currentOffset,
-          use_semantic_search: isSemanticActive && (!filterTypes || filterTypes.length === 0),
+          favoritesOnly,
+          pinnedOnly,
+          useSemanticSearch: isSemanticActive && (!filterTypes || filterTypes.length === 0),
         })
       } else {
         // Browse mode: Standard chronological pagination
         newClips = await invoke<ClipItem[]>('get_recent_clips_paginated', {
           limit,
           offset: currentOffset,
+          favoritesOnly,
+          pinnedOnly,
         })
       }
 
@@ -136,6 +146,21 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set({ currentOffset: 0, hasMore: true })
   },
 
+  setActiveTab: async (tab: 'all' | 'favorites' | 'pinned') => {
+    const { activeTab } = useClipboardStore.getState()
+    if (activeTab === tab) return
+
+    set({
+      activeTab: tab,
+      clips: [],
+      currentOffset: 0,
+      hasMore: true,
+    })
+
+    // Automatically load first page of the new tab
+    await useClipboardStore.getState().loadMoreClips(50)
+  },
+
   // Enter search mode with a new query
   // Resets pagination and loads first page of search results
   enterSearchMode: async (rawQuery: string) => {
@@ -153,11 +178,17 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       const { query, filterTypes } = parseSearchQuery(rawQuery)
 
       const isSemanticActive = useUIStore.getState().isSemanticActive
+      const { activeTab } = useClipboardStore.getState()
+      const favoritesOnly = activeTab === 'favorites'
+      const pinnedOnly = activeTab === 'pinned'
+
       const clips = await invoke<ClipItem[]>('search_clips_paginated', {
         query,
         filterTypes,
         limit: 50,
         offset: 0,
+        favoritesOnly,
+        pinnedOnly,
         useSemanticSearch: isSemanticActive && (!filterTypes || filterTypes.length === 0),
         similarityThreshold: 0.3,
       })
@@ -191,10 +222,17 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       const { query, filterTypes } = parseSearchQuery(rawQuery)
       const settings = useSettingsStore.getState().settings
+
+      const { activeTab } = useClipboardStore.getState()
+      const favoritesOnly = activeTab === 'favorites'
+      const pinnedOnly = activeTab === 'pinned'
+
       const clips = await invoke<ClipItem[]>('search_clips', {
         query,
         filterTypes,
         limit,
+        favoritesOnly,
+        pinnedOnly,
         useSemanticSearch:
           (settings?.semantic_search_enabled ?? false) &&
           (!filterTypes || filterTypes.length === 0),

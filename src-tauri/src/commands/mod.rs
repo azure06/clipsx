@@ -34,11 +34,18 @@ pub async fn get_recent_clips(
 pub async fn get_recent_clips_paginated(
     limit: Option<i32>,
     offset: Option<i32>,
+    favorites_only: Option<bool>,
+    pinned_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
     state
         .repository
-        .get_recent_paginated(limit.unwrap_or(50), offset.unwrap_or(0))
+        .get_recent_paginated(
+            limit.unwrap_or(50),
+            offset.unwrap_or(0),
+            favorites_only.unwrap_or(false),
+            pinned_only.unwrap_or(false),
+        )
         .await
         .map_err(|e| e.to_string())
 }
@@ -82,6 +89,8 @@ pub async fn search_clips(
         filter_types,
         Some(limit_val),
         Some(0),
+        Some(false),
+        Some(false),
         use_semantic_search,
         similarity_threshold,
         state,
@@ -95,12 +104,16 @@ pub async fn search_clips_paginated(
     filter_types: Option<Vec<String>>,
     limit: Option<i32>,
     offset: Option<i32>,
+    favorites_only: Option<bool>,
+    pinned_only: Option<bool>,
     use_semantic_search: bool,
     similarity_threshold: Option<f32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
     let limit_val = limit.unwrap_or(50);
     let offset_val = offset.unwrap_or(0);
+    let fav_val = favorites_only.unwrap_or(false);
+    let pin_val = pinned_only.unwrap_or(false);
     let threshold = similarity_threshold.unwrap_or(0.3); // Default threshold
 
     if use_semantic_search && state.semantic_service.is_ready() && !query.trim().is_empty() {
@@ -114,7 +127,7 @@ pub async fn search_clips_paginated(
         // Fetch embeddings with filters
         let all_embeddings = state
             .repository
-            .get_embeddings_with_filters(filter_types.clone())
+            .get_embeddings_with_filters(filter_types.clone(), fav_val, pin_val)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -180,7 +193,14 @@ pub async fn search_clips_paginated(
     // Fallback to Full Text Search (FTS)
     state
         .repository
-        .search_paginated(&query, filter_types, limit_val, offset_val)
+        .search_paginated(
+            &query,
+            filter_types,
+            limit_val,
+            offset_val,
+            fav_val,
+            pin_val,
+        )
         .await
         .map_err(|e| e.to_string())
 }

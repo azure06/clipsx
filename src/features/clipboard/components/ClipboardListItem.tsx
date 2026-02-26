@@ -1,9 +1,7 @@
-import { useState, memo } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import * as Toast from '@radix-ui/react-toast'
+import { memo } from 'react'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatClipPreview } from '../../../shared/types'
-import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Hash, Check, Command } from 'lucide-react'
+import { Star, Sparkles, Pin, Hash, Command, CornerDownLeft } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
@@ -11,10 +9,6 @@ type ClipboardListItemProps = {
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
   readonly onDoubleClick?: (text: string, id: string) => void
-  readonly onDelete: (id: string) => void
-  readonly onToggleFavorite: (id: string) => void
-  readonly onTogglePin: (id: string) => void
-  readonly onGenerateEmbedding?: (id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
 }
@@ -24,10 +18,6 @@ const ClipboardListItemComponent = ({
   onCopy,
   onSelect,
   onDoubleClick,
-  onDelete,
-  onToggleFavorite,
-  onTogglePin,
-  onGenerateEmbedding,
   isSelected = false,
   index,
 }: ClipboardListItemProps) => {
@@ -44,14 +34,11 @@ const ClipboardListItemComponent = ({
     collections.length > 0 ||
     Boolean(clip.hasEmbedding)
 
-  const [showToast, setShowToast] = useState(false)
-
   const handleClick = () => {
     if (onSelect) {
       onSelect(clip.contentText ?? '', clip.id)
     } else {
       onCopy(clip.contentText ?? '', clip.id)
-      setShowToast(true)
     }
   }
 
@@ -88,12 +75,27 @@ const ClipboardListItemComponent = ({
             {preview}
           </span>
 
-          {/* Spacer */}
-          <div className="flex-1"></div>
+          {typeof clip.similarityScore === 'number' && clip.similarityScore > 0 && (
+            <div
+              className="flex items-center gap-0.5 px-1.5 py-px rounded border text-[10px] font-bold shadow-sm whitespace-nowrap shrink-0 ml-1"
+              style={{
+                background: 'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
+                borderColor: 'rgba(236,72,153,0.2)',
+                color: '#ec4899', // Pinkish text to match gradient
+              }}
+              title={`Semantic Match Score: ${Math.round(clip.similarityScore * 100)}%`}
+            >
+              <Sparkles className="h-2.5 w-2.5 inline mr-0.5" strokeWidth={3} />
+              {Math.round(clip.similarityScore * 100)}%
+            </div>
+          )}
+        </div>
 
-          {/* Attributes - Horizontal Row */}
+        {/* Far Right Area: Shortcut, Icons, Enter Key */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto pl-2">
+          {/* Attributes - Right Aligned */}
           {hasAttributes && (
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0 opacity-70">
               {isPinned && <Pin className="h-3 w-3 text-violet-500" strokeWidth={2.5} />}
               {isFavorite && (
                 <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />
@@ -124,172 +126,26 @@ const ClipboardListItemComponent = ({
             </div>
           )}
 
-          {typeof clip.similarityScore === 'number' && clip.similarityScore > 0 && (
-            <div
-              className="flex items-center gap-0.5 px-1.5 py-px rounded border text-[10px] font-bold shadow-sm whitespace-nowrap shrink-0 ml-1"
-              style={{
-                background: 'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
-                borderColor: 'rgba(236,72,153,0.2)',
-                color: '#ec4899', // Pinkish text to match gradient
-              }}
-              title={`Semantic Match Score: ${Math.round(clip.similarityScore * 100)}%`}
-            >
-              <Sparkles className="h-2.5 w-2.5 inline mr-0.5" strokeWidth={3} />
-              {Math.round(clip.similarityScore * 100)}%
+          {/* Shortcut / Action Hint */}
+          {isSelected || (index !== undefined && index >= 0 && index < 9) ? (
+            <div className="flex shrink-0 items-center justify-center h-5 min-w-[20px] px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-500 dark:text-gray-400 shadow-sm transition-opacity">
+              {isSelected ? (
+                <CornerDownLeft
+                  className="h-3 w-3 opacity-70 text-blue-500 dark:text-blue-400"
+                  strokeWidth={2.5}
+                />
+              ) : (
+                <>
+                  <Command className="w-2.5 h-2.5 mr-0.5 opacity-70" />
+                  <span className="opacity-70">{index! + 1}</span>
+                </>
+              )}
             </div>
+          ) : (
+            <div className="h-5 w-5 shrink-0 opacity-0 pointer-events-none" /> /* Placeholder space to prevent jump */
           )}
-
-          {/* Metadata - Timestamp */}
-          <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-            {new Date(clip.createdAt * 1000).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </span>
-        </div>
-
-        {/* Shortcut Hint */}
-        {index !== undefined && index >= 0 && index < 9 && (
-          <div className="hidden group-hover:flex items-center justify-center h-5 px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-400 dark:text-gray-500 ml-2 shadow-sm transition-opacity opacity-0 group-hover:opacity-100">
-            <Command className="w-2.5 h-2.5 mr-0.5 opacity-70" />
-            <span className="opacity-70">{index + 1}</span>
-          </div>
-        )}
-
-        {/* Quick Hover Actions */}
-        <div className="hidden group-hover:flex items-center gap-1 ml-2 transition-opacity opacity-0 group-hover:opacity-100">
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              onToggleFavorite(clip.id)
-            }}
-            className="rounded-lg p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-500 active:scale-95"
-            title={isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-          >
-            <Star
-              className={`h-4 w-4 ${isFavorite ? 'fill-amber-500 text-amber-500' : ''}`}
-              strokeWidth={2}
-            />
-          </button>
-
-          <button
-            onClick={e => {
-              e.stopPropagation()
-              onTogglePin(clip.id)
-            }}
-            className="rounded-lg p-1.5 text-gray-400 dark:text-gray-500 transition-all duration-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-500 active:scale-95"
-            title={isPinned ? 'Unpin' : 'Pin to Top'}
-          >
-            <Pin
-              className={`h-4 w-4 ${isPinned ? 'fill-blue-500 text-blue-500' : ''}`}
-              strokeWidth={2}
-            />
-          </button>
-        </div>
-
-        {/* Actions menu - always visible */}
-        <div className="flex items-start shrink-0 ml-1" onClick={e => e.stopPropagation()}>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className="rounded-lg p-1.5 text-gray-400 dark:text-gray-600 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-400 active:scale-95"
-                title="Actions"
-              >
-                <MoreVertical className="h-4 w-4" strokeWidth={2} />
-              </button>
-            </DropdownMenu.Trigger>
-
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                className="z-50 w-48 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1.5 shadow-xl shadow-gray-900/10 dark:shadow-black/50 animate-in fade-in-0 zoom-in-95"
-                sideOffset={6}
-                align="end"
-                collisionPadding={8}
-              >
-                <DropdownMenu.Item
-                  onClick={() => {
-                    onCopy(clip.contentText ?? '', clip.id)
-                  }}
-                  className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-                >
-                  <Copy className="h-3.5 w-3.5" strokeWidth={2} />
-                  Copy to Clipboard
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  onClick={() => onToggleFavorite(clip.id)}
-                  className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-                >
-                  <Star
-                    className={`h-3.5 w-3.5 ${isFavorite ? 'fill-amber-500 text-amber-500' : ''}`}
-                    strokeWidth={2}
-                  />
-                  {isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  onClick={() => onTogglePin(clip.id)}
-                  className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-                >
-                  <Pin
-                    className={`h-3.5 w-3.5 ${isPinned ? 'fill-blue-500 text-blue-500' : ''}`}
-                    strokeWidth={2}
-                  />
-                  {isPinned ? 'Unpin' : 'Pin to Top'}
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Separator className="my-1.5 border-t border-gray-200 dark:border-gray-700" />
-
-                <DropdownMenu.Item
-                  disabled
-                  className="flex items-center gap-2.5 px-3 py-2 text-xs text-gray-400 dark:text-gray-600 rounded-lg mx-1"
-                >
-                  <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
-                  Fix Grammar
-                </DropdownMenu.Item>
-
-                {!clip.hasEmbedding && onGenerateEmbedding && (
-                  <DropdownMenu.Item
-                    onClick={() => onGenerateEmbedding(clip.id)}
-                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-indigo-600 dark:text-indigo-400 outline-none transition-colors hover:bg-indigo-50 dark:hover:bg-indigo-950/20 focus:bg-indigo-50 dark:focus:bg-indigo-950/20 rounded-lg mx-1"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
-                    Generate AI Embedding
-                  </DropdownMenu.Item>
-                )}
-
-                <DropdownMenu.Separator className="my-1.5 border-t border-gray-200 dark:border-gray-700" />
-
-                <DropdownMenu.Item
-                  onClick={() => onDelete(clip.id)}
-                  className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-red-600 dark:text-red-400 outline-none transition-colors hover:bg-red-50 dark:hover:bg-red-950/20 focus:bg-red-50 dark:focus:bg-red-950/20 rounded-lg mx-1"
-                >
-                  <Trash className="h-3.5 w-3.5" strokeWidth={2} />
-                  Delete
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
         </div>
       </div>
-
-      {/* Toast notification */}
-      <Toast.Provider swipeDirection="down">
-        <Toast.Root
-          open={showToast}
-          onOpenChange={setShowToast}
-          className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-1.5 shadow-xl flex items-center gap-2.5"
-          duration={1500}
-        >
-          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30">
-            <Check className="h-3.5 w-3.5 text-green-600 dark:text-green-400" strokeWidth={2.5} />
-          </div>
-          <Toast.Title className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            Copied to clipboard
-          </Toast.Title>
-        </Toast.Root>
-        <Toast.Viewport className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 m-0 list-none outline-none" />
-      </Toast.Provider>
     </>
   )
 } // Memoize the component to prevent re-renders when other items change
