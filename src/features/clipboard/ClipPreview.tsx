@@ -58,7 +58,14 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
           {content.metadata.language && <span>{content.metadata.language}</span>}
         </div>
-        <div>{/* Optional: right-aligned status info */}</div>
+        <div>
+          {content.clip.appName && (
+            <span className="text-gray-400">
+              <span className="opacity-60 mr-1">Source:</span>
+              {content.clip.appName}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   )

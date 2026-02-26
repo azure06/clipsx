@@ -8,38 +8,32 @@ type OfficePreviewProps = {
 }
 
 export const OfficePreview = ({ content }: OfficePreviewProps) => {
-  const [selectedTab, setSelectedTab] = useState<'text' | 'svg' | 'image'>('text')
+  const [selectedTab, setSelectedTab] = useState<'text' | 'svg' | 'image' | null>(null)
 
-  const { svg, attachment_path, source_app } = content.metadata
+  const { svg, attachment_path } = content.metadata
   const imagePath = content.clip.imagePath
 
   // Convert Tauri file paths to URLs
   const imageUrl = useMemo(() => (imagePath ? convertFileSrc(imagePath) : null), [imagePath])
+  const svgUrl = useMemo(() => (svg ? convertFileSrc(svg) : null), [svg])
 
   const hasSvg = !!svg
   const hasImage = !!imagePath
   const hasAttachment = !!attachment_path
 
   // Determine default tab
-  const defaultTab = hasSvg ? 'svg' : hasImage ? 'image' : 'text'
+  const defaultTab = hasImage ? 'image' : hasSvg ? 'svg' : 'text'
 
   // Use default tab if selected tab content is not available
   const activeTab =
-    (selectedTab === 'svg' && !hasSvg) || (selectedTab === 'image' && !hasImage)
-      ? defaultTab
-      : selectedTab
+    (selectedTab === 'svg' && hasSvg) ||
+    (selectedTab === 'image' && hasImage) ||
+    selectedTab === 'text'
+      ? selectedTab
+      : defaultTab
 
   return (
     <div className="flex flex-col h-full">
-      {/* Source App Header */}
-      {source_app && (
-        <div className="px-4 py-2 bg-white/5 border-b border-white/10">
-          <div className="text-xs text-gray-400">
-            <span className="font-semibold">Source:</span> {source_app}
-          </div>
-        </div>
-      )}
-
       {/* Tab Navigation */}
       <div className="flex gap-2 px-4 py-2 bg-white/[0.02] border-b border-white/10">
         <TabButton
@@ -89,7 +83,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
       {/* Content Area */}
       <div className="flex-1 overflow-auto custom-scrollbar">
         {activeTab === 'text' && <TextTab content={content} />}
-        {activeTab === 'svg' && hasSvg && <SVGTab svg={svg} />}
+        {activeTab === 'svg' && hasSvg && svgUrl && <SVGTab svgUrl={svgUrl} />}
         {activeTab === 'image' && hasImage && imageUrl && <ImageTab imageUrl={imageUrl} />}
       </div>
     </div>
@@ -129,33 +123,16 @@ const TextTab = ({ content }: { content: Content }) => (
 )
 
 // SVG Tab
-const SVGTab = ({ svg }: { svg: string }) => {
-  const [showRaw, setShowRaw] = useState(false)
-
+const SVGTab = ({ svgUrl }: { svgUrl: string }) => {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 border-b border-white/10 flex justify-between items-center">
-        <span className="text-xs text-gray-500">SVG Content</span>
-        <button
-          type="button"
-          onClick={() => setShowRaw(!showRaw)}
-          className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-        >
-          {showRaw ? 'Show Preview' : 'Show XML'}
-        </button>
+        <span className="text-xs text-gray-500">SVG Image</span>
       </div>
 
-      {showRaw ? (
-        <div className="flex-1 overflow-auto p-4">
-          <pre className="whitespace-pre-wrap font-mono text-xs text-gray-400 leading-relaxed">
-            {svg}
-          </pre>
-        </div>
-      ) : (
-        <div className="flex-1 overflow-auto p-8 flex items-center justify-center bg-white/[0.02]">
-          <div className="max-w-full max-h-full" dangerouslySetInnerHTML={{ __html: svg }} />
-        </div>
-      )}
+      <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-white/[0.02]">
+        <img src={svgUrl} className="max-w-full max-h-full object-contain" alt="SVG preview" />
+      </div>
     </div>
   )
 }
