@@ -109,8 +109,12 @@ export const AppLayout = () => {
                         return <ClipPreview clip={displayedClip} />
                       }
                       return (
-                        <div className="w-full flex-1 flex items-center justify-center text-gray-500 animate-fade-in">
-                          <p>Select a clip to preview</p>
+                        <div className="w-full flex-1 flex flex-col items-center justify-center text-gray-400 animate-fade-in border border-dashed border-white/10 rounded-2xl bg-white/5">
+                          <p className="text-sm font-medium">Capture Something First</p>
+                          <p className="text-xs text-gray-500 mt-2 text-center max-w-60">
+                            Your clipboard history is currently empty. Start copying items, and
+                            they'll appear here for preview.
+                          </p>
                         </div>
                       )
                     })()}
