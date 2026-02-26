@@ -3,7 +3,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Toast from '@radix-ui/react-toast'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatClipPreview } from '../../../shared/types'
-import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Hash, Check } from 'lucide-react'
+import { Star, MoreVertical, Copy, Trash, Sparkles, Pin, Hash, Check, Command } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
@@ -147,6 +147,14 @@ const ClipboardListItemComponent = ({
             })}
           </span>
         </div>
+
+        {/* Shortcut Hint */}
+        {index !== undefined && index >= 0 && index < 9 && (
+          <div className="hidden group-hover:flex items-center justify-center h-5 px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-400 dark:text-gray-500 ml-2 shadow-sm transition-opacity opacity-0 group-hover:opacity-100">
+            <Command className="w-2.5 h-2.5 mr-0.5 opacity-70" />
+            <span className="opacity-70">{index + 1}</span>
+          </div>
+        )}
 
         {/* Actions menu - always visible */}
         <div className="flex items-start flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
