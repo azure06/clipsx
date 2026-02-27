@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from '../../stores'
@@ -100,6 +100,112 @@ const ButtonGroup = ({ value, onChange, options }: ButtonGroupProps) => (
     ))}
   </div>
 )
+
+// --- ShortcutRecorder: visual key-combination recorder widget ---
+
+type ShortcutRecorderProps = {
+  readonly value: string
+  readonly onChange: (shortcut: string) => void
+}
+
+const KeyChip = ({ label }: { label: string }) => (
+  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white dark:bg-white/10 border border-gray-300 dark:border-white/15 text-[11px] font-mono font-semibold text-gray-700 dark:text-gray-200 shadow-sm shadow-black/5">
+    {label}
+  </span>
+)
+
+const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
+  const [isRecording, setIsRecording] = useState(false)
+  const [pendingKeys, setPendingKeys] = useState<string[]>([])
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const chips =
+    isRecording && pendingKeys.length > 0 ? pendingKeys : value.split('+').filter(Boolean)
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    e.preventDefault()
+    const keys: string[] = []
+    if (e.metaKey) keys.push('Cmd')
+    if (e.ctrlKey) keys.push('Ctrl')
+    if (e.altKey) keys.push('Alt')
+    if (e.shiftKey) keys.push('Shift')
+
+    const isStandaloneModifier = ['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)
+    if (!isStandaloneModifier) {
+      keys.push(e.key === ' ' ? 'Space' : e.key.toUpperCase())
+      onChange(keys.join('+'))
+      setIsRecording(false)
+      setPendingKeys([])
+      containerRef.current?.blur()
+    } else {
+      // Show live preview of modifiers being pressed
+      setPendingKeys(keys)
+    }
+  }
+
+  const handleKeyUp = (e: React.KeyboardEvent) => {
+    // Reset live preview if user releases all modifiers without finishing
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key) && isRecording) {
+      const keys: string[] = []
+      if (e.metaKey) keys.push('Cmd')
+      if (e.ctrlKey) keys.push('Ctrl')
+      if (e.altKey) keys.push('Alt')
+      if (e.shiftKey) keys.push('Shift')
+      setPendingKeys(keys)
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        role="button"
+        aria-label="Shortcut recorder. Click then press your key combination."
+        onFocus={() => {
+          setIsRecording(true)
+          setPendingKeys([])
+        }}
+        onBlur={() => {
+          setIsRecording(false)
+          setPendingKeys([])
+        }}
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        className={`relative flex items-center justify-center gap-1.5 min-w-48 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all duration-150 select-none outline-none ${
+          isRecording
+            ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-500/10 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]'
+            : 'border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/5 hover:border-blue-300 dark:hover:border-blue-500/40 hover:bg-blue-50/30 dark:hover:bg-blue-500/5'
+        }`}
+      >
+        {/* Recording pulse dot */}
+        {isRecording && (
+          <span className="absolute top-1.5 right-1.5 flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500" />
+          </span>
+        )}
+
+        {/* Key chips */}
+        {chips.map((chip, i) => (
+          <KeyChip key={i} label={chip} />
+        ))}
+
+        {/* Placeholder if no keys yet */}
+        {chips.length === 0 && (
+          <span className="text-xs text-gray-400 dark:text-gray-500">Press a shortcut…</span>
+        )}
+      </div>
+
+      {/* Contextual hint */}
+      <p
+        className={`text-[10px] transition-colors duration-150 ${isRecording ? 'text-blue-500' : 'text-gray-400 dark:text-gray-600'}`}
+      >
+        {isRecording ? 'Hold modifiers then press your key' : 'Click to record'}
+      </p>
+    </div>
+  )
+}
 
 // --- Main Settings component ---
 
@@ -375,33 +481,9 @@ export const Settings = () => {
                   label="Global Shortcut"
                   description="Keyboard shortcut to show/hide the app"
                 >
-                  <input
-                    type="text"
+                  <ShortcutRecorder
                     value={settings.global_shortcut}
-                    readOnly
-                    onKeyDown={e => {
-                      e.preventDefault()
-
-                      const keys = []
-                      if (e.metaKey || e.key === 'Meta') keys.push('Cmd')
-                      if (e.ctrlKey || e.key === 'Control') keys.push('Ctrl')
-                      if (e.altKey || e.key === 'Alt') keys.push('Alt')
-                      if (e.shiftKey || e.key === 'Shift') keys.push('Shift')
-
-                      // Ignore standalone modifier presses completely
-                      const isStandaloneModifier = ['Control', 'Shift', 'Alt', 'Meta'].includes(
-                        e.key
-                      )
-
-                      if (!isStandaloneModifier) {
-                        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase()
-                        keys.push(key)
-                        // Commit immediately to prevent bugs with trailing modifiers on release
-                        void updateSettings({ global_shortcut: keys.join('+') })
-                      }
-                    }}
-                    placeholder="Press keys..."
-                    className="w-48 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer placeholder-gray-400 text-center"
+                    onChange={shortcut => void updateSettings({ global_shortcut: shortcut })}
                   />
                 </SettingRow>
               </SettingsSection>
