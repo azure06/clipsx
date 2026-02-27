@@ -1338,6 +1338,46 @@ unsafe fn get_format_windows(format_name: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "windows")]
+unsafe fn get_all_formats_windows() -> Vec<(u32, String)> {
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EnumClipboardFormats, GetClipboardFormatNameW, OpenClipboard,
+    };
+
+    let mut formats = Vec::new();
+
+    if OpenClipboard(None).is_err() {
+        return formats;
+    }
+
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+    let _guard = ClipboardGuard;
+
+    let mut format = 0;
+    loop {
+        format = EnumClipboardFormats(format);
+        if format == 0 {
+            break;
+        }
+
+        let mut name_buf = [0u16; 256];
+        let len = GetClipboardFormatNameW(format, &mut name_buf);
+        if len > 0 {
+            let name = String::from_utf16_lossy(&name_buf[..len as usize]);
+            formats.push((format, name));
+        }
+    }
+
+    formats
+}
+
+#[cfg(target_os = "windows")]
 unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
     let mut ole_type = None;
     let mut ole_data = None;
@@ -1346,11 +1386,42 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
     let mut png_data = None;
     let mut source_app = String::from("Microsoft Office");
 
-    // Check for Art::GVML ClipFormat (PowerPoint shapes)
-    if let Some(data) = get_format_windows("Art::GVML ClipFormat") {
+    // Gather all dynamic formats currently on the clipboard (strings)
+    let formats = get_all_formats_windows();
+    let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
+
+    for (_, format_name) in &formats {
+        let name_lower = format_name.to_lowercase();
+        // Look for Office packages or native elements just like macOS does
+        if name_lower.contains("powerpoint")
+            || name_lower.contains("excel")
+            || name_lower.contains("word")
+            || format_name == "Art::GVML ClipFormat"
+            || format_name == "Embed Source"
+        {
+            // Exclude small internal metadata types that break restorations if forced
+            if !name_lower.contains("internal theme")
+                && !name_lower.contains("color scheme")
+                && !name_lower.contains("activeclipboard")
+            {
+                if let Some(data) = get_format_windows(format_name) {
+                    candidates.push((format_name.clone(), data));
+                }
+            }
+        }
+    }
+
+    // The largest payload is typically the actual document/slide package
+    if let Some((uti, data)) = candidates.into_iter().max_by_key(|(_, d)| d.len()) {
         ole_data = Some(data);
-        ole_type = Some("Art::GVML ClipFormat".to_string());
-        source_app = String::from("Microsoft PowerPoint");
+        ole_type = Some(uti.clone());
+        if uti.contains("PowerPoint") || uti == "Art::GVML ClipFormat" {
+            source_app = String::from("Microsoft PowerPoint");
+        } else if uti.contains("Word") {
+            source_app = String::from("Microsoft Word");
+        } else if uti.contains("Excel") {
+            source_app = String::from("Microsoft Excel");
+        }
     }
 
     if let Some(data) = get_format_windows("image/svg+xml") {
