@@ -48,25 +48,33 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
   )
 }
 
-const ActionIconButton = ({ action, content }: { action: SmartAction; content: Content }) => (
-  <Tooltip.Root>
-    <Tooltip.Trigger asChild>
-      <button
-        onClick={() => void action.execute(content)}
-        className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-      >
-        <div className="w-4 h-4">{action.icon}</div>
-      </button>
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-      <Tooltip.Content
-        className="z-100 px-2 py-1 text-[10px] bg-gray-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
-        sideOffset={5}
-      >
-        {action.label}
-        {action.shortcut && <span className="ml-1.5 text-gray-500">{action.shortcut}</span>}
-        <Tooltip.Arrow className="fill-gray-900" />
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
-)
+const ActionIconButton = ({ action, content }: { action: SmartAction; content: Content }) => {
+  const isActive = action.isActive?.(content)
+
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <button
+          onClick={() => void action.execute(content)}
+          className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50 ${
+            isActive
+              ? 'text-blue-400 bg-blue-500/10 hover:bg-blue-500/20'
+              : 'text-gray-400 hover:text-white hover:bg-white/10'
+          }`}
+        >
+          <div className="w-4 h-4">{action.icon}</div>
+        </button>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          className="z-100 px-2 py-1 text-[10px] bg-gray-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
+          sideOffset={5}
+        >
+          {action.label}
+          {action.shortcut && <span className="ml-1.5 text-gray-500">{action.shortcut}</span>}
+          <Tooltip.Arrow className="fill-gray-900" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+}

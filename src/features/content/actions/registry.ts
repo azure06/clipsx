@@ -7,6 +7,7 @@ import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
 import { useOpenInDefaultEditorAction } from './shared/OpenInDefaultEditorAction'
+import { useGenerateEmbeddingAction } from './shared/GenerateEmbeddingAction'
 
 // Type-Specific Actions
 import {
@@ -33,6 +34,7 @@ export const useActionRegistry = (context?: ActionContext) => {
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
   const openDefaultEditor = useOpenInDefaultEditorAction()
+  const generateEmbedding = useGenerateEmbeddingAction(context?.onGenerateEmbedding)
 
   // Type Specific
   const openUrl = useOpenURLAction()
@@ -65,8 +67,8 @@ export const useActionRegistry = (context?: ActionContext) => {
 
   // Group 2: Meta Actions (Fav, Pin, Delete)
   const metaActions = useMemo(
-    () => [favoriteAction, pinAction, deleteAction],
-    [favoriteAction, pinAction, deleteAction]
+    () => [favoriteAction, pinAction, generateEmbedding, deleteAction],
+    [favoriteAction, pinAction, generateEmbedding, deleteAction]
   )
 
   // Group 3: Smart Actions (Type-specific)

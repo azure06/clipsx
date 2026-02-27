@@ -9,7 +9,7 @@ interface ClipPreviewProps {
 }
 
 export const ClipPreview = ({ clip }: ClipPreviewProps) => {
-  const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
+  const { deleteClip, togglePin, toggleFavorite, generateEmbedding } = useClipboardStore()
 
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
@@ -19,8 +19,9 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
       onDelete: (id: string) => deleteClip(id),
       onTogglePin: (id: string) => togglePin(id),
       onToggleFavorite: (id: string) => toggleFavorite(id),
+      onGenerateEmbedding: (id: string) => void generateEmbedding(id),
     }),
-    [deleteClip, togglePin, toggleFavorite]
+    [deleteClip, togglePin, toggleFavorite, generateEmbedding]
   )
 
   return (

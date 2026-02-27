@@ -11,4 +11,5 @@ export const useFavoriteAction = (onToggle?: (clipId: string) => void): SmartAct
   execute: (content: Content) => {
     onToggle?.(content.clip.id)
   },
+  isActive: (content: Content) => Boolean(content.clip.isFavorite),
 })

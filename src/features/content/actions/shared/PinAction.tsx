@@ -11,5 +11,6 @@ export const usePinAction = (onTogglePin?: (id: string) => void): SmartAction =>
     execute: (content: Content) => {
       onTogglePin?.(content.clip.id)
     },
+    isActive: content => Boolean(content.clip.isPinned),
   }
 }

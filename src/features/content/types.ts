@@ -79,10 +79,12 @@ export type SmartAction = {
   readonly shortcut?: string
   readonly check: (content: Content) => boolean
   readonly execute: (content: Content) => Promise<void> | void
+  readonly isActive?: (content: Content) => boolean
 }
 
 export interface ActionContext {
   onDelete: (id: string) => void
   onTogglePin: (id: string) => void
   onToggleFavorite: (id: string) => void
+  onGenerateEmbedding?: (id: string) => void
 }
