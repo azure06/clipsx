@@ -153,6 +153,8 @@ impl ClipboardService {
                 svg_data,
                 pdf_data,
                 png_data,
+                html_data,
+                rtf_data,
                 extracted_text,
                 source_app: office_app,
             } => {
@@ -162,6 +164,8 @@ impl ClipboardService {
                     svg_data,
                     pdf_data,
                     png_data,
+                    html_data,
+                    rtf_data,
                     extracted_text,
                     office_app,
                     &content_hash,
@@ -427,6 +431,8 @@ impl ClipboardService {
         svg_data: Option<Vec<u8>>,
         pdf_data: Option<Vec<u8>>,
         png_data: Option<Vec<u8>>,
+        html_data: Option<String>,
+        rtf_data: Option<String>,
         extracted_text: String,
         source_app: String,
         hash: &str,
@@ -478,8 +484,8 @@ impl ClipboardService {
             id,
             content_type: "office".to_string(),
             content_text: Some(extracted_text), // Text from pasteboard/SVG/PDF → searchable via FTS5
-            content_html: None,
-            content_rtf: None,
+            content_html: html_data,
+            content_rtf: rtf_data,
             svg_path,                  // SVG file: clipboard_data/svg/{id}.svg
             pdf_path,                  // PDF file: clipboard_data/pdf/{id}.pdf
             image_path,                // PNG file: clipboard_data/images/{id}.png

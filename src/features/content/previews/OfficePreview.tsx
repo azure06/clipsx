@@ -1,6 +1,6 @@
 import type { Content } from '../types'
 import { useState, useMemo } from 'react'
-import { FileText, Image as ImageIcon, Download } from 'lucide-react'
+import { FileText, Image as ImageIcon, Download, Table } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 
 type OfficePreviewProps = {
@@ -8,10 +8,11 @@ type OfficePreviewProps = {
 }
 
 export const OfficePreview = ({ content }: OfficePreviewProps) => {
-  const [selectedTab, setSelectedTab] = useState<'text' | 'svg' | 'image' | null>(null)
+  const [selectedTab, setSelectedTab] = useState<'html' | 'text' | 'svg' | 'image' | null>(null)
 
   const { svg, attachment_path } = content.metadata
   const imagePath = content.clip.imagePath
+  const htmlContent = content.clip.contentHtml
 
   // Convert Tauri file paths to URLs
   const imageUrl = useMemo(() => (imagePath ? convertFileSrc(imagePath) : null), [imagePath])
@@ -20,12 +21,14 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
   const hasSvg = !!svg
   const hasImage = !!imagePath
   const hasAttachment = !!attachment_path
+  const hasHtml = !!htmlContent
 
   // Determine default tab
-  const defaultTab = hasImage ? 'image' : hasSvg ? 'svg' : 'text'
+  const defaultTab = hasHtml ? 'html' : hasImage ? 'image' : hasSvg ? 'svg' : 'text'
 
   // Use default tab if selected tab content is not available
   const activeTab =
+    (selectedTab === 'html' && hasHtml) ||
     (selectedTab === 'svg' && hasSvg) ||
     (selectedTab === 'image' && hasImage) ||
     selectedTab === 'text'
@@ -36,6 +39,15 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
     <div className="flex flex-col h-full">
       {/* Tab Navigation */}
       <div className="flex gap-2 px-4 py-2 bg-white/[0.02] border-b border-white/10">
+        {hasHtml && (
+          <TabButton
+            icon={<Table className="w-4 h-4" />}
+            label="Table"
+            active={activeTab === 'html'}
+            onClick={() => setSelectedTab('html')}
+          />
+        )}
+
         <TabButton
           icon={<FileText className="w-4 h-4" />}
           label="Text"
@@ -82,6 +94,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
 
       {/* Content Area */}
       <div className="flex-1 overflow-auto custom-scrollbar">
+        {activeTab === 'html' && hasHtml && <HTMLTab html={htmlContent} />}
         {activeTab === 'text' && <TextTab content={content} />}
         {activeTab === 'svg' && hasSvg && svgUrl && <SVGTab svgUrl={svgUrl} />}
         {activeTab === 'image' && hasImage && imageUrl && <ImageTab imageUrl={imageUrl} />}
@@ -111,6 +124,13 @@ const TabButton = ({ icon, label, active, onClick }: TabButtonProps) => (
     {icon}
     {label}
   </button>
+)
+
+// HTML Tab
+const HTMLTab = ({ html }: { html: string }) => (
+  <div className="p-4 bg-white text-black min-h-full">
+    <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: html }} />
+  </div>
 )
 
 // Text Tab

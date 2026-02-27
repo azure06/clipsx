@@ -497,7 +497,9 @@ mod tests {
         let mut monitor = PollingMonitor::new(Box::new(mock));
 
         // Simulate ClipsX writing "Hello" to the clipboard
-        monitor.notify_wrote("Hello");
+        monitor.notify_wrote(&ClipboardContent::Text {
+            content: "Hello".to_string(),
+        });
 
         // Next check should be suppressed
         let result = monitor.check().unwrap();

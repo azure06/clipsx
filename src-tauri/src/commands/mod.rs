@@ -457,6 +457,8 @@ pub async fn copy_to_clipboard(
                 svg_data,
                 pdf_data,
                 png_data,
+                html_data: clip.content_html.clone(),
+                rtf_data: clip.content_rtf.clone(),
                 extracted_text: clip.content_text.unwrap_or_default(),
                 source_app: clip
                     .app_name

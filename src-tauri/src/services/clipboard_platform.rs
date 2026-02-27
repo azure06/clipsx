@@ -74,8 +74,10 @@ pub enum ClipboardContent {
         svg_data: Option<Vec<u8>>, // SVG vector graphics → clipboard_data/svg/{id}.svg
         pdf_data: Option<Vec<u8>>, // PDF document → clipboard_data/pdf/{id}.pdf
         png_data: Option<Vec<u8>>, // PNG raster image → clipboard_data/images/{id}.png
-        extracted_text: String,   // Text from pasteboard/SVG/PDF → content_text (FTS5 indexed)
-        source_app: String,       // "Microsoft Word", "Microsoft Excel", etc.
+        html_data: Option<String>, // HTML formatted payload for styled rendering (e.g. Excel tables)
+        rtf_data: Option<String>,  // RTF formatted payload
+        extracted_text: String,    // Text from pasteboard/SVG/PDF → content_text (FTS5 indexed)
+        source_app: String,        // "Microsoft Word", "Microsoft Excel", etc.
     },
 }
 
@@ -932,7 +934,17 @@ pub fn get_change_count() -> Result<i64> {
 #[cfg(not(target_os = "macos"))]
 pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
     #[cfg(target_os = "windows")]
-    if let Some(office_content) = unsafe { read_office_content_windows() } {
+    if let Some(mut office_content) = unsafe { read_office_content_windows() } {
+        // Fallback to plain text if SVG extraction yielded nothing (e.g. Excel)
+        if let ClipboardContent::Office { extracted_text, .. } = &mut office_content {
+            if extracted_text.is_empty() {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    if let Ok(text) = clipboard.get_text() {
+                        *extracted_text = text;
+                    }
+                }
+            }
+        }
         return Ok(Some(office_content));
     }
 
@@ -1379,21 +1391,17 @@ unsafe fn get_all_formats_windows() -> Vec<(u32, String)> {
 
 #[cfg(target_os = "windows")]
 unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
-    let mut ole_type = None;
-    let mut ole_data = None;
-    let mut svg_data = None;
-    let mut pdf_data = None;
-    let mut png_data = None;
-    let mut source_app = String::from("Microsoft Office");
-
-    // Gather all dynamic formats currently on the clipboard (strings)
     let formats = get_all_formats_windows();
+
+    // Step 1: Detect if this is Office and which app it's from
+    // We collect all possible Office formats and pick the largest one
+    // to ensure we capture the main package (e.g., full workbook vs single cell metadata)
     let mut candidates: Vec<(String, Vec<u8>, String)> = Vec::new();
 
     for (_, format_name) in &formats {
         let name_lower = format_name.to_lowercase();
 
-        // Exclude small internal metadata types that break restorations if forced
+        // Skip internal/theme formats that shouldn't be the primary payload
         if name_lower.contains("internal theme")
             || name_lower.contains("color scheme")
             || name_lower.contains("activeclipboard")
@@ -1404,13 +1412,10 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
         let mut app_category = None;
 
         // --- PowerPoint Format Detection ---
-        // PowerPoint copies full slides as "PowerPoint X.X Slides Package" and shapes as "Art::GVML ClipFormat".
         if name_lower.contains("powerpoint") || format_name == "Art::GVML ClipFormat" {
             app_category = Some("Microsoft PowerPoint");
         }
         // --- Excel Format Detection ---
-        // Excel stores full ranges/workbooks as "Biff12", "Biff8", "XML Spreadsheet", etc.
-        // It often does NOT use the word "Excel" in its native custom formats.
         else if name_lower.contains("excel")
             || name_lower.contains("biff")
             || name_lower.contains("xml spreadsheet")
@@ -1418,14 +1423,13 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
             app_category = Some("Microsoft Excel");
         }
         // --- Word Format Detection ---
-        // Word uses "Word" in its formats, and typically relies on RTF or HTML for rich text.
         else if name_lower.contains("word") {
             app_category = Some("Microsoft Word");
         }
         // --- Generic OLE/Embed Source ---
-        // "Embed Source" is a generic OLE format used by many Office apps (often Excel embedded objects).
         else if format_name == "Embed Source" {
-            app_category = Some("Microsoft Office"); // Fallback
+            // Generic OLE object, often used by Office apps
+            app_category = Some("Microsoft Office");
         }
 
         if let Some(category) = app_category {
@@ -1435,50 +1439,69 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
         }
     }
 
-    // The largest payload is typically the actual document/slide/spreadsheet package
+    // Step 2: Grab the largest native format as our primary package
+    let ole_type;
+    let ole_data;
+    let source_app;
+
     if let Some((uti, data, category)) = candidates.into_iter().max_by_key(|(_, d, _)| d.len()) {
+        ole_type = Some(uti);
         ole_data = Some(data);
-        ole_type = Some(uti.clone());
         source_app = category;
-
-        // Refine 'Microsoft Office' fallback based on UTI if we grabbed Embed Source from Excel
-        if source_app == "Microsoft Office"
-            && (uti == "Embed Source" || uti.contains("Biff") || uti.contains("XML Spreadsheet"))
-        {
-            source_app = String::from("Microsoft Excel");
-        }
-    }
-
-    if let Some(data) = get_format_windows("image/svg+xml") {
-        svg_data = Some(data);
-    }
-
-    if let Some(data) = get_format_windows("PNG") {
-        png_data = Some(data);
-    }
-
-    if let Some(data) = get_format_windows("Portable Document Format") {
-        pdf_data = Some(data);
-    }
-
-    if ole_data.is_none() && svg_data.is_none() {
+    } else {
+        // If we found NO native office formats, abort. This is not an Office payload!
         return None;
     }
 
-    // Extract text
-    let extracted_text = {
-        if let Some(ref svg) = svg_data {
-            let svg_str = String::from_utf8_lossy(svg);
-            let text = extract_svg_text(&svg_str);
-            if !text.is_empty() {
-                text
-            } else {
-                String::new()
+    // Step 3: Extract visual/preview formats
+    let svg_data = get_format_windows("image/svg+xml");
+    let png_data = get_format_windows("PNG");
+    let pdf_data = get_format_windows("Portable Document Format");
+
+    // Step 4: Extract text styling formats (HTML, RTF)
+    let mut html_data = None;
+    if let Some(data) = get_format_windows("HTML Format") {
+        let len = data.iter().position(|&b| b == 0).unwrap_or(data.len());
+        let raw_html = String::from_utf8_lossy(&data[..len]).to_string();
+
+        // Parse Windows HTML Format header (e.g., StartHTML:00000100)
+        let mut start_idx = 0;
+        let mut end_idx = raw_html.len();
+
+        for line in raw_html.lines().take(15) {
+            if line.starts_with("StartHTML:") {
+                if let Ok(val) = line[10..].trim().parse::<usize>() {
+                    start_idx = val;
+                }
+            } else if line.starts_with("EndHTML:") {
+                if let Ok(val) = line[8..].trim().parse::<usize>() {
+                    end_idx = val;
+                }
             }
-        } else {
-            String::new()
         }
-    };
+
+        // Sanity check indices
+        if start_idx < raw_html.len() && end_idx <= raw_html.len() && start_idx < end_idx {
+            html_data = Some(raw_html[start_idx..end_idx].to_string());
+        } else {
+            html_data = Some(raw_html); // Fallback to raw if header is malformed
+        }
+    }
+
+    let mut rtf_data = None;
+    if let Some(data) = get_format_windows("Rich Text Format") {
+        let len = data.iter().position(|&b| b == 0).unwrap_or(data.len());
+        rtf_data = Some(String::from_utf8_lossy(&data[..len]).to_string());
+    }
+
+    // Step 5: Extract plain text (for search indexing and fallback)
+    let mut extracted_text = String::new();
+    if let Some(ref svg) = svg_data {
+        let svg_str = String::from_utf8_lossy(svg);
+        extracted_text = extract_svg_text(&svg_str);
+    }
+    // Note: If extracted_text is empty (e.g. Excel has no SVG),
+    // the fallback to `arboard` plaintext occurs in `read_clipboard()`.
 
     Some(ClipboardContent::Office {
         ole_data,
@@ -1486,6 +1509,8 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
         svg_data,
         pdf_data,
         png_data,
+        html_data,
+        rtf_data,
         extracted_text,
         source_app,
     })
