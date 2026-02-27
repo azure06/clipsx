@@ -1,18 +1,13 @@
 import { memo } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { ClipItem, Tag, Collection } from '../../../shared/types'
 import { formatTimestamp } from '../../../shared/types'
-import { Star, Copy, Trash, MoreVertical, Sparkles, Pin, Folder, Hash } from 'lucide-react'
+import { Star, Sparkles, Pin, Folder, Hash } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardGridItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
-  readonly onDelete: (id: string) => void
-  readonly onToggleFavorite: (id: string) => void
-  readonly onTogglePin: (id: string) => void
-  readonly onGenerateEmbedding?: (id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
 }
@@ -21,10 +16,6 @@ const ClipboardGridItemComponent = ({
   clip,
   onCopy,
   onSelect,
-  onDelete,
-  onToggleFavorite,
-  onTogglePin,
-  onGenerateEmbedding,
   isSelected = false,
   index,
 }: ClipboardGridItemProps) => {
@@ -65,91 +56,6 @@ const ClipboardGridItemComponent = ({
       {isPinned && (
         <div className="absolute left-0 top-0 h-1 w-full rounded-t-xl bg-gradient-to-r from-violet-500 to-violet-600 dark:from-violet-400 dark:to-violet-500"></div>
       )}
-
-      {/* Actions menu - top right */}
-      <div className="absolute right-2 top-2 z-10">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              className="rounded-lg p-1.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm text-gray-400 dark:text-gray-600 transition-all duration-200 hover:bg-white dark:hover:bg-gray-900 hover:text-gray-600 dark:hover:text-gray-400 active:scale-95 shadow-sm"
-              title="Actions"
-            >
-              <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          </DropdownMenu.Trigger>
-
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="z-50 w-44 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1.5 shadow-xl shadow-gray-900/10 dark:shadow-black/50 animate-in fade-in-0 zoom-in-95"
-              sideOffset={6}
-              align="end"
-              collisionPadding={8}
-            >
-              <DropdownMenu.Item
-                onClick={() => {
-                  onCopy(clip.contentText ?? '', clip.id)
-                }}
-                className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-              >
-                <Copy className="h-3.5 w-3.5" strokeWidth={2} />
-                Copy
-              </DropdownMenu.Item>
-
-              <DropdownMenu.Item
-                onClick={() => onToggleFavorite(clip.id)}
-                className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-              >
-                <Star
-                  className={`h-3.5 w-3.5 ${isFavorite ? 'fill-amber-500 text-amber-500' : ''}`}
-                  strokeWidth={2}
-                />
-                {isFavorite ? 'Remove Favorite' : 'Add Favorite'}
-              </DropdownMenu.Item>
-
-              <DropdownMenu.Item
-                onClick={() => onTogglePin(clip.id)}
-                className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-gray-700 dark:text-gray-300 outline-none transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 focus:bg-gray-50 dark:focus:bg-gray-800 rounded-lg mx-1"
-              >
-                <Pin
-                  className={`h-3.5 w-3.5 ${isPinned ? 'fill-blue-500 text-blue-500' : ''}`}
-                  strokeWidth={2}
-                />
-                {isPinned ? 'Unpin' : 'Pin to Top'}
-              </DropdownMenu.Item>
-
-              <DropdownMenu.Separator className="my-1.5 border-t border-gray-200 dark:border-gray-700" />
-
-              <DropdownMenu.Item
-                disabled
-                className="flex items-center gap-2.5 px-3 py-2 text-xs text-gray-400 dark:text-gray-600 rounded-lg mx-1"
-              >
-                <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
-                Fix Grammar
-              </DropdownMenu.Item>
-
-              {!clip.hasEmbedding && onGenerateEmbedding && (
-                <DropdownMenu.Item
-                  onClick={() => onGenerateEmbedding(clip.id)}
-                  className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-indigo-600 dark:text-indigo-400 outline-none transition-colors hover:bg-indigo-50 dark:hover:bg-indigo-950/20 focus:bg-indigo-50 dark:focus:bg-indigo-950/20 rounded-lg mx-1"
-                >
-                  <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
-                  Generate AI Embedding
-                </DropdownMenu.Item>
-              )}
-
-              <DropdownMenu.Separator className="my-1.5 border-t border-gray-200 dark:border-gray-700" />
-
-              <DropdownMenu.Item
-                onClick={() => onDelete(clip.id)}
-                className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs text-red-600 dark:text-red-400 outline-none transition-colors hover:bg-red-50 dark:hover:bg-red-950/20 focus:bg-red-50 dark:focus:bg-red-950/20 rounded-lg mx-1"
-              >
-                <Trash className="h-3.5 w-3.5" strokeWidth={2} />
-                Delete
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </div>
 
       {/* Content Preview */}
       <div className="p-2.5 pb-0 flex items-center justify-center aspect-square">

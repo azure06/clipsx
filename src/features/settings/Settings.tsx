@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { Theme, ViewMode, RetentionPolicy, PasteFormat, AppSettings } from '../../shared/types'
+import type { Theme, RetentionPolicy, PasteFormat, AppSettings } from '../../shared/types'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   Palette,
@@ -219,18 +219,18 @@ export const Settings = () => {
                   await invoke('update_settings', {
                     settings: {
                       theme: 'auto',
-                      view_mode: 'list',
                       language: 'en',
                       global_shortcut: 'Cmd+Shift+V',
                       enable_images: true,
                       enable_files: true,
                       enable_rich_text: true,
+                      enable_office_formats: true,
                       excluded_apps: [],
                       history_limit: 1000,
                       retention_policy: 'unlimited',
                       retention_value: 0,
                       auto_delete_days: 0,
-                      max_image_size_mb: 10,
+                      max_item_size_mb: 10,
                       auto_clear_minutes: 0,
                       hide_on_copy: false,
                       clear_on_exit: false,
@@ -238,7 +238,6 @@ export const Settings = () => {
                       default_paste_format: 'auto',
                       auto_close_after_paste: true,
                       show_copy_toast: true,
-                      toast_duration_ms: 1500,
                     },
                   })
                   await loadSettings()
@@ -270,11 +269,6 @@ export const Settings = () => {
     { value: 'auto' as Theme, label: 'Auto (System)' },
     { value: 'light' as Theme, label: 'Light' },
     { value: 'dark' as Theme, label: 'Dark' },
-  ]
-
-  const viewModeOptions = [
-    { value: 'list' as ViewMode, label: 'List' },
-    { value: 'grid' as ViewMode, label: 'Grid' },
   ]
 
   const languageOptions = [
@@ -362,15 +356,6 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow label="View Mode" description="List or grid display">
-                  <Select
-                    value={settings.view_mode}
-                    onChange={value => void updateSettings({ view_mode: value })}
-                    options={viewModeOptions}
-                    className="w-40"
-                  />
-                </SettingRow>
-
                 <SettingRow label="Language" description="Select your preferred language">
                   <Select
                     value={settings.language}
@@ -393,9 +378,30 @@ export const Settings = () => {
                   <input
                     type="text"
                     value={settings.global_shortcut}
-                    onChange={e => void updateSettings({ global_shortcut: e.target.value })}
-                    placeholder="Cmd+Shift+V"
-                    className="w-48 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    readOnly
+                    onKeyDown={e => {
+                      e.preventDefault()
+
+                      const keys = []
+                      if (e.metaKey || e.key === 'Meta') keys.push('Cmd')
+                      if (e.ctrlKey || e.key === 'Control') keys.push('Ctrl')
+                      if (e.altKey || e.key === 'Alt') keys.push('Alt')
+                      if (e.shiftKey || e.key === 'Shift') keys.push('Shift')
+
+                      // Ignore standalone modifier presses completely
+                      const isStandaloneModifier = ['Control', 'Shift', 'Alt', 'Meta'].includes(
+                        e.key
+                      )
+
+                      if (!isStandaloneModifier) {
+                        const key = e.key === ' ' ? 'Space' : e.key.toUpperCase()
+                        keys.push(key)
+                        // Commit immediately to prevent bugs with trailing modifiers on release
+                        void updateSettings({ global_shortcut: keys.join('+') })
+                      }
+                    }}
+                    placeholder="Press keys..."
+                    className="w-48 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-mono text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer placeholder-gray-400 text-center"
                   />
                 </SettingRow>
               </SettingsSection>
@@ -451,6 +457,16 @@ export const Settings = () => {
                   <Switch
                     checked={settings.enable_rich_text}
                     onChange={value => void updateSettings({ enable_rich_text: value })}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Capture Office Formats"
+                  description="Save PowerPoint, Word, Excel objects"
+                >
+                  <Switch
+                    checked={settings.enable_office_formats}
+                    onChange={value => void updateSettings({ enable_office_formats: value })}
                   />
                 </SettingRow>
               </SettingsSection>
@@ -598,10 +614,13 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow label="Max Image Size" description="Maximum size for image clips">
+                <SettingRow
+                  label="Max Item Size (Combined)"
+                  description="Maximum combined size for binary items before skipping"
+                >
                   <ButtonGroup
-                    value={settings.max_image_size_mb}
-                    onChange={value => void updateSettings({ max_image_size_mb: value })}
+                    value={settings.max_item_size_mb}
+                    onChange={value => void updateSettings({ max_item_size_mb: value })}
                     options={[
                       { value: 1, label: '1 MB' },
                       { value: 5, label: '5 MB' },
@@ -609,6 +628,57 @@ export const Settings = () => {
                       { value: 25, label: '25 MB' },
                       { value: 50, label: '50 MB' },
                     ]}
+                  />
+                </SettingRow>
+              </SettingsSection>
+
+              <Card className="shadow-sm">
+                <Button
+                  variant="destructive"
+                  leftIcon={<Trash className="h-4 w-4" />}
+                  onClick={() => void handleClearAllData()}
+                >
+                  Clear All Clipboard Data
+                </Button>
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
+                  Permanently delete all clipboard history. This action cannot be undone.
+                </p>
+              </Card>
+            </>
+          )}
+
+          {/* PRIVACY TAB */}
+          {activeTab === 'privacy' && (
+            <>
+              <SettingsSection
+                icon={<Shield className="h-4 w-4" />}
+                title="Privacy & Security"
+                description="Protect your sensitive information"
+              >
+                <SettingRow
+                  label="Auto-clear After Copy"
+                  description="Automatically delete sensitive clips after a set time"
+                >
+                  <ButtonGroup
+                    value={settings.auto_clear_minutes}
+                    onChange={value => void updateSettings({ auto_clear_minutes: value })}
+                    options={[
+                      { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
+                      { value: 5, label: '5 min', icon: <Zap className="h-3 w-3" /> },
+                      { value: 15, label: '15 min', icon: <Timer className="h-3 w-3" /> },
+                      { value: 30, label: '30 min', icon: <Clock className="h-3 w-3" /> },
+                      { value: 60, label: '1 hour', icon: <Clock className="h-3 w-3" /> },
+                    ]}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Clear on Exit"
+                  description="Delete all clipboard history when closing the app"
+                >
+                  <Switch
+                    checked={settings.clear_on_exit}
+                    onChange={value => void updateSettings({ clear_on_exit: value })}
                   />
                 </SettingRow>
               </SettingsSection>
@@ -667,56 +737,7 @@ export const Settings = () => {
                   />
                 </SettingRow>
               </SettingsSection>
-
-              <Card className="shadow-sm">
-                <Button
-                  variant="destructive"
-                  leftIcon={<Trash className="h-4 w-4" />}
-                  onClick={() => void handleClearAllData()}
-                >
-                  Clear All Clipboard Data
-                </Button>
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
-                  Permanently delete all clipboard history. This action cannot be undone.
-                </p>
-              </Card>
             </>
-          )}
-
-          {/* PRIVACY TAB */}
-          {activeTab === 'privacy' && (
-            <SettingsSection
-              icon={<Shield className="h-4 w-4" />}
-              title="Privacy & Security"
-              description="Protect your sensitive information"
-            >
-              <SettingRow
-                label="Auto-clear After Copy"
-                description="Automatically delete sensitive clips after a set time"
-              >
-                <ButtonGroup
-                  value={settings.auto_clear_minutes}
-                  onChange={value => void updateSettings({ auto_clear_minutes: value })}
-                  options={[
-                    { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
-                    { value: 5, label: '5 min', icon: <Zap className="h-3 w-3" /> },
-                    { value: 15, label: '15 min', icon: <Timer className="h-3 w-3" /> },
-                    { value: 30, label: '30 min', icon: <Clock className="h-3 w-3" /> },
-                    { value: 60, label: '1 hour', icon: <Clock className="h-3 w-3" /> },
-                  ]}
-                />
-              </SettingRow>
-
-              <SettingRow
-                label="Clear on Exit"
-                description="Delete all clipboard history when closing the app"
-              >
-                <Switch
-                  checked={settings.clear_on_exit}
-                  onChange={value => void updateSettings({ clear_on_exit: value })}
-                />
-              </SettingRow>
-            </SettingsSection>
           )}
 
           {/* ADVANCED TAB */}
@@ -741,22 +762,6 @@ export const Settings = () => {
                   <Switch
                     checked={settings.show_copy_toast}
                     onChange={value => void updateSettings({ show_copy_toast: value })}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Toast Duration"
-                  description="How long notifications stay visible"
-                >
-                  <ButtonGroup
-                    value={settings.toast_duration_ms}
-                    onChange={value => void updateSettings({ toast_duration_ms: value })}
-                    options={[
-                      { value: 1000, label: 'Quick (1s)' },
-                      { value: 1500, label: 'Default (1.5s)' },
-                      { value: 2000, label: 'Slow (2s)' },
-                      { value: 3000, label: 'Long (3s)' },
-                    ]}
                   />
                 </SettingRow>
               </SettingsSection>

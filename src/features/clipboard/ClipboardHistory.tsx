@@ -5,7 +5,6 @@ import { useClipboardStore } from '../../stores'
 import { useSettingsStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
-import type { ViewMode } from './utils'
 
 // Re-export for backwards compatibility
 // Re-export for backwards compatibility
@@ -42,7 +41,6 @@ export const ClipboardHistory = ({
 
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
-  const viewMode: ViewMode = 'list'
 
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -126,7 +124,7 @@ export const ClipboardHistory = ({
     observer.observe(trigger)
 
     return () => observer.disconnect()
-  }, [loadMoreClips, viewMode, clips.length])
+  }, [loadMoreClips, clips.length])
 
   // Unified action handler for Click and Enter
   const handleAction = useCallback(
@@ -166,28 +164,6 @@ export const ClipboardHistory = ({
     [deleteClip]
   )
 
-  const handleToggleFavorite = useCallback(
-    (id: string) => {
-      void toggleFavorite(id)
-    },
-    [toggleFavorite]
-  )
-
-  const handleTogglePin = useCallback(
-    (id: string) => {
-      void togglePin(id)
-    },
-    [togglePin]
-  )
-
-  const handleGenerateEmbedding = useCallback((id: string) => {
-    const { generateEmbedding } = useClipboardStore.getState()
-    if (generateEmbedding) {
-      void generateEmbedding(id)
-    }
-  }, [])
-
-  // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
     (_text: string, clipId: string) => {
@@ -215,13 +191,6 @@ export const ClipboardHistory = ({
     [handleExplicitCopy]
   )
 
-  const onDeleteHandler = useCallback(
-    (id: string) => {
-      void handleDelete(id)
-    },
-    [handleDelete]
-  )
-
   // Filter clips - only by activeFilter now, search is handled by backend FTS
   // NOTE: Clips array already contains search results if in search mode
   // Filter clips - only by activeFilter now, search is handled by backend FTS
@@ -230,11 +199,11 @@ export const ClipboardHistory = ({
   // Reset selection when clips change
   useEffect(() => {
     if (clips.length > 0 && selectedIndex >= clips.length) {
-      setSelectedIndex(0) // Reset if out of bounds
+      setTimeout(() => setSelectedIndex(0), 0) // Reset if out of bounds
     } else if (clips.length > 0 && selectedIndex === -1) {
-      setSelectedIndex(0)
+      setTimeout(() => setSelectedIndex(0), 0)
     }
-  }, [clips, selectedIndex])
+  }, [clips.length, selectedIndex])
 
   // Auto-scroll selected item into view
   const scrollSelectedIntoView = useCallback((index: number) => {
@@ -334,12 +303,12 @@ export const ClipboardHistory = ({
         }
         case 'f': {
           const clip = clips[selectedIndex]
-          if (clip) handleToggleFavorite(clip.id)
+          if (clip) void toggleFavorite(clip.id)
           break
         }
         case 'p': {
           const clip = clips[selectedIndex]
-          if (clip) handleTogglePin(clip.id)
+          if (clip) void togglePin(clip.id)
           break
         }
         case '/': {
@@ -353,16 +322,14 @@ export const ClipboardHistory = ({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
     clips,
     selectedIndex,
     scrollSelectedIntoView,
     handleAction,
     handleDelete,
-    handleToggleFavorite,
-    handleTogglePin,
+    toggleFavorite,
+    togglePin,
   ])
 
   // ADDED: Notify parent of selection change for preview
@@ -456,21 +423,15 @@ export const ClipboardHistory = ({
 
     return (
       <>
-        {viewMode === 'list' && (
-          <ClipboardListView
-            clips={clips}
-            onSelect={onSelectHandler}
-            onDoubleClick={onDoubleClickHandler}
-            onCopy={onCopyHandler}
-            onDelete={onDeleteHandler}
-            onToggleFavorite={handleToggleFavorite}
-            onTogglePin={handleTogglePin}
-            onGenerateEmbedding={handleGenerateEmbedding}
-            infiniteScrollTrigger={infiniteScrollTrigger}
-            scrollContainerRef={scrollContainerRef}
-            selectedIndex={selectedIndex}
-          />
-        )}
+        <ClipboardListView
+          clips={clips}
+          onSelect={onSelectHandler}
+          onDoubleClick={onDoubleClickHandler}
+          onCopy={onCopyHandler}
+          infiniteScrollTrigger={infiniteScrollTrigger}
+          scrollContainerRef={scrollContainerRef}
+          selectedIndex={selectedIndex}
+        />
       </>
     )
   }

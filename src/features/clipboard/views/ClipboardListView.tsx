@@ -6,10 +6,6 @@ type ClipboardListViewProps = {
   readonly onCopy: (text: string, clipId: string) => void
   readonly onSelect?: (text: string, clipId: string) => void
   readonly onDoubleClick?: (text: string, clipId: string) => void
-  readonly onDelete: (id: string) => void
-  readonly onToggleFavorite: (id: string) => void
-  readonly onTogglePin: (id: string) => void
-  readonly onGenerateEmbedding?: (id: string) => void
   readonly infiniteScrollTrigger?: React.ReactNode
   readonly scrollContainerRef?: React.RefObject<HTMLDivElement | null>
   readonly selectedIndex?: number
@@ -20,10 +16,6 @@ export const ClipboardListView = ({
   onCopy,
   onSelect,
   onDoubleClick,
-  onDelete,
-  onToggleFavorite,
-  onTogglePin,
-  onGenerateEmbedding,
   infiniteScrollTrigger,
   scrollContainerRef,
   selectedIndex,
@@ -36,10 +28,6 @@ export const ClipboardListView = ({
         onCopy={onCopy}
         onSelect={onSelect}
         onDoubleClick={onDoubleClick}
-        onDelete={onDelete}
-        onToggleFavorite={onToggleFavorite}
-        onTogglePin={onTogglePin}
-        onGenerateEmbedding={onGenerateEmbedding}
         isSelected={index === selectedIndex}
         index={index}
       />

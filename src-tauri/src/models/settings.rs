@@ -59,8 +59,7 @@ impl Default for PasteFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     // General
-    pub theme: Theme,
-    pub view_mode: ViewMode,
+    pub theme: String,
     pub language: String,
 
     // Shortcuts
@@ -70,14 +69,15 @@ pub struct AppSettings {
     pub enable_images: bool,
     pub enable_files: bool,
     pub enable_rich_text: bool,
+    pub enable_office_formats: bool,
     pub excluded_apps: Vec<String>,
 
     // Storage & History
     pub history_limit: u32,
-    pub retention_policy: RetentionPolicy,
+    pub retention_policy: String,
     pub retention_value: u32,
     pub auto_delete_days: u32,
-    pub max_image_size_mb: u32,
+    pub max_item_size_mb: u32,
 
     // Privacy & Behavior
     pub auto_clear_minutes: u32,
@@ -97,7 +97,6 @@ pub struct AppSettings {
 
     // Notifications
     pub show_copy_toast: bool,
-    pub toast_duration_ms: u32,
 
     // Onboarding
     #[serde(default = "default_false")]
@@ -117,8 +116,7 @@ fn default_semantic_model() -> String {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: Theme::default(),
-            view_mode: ViewMode::default(),
+            theme: "auto".to_string(),
             language: "en".to_string(),
             global_shortcut: if cfg!(target_os = "macos") {
                 "Cmd+Shift+V".to_string()
@@ -128,12 +126,13 @@ impl Default for AppSettings {
             enable_images: true,
             enable_files: true,
             enable_rich_text: true,
+            enable_office_formats: true,
             excluded_apps: vec![],
             history_limit: 1000,
-            retention_policy: RetentionPolicy::default(),
+            retention_policy: "unlimited".to_string(),
             retention_value: 0,
             auto_delete_days: 0,
-            max_image_size_mb: 10,
+            max_item_size_mb: 10,
             auto_clear_minutes: 0,
             hide_on_copy: false,
             clear_on_exit: false,
@@ -144,7 +143,6 @@ impl Default for AppSettings {
             hide_on_blur: true,
             always_on_top: false,
             show_copy_toast: true,
-            toast_duration_ms: 1500,
             has_seen_welcome: false,
             semantic_search_enabled: false,
             semantic_model: default_semantic_model(),
