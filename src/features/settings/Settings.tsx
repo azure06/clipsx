@@ -40,7 +40,7 @@ const SettingsSection = ({ icon, title, description, children }: SettingsSection
   <Card
     header={
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
+        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-linear-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
           {icon}
         </div>
         <div>
@@ -300,7 +300,7 @@ export const Settings = () => {
   return (
     <div className="flex h-full overflow-hidden bg-transparent">
       {/* Left Sidebar Menu */}
-      <div className="w-48 flex-shrink-0 flex flex-col border-r border-white/10 bg-gray-900/30">
+      <div className="w-48 shrink-0 flex flex-col border-r border-gray-200/50 dark:border-white/10 bg-gray-100/50 dark:bg-gray-900/30">
         <div className="p-4">
           <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">
             Settings
@@ -312,12 +312,12 @@ export const Settings = () => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${
                   activeTab === tab.id
-                    ? 'bg-blue-500/10 text-blue-400'
-                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                    ? 'bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-200'
                 }`}
               >
                 <div
-                  className={`${activeTab === tab.id ? 'text-blue-400' : 'text-gray-500 group-hover:text-gray-300'}`}
+                  className={`${activeTab === tab.id ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300'}`}
                 >
                   {tab.icon}
                 </div>
@@ -332,7 +332,7 @@ export const Settings = () => {
       <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
         <div className="p-8 space-y-6 max-w-3xl mx-auto">
           <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-100">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {tabs.find(t => t.id === activeTab)?.label}
             </h1>
             <p className="text-sm text-gray-500 mt-1">

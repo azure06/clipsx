@@ -1,4 +1,7 @@
 @import 'tailwindcss';
+@config '../tailwind.config.js';
+
+@custom-variant dark (&:is(.dark *));
 
 @layer base {
   button,
@@ -90,7 +93,7 @@ button.decorum-tb-btn {
   border: none !important;
   outline: none !important;
   cursor: pointer !important;
-  color: rgba(156, 163, 175, 0.7) !important; /* gray-400 at 70% */
+  color: rgba(75, 85, 99, 0.85) !important; /* gray-600, good on light */
   transition:
     background 0.15s ease,
     color 0.15s ease;
@@ -98,12 +101,26 @@ button.decorum-tb-btn {
   margin: 0;
 }
 
+.dark button.decorum-tb-btn {
+  color: rgba(156, 163, 175, 0.7) !important; /* gray-400, good on dark */
+}
+
+/* Light mode hover: subtle dark tint */
 button.decorum-tb-btn:hover {
-  background: rgba(255, 255, 255, 0.07) !important;
-  color: #e5e7eb !important; /* gray-200 */
+  background: rgba(0, 0, 0, 0.06) !important;
+  color: #111827 !important;
+}
+
+/* Dark mode hover: subtle light tint */
+.dark button.decorum-tb-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #e5e7eb !important;
 }
 
 button.decorum-tb-btn:active {
+  background: rgba(0, 0, 0, 0.1) !important;
+}
+.dark button.decorum-tb-btn:active {
   background: rgba(255, 255, 255, 0.12) !important;
 }
 

@@ -25,17 +25,18 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   )
 
   return (
-    <div className="flex flex-col h-full bg-white/5 border border-white/5 rounded-lg overflow-hidden my-0.5 mr-2">
-      {/* Unified Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 shrink-0 bg-white/[0.02]">
+    <div className="flex flex-col h-full rounded-lg overflow-hidden my-0.5 mr-2 bg-white/30 dark:bg-white/5 backdrop-blur-xl border border-white/50 dark:border-white/5 shadow-md shadow-white/70 dark:shadow-none">
+      {/* Header: L2 — slightly more opaque */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/50 dark:border-white/5 shrink-0 bg-white/40 dark:bg-white/5">
         <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 px-2 py-1 rounded-md bg-white/5`}>
+          {/* Type badge: L3 */}
+          <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/50 dark:bg-white/10">
             <span className={`w-1.5 h-1.5 rounded-full ${getTypeColor(content.type)}`} />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
               {content.type}
             </span>
           </div>
-          <span className="text-xs text-gray-500 tabular-nums">
+          <span className="text-xs text-gray-500 dark:text-gray-500 tabular-nums">
             {new Date(clip.createdAt * 1000).toLocaleString()}
           </span>
         </div>
@@ -51,17 +52,16 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
         <ContentPreview content={content} />
       </div>
 
-      {/* Status Bar */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-black/20 border-t border-white/5 text-[10px] text-gray-500 font-mono">
+      {/* Status Bar: L2 */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-white/40 dark:bg-black/20 border-t border-white/50 dark:border-white/5 text-[10px] text-gray-500 font-mono">
         <div className="flex items-center gap-4">
-          {/* Common stats calculated from content */}
           <span>{content.text.length} chars</span>
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
           {content.metadata.language && <span>{content.metadata.language}</span>}
         </div>
         <div>
           {content.clip.appName && (
-            <span className="text-gray-400">
+            <span className="text-gray-500 dark:text-gray-400">
               <span className="opacity-60 mr-1">Source:</span>
               {content.clip.appName}
             </span>

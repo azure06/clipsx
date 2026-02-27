@@ -50,10 +50,10 @@ const ClipboardListItemComponent = ({
         data-clip-index={index}
         className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${
           isSelected
-            ? 'bg-gradient-to-r from-blue-500/20 to-violet-500/20 border-blue-200/50 dark:border-blue-500/30'
+            ? 'bg-linear-to-r from-blue-100/40 dark:from-blue-500/20 to-violet-100/40 dark:to-violet-500/20 border-blue-200/60 dark:border-blue-500/30 backdrop-blur-md shadow-sm'
             : isPinned
-              ? 'bg-violet-50/30 dark:bg-violet-500/5 border-violet-100/50 dark:border-violet-500/10'
-              : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
+              ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200/50 dark:border-violet-500/10'
+              : 'bg-transparent border-transparent hover:bg-white/50 dark:hover:bg-white/5 hover:border-white/60 dark:hover:border-white/5 hover:shadow-sm dark:hover:shadow-none'
         }`}
       >
         {/* Accent border for pinned items */}
@@ -62,7 +62,7 @@ const ClipboardListItemComponent = ({
         )}
 
         {/* Type icon */}
-        <div className="shrink-0 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors">
+        <div className="shrink-0 text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors">
           <ContentIcon content={clipToContent(clip)} size="sm" />
         </div>
 
@@ -128,7 +128,7 @@ const ClipboardListItemComponent = ({
 
           {/* Shortcut / Action Hint */}
           {isSelected || (index !== undefined && index >= 0 && index < 9) ? (
-            <div className="flex shrink-0 items-center justify-center h-5 min-w-[20px] px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-500 dark:text-gray-400 shadow-sm transition-opacity">
+            <div className="flex shrink-0 items-center justify-center h-5 min-w-5 px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-500 dark:text-gray-400 shadow-sm transition-opacity">
               {isSelected ? (
                 <CornerDownLeft
                   className="h-3 w-3 opacity-70 text-blue-500 dark:text-blue-400"

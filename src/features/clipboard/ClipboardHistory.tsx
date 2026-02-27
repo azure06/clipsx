@@ -352,8 +352,8 @@ export const ClipboardHistory = ({
   const infiniteScrollTrigger = (
     <div ref={loadMoreTriggerRef} className="flex justify-center py-4 min-h-25">
       {loading && (
-        <div className="text-xs text-gray-500 flex items-center gap-2">
-          <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-700 border-t-gray-400"></div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 dark:border-gray-700 border-t-gray-600 dark:border-t-gray-400"></div>
           Loading more...
         </div>
       )}
@@ -366,8 +366,8 @@ export const ClipboardHistory = ({
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
-            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-gray-400"></div>
-            <p className="text-sm text-gray-400">Loading clipboard history...</p>
+            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 dark:border-gray-700 border-t-gray-600 dark:border-t-gray-400"></div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading clipboard history...</p>
           </div>
         </div>
       )
@@ -377,14 +377,14 @@ export const ClipboardHistory = ({
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-950">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-950">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
                 strokeWidth={1.5}
                 stroke="currentColor"
-                className="h-6 w-6 text-red-400"
+                className="h-6 w-6 text-red-600 dark:text-red-400"
               >
                 <path
                   strokeLinecap="round"
@@ -393,7 +393,7 @@ export const ClipboardHistory = ({
                 />
               </svg>
             </div>
-            <p className="text-sm font-medium text-red-400">Error: {error}</p>
+            <p className="text-sm font-medium text-red-600 dark:text-red-400">Error: {error}</p>
           </div>
         </div>
       )
@@ -410,10 +410,10 @@ export const ClipboardHistory = ({
                 filter: 'sepia(1) saturate(1) hue-rotate(180deg) brightness(0.5)',
               }}
             />
-            <p className="-mt-4 text-xs text-gray-500">
+            <p className="-mt-4 text-xs text-gray-500 dark:text-gray-400">
               {mode === 'search' ? 'No clips match your search' : 'Your clipboard is empty'}
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
               {mode === 'search' ? 'Try a different query' : 'Start copying to build your history'}
             </p>
           </div>
@@ -446,8 +446,8 @@ export const ClipboardHistory = ({
             onClick={() => void setActiveTab(filter)}
             className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
               activeTab === filter
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                : 'text-gray-400 hover:text-gray-300 hover:bg-white/5 border border-transparent'
+                ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-black/5 dark:hover:bg-white/5 border border-transparent'
             }`}
           >
             {filter.charAt(0).toUpperCase() + filter.slice(1)}
