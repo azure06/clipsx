@@ -1,0 +1,32 @@
+   Compiling clipsx v0.1.0 (C:\Users\gabri\Repos\clipsx\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.36s
+     Running `target\debug\clipboard_dump.exe`
+Format 49161: DataObject
+Format 14 (Built-in or no name)
+Format 3 (Built-in or no name)
+Format 2 (Built-in or no name)
+Format 50045: Biff12
+Format 50022: Biff8
+Format 50025: Biff5
+Format 4 (Built-in or no name)
+Format 5 (Built-in or no name)
+Format 50044: XML Spreadsheet
+Format 49304: HTML Format
+Format 13 (Built-in or no name)
+Format 1 (Built-in or no name)
+Format 50027: Csv
+Format 49337: Rich Text Format
+Format 49163: Embed Source
+Format 49156: Native
+Format 49155: OwnerLink
+Format 49166: Object Descriptor
+Format 49165: Link Source
+Format 49167: Link Source Descriptor
+Format 49989: Link
+Format 129 (Built-in or no name)
+Format 49154: ObjectLink
+Format 49171: Ole Private Data
+Format 16 (Built-in or no name)
+Format 7 (Built-in or no name)
+Format 8 (Built-in or no name)
+Format 17 (Built-in or no name)

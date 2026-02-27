@@ -1388,38 +1388,63 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
 
     // Gather all dynamic formats currently on the clipboard (strings)
     let formats = get_all_formats_windows();
-    let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut candidates: Vec<(String, Vec<u8>, String)> = Vec::new();
 
     for (_, format_name) in &formats {
         let name_lower = format_name.to_lowercase();
-        // Look for Office packages or native elements just like macOS does
-        if name_lower.contains("powerpoint")
-            || name_lower.contains("excel")
-            || name_lower.contains("word")
-            || format_name == "Art::GVML ClipFormat"
-            || format_name == "Embed Source"
+
+        // Exclude small internal metadata types that break restorations if forced
+        if name_lower.contains("internal theme")
+            || name_lower.contains("color scheme")
+            || name_lower.contains("activeclipboard")
         {
-            // Exclude small internal metadata types that break restorations if forced
-            if !name_lower.contains("internal theme")
-                && !name_lower.contains("color scheme")
-                && !name_lower.contains("activeclipboard")
-            {
-                if let Some(data) = get_format_windows(format_name) {
-                    candidates.push((format_name.clone(), data));
-                }
+            continue;
+        }
+
+        let mut app_category = None;
+
+        // --- PowerPoint Format Detection ---
+        // PowerPoint copies full slides as "PowerPoint X.X Slides Package" and shapes as "Art::GVML ClipFormat".
+        if name_lower.contains("powerpoint") || format_name == "Art::GVML ClipFormat" {
+            app_category = Some("Microsoft PowerPoint");
+        }
+        // --- Excel Format Detection ---
+        // Excel stores full ranges/workbooks as "Biff12", "Biff8", "XML Spreadsheet", etc.
+        // It often does NOT use the word "Excel" in its native custom formats.
+        else if name_lower.contains("excel")
+            || name_lower.contains("biff")
+            || name_lower.contains("xml spreadsheet")
+        {
+            app_category = Some("Microsoft Excel");
+        }
+        // --- Word Format Detection ---
+        // Word uses "Word" in its formats, and typically relies on RTF or HTML for rich text.
+        else if name_lower.contains("word") {
+            app_category = Some("Microsoft Word");
+        }
+        // --- Generic OLE/Embed Source ---
+        // "Embed Source" is a generic OLE format used by many Office apps (often Excel embedded objects).
+        else if format_name == "Embed Source" {
+            app_category = Some("Microsoft Office"); // Fallback
+        }
+
+        if let Some(category) = app_category {
+            if let Some(data) = get_format_windows(format_name) {
+                candidates.push((format_name.clone(), data, category.to_string()));
             }
         }
     }
 
-    // The largest payload is typically the actual document/slide package
-    if let Some((uti, data)) = candidates.into_iter().max_by_key(|(_, d)| d.len()) {
+    // The largest payload is typically the actual document/slide/spreadsheet package
+    if let Some((uti, data, category)) = candidates.into_iter().max_by_key(|(_, d, _)| d.len()) {
         ole_data = Some(data);
         ole_type = Some(uti.clone());
-        if uti.contains("PowerPoint") || uti == "Art::GVML ClipFormat" {
-            source_app = String::from("Microsoft PowerPoint");
-        } else if uti.contains("Word") {
-            source_app = String::from("Microsoft Word");
-        } else if uti.contains("Excel") {
+        source_app = category;
+
+        // Refine 'Microsoft Office' fallback based on UTI if we grabbed Embed Source from Excel
+        if source_app == "Microsoft Office"
+            && (uti == "Embed Source" || uti.contains("Biff") || uti.contains("XML Spreadsheet"))
+        {
             source_app = String::from("Microsoft Excel");
         }
     }
