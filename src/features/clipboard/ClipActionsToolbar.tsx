@@ -27,7 +27,9 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
         ))}
 
         {/* Separator if we have smart actions */}
-        {standard.length > 0 && smart.length > 0 && <div className="w-px h-3 bg-white/10 mx-1" />}
+        {standard.length > 0 && smart.length > 0 && (
+          <div className="w-px h-3 bg-slate-100/10 mx-1" />
+        )}
 
         {/* Smart Actions */}
         {smart.map(action => (
@@ -36,7 +38,7 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
 
         {/* Separator if we have meta actions */}
         {(standard.length > 0 || smart.length > 0) && meta.length > 0 && (
-          <div className="w-px h-3 bg-white/10 mx-1" />
+          <div className="w-px h-3 bg-slate-100/10 mx-1" />
         )}
 
         {/* Meta Actions */}
@@ -59,7 +61,7 @@ const ActionIconButton = ({ action, content }: { action: SmartAction; content: C
           className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50 ${
             isActive
               ? 'text-blue-400 bg-blue-500/10 hover:bg-blue-500/20'
-              : 'text-gray-400 hover:text-white hover:bg-white/10'
+              : 'text-gray-400 hover:text-white hover:bg-slate-100/10'
           }`}
         >
           <div className="w-4 h-4">{action.icon}</div>
@@ -67,7 +69,7 @@ const ActionIconButton = ({ action, content }: { action: SmartAction; content: C
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          className="z-100 px-2 py-1 text-[10px] bg-gray-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
+          className="z-100 px-2 py-1 text-[10px] bg-slate-900 border border-white/10 text-white rounded shadow-lg animate-in fade-in-0 zoom-in-95"
           sideOffset={5}
         >
           {action.label}

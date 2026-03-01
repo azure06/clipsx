@@ -35,7 +35,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
 
       <div className="flex flex-col gap-4">
         {/* Expression Display */}
-        <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+        <div className="p-3 rounded-xl bg-slate-100/5 border border-gray-100/10">
           <div className="text-sm text-gray-400 font-mono mb-1">Equation</div>
           <div className="text-lg font-medium text-white/90 font-mono break-all leading-relaxed">
             {content.text}
@@ -45,16 +45,16 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
         {/* Result Display */}
         {hasResult ? (
           <div className="relative group">
-            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-indigo-500/10 rounded-xl blur-xl opacity-50" />
+            <div className="absolute inset-0 bg-linear-to-r from-indigo-500/10 via-purple-500/10 to-indigo-500/10 rounded-xl blur-xl opacity-50" />
 
-            <div className="relative p-4 rounded-xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 text-center">
+            <div className="relative p-4 rounded-xl bg-linear-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 text-center">
               <div className="flex items-center gap-2 text-indigo-300/80 mb-1">
                 <Equal size={20} strokeWidth={2.5} />
                 <span className="text-xs font-semibold uppercase tracking-wider">Result</span>
               </div>
 
               <div
-                className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-200 via-white to-purple-200 select-all cursor-pointer hover:scale-105 transition-transform duration-200 font-mono"
+                className="text-4xl font-bold text-transparent bg-clip-text bg-linear-to-r from-indigo-200 via-gray-100 to-purple-200 select-all cursor-pointer hover:scale-105 transition-transform duration-200 font-mono"
                 onClick={handleCopyResult}
                 title="Click to copy result"
               >
@@ -67,7 +67,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
               <div className="h-6 flex items-center justify-center">
                 <button
                   onClick={handleCopyResult}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-colors text-xs font-medium text-gray-400 hover:text-white"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/5 hover:border-gray-100/10 transition-colors text-xs font-medium text-gray-400 hover:text-white"
                 >
                   {copied ? (
                     <>

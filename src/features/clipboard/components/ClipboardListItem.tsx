@@ -53,7 +53,7 @@ const ClipboardListItemComponent = ({
             ? 'bg-linear-to-r from-blue-100/40 dark:from-blue-500/20 to-violet-100/40 dark:to-violet-500/20 border-blue-200/60 dark:border-blue-500/30 backdrop-blur-md shadow-sm'
             : isPinned
               ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200/50 dark:border-violet-500/10'
-              : 'bg-transparent border-transparent hover:bg-white/50 dark:hover:bg-white/5 hover:border-white/60 dark:hover:border-white/5 hover:shadow-sm dark:hover:shadow-none'
+              : 'bg-transparent border-transparent hover:bg-slate-100/50 dark:hover:bg-slate-100/5 hover:border-gray-100/60 dark:hover:border-gray-100/5 hover:shadow-sm dark:hover:shadow-none'
         }`}
       >
         {/* Accent border for pinned items */}
@@ -62,7 +62,7 @@ const ClipboardListItemComponent = ({
         )}
 
         {/* Type icon */}
-        <div className="shrink-0 text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors">
+        <div className="shrink-0 text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
           <ContentIcon content={clipToContent(clip)} size="sm" />
         </div>
 
@@ -70,7 +70,7 @@ const ClipboardListItemComponent = ({
         <div className="flex-1 min-w-0 flex items-center gap-3">
           {/* Preview text - Strictly 1 line */}
           <span
-            className={`truncate text-xs ${isSelected ? 'font-medium text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
+            className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
           >
             {preview}
           </span>
@@ -128,7 +128,7 @@ const ClipboardListItemComponent = ({
 
           {/* Shortcut / Action Hint */}
           {isSelected || (index !== undefined && index >= 0 && index < 9) ? (
-            <div className="flex shrink-0 items-center justify-center h-5 min-w-5 px-1.5 rounded border border-gray-200/50 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50 text-[10px] font-medium text-gray-500 dark:text-gray-400 shadow-sm transition-opacity">
+            <div className="flex shrink-0 items-center justify-center h-5 min-w-5 px-1.5 rounded border border-gray-300/60 dark:border-gray-700/50 bg-slate-50/60 dark:bg-slate-800/50 text-[10px] font-medium text-gray-600 dark:text-gray-400 shadow-sm transition-opacity">
               {isSelected ? (
                 <CornerDownLeft
                   className="h-3 w-3 opacity-70 text-blue-500 dark:text-blue-400"

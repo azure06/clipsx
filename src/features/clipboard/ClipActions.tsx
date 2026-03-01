@@ -36,7 +36,7 @@ const ActionCard = ({
 }) => (
   <button
     onClick={() => void action.execute(content)}
-    className="group relative flex flex-col items-center justify-center gap-2 rounded-xl border border-white/5 bg-white/5 p-3 transition-all duration-200 hover:border-white/10 hover:bg-white/10 hover:shadow-lg hover:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-gray-400 hover:text-gray-100"
+    className="group relative flex flex-col items-center justify-center gap-2 rounded-xl border border-gray-100/5 bg-slate-100/5 p-3 transition-all duration-200 hover:border-gray-100/10 hover:bg-slate-100/10 hover:shadow-lg hover:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-gray-400 hover:text-gray-100"
     style={{ animationDelay: `${index * 50}ms` }}
   >
     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-black/20 shadow-inner transition-transform group-hover:scale-110 text-gray-400 group-hover:text-blue-400">

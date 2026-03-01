@@ -21,11 +21,11 @@ const variantClasses: Record<ButtonVariant, string> = {
   primary:
     'bg-gradient-to-r from-blue-500 to-violet-500 text-white hover:from-blue-600 hover:to-violet-600 shadow-sm',
   secondary:
-    'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700',
+    'bg-slate-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 hover:bg-slate-200 dark:hover:bg-slate-700',
   destructive: 'bg-red-500 text-white hover:bg-red-600 shadow-sm',
-  ghost: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800',
+  ghost: 'text-gray-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-slate-800',
   outline:
-    'border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700',
+    'border border-gray-300/70 dark:border-gray-700 bg-slate-100/70 dark:bg-slate-800 text-gray-700 dark:text-gray-300 hover:bg-slate-200/60 dark:hover:bg-slate-700',
 }
 
 const sizeClasses: Record<ButtonSize, string> = {

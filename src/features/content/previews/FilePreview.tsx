@@ -108,7 +108,7 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
   const isVideo = ['mp4', 'mov', 'avi', 'webm', 'ogg'].includes(ext)
 
   return (
-    <div className="flex flex-col p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors group">
+    <div className="flex flex-col p-3 bg-slate-100/5 rounded-lg hover:bg-slate-100/10 transition-colors group">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="shrink-0">{getFileIcon(file.path)}</div>
@@ -129,7 +129,7 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
 
         <button
           onClick={() => void handleOpen()}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-white/10 rounded text-xs text-white/60 hover:text-white shrink-0"
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-slate-100/10 rounded text-xs text-white/60 hover:text-white shrink-0"
           title="Open File"
         >
           Open

@@ -114,9 +114,9 @@ export const SearchBar = ({
 
   return (
     <div className="relative w-full group">
-      <div className="relative flex items-center backdrop-blur-2xl border border-white/60 dark:border-white/10 bg-white/40 dark:bg-transparent rounded-xl shadow-xl shadow-black/5 dark:shadow-2xl">
+      <div className="relative flex items-center backdrop-blur-2xl border-none bg-slate-100/10 dark:bg-transparent rounded-xl shadow-sm shadow-black/4 dark:shadow-2xl">
         {/* Search Icon */}
-        <div className="pl-4 text-gray-400">
+        <div className="pl-4 text-gray-500 dark:text-gray-400">
           <Search className="w-5 h-5" />
         </div>
 
@@ -154,7 +154,7 @@ export const SearchBar = ({
               className={`p-1.5 rounded-md transition-all duration-200 ${
                 isSemanticActive
                   ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 shadow-sm shadow-indigo-500/10'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5'
+                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-black/5 dark:hover:bg-slate-100/5'
               }`}
               title={
                 isSemanticActive
@@ -169,12 +169,12 @@ export const SearchBar = ({
           {value ? (
             <button
               onClick={onClear}
-              className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-gray-400 dark:text-gray-500 transition-colors"
+              className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-slate-100/10 text-gray-400 dark:text-gray-500 transition-colors"
             >
               <X className="w-4 h-4" />
             </button>
           ) : (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/50 dark:bg-white/5 border border-white/60 dark:border-white/5">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/5 border border-gray-200/60 dark:border-gray-100/5">
               <Command className="w-3 h-3 text-gray-500" />
               <span className="text-xs text-gray-500 font-medium">K</span>
             </div>
@@ -184,7 +184,7 @@ export const SearchBar = ({
 
       {/* Slash-Command Filter Menu */}
       {showFilterMenu && (
-        <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-white/60 dark:border-white/10 bg-white/70 dark:bg-gray-900/95 backdrop-blur-2xl shadow-xl shadow-black/5 dark:shadow-2xl overflow-hidden z-50 animate-fade-in">
+        <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-gray-200/60 dark:border-white/10 bg-slate-100/80 dark:bg-slate-900/95 backdrop-blur-2xl shadow-xl shadow-black/5 dark:shadow-2xl overflow-hidden z-50 animate-fade-in">
           <div className="p-1.5">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
               Filters
@@ -197,8 +197,8 @@ export const SearchBar = ({
                   onClick={() => handleFilterClick(option.prefix)}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
                     index === selectedFilterIndex
-                      ? 'bg-gray-100 dark:bg-white/10 text-gray-900 dark:text-white'
-                      : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-200'
+                      ? 'bg-slate-100/80 dark:bg-slate-100/10 text-gray-900 dark:text-white'
+                      : 'text-gray-500 dark:text-gray-400 hover:bg-slate-100/60 dark:hover:bg-slate-100/5 hover:text-gray-900 dark:hover:text-gray-200'
                   }`}
                 >
                   <Icon className="w-4 h-4 shrink-0" />

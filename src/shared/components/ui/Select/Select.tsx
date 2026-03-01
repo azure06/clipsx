@@ -27,7 +27,7 @@ export const Select = <T extends string = string>({
   return (
     <SelectPrimitive.Root value={value} onValueChange={onChange} disabled={disabled}>
       <SelectPrimitive.Trigger
-        className={`inline-flex items-center justify-between gap-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`inline-flex items-center justify-between gap-2 rounded-lg border border-gray-300/70 dark:border-gray-700 bg-slate-100/70 dark:bg-slate-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 hover:bg-slate-200/60 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       >
         <SelectPrimitive.Value placeholder={placeholder} />
         <SelectPrimitive.Icon>
@@ -37,7 +37,7 @@ export const Select = <T extends string = string>({
 
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg"
+          className="overflow-hidden rounded-lg border border-gray-200/80 dark:border-gray-800 bg-slate-100/90 dark:bg-slate-900/95 backdrop-blur-xl shadow-lg"
           position="popper"
           sideOffset={4}
         >
@@ -47,7 +47,7 @@ export const Select = <T extends string = string>({
                 key={option.value}
                 value={option.value}
                 disabled={option.disabled}
-                className="relative flex cursor-pointer select-none items-center rounded px-8 py-1.5 text-sm text-gray-900 dark:text-gray-100 outline-none data-[highlighted]:bg-gray-100 dark:data-[highlighted]:bg-gray-800 data-[disabled]:opacity-50 data-[disabled]:cursor-not-allowed"
+                className="relative flex cursor-pointer select-none items-center rounded px-8 py-1.5 text-sm text-gray-900 dark:text-gray-100 outline-none data-highlighted:bg-slate-100 dark:data-highlighted:bg-slate-800 data-disabled:opacity-50 data-disabled:cursor-not-allowed"
               >
                 <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className="absolute left-2 inline-flex items-center">

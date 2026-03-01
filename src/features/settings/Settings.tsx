@@ -40,7 +40,7 @@ const SettingsSection = ({ icon, title, description, children }: SettingsSection
   <Card
     header={
       <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-linear-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
+        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-linear-to-br from-blue-100/60 to-violet-100/60 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
           {icon}
         </div>
         <div>
@@ -109,7 +109,7 @@ type ShortcutRecorderProps = {
 }
 
 const KeyChip = ({ label }: { label: string }) => (
-  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white dark:bg-white/10 border border-gray-300 dark:border-white/15 text-[11px] font-mono font-semibold text-gray-700 dark:text-gray-200 shadow-sm shadow-black/5">
+  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100/10 dark:bg-slate-100/10 border border-gray-300 dark:border-white/15 text-[11px] font-mono font-semibold text-gray-700 dark:text-gray-200 shadow-sm shadow-black/5">
     {label}
   </span>
 )
@@ -156,7 +156,7 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
   }
 
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className="flex flex-col items-end gap-1">
       <div
         ref={containerRef}
         tabIndex={0}
@@ -172,10 +172,10 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
         }}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        className={`relative flex items-center justify-center gap-1.5 min-w-48 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all duration-150 select-none outline-none ${
+        className={`relative flex items-center justify-center gap-1 min-w-36 px-2.5 py-1.5 rounded-lg border-2 cursor-pointer transition-all duration-150 select-none outline-none ${
           isRecording
             ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-500/10 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]'
-            : 'border-gray-200 dark:border-white/10 bg-white/60 dark:bg-white/5 hover:border-blue-300 dark:hover:border-blue-500/40 hover:bg-blue-50/30 dark:hover:bg-blue-500/5'
+            : 'border-gray-200 dark:border-white/10 bg-slate-100/60 dark:bg-slate-100/5 hover:border-blue-300 dark:hover:border-blue-500/40 hover:bg-blue-50/30 dark:hover:bg-blue-500/5'
         }`}
       >
         {/* Recording pulse dot */}
@@ -404,9 +404,9 @@ export const Settings = () => {
   // --- Render ---
 
   return (
-    <div className="flex h-full overflow-hidden bg-transparent">
+    <div className="flex h-full overflow-hidden">
       {/* Left Sidebar Menu */}
-      <div className="w-48 shrink-0 flex flex-col border-r border-gray-200/50 dark:border-white/10 bg-gray-100/50 dark:bg-gray-900/30">
+      <div className="w-48 shrink-0 flex flex-col border-r border-gray-200/50 dark:border-white/10 bg-slate-100/30 dark:bg-slate-900/30">
         <div className="p-4">
           <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">
             Settings
@@ -418,8 +418,8 @@ export const Settings = () => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${
                   activeTab === tab.id
-                    ? 'bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
-                    : 'text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-200'
+                    ? 'bg-blue-100/60 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-slate-100/5 hover:text-gray-900 dark:hover:text-gray-200'
                 }`}
               >
                 <div
@@ -435,7 +435,7 @@ export const Settings = () => {
       </div>
 
       {/* Right Content Area */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar bg-transparent">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-8 space-y-6 max-w-3xl mx-auto">
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
@@ -619,7 +619,7 @@ export const Settings = () => {
                             }
                           }
                         }}
-                        className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-slate-100/10 dark:bg-slate-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                       <Button
                         size="sm"
@@ -645,7 +645,7 @@ export const Settings = () => {
                       {settings.excluded_apps.map(app => (
                         <div
                           key={app}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-300"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100/10 dark:bg-slate-800 text-sm text-gray-700 dark:text-gray-300"
                         >
                           <span>{app}</span>
                           <button
@@ -797,7 +797,7 @@ export const Settings = () => {
                       onChange={e =>
                         void updateSettings({ retention_value: parseInt(e.target.value) || 0 })
                       }
-                      className="w-24 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-24 rounded-lg border border-gray-300 dark:border-gray-700 bg-slate-100/10 dark:bg-slate-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </SettingRow>
                 )}

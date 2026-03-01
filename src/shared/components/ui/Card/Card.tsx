@@ -12,9 +12,9 @@ export type CardProps = {
 }
 
 const variantClasses: Record<CardVariant, string> = {
-  default: 'bg-white dark:bg-gray-900/30 border border-gray-200 dark:border-gray-800',
+  default: 'bg-slate-100/40 dark:bg-slate-900/40',
   outlined: 'bg-transparent border-2 border-gray-300 dark:border-gray-700',
-  elevated: 'bg-white dark:bg-gray-900 shadow-lg border border-gray-100 dark:border-gray-900',
+  elevated: 'bg-slate-200/40 dark:bg-slate-900 shadow-lg',
 }
 
 export const Card = ({
@@ -35,7 +35,7 @@ export const Card = ({
   return (
     <div className={classes} onClick={onClick}>
       {header && (
-        <div className="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-5 py-4">
+        <div className="border-b border-gray-200 dark:border-gray-800 bg-slate-100/30 dark:bg-slate-900/50 px-5 py-4">
           {header}
         </div>
       )}
@@ -43,7 +43,7 @@ export const Card = ({
       <div className="p-5">{children}</div>
 
       {footer && (
-        <div className="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 px-5 py-4">
+        <div className="border-t border-gray-200 dark:border-gray-800 bg-slate-100/30 dark:bg-slate-900/50 px-5 py-4">
           {footer}
         </div>
       )}

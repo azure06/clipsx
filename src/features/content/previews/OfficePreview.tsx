@@ -38,7 +38,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
   return (
     <div className="flex flex-col h-full">
       {/* Tab Navigation */}
-      <div className="flex gap-2 px-4 py-2 bg-white/[0.02] border-b border-white/10">
+      <div className="flex gap-2 px-4 py-2 bg-slate-100/2 border-b border-gray-100/10">
         {hasHtml && (
           <TabButton
             icon={<Table className="w-4 h-4" />}
@@ -77,7 +77,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
           <div className="ml-auto">
             <button
               type="button"
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-300 bg-white/5 hover:bg-white/10 rounded-md transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-300 bg-slate-100/5 hover:bg-slate-100/10 rounded-md transition-colors"
               onClick={() => {
                 if (attachment_path) {
                   // TODO: Implement attachment download
@@ -118,7 +118,7 @@ const TabButton = ({ icon, label, active, onClick }: TabButtonProps) => (
     className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
       active
         ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-        : 'text-gray-400 hover:text-gray-300 hover:bg-white/5'
+        : 'text-gray-400 hover:text-gray-300 hover:bg-slate-100/5'
     }`}
   >
     {icon}
@@ -128,7 +128,7 @@ const TabButton = ({ icon, label, active, onClick }: TabButtonProps) => (
 
 // HTML Tab
 const HTMLTab = ({ html }: { html: string }) => (
-  <div className="p-4 bg-white text-black min-h-full">
+  <div className="p-4 bg-slate-100 text-black min-h-full">
     <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: html }} />
   </div>
 )
@@ -150,7 +150,7 @@ const SVGTab = ({ svgUrl }: { svgUrl: string }) => {
         <span className="text-xs text-gray-500">SVG Image</span>
       </div>
 
-      <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-white/[0.02]">
+      <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100/2">
         <img src={svgUrl} className="max-w-full max-h-full object-contain" alt="SVG preview" />
       </div>
     </div>
@@ -159,7 +159,7 @@ const SVGTab = ({ svgUrl }: { svgUrl: string }) => {
 
 // Image Tab
 const ImageTab = ({ imageUrl }: { imageUrl: string }) => (
-  <div className="flex items-center justify-center p-8 bg-white/[0.02]">
+  <div className="flex items-center justify-center p-8 bg-slate-100/2">
     <img
       src={imageUrl}
       alt="Office content"

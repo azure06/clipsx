@@ -60,7 +60,7 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
           </thead>
           <tbody className="divide-y divide-white/5">
             {rows.map((row, i) => (
-              <tr key={i} className="hover:bg-white/5 transition-colors group">
+              <tr key={i} className="hover:bg-slate-100/5 transition-colors group">
                 {row.map((cell, j) => (
                   <td key={j} className="px-3 py-2 text-white/80 group-hover:text-white">
                     {cell}

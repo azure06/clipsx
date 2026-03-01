@@ -50,7 +50,7 @@ export const Input = ({
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
           disabled={disabled}
-          className={`w-full rounded-lg border bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`w-full rounded-lg border bg-slate-100/70 dark:bg-slate-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
             hasError
               ? 'border-red-300 dark:border-red-900 focus:border-red-500 focus:ring-red-500'
               : 'border-gray-300 dark:border-gray-700 focus:border-blue-500 focus:ring-blue-500'

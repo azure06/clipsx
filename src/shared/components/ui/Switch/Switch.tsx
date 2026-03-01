@@ -38,10 +38,10 @@ export const Switch = ({
         checked={checked}
         onCheckedChange={onChange}
         disabled={disabled}
-        className={`${root} relative inline-flex items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-blue-500 data-[state=checked]:to-violet-500 data-[state=unchecked]:bg-gray-300 dark:data-[state=unchecked]:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer hover:data-[state=unchecked]:bg-gray-400 dark:hover:data-[state=unchecked]:bg-gray-600`}
+        className={`${root} relative inline-flex items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 data-[state=checked]:bg-linear-to-r data-[state=checked]:from-blue-500 data-[state=checked]:to-violet-500 data-[state=unchecked]:bg-slate-300 dark:data-[state=unchecked]:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer hover:data-[state=unchecked]:bg-slate-400 dark:hover:data-[state=unchecked]:bg-slate-600`}
       >
         <SwitchPrimitive.Thumb
-          className={`${thumb} block rounded-full bg-white shadow-sm transition-transform duration-200 translate-x-1`}
+          className={`${thumb} block rounded-full bg-slate-100 shadow-sm transition-transform duration-200 translate-x-1`}
         />
       </SwitchPrimitive.Root>
       {label && (

@@ -49,7 +49,7 @@ export const clipToContent = (clip: ClipItem): Content => {
 // Get type color for UI
 export const getTypeColor = (type: ContentType): string => {
   const colors: Record<ContentType, string> = {
-    text: 'bg-gray-500',
+    text: 'bg-slate-500',
     url: 'bg-blue-500',
     email: 'bg-amber-500',
     color: 'bg-purple-500',

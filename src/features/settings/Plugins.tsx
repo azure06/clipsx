@@ -130,7 +130,7 @@ export const Plugins = () => {
   return (
     <div className="h-full w-full bg-transparent text-gray-900 dark:text-gray-100 overflow-y-auto custom-scrollbar animate-fade-in relative">
       <div className="p-8 max-w-6xl mx-auto">
-        <div className="flex justify-between items-end mb-8 border-b border-gray-200 dark:border-white/10 pb-6">
+        <div className="flex justify-between items-end mb-8 border-b border-slate-300 dark:border-slate/10 pb-6">
           <div>
             <h1 className="text-2xl font-bold mb-1">AI Search Engines</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -167,7 +167,7 @@ export const Plugins = () => {
             return (
               <div
                 key={model.id}
-                className={`flex flex-col p-4 rounded-lg border transition-all duration-200 bg-white dark:bg-gray-800/40 shadow-sm ${
+                className={`flex flex-col p-4 rounded-lg border transition-all duration-200 bg-slate-100/50 dark:bg-slate-800/40 shadow-sm ${
                   isActive
                     ? 'border-blue-500 dark:border-blue-500/50 ring-1 ring-blue-500/20'
                     : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20'
@@ -176,7 +176,7 @@ export const Plugins = () => {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-4">
                     {/* Icon */}
-                    <div className="shrink-0 w-12 h-12 flex items-center justify-center rounded-md bg-linear-to-br from-blue-100 to-indigo-100 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-600 dark:text-blue-400">
+                    <div className="shrink-0 w-12 h-12 flex items-center justify-center rounded-md bg-linear-to-br from-blue-100/60 to-indigo-100/60 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-600 dark:text-blue-400">
                       <svg
                         className="w-6 h-6"
                         fill="none"
@@ -237,7 +237,7 @@ export const Plugins = () => {
                 <div className="mt-4 pt-3 flex flex-col gap-2">
                   {isActive ? (
                     <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-sm font-medium border border-blue-100 dark:border-transparent">
+                      <div className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded bg-blue-50/80 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-sm font-medium border border-blue-100/80 dark:border-transparent">
                         <svg
                           className="w-4 h-4"
                           fill="none"
@@ -298,7 +298,7 @@ export const Plugins = () => {
                   ) : isActivatingThis ? (
                     <button
                       disabled
-                      className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 opacity-80 cursor-wait"
+                      className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-slate-100/60 dark:bg-slate-700 text-gray-900 dark:text-gray-100 opacity-80 cursor-wait"
                     >
                       <svg
                         className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5 text-gray-500 dark:text-gray-400"
@@ -326,7 +326,7 @@ export const Plugins = () => {
                     <button
                       onClick={() => void handleSelectExistingModel(model.id)}
                       disabled={isAnotherDownloadingOrActivating}
-                      className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-slate-100/60 dark:bg-slate-700 text-gray-900 dark:text-gray-100 hover:bg-slate-200/60 dark:hover:bg-slate-600 disabled:opacity-50"
                     >
                       {isDownloaded ? 'Set as Active' : `Download (${model.size})`}
                     </button>

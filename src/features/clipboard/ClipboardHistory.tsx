@@ -377,7 +377,7 @@ export const ClipboardHistory = ({
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-950">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100/60 dark:bg-red-950">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
@@ -446,8 +446,8 @@ export const ClipboardHistory = ({
             onClick={() => void setActiveTab(filter)}
             className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
               activeTab === filter
-                ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30'
-                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-black/5 dark:hover:bg-white/5 border border-transparent'
+                ? 'bg-blue-100/60 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 border border-blue-200/60 dark:border-blue-500/30'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-black/5 dark:hover:bg-slate-100/5 border border-transparent'
             }`}
           >
             {filter.charAt(0).toUpperCase() + filter.slice(1)}

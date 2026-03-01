@@ -23,10 +23,10 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
       {/* Compact URL display */}
       <div
         onClick={handleOpen}
-        className="group relative p-4 rounded-xl bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20 hover:border-blue-400/40 cursor-pointer transition-all duration-300 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)] overflow-hidden"
+        className="group relative p-4 rounded-xl bg-linear-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20 hover:border-blue-400/40 cursor-pointer transition-all duration-300 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)] overflow-hidden"
       >
         {/* Animated background gradient */}
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500/5 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+        <div className="absolute inset-0 bg-linear-to-r from-transparent via-blue-500/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
 
         <div className="relative flex items-start gap-3">
           <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30 group-hover:scale-110 transition-transform duration-200">
@@ -50,7 +50,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
       </div>
 
       {(isImage || isVideo) && (
-        <div className="rounded-lg overflow-hidden bg-black/20 flex items-center justify-center border border-white/5">
+        <div className="rounded-lg overflow-hidden bg-black/20 flex items-center justify-center border border-gray-100/5">
           {isImage ? (
             <img
               src={url}
@@ -78,7 +78,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
         <div className="px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-400 text-[10px] font-semibold uppercase tracking-wider">
           {protocol}
         </div>
-        <div className="px-2.5 py-1 rounded-md bg-white/5 text-gray-400 text-[10px] font-medium">
+        <div className="px-2.5 py-1 rounded-md bg-slate-100/5 text-gray-400 text-[10px] font-medium">
           {url.length} chars
         </div>
       </div>

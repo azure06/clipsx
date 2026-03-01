@@ -102,7 +102,7 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
       case 'files':
         return 'bg-blue-600/20 text-blue-400 ring-blue-600/30'
       default:
-        return 'bg-gray-500/20 text-gray-400 ring-gray-500/30'
+        return 'bg-slate-500/20 text-gray-400 ring-gray-500/30'
     }
   }
 

@@ -73,7 +73,7 @@ export const AppLayout = () => {
 
   return (
     // Main Container - Single Background Color/Gradient Source
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/80 dark:bg-gray-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-lg border border-white/50 dark:border-white/10">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-lg border border-white/50 dark:border-white/10">
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
 
@@ -83,7 +83,7 @@ export const AppLayout = () => {
         <Sidebar onLoginClick={() => console.log('Login clicked')} />
 
         {/* 3. Main Content — glass L1 wrapper */}
-        <div className="flex-1 relative my-1 flex flex-col min-w-0 rounded-xl overflow-hidden mr-2 bg-white/30 dark:bg-white/5 backdrop-blur-xl border border-white/50 dark:border-white/10 shadow-lg shadow-white/60 dark:shadow-black/30">
+        <div className="flex-1 relative my-1 flex flex-col min-w-0 rounded-xl overflow-hidden mr-2 bg-slate-100/40 dark:bg-slate-100/5 backdrop-blur-xl border border-white/10 dark:border-white/10">
           <div className="flex-1 flex flex-col mx-auto w-full relative overflow-hidden max-w-lvw">
             {/* Content varies by View */}
             {activeView === 'clips' && (
@@ -103,7 +103,7 @@ export const AppLayout = () => {
                 {/* Split View Container */}
                 <div className="flex-1 flex gap-6 min-h-0 overflow-auto">
                   {/* LEFT PANEL — glass L1, peers with Preview */}
-                  <div className="flex-1 min-w-0 flex flex-col overflow-hidden rounded-2xl bg-white/30 dark:bg-white/5 backdrop-blur-xl border border-white/50 dark:border-white/5 shadow-md shadow-white/70 dark:shadow-none animate-slide-in-left">
+                  <div className="flex-1 min-w-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left">
                     <ClipboardHistory
                       searchQuery={searchQuery}
                       className="flex-1"
@@ -118,7 +118,7 @@ export const AppLayout = () => {
                         return <ClipPreview clip={displayedClip} />
                       }
                       return (
-                        <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl bg-white/30 dark:bg-white/5 backdrop-blur-xl border border-dashed border-white/50 dark:border-white/10">
+                        <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 border-dashed">
                           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                             Capture Something First
                           </p>

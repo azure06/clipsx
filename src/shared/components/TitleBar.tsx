@@ -44,7 +44,7 @@ export const TitleBar = () => {
 
       {/* Right: Clip count — inset extra on Windows so it clears the decorum buttons */}
       <div
-        className="ml-auto text-[11px] font-semibold text-gray-500 dark:text-gray-400 pointer-events-none"
+        className="ml-auto text-[11px] font-semibold text-gray-600 dark:text-gray-400 pointer-events-none"
         style={isWindows ? { marginRight: '146px' } : undefined}
       >
         {clipCount} {clipCount === 1 ? 'clip' : 'clips'}
