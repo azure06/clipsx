@@ -59,7 +59,7 @@ impl Default for PasteFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     // General
-    pub theme: String,
+    pub theme: Theme,
     pub language: String,
 
     // Shortcuts
@@ -74,7 +74,7 @@ pub struct AppSettings {
 
     // Storage & History
     pub history_limit: u32,
-    pub retention_policy: String,
+    pub retention_policy: RetentionPolicy,
     pub retention_value: u32,
     pub auto_delete_days: u32,
     pub max_item_size_mb: u32,
@@ -116,7 +116,7 @@ fn default_semantic_model() -> String {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: "auto".to_string(),
+            theme: Theme::default(),
             language: "en".to_string(),
             global_shortcut: if cfg!(target_os = "macos") {
                 "Cmd+Shift+V".to_string()
@@ -129,7 +129,7 @@ impl Default for AppSettings {
             enable_office_formats: true,
             excluded_apps: vec![],
             history_limit: 1000,
-            retention_policy: "unlimited".to_string(),
+            retention_policy: RetentionPolicy::default(),
             retention_value: 0,
             auto_delete_days: 0,
             max_item_size_mb: 10,

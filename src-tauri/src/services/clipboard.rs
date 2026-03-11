@@ -140,8 +140,8 @@ impl ClipboardService {
                 let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
                 Self::create_rtf_clip(rtf, plain, &content_hash, &detection, source_app.clone())
             }
-            ClipboardContent::Image { data, format } => {
-                self.create_image_clip(data, format, &content_hash, source_app.clone())
+            ClipboardContent::Image { data, format, pdf_data } => {
+                self.create_image_clip(data, format, &pdf_data, &content_hash, source_app.clone())
                     .await?
             }
             ClipboardContent::Files { paths } => {
@@ -150,6 +150,7 @@ impl ClipboardService {
             ClipboardContent::Office {
                 ole_data,
                 ole_type,
+                extra_types,
                 svg_data,
                 pdf_data,
                 png_data,
@@ -161,6 +162,7 @@ impl ClipboardService {
                 self.create_office_clip(
                     ole_data,
                     ole_type,
+                    extra_types,
                     svg_data,
                     pdf_data,
                     png_data,
@@ -307,6 +309,7 @@ impl ClipboardService {
         &self,
         data: Vec<u8>,
         format: clipboard_platform::ImageFormat,
+        pdf_data: &Option<Vec<u8>>,
         hash: &str,
         app_name: Option<String>,
     ) -> Result<ClipItem> {
@@ -318,6 +321,16 @@ impl ClipboardService {
 
         tokio::fs::write(&image_path, data).await?;
 
+        // Save PDF alongside the raster image if present (e.g. PowerPoint slideshow)
+        let saved_pdf_path = if let Some(pdf) = pdf_data {
+            let pdf_filename = format!("{}.pdf", id);
+            let pdf_path = self.storage_dir.join("pdf").join(&pdf_filename);
+            tokio::fs::write(&pdf_path, pdf).await?;
+            Some(pdf_path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
         Ok(ClipItem {
             id,
             content_type: "image".to_string(),
@@ -325,7 +338,7 @@ impl ClipboardService {
             content_html: None,
             content_rtf: None,
             svg_path: None,
-            pdf_path: None,
+            pdf_path: saved_pdf_path,
             image_path: Some(image_path.to_string_lossy().to_string()),
             attachment_path: None,
             attachment_type: None,
@@ -428,6 +441,7 @@ impl ClipboardService {
         &self,
         ole_data: Option<Vec<u8>>,
         ole_type: Option<String>,
+        extra_types: Vec<(String, Vec<u8>)>,
         svg_data: Option<Vec<u8>>,
         pdf_data: Option<Vec<u8>>,
         png_data: Option<Vec<u8>>,
@@ -493,7 +507,21 @@ impl ClipboardService {
             attachment_type: ole_type, // UTI type for restoring OLE to pasteboard
             file_paths: None,
             detected_type: "office".to_string(),
-            metadata: Some(format!(r#"{{"source_app":"{}"}}"#, source_app)),
+            metadata: {
+                // Encode extra_types as hex strings so they survive the DB round-trip
+                // without requiring a base64 dependency. Each entry is small (~100-500 bytes).
+                let extra_json: Vec<serde_json::Value> = extra_types
+                    .iter()
+                    .map(|(t, d)| serde_json::json!({
+                        "type": t,
+                        "hex": d.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+                    }))
+                    .collect();
+                Some(serde_json::json!({
+                    "source_app": source_app,
+                    "extra_types": extra_json
+                }).to_string())
+            },
             created_at: now,
             updated_at: now,
             app_name,

@@ -47,7 +47,51 @@ export const ClipboardHistory = ({
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const searchTimeoutRef = useRef<number | null>(null)
+  // macOS IME fix: we cannot use e.isComposing because on macOS WebKit,
+  // compositionend fires *before* the confirming Enter keydown, making
+  // e.isComposing already false by the time our handler runs.
+  //
+  // We also cannot use a simple setTimeout(0) because macOS Japanese IME fires
+  // rapid compositionend → compositionstart pairs for each conversion segment
+  // (e.g. while the underline is still visible). A naive reset would clear the
+  // flag between those pairs and let an intermediate Enter through.
+  //
+  // Solution: debounce the reset with 100ms. If a new compositionstart arrives
+  // within 100ms of compositionend we cancel the reset, keeping isComposingRef
+  // true for the entire user-visible IME session (all underlines gone).
+  const isComposingRef = useRef(false)
+  const compositionEndTimerRef = useRef<number | null>(null)
   // const searchInputRef = useRef<HTMLInputElement>(null) // Input is now external
+
+  // Track IME composition state (see isComposingRef above)
+  useEffect(() => {
+    const onCompositionStart = () => {
+      // Cancel any pending reset — a new segment is being composed.
+      if (compositionEndTimerRef.current !== null) {
+        clearTimeout(compositionEndTimerRef.current)
+        compositionEndTimerRef.current = null
+      }
+      isComposingRef.current = true
+    }
+    const onCompositionEnd = () => {
+      // Delay the reset so that:
+      // 1. The Enter keydown that immediately follows compositionend still
+      //    sees isComposingRef.current === true.
+      // 2. If macOS fires another compositionstart within 100ms (next segment),
+      //    onCompositionStart cancels this timer and keeps the flag true.
+      compositionEndTimerRef.current = window.setTimeout(() => {
+        isComposingRef.current = false
+        compositionEndTimerRef.current = null
+      }, 100)
+    }
+    window.addEventListener('compositionstart', onCompositionStart)
+    window.addEventListener('compositionend', onCompositionEnd)
+    return () => {
+      window.removeEventListener('compositionstart', onCompositionStart)
+      window.removeEventListener('compositionend', onCompositionEnd)
+      if (compositionEndTimerRef.current !== null) clearTimeout(compositionEndTimerRef.current)
+    }
+  }, [])
 
   // Load initial batch on mount
   useEffect(() => {
@@ -221,6 +265,11 @@ export const ClipboardHistory = ({
       // If another component (like SearchBar) already handled and prevented this event, ignore it.
       if (e.defaultPrevented) return
 
+      // Ignore events fired during IME composition (e.g. Japanese 変換 confirmation).
+      // Uses a ref instead of e.isComposing because on macOS WebKit, compositionend
+      // fires before the final keydown, making e.isComposing already false on Enter.
+      if (isComposingRef.current) return
+
       // Skip if focus is inside any text input EXCEPT for the main search input
       const active = document.activeElement
       const isInput = active instanceof HTMLInputElement
@@ -292,6 +341,12 @@ export const ClipboardHistory = ({
         }
         case 'Delete':
         case 'Backspace': {
+          // Do not delete a clip while the search input has focus — the key should
+          // edit the text instead. The outer `isInput` guard already blocks plain
+          // Delete/Backspace, but Cmd+Backspace (common Mac "delete to line start")
+          // bypasses it because the guard passes through all meta/ctrl combos for
+          // the Cmd+1..9 shortcuts. Guard explicitly here instead.
+          if (isInput) break
           e.preventDefault()
           const clip = clips[selectedIndex]
           if (clip) {

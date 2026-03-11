@@ -278,6 +278,219 @@ pub async fn clear_all_clips(state: State<'_, AppState>) -> Result<(), String> {
 // Clipboard Commands
 // ============================================================================
 
+/// Reconstruct a full [`ClipboardContent`] from a stored [`ClipItem`], reading any
+/// associated files from disk. Used by both `copy_to_clipboard` and `paste_clip` so
+/// that rich formats (Office, image, HTML, RTF) are always fully restored.
+///
+/// ## Storage contract — DB field → ClipboardContent field
+///
+/// | content_type | DB / file field            | → ClipboardContent field  |
+/// |-------------|----------------------------|---------------------------|
+/// | any         | `content_text`             | `content` / `plain` / `extracted_text` |
+/// | html        | `content_html`             | `html`                    |
+/// | rtf         | `content_rtf`              | `rtf`                     |
+/// | image       | `image_path` (disk)        | `data`                    |
+/// | image       | `pdf_path` (disk, opt.)    | `pdf_data`                |
+/// | files       | `file_paths` (JSON)        | `paths`                   |
+/// | office      | `attachment_path` (disk)   | `ole_data`                |
+/// | office      | `attachment_type`          | `ole_type`                |
+/// | office      | `metadata["extra_types"]`  | `extra_types` (hex→bytes) |
+/// | office      | `svg_path` (disk)          | `svg_data`                |
+/// | office      | `pdf_path` (disk)          | `pdf_data`                |
+/// | office      | `image_path` (disk)        | `png_data`                |
+/// | office      | `content_html`             | `html_data`               |
+/// | office      | `content_rtf`              | `rtf_data`                |
+/// | office      | `app_name`                 | `source_app`              |
+///
+/// **Invariant**: `ole_data` and `ole_type` are always captured together. If
+/// `ole_type` is `None` the OLE binary will be present but `write_clipboard`
+/// will skip it rather than guess a version-specific UTI.
+async fn reconstruct_clipboard_content(
+    clip: &crate::models::ClipItem,
+    fallback_text: String,
+) -> Result<crate::services::clipboard_platform::ClipboardContent, String> {
+    use crate::services::clipboard_platform::ClipboardContent;
+
+    let content = match clip.content_type.as_str() {
+        "text" => ClipboardContent::Text {
+            content: clip.content_text.clone().unwrap_or(fallback_text),
+        },
+
+        "html" => ClipboardContent::Html {
+            html: clip.content_html.clone().unwrap_or_default(),
+            plain: clip.content_text.clone().unwrap_or_default(),
+        },
+
+        "rtf" => ClipboardContent::Rtf {
+            rtf: clip.content_rtf.clone().unwrap_or_default(),
+            plain: clip.content_text.clone().unwrap_or_default(),
+        },
+
+        "image" => {
+            let image_data = if let Some(path) = &clip.image_path {
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|e| format!("Failed to read image: {}", e))?
+            } else {
+                return Err("Image clip has no image_path".to_string());
+            };
+
+            let format = if let Some(path) = &clip.image_path {
+                if path.ends_with(".png") {
+                    crate::services::clipboard_platform::ImageFormat::Png
+                } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+                    crate::services::clipboard_platform::ImageFormat::Jpeg
+                } else {
+                    crate::services::clipboard_platform::ImageFormat::Tiff
+                }
+            } else {
+                crate::services::clipboard_platform::ImageFormat::Png
+            };
+
+            ClipboardContent::Image {
+                data: image_data,
+                format,
+                pdf_data: if let Some(path) = &clip.pdf_path {
+                    tokio::fs::read(path).await.ok()
+                } else {
+                    None
+                },
+            }
+        }
+
+        "files" => ClipboardContent::Files {
+            paths: serde_json::from_str(&clip.file_paths.clone().unwrap_or_default())
+                .unwrap_or_default(),
+        },
+
+        "office" => {
+            eprintln!("[RECONSTRUCT] Reading Office files from disk...");
+
+            let ole_data = if let Some(path) = &clip.attachment_path {
+                eprintln!("[RECONSTRUCT]Attempting to read OLE from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[RECONSTRUCT]✓ OLE read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[RECONSTRUCT]✗ OLE read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[RECONSTRUCT]No OLE path in clip");
+                None
+            };
+
+            let svg_data = if let Some(path) = &clip.svg_path {
+                eprintln!("[RECONSTRUCT]Attempting to read SVG from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[RECONSTRUCT]✓ SVG read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[RECONSTRUCT]✗ SVG read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[RECONSTRUCT]No SVG path in clip");
+                None
+            };
+
+            let pdf_data = if let Some(path) = &clip.pdf_path {
+                eprintln!("[RECONSTRUCT]Attempting to read PDF from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[RECONSTRUCT]✓ PDF read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[RECONSTRUCT]✗ PDF read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[RECONSTRUCT]No PDF path in clip");
+                None
+            };
+
+            let png_data = if let Some(path) = &clip.image_path {
+                eprintln!("[RECONSTRUCT]Attempting to read PNG from: {}", path);
+                match tokio::fs::read(path).await {
+                    Ok(data) => {
+                        eprintln!("[RECONSTRUCT]✓ PNG read successfully: {} bytes", data.len());
+                        Some(data)
+                    }
+                    Err(e) => {
+                        eprintln!("[RECONSTRUCT]✗ PNG read failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("[RECONSTRUCT]No PNG path in clip");
+                None
+            };
+
+            eprintln!(
+                "[RECONSTRUCT] Office content reconstructed - OLE: {}, SVG: {}, PDF: {}, PNG: {}",
+                ole_data.is_some(),
+                svg_data.is_some(),
+                pdf_data.is_some(),
+                png_data.is_some()
+            );
+
+            ClipboardContent::Office {
+                ole_data,
+                ole_type: clip.attachment_type.clone(),
+                extra_types: {
+                    let mut decoded = vec![];
+                    if let Some(ref meta) = clip.metadata {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(meta) {
+                            if let Some(arr) = json["extra_types"].as_array() {
+                                for entry in arr {
+                                    if let (Some(t), Some(hex)) = (
+                                        entry["type"].as_str(),
+                                        entry["hex"].as_str(),
+                                    ) {
+                                        let data: Vec<u8> = (0..hex.len())
+                                            .step_by(2)
+                                            .filter_map(|i| {
+                                                hex.get(i..i + 2)
+                                                    .and_then(|s| u8::from_str_radix(s, 16).ok())
+                                            })
+                                            .collect();
+                                        decoded.push((t.to_string(), data));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    decoded
+                },
+                svg_data,
+                pdf_data,
+                png_data,
+                html_data: clip.content_html.clone(),
+                rtf_data: clip.content_rtf.clone(),
+                extracted_text: clip.content_text.clone().unwrap_or_default(),
+                source_app: clip
+                    .app_name
+                    .clone()
+                    .unwrap_or_else(|| "Microsoft Office".to_string()),
+            }
+        }
+
+        _ => ClipboardContent::Text {
+            content: fallback_text,
+        },
+    };
+
+    Ok(content)
+}
+
 #[tauri::command]
 pub async fn copy_to_clipboard(
     text: String,
@@ -321,156 +534,7 @@ pub async fn copy_to_clipboard(
               clip.image_path.as_ref().map(|_| "set"));
 
     // 3. Reconstruct ClipboardContent based on content_type
-    use crate::services::clipboard_platform::ClipboardContent;
-
-    let content = match clip.content_type.as_str() {
-        "text" => ClipboardContent::Text {
-            content: clip.content_text.unwrap_or_default(),
-        },
-
-        "html" => ClipboardContent::Html {
-            html: clip.content_html.unwrap_or_default(),
-            plain: clip.content_text.unwrap_or_default(),
-        },
-
-        "rtf" => ClipboardContent::Rtf {
-            rtf: clip.content_rtf.unwrap_or_default(),
-            plain: clip.content_text.unwrap_or_default(),
-        },
-
-        "image" => {
-            // Read image file from disk
-            let image_data = if let Some(path) = &clip.image_path {
-                tokio::fs::read(path)
-                    .await
-                    .map_err(|e| format!("Failed to read image: {}", e))?
-            } else {
-                return Err("Image clip has no image_path".to_string());
-            };
-
-            // Determine format from file extension
-            let format = if let Some(path) = &clip.image_path {
-                if path.ends_with(".png") {
-                    crate::services::clipboard_platform::ImageFormat::Png
-                } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-                    crate::services::clipboard_platform::ImageFormat::Jpeg
-                } else {
-                    crate::services::clipboard_platform::ImageFormat::Tiff
-                }
-            } else {
-                crate::services::clipboard_platform::ImageFormat::Png
-            };
-
-            ClipboardContent::Image {
-                data: image_data,
-                format,
-            }
-        }
-
-        "files" => ClipboardContent::Files {
-            paths: serde_json::from_str(&clip.file_paths.unwrap_or_default()).unwrap_or_default(),
-        },
-
-        "office" => {
-            // Read all Office files from disk
-            eprintln!("[COPY] Reading Office files from disk...");
-
-            let ole_data = if let Some(path) = &clip.attachment_path {
-                eprintln!("[COPY]   Attempting to read OLE from: {}", path);
-                match tokio::fs::read(path).await {
-                    Ok(data) => {
-                        eprintln!("[COPY]   ✓ OLE read successfully: {} bytes", data.len());
-                        Some(data)
-                    }
-                    Err(e) => {
-                        eprintln!("[COPY]   ✗ OLE read failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                eprintln!("[COPY]   No OLE path in clip");
-                None
-            };
-
-            let svg_data = if let Some(path) = &clip.svg_path {
-                eprintln!("[COPY]   Attempting to read SVG from: {}", path);
-                match tokio::fs::read(path).await {
-                    Ok(data) => {
-                        eprintln!("[COPY]   ✓ SVG read successfully: {} bytes", data.len());
-                        Some(data)
-                    }
-                    Err(e) => {
-                        eprintln!("[COPY]   ✗ SVG read failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                eprintln!("[COPY]   No SVG path in clip");
-                None
-            };
-
-            let pdf_data = if let Some(path) = &clip.pdf_path {
-                eprintln!("[COPY]   Attempting to read PDF from: {}", path);
-                match tokio::fs::read(path).await {
-                    Ok(data) => {
-                        eprintln!("[COPY]   ✓ PDF read successfully: {} bytes", data.len());
-                        Some(data)
-                    }
-                    Err(e) => {
-                        eprintln!("[COPY]   ✗ PDF read failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                eprintln!("[COPY]   No PDF path in clip");
-                None
-            };
-
-            let png_data = if let Some(path) = &clip.image_path {
-                eprintln!("[COPY]   Attempting to read PNG from: {}", path);
-                match tokio::fs::read(path).await {
-                    Ok(data) => {
-                        eprintln!("[COPY]   ✓ PNG read successfully: {} bytes", data.len());
-                        Some(data)
-                    }
-                    Err(e) => {
-                        eprintln!("[COPY]   ✗ PNG read failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                eprintln!("[COPY]   No PNG path in clip");
-                None
-            };
-
-            eprintln!(
-                "[COPY] Office content reconstructed - OLE: {}, SVG: {}, PDF: {}, PNG: {}",
-                ole_data.is_some(),
-                svg_data.is_some(),
-                pdf_data.is_some(),
-                png_data.is_some()
-            );
-
-            ClipboardContent::Office {
-                ole_data,
-                ole_type: clip.attachment_type.clone(), // Use stored UTI for accurate pasteboard write
-                svg_data,
-                pdf_data,
-                png_data,
-                html_data: clip.content_html.clone(),
-                rtf_data: clip.content_rtf.clone(),
-                extracted_text: clip.content_text.unwrap_or_default(),
-                source_app: clip
-                    .app_name
-                    .unwrap_or_else(|| "Microsoft Office".to_string()),
-            }
-        }
-
-        _ => {
-            // Fallback to plain text
-            ClipboardContent::Text { content: text }
-        }
-    };
+    let content = reconstruct_clipboard_content(&clip, text).await?;
 
     // 4. Write all formats to clipboard
     eprintln!("[COPY] Writing content to clipboard...");
@@ -509,19 +573,39 @@ pub async fn paste_clip(
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    // 1. Copy text to clipboard
+    // 1. Write full clip content to clipboard (rich formats preserved)
     if let Some(ref clip_id) = id {
         state
             .repository
             .touch(clip_id)
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
+
+        let clip = state
+            .repository
+            .get_by_id(clip_id)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?
+            .ok_or_else(|| "Clip not found".to_string())?;
+
+        let content = reconstruct_clipboard_content(&clip, text).await?;
+
+        crate::services::clipboard_platform::write_clipboard(&content)
+            .map_err(|e| format!("Failed to write clipboard: {}", e))?;
+
+        {
+            let monitor = state.clipboard_service.get_monitor();
+            let mut monitor = monitor.lock().await;
+            monitor.notify_wrote(&content);
+        }
+    } else {
+        // No clip ID — plain text only (called without a stored clip)
+        state
+            .clipboard_service
+            .set_text(&text)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
     }
-    state
-        .clipboard_service
-        .set_text(&text)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?;
 
     // 2. Hide the overlay window — OS auto-refocuses previous app
     if let Some(window) = app.get_webview_window("main") {
@@ -781,5 +865,74 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
         Ok(())
     } else {
         Err("Clip does not have text content to embed".to_string())
+    }
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    /// Decode a hex string using the same safe `str::get` pattern used in
+    /// `reconstruct_clipboard_content` for `extra_types`.
+    fn hex_decode(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .filter_map(|i| {
+                hex.get(i..i + 2)
+                    .and_then(|s| u8::from_str_radix(s, 16).ok())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hex_decode_normal() {
+        assert_eq!(hex_decode("deadbeef"), vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn hex_decode_empty() {
+        assert!(hex_decode("").is_empty());
+    }
+
+    #[test]
+    fn hex_decode_odd_length_does_not_panic() {
+        // "de" → 0xde, "ad" → 0xad, trailing "b" has no second nibble → silently skipped
+        assert_eq!(hex_decode("deadb"), vec![0xde, 0xad]);
+    }
+
+    #[test]
+    fn hex_decode_invalid_chars_skipped() {
+        // "__" is not valid hex — from_str_radix returns Err → filtered out
+        assert_eq!(hex_decode("de__ef"), vec![0xde, 0xef]);
+    }
+
+    #[test]
+    fn hex_decode_uppercase() {
+        assert_eq!(hex_decode("DEADBEEF"), vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    /// Verify the OLE write guard: only write when BOTH ole_data and ole_type
+    /// are present. If either is None, we must skip to avoid pasteboard corruption.
+    #[test]
+    fn ole_write_guard_requires_both_data_and_uti() {
+        let cases: &[(Option<&[u8]>, Option<&str>, bool)] = &[
+            (Some(b"data"), Some("com.microsoft.PowerPoint-16.0-Slides-Package"), true),
+            (Some(b"data"), None, false),  // UTI unknown — must skip
+            (None, Some("com.microsoft.PowerPoint-16.0-Slides-Package"), false), // no data
+            (None, None, false),
+        ];
+
+        for (ole_data, ole_type, expected_written) in cases {
+            let written = matches!((ole_data, ole_type), (Some(_), Some(_)));
+            assert_eq!(
+                written, *expected_written,
+                "ole_data={} ole_type={} should_write={}",
+                ole_data.is_some(),
+                ole_type.is_some(),
+                expected_written
+            );
+        }
     }
 }

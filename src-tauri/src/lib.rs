@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 pub mod commands;
 pub mod models;
 pub mod repositories;

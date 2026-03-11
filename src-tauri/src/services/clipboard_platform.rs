@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, deprecated, unused_imports, unexpected_cfgs)]
 /// Platform-specific clipboard utilities
 ///
 /// **macOS (NSPasteboard):**
@@ -64,13 +64,21 @@ pub enum ClipboardContent {
     Image {
         data: Vec<u8>,
         format: ImageFormat,
+        /// PDF representation captured alongside the raster image (e.g. from a
+        /// PowerPoint slideshow slide).  None for plain screenshots / photos.
+        pdf_data: Option<Vec<u8>>,
     },
     Files {
         paths: Vec<String>,
     },
     Office {
         ole_data: Option<Vec<u8>>, // OLE/Office package → clipboard_data/office/{id}.bin
-        ole_type: Option<String>, // UTI type name of the OLE data, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
+        ole_type: Option<String>, // Exact UTI captured at read time (e.g. "com.microsoft.PowerPoint-16.0-Slides-Package").
+                                  // None = UTI was not recorded; OLE data MUST NOT be written without a known UTI.
+        /// All other com.microsoft.* binary types (e.g. ole.source.*) captured alongside the package.
+        /// These small reference types tell Office apps their native format is on the pasteboard.
+        /// Without them, PowerPoint falls back to PNG on paste.
+        extra_types: Vec<(String, Vec<u8>)>,
         svg_data: Option<Vec<u8>>, // SVG vector graphics → clipboard_data/svg/{id}.svg
         pdf_data: Option<Vec<u8>>, // PDF document → clipboard_data/pdf/{id}.pdf
         png_data: Option<Vec<u8>>, // PNG raster image → clipboard_data/images/{id}.png
@@ -139,8 +147,8 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
         eprintln!("[DEBUG] Not Office content, continuing with other checks");
 
         // Check for images
-        if let Some((data, format)) = read_image(pasteboard) {
-            return Ok(Some(ClipboardContent::Image { data, format }));
+        if let Some((data, format, pdf_data)) = read_image(pasteboard) {
+            return Ok(Some(ClipboardContent::Image { data, format, pdf_data }));
         }
 
         // Check for HTML (with fallback to plain text)
@@ -201,7 +209,7 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                     msg_send![pasteboard, setString:plain_ns forType:NSPasteboardTypeString];
             }
 
-            ClipboardContent::Image { data, format } => {
+            ClipboardContent::Image { data, format, pdf_data } => {
                 // Write image in its original format
                 let image_data = NSData::from_vec(data.clone());
                 let type_str = match format {
@@ -215,6 +223,18 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                         msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
                     if ns_type != nil {
                         let _: bool = msg_send![pasteboard, setData:image_data forType:ns_type];
+                    }
+                }
+
+                // Write PDF if captured (e.g. PowerPoint slideshow preserves vector quality)
+                if let Some(pdf) = pdf_data {
+                    if let Ok(type_c_str) = CString::new("com.adobe.pdf") {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let pdf_ns_data = NSData::from_vec(pdf.clone());
+                            let _: bool = msg_send![pasteboard, setData:pdf_ns_data forType:ns_type];
+                        }
                     }
                 }
             }
@@ -232,20 +252,27 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
             ClipboardContent::Office {
                 ole_data,
                 ole_type,
+                extra_types,
                 svg_data,
                 pdf_data,
                 png_data,
+                html_data,
+                rtf_data,
                 extracted_text,
-                source_app: _,
+                ..
             } => {
                 eprintln!("[DEBUG] Writing Office content to clipboard:");
 
-                // Write OLE first (highest fidelity — must be declared before previews so
-                // Office apps find their native type at the top of the pasteboard)
-                if let Some(ole) = ole_data {
-                    let uti = ole_type
-                        .as_deref()
-                        .unwrap_or("com.microsoft.PowerPoint-14.0-Slides-Package");
+                // Write OLE package FIRST so it becomes types[0] — the "primary" representation.
+                // NSPasteboard.types returns types in insertion order; PowerPoint's paste handler
+                // (and the modern readObjectsForClasses: API) treats the first type as the primary
+                // format. Writing the native package first matches how PowerPoint itself declares
+                // clipboard content and ensures PowerPoint pastes as an editable slide, not an image.
+                // Write OLE only when we have both the data AND its captured UTI.
+                // If ole_type is None (e.g. clip captured before UTI tracking was added),
+                // skip writing — guessing a version-specific UTI would corrupt the pasteboard
+                // and block the SVG/PDF/PNG fallback paths below.
+                if let (Some(ole), Some(uti)) = (ole_data, ole_type.as_deref()) {
                     if let Ok(type_c_str) = CString::new(uti) {
                         let ns_type: id =
                             msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
@@ -258,6 +285,24 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                                 ole.len(),
                                 uti
                             );
+                        }
+                    }
+                }
+
+                // Write extra types after the package.
+                // Includes small reference blobs (DataObject, Internal-Slides, appbundleid)
+                // AND the ole.source.* presence signals (0 bytes). The signals are written
+                // as empty NSData — their presence in [pasteboard types] is what matters,
+                // not their content. Must come after the package so the package remains
+                // types[0] (the primary representation PowerPoint reads).
+                for (t, d) in extra_types {
+                    if let Ok(type_c_str) = CString::new(t.as_str()) {
+                        let ns_type: id =
+                            msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
+                        if ns_type != nil {
+                            let ns_data = NSData::from_vec(d.clone());
+                            let ok: bool = msg_send![pasteboard, setData:ns_data forType:ns_type];
+                            eprintln!("[DEBUG]   {} extra type '{}' ({} bytes)", if ok { "✓" } else { "✗" }, t, d.len());
                         }
                     }
                 }
@@ -302,6 +347,22 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                             eprintln!("[DEBUG]   ✓ PNG written ({} bytes)", png.len());
                         }
                     }
+                }
+
+                // Write HTML if captured (enables styled paste in apps like Pages, Keynote)
+                if let Some(html) = html_data {
+                    let html_ns = NSString::from_str(html);
+                    let _: bool =
+                        msg_send![pasteboard, setString:html_ns forType:NSPasteboardTypeHTML];
+                    eprintln!("[DEBUG]   ✓ HTML written ({} chars)", html.len());
+                }
+
+                // Write RTF if captured
+                if let Some(rtf) = rtf_data {
+                    let rtf_bytes = NSData::from_vec(rtf.as_bytes().to_vec());
+                    let _: bool =
+                        msg_send![pasteboard, setData:rtf_bytes forType:NSPasteboardTypeRTF];
+                    eprintln!("[DEBUG]   ✓ RTF written ({} chars)", rtf.len());
                 }
 
                 // Write plain text fallback
@@ -458,17 +519,37 @@ unsafe fn read_rtf(pasteboard: id) -> Option<(String, String)> {
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn read_image(pasteboard: id) -> Option<(Vec<u8>, ImageFormat)> {
+unsafe fn read_image(pasteboard: id) -> Option<(Vec<u8>, ImageFormat, Option<Vec<u8>>)> {
     use cocoa::base::nil;
     use std::ffi::CString;
 
+    // Helper: read PDF data alongside the raster image (e.g. PowerPoint slideshow)
+    let read_pdf = || -> Option<Vec<u8>> {
+        if let Ok(c) = CString::new("com.adobe.pdf") {
+            let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+            if ns_type != nil {
+                if let Some(d) = read_image_data(pasteboard, ns_type) {
+                    return Some(d);
+                }
+            }
+        }
+        if let Ok(c) = CString::new("Apple PDF pasteboard type") {
+            let ns_type: id = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+            if ns_type != nil {
+                if let Some(d) = read_image_data(pasteboard, ns_type) {
+                    return Some(d);
+                }
+            }
+        }
+        None
+    };
+
     // Try PNG first (most compatible)
-    // Use stringWithUTF8String to create NSString from C string
     if let Ok(png_c_str) = CString::new("public.png") {
         let png_ns: id = msg_send![class!(NSString), stringWithUTF8String: png_c_str.as_ptr()];
         if png_ns != nil {
             if let Some(data) = read_image_data(pasteboard, png_ns) {
-                return Some((data, ImageFormat::Png));
+                return Some((data, ImageFormat::Png, read_pdf()));
             }
         }
     }
@@ -478,7 +559,7 @@ unsafe fn read_image(pasteboard: id) -> Option<(Vec<u8>, ImageFormat)> {
         let tiff_ns: id = msg_send![class!(NSString), stringWithUTF8String: tiff_c_str.as_ptr()];
         if tiff_ns != nil {
             if let Some(data) = read_image_data(pasteboard, tiff_ns) {
-                return Some((data, ImageFormat::Tiff));
+                return Some((data, ImageFormat::Tiff, read_pdf()));
             }
         }
     }
@@ -670,67 +751,35 @@ unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
         }
     }
 
-    let mut ole_type: Option<String> = None;
-    let mut source_app = String::from("Microsoft Office");
-
-    // Find any type containing "ole.source" (substring matching)
-    for i in 0..count {
-        let ns_type: id = msg_send![types, objectAtIndex: i];
-        if ns_type != nil {
-            let c_str: *const i8 = msg_send![ns_type, UTF8String];
-            if !c_str.is_null() {
-                let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
-                if type_str.contains("ole.source") {
-                    eprintln!("[DEBUG] Found OLE type: {}", type_str);
-                    // Determine source app from OLE type
-                    if type_str.contains("word") {
-                        source_app = String::from("Microsoft Word");
-                    } else if type_str.contains("excel") {
-                        source_app = String::from("Microsoft Excel");
-                    } else if type_str.contains("powerpoint") {
-                        source_app = String::from("Microsoft PowerPoint");
-                    }
-                    ole_type = Some(type_str.to_string());
-                    eprintln!("[DEBUG] Detected source app: {}", source_app);
-                    break;
-                }
-            }
-        }
-    }
-
     let has_svg = has_type("com.microsoft.image-svg-xml");
     eprintln!(
         "[DEBUG] Has SVG type (com.microsoft.image-svg-xml): {}",
         has_svg
     );
 
-    // Must have at least OLE or SVG to be considered Office content
-    if ole_type.is_none() && !has_svg {
-        eprintln!("[DEBUG] No OLE or SVG found - not Office content");
-        return None;
-    }
-
-    eprintln!(
-        "[DEBUG] Office content detected! OLE: {}, SVG: {}",
-        ole_type.is_some(),
-        has_svg
-    );
-
-    // Dynamically enumerate ALL com.microsoft.* binary types on the pasteboard
-    // and pick the one with the most data as the OLE package.
+    // ── Step 1: Scan all com.microsoft.* binary types ────────────────────────────────────────
     //
-    // WHY dynamic instead of hardcoded:
-    // - PowerPoint 14.x uses "com.microsoft.PowerPoint-14.0-Slides-Package"
-    // - PowerPoint 15.x/16.x uses "com.microsoft.PowerPoint-16.0-Slides-Package"
-    // - Word/Excel have their own version-specific types
-    // Hardcoding version numbers breaks paste for any version not in the list.
+    // We enumerate every type whose name starts with "com.microsoft." and try to read its
+    // binary data. Types with actual content (the OLE package, small reference blobs, etc.)
+    // land in `candidates`. Types with 0 bytes (the ole.source.* signal flags) are handled
+    // separately in Step 2 below because read_image_data() filters them out.
     //
-    // WHY pick largest:
-    // - Native package formats (the actual content) are large (~50-500 KB)
-    // - OLE2 reference types ("ole.source.*") are typically small (~1-10 KB)
-    // Picking the largest reliably selects the format Office uses when pasting.
+    // WHY dynamic (not hardcoded version numbers):
+    //   PowerPoint 14.x → "com.microsoft.PowerPoint-14.0-Slides-Package"
+    //   PowerPoint 16.x → "com.microsoft.PowerPoint-16.0-Slides-Package"
+    //   Hardcoding any version breaks capture on every other version.
+    //
+    // WHY pick the largest candidate as the OLE package:
+    //   The actual slide package is large (50–500 KB).
+    //   Other binary types (DataObject, Internal-Slides, appbundleid) are a few bytes each.
+    //   Largest == the real content.
+    //
+    // WHY do this before the gate check:
+    //   Some Office copies (e.g. future versions) may not include ole.source.* or SVG.
+    //   Gating on their presence before this scan would miss those cases.
     eprintln!("[DEBUG] Scanning all com.microsoft.* types for OLE data...");
     let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut source_app = String::from("Microsoft Office");
 
     for i in 0..count {
         let ns_type_obj: id = msg_send![types, objectAtIndex: i];
@@ -739,7 +788,7 @@ unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
             if !c_str.is_null() {
                 let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
                 let t = type_str.as_ref();
-                // Only try native binary types — skip image previews and text
+                // Skip image/text subtypes — those are handled by the image/html/rtf paths
                 if t.starts_with("com.microsoft.")
                     && !t.contains("image-svg")
                     && !t.contains("image-gif")
@@ -752,6 +801,19 @@ unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
                     eprintln!("[DEBUG]   Trying: {}", t);
                     if let Some(d) = read_image_data(pasteboard, ns_type_obj) {
                         eprintln!("[DEBUG]     -> Got {} bytes", d.len());
+                        // Infer source app from the UTI name (case-insensitive) so we don't
+                        // rely on a separate loop. Works for both package types
+                        // ("PowerPoint-16.0-Slides-Package") and small blobs ("DataObject").
+                        if source_app == "Microsoft Office" {
+                            let t_lower = t.to_lowercase();
+                            if t_lower.contains("powerpoint") {
+                                source_app = String::from("Microsoft PowerPoint");
+                            } else if t_lower.contains("word") {
+                                source_app = String::from("Microsoft Word");
+                            } else if t_lower.contains("excel") {
+                                source_app = String::from("Microsoft Excel");
+                            }
+                        }
                         candidates.push((t.to_string(), d));
                     } else {
                         eprintln!("[DEBUG]     -> No data");
@@ -761,23 +823,72 @@ unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
         }
     }
 
-    let ole_result = candidates
-        .into_iter()
-        .max_by_key(|(_, d)| d.len())
-        .map(|(uti, d)| {
-            eprintln!("[DEBUG] Selected OLE: '{}' ({} bytes)", uti, d.len());
-            (d, uti)
-        });
-
-    if ole_result.is_none() {
-        eprintln!("[DEBUG] No com.microsoft.* binary data found on pasteboard");
+    // Gate: require at least one binary com.microsoft.* type OR an SVG to proceed.
+    // If we have neither, this is not Office clipboard content.
+    if candidates.is_empty() && !has_svg {
+        eprintln!("[DEBUG] No com.microsoft.* data or SVG found - not Office content");
+        return None;
     }
 
-    // Split data and type string
-    let (ole_data, selected_ole_type) = match ole_result {
-        Some((data, uti)) => (Some(data), Some(uti)),
-        None => (None, None),
+    eprintln!(
+        "[DEBUG] Office content detected! candidates: {}, SVG: {}",
+        candidates.len(),
+        has_svg
+    );
+
+    // Split candidates: largest one is the OLE package, the rest are extra signal/reference types.
+    let max_idx = candidates
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, (_, d))| d.len())
+        .map(|(i, _)| i);
+
+    let (ole_data, selected_ole_type, mut extra_types) = if let Some(idx) = max_idx {
+        let (uti, data) = candidates.remove(idx);
+        eprintln!("[DEBUG] Selected OLE: '{}' ({} bytes)", uti, data.len());
+        for (t, d) in &candidates {
+            eprintln!("[DEBUG] Extra type: '{}' ({} bytes)", t, d.len());
+        }
+        (Some(data), Some(uti), candidates)
+    } else {
+        eprintln!("[DEBUG] No com.microsoft.* binary data found on pasteboard");
+        (None, None, vec![])
     };
+
+    // ── Step 2: Capture ole.source.* presence signals ─────────────────────────────────────
+    //
+    // HOW POWERPOINT DECIDES WHAT TO PASTE:
+    //   PowerPoint's paste handler does not scan for "Slides-Package" directly.
+    //   It first checks for any type matching "com.microsoft.ole.source.*" as a signal
+    //   that native OLE data is present. Only when that signal is found does it read
+    //   the Slides-Package and paste as an editable slide. Without the signal it falls
+    //   back to PNG regardless of whether the package is on the pasteboard.
+    //
+    // WHY these types have 0 bytes:
+    //   "com.microsoft.ole.source.83172.0x6000027fa140" — the PID (83172) and memory
+    //   address are the source app's lazy-rendering callback coordinates. The data is
+    //   intentionally empty; the type NAME is the signal, not its content.
+    //
+    // WHY read_image_data() skips them:
+    //   read_image_data() correctly rejects 0-byte data for all other types (avoids
+    //   noise). We capture ole.source.* explicitly here so they end up in extra_types
+    //   and are written back to the pasteboard on restore — with empty NSData, which
+    //   is enough to declare the type and trigger PowerPoint's native paste path.
+    for i in 0..count {
+        let ns_type_obj: id = msg_send![types, objectAtIndex: i];
+        if ns_type_obj != nil {
+            let c_str: *const i8 = msg_send![ns_type_obj, UTF8String];
+            if !c_str.is_null() {
+                let type_str = std::ffi::CStr::from_ptr(c_str).to_string_lossy();
+                let t = type_str.as_ref();
+                // Add if not already present (it would be present only if somehow non-zero)
+                if t.contains("ole.source") && !extra_types.iter().any(|(k, _)| k == t) {
+                    eprintln!("[DEBUG] Capturing ole.source signal type (0 bytes): {}", t);
+                    extra_types.push((t.to_string(), vec![]));
+                }
+            }
+        }
+    }
 
     // Extract SVG data (as bytes to save as file)
     let svg_data = if has_svg {
@@ -901,9 +1012,12 @@ unsafe fn read_office_content(pasteboard: id) -> Option<ClipboardContent> {
     Some(ClipboardContent::Office {
         ole_data,
         ole_type: selected_ole_type,
+        extra_types,
         svg_data,
         pdf_data,
         png_data,
+        html_data: read_html(pasteboard).map(|(html, _)| html),
+        rtf_data: read_rtf(pasteboard).map(|(rtf, _)| rtf),
         extracted_text,
         source_app,
     })
@@ -980,6 +1094,7 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
         return Ok(Some(ClipboardContent::Image {
             data: png_data,
             format: ImageFormat::Png,
+            pdf_data: None,
         }));
     }
 
@@ -1051,8 +1166,9 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                 if OpenClipboard(None).is_ok() {
                     let _ = EmptyClipboard();
 
-                    if let Some(ole) = ole_data {
-                        let t = ole_type.as_deref().unwrap_or("Art::GVML ClipFormat");
+                    // Write OLE only when we have both the data AND its captured format name.
+                    // If ole_type is None, skip — guessing a format name would write garbage.
+                    if let (Some(ole), Some(t)) = (ole_data, ole_type.as_deref()) {
                         set_format_windows(t, ole);
                     }
                     if let Some(svg) = svg_data {
@@ -1506,6 +1622,7 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
     Some(ClipboardContent::Office {
         ole_data,
         ole_type,
+        extra_types: vec![],
         svg_data,
         pdf_data,
         png_data,
