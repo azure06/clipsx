@@ -126,42 +126,57 @@ pub fn get_change_count() -> Result<i64> {
 
 #[cfg(target_os = "macos")]
 pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
+    // Load user settings to decide which formats to capture
+    use tauri::Manager;
+    let settings = _app
+        .try_state::<crate::commands::AppState>()
+        .and_then(|state| state.settings_repository.load().ok())
+        .unwrap_or_default();
+
     unsafe {
         let pasteboard: id = msg_send![class!(NSPasteboard), generalPasteboard];
 
         eprintln!("[DEBUG] read_clipboard() called");
 
         // Check for files first (highest priority for drag-drop)
-        if let Some(files) = read_files(pasteboard) {
-            eprintln!("[DEBUG] Detected as Files content");
-            return Ok(Some(ClipboardContent::Files { paths: files }));
+        if settings.enable_files {
+            if let Some(files) = read_files(pasteboard) {
+                eprintln!("[DEBUG] Detected as Files content");
+                return Ok(Some(ClipboardContent::Files { paths: files }));
+            }
         }
 
         // Check for Office content (BEFORE generic images)
         // Office apps provide PNG, but we want Office-specific handling
-        eprintln!("[DEBUG] Checking for Office content...");
-        if let Some(office_content) = read_office_content(pasteboard) {
-            eprintln!("[DEBUG] Detected as Office content");
-            return Ok(Some(office_content));
+        if settings.enable_office_formats {
+            eprintln!("[DEBUG] Checking for Office content...");
+            if let Some(office_content) = read_office_content(pasteboard) {
+                eprintln!("[DEBUG] Detected as Office content");
+                return Ok(Some(office_content));
+            }
+            eprintln!("[DEBUG] Not Office content, continuing with other checks");
         }
-        eprintln!("[DEBUG] Not Office content, continuing with other checks");
 
         // Check for images
-        if let Some((data, format, pdf_data)) = read_image(pasteboard) {
-            return Ok(Some(ClipboardContent::Image { data, format, pdf_data }));
+        if settings.enable_images {
+            if let Some((data, format, pdf_data)) = read_image(pasteboard) {
+                return Ok(Some(ClipboardContent::Image { data, format, pdf_data }));
+            }
         }
 
         // Check for HTML (with fallback to plain text)
-        if let Some((html, plain)) = read_html(pasteboard) {
-            return Ok(Some(ClipboardContent::Html { html, plain }));
+        if settings.enable_rich_text {
+            if let Some((html, plain)) = read_html(pasteboard) {
+                return Ok(Some(ClipboardContent::Html { html, plain }));
+            }
+
+            // Check for RTF (with fallback to plain text)
+            if let Some((rtf, plain)) = read_rtf(pasteboard) {
+                return Ok(Some(ClipboardContent::Rtf { rtf, plain }));
+            }
         }
 
-        // Check for RTF (with fallback to plain text)
-        if let Some((rtf, plain)) = read_rtf(pasteboard) {
-            return Ok(Some(ClipboardContent::Rtf { rtf, plain }));
-        }
-
-        // Fallback to plain text
+        // Fallback to plain text (always captured)
         if let Some(text) = read_text(pasteboard) {
             return Ok(Some(ClipboardContent::Text { content: text }));
         }
@@ -1047,19 +1062,28 @@ pub fn get_change_count() -> Result<i64> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent>> {
+    // Load user settings to decide which formats to capture
+    use tauri::Manager;
+    let settings = _app
+        .try_state::<crate::commands::AppState>()
+        .and_then(|state| state.settings_repository.load().ok())
+        .unwrap_or_default();
+
     #[cfg(target_os = "windows")]
-    if let Some(mut office_content) = unsafe { read_office_content_windows() } {
-        // Fallback to plain text if SVG extraction yielded nothing (e.g. Excel)
-        if let ClipboardContent::Office { extracted_text, .. } = &mut office_content {
-            if extracted_text.is_empty() {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        *extracted_text = text;
+    if settings.enable_office_formats {
+        if let Some(mut office_content) = unsafe { read_office_content_windows() } {
+            // Fallback to plain text if SVG extraction yielded nothing (e.g. Excel)
+            if let ClipboardContent::Office { extracted_text, .. } = &mut office_content {
+                if extracted_text.is_empty() {
+                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                        if let Ok(text) = clipboard.get_text() {
+                            *extracted_text = text;
+                        }
                     }
                 }
             }
+            return Ok(Some(office_content));
         }
-        return Ok(Some(office_content));
     }
 
     // For non-macOS platforms, use arboard (cross-platform)
@@ -1067,77 +1091,85 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
 
     // Check for files first (CF_HDROP)
     // NOTE: This uses native Windows API because arboard doesn't support files
-    if let Some(files) = unsafe { read_files() } {
-        return Ok(Some(ClipboardContent::Files { paths: files }));
+    if settings.enable_files {
+        if let Some(files) = unsafe { read_files() } {
+            return Ok(Some(ClipboardContent::Files { paths: files }));
+        }
     }
 
     let mut clipboard = Clipboard::new()?;
 
     // Try to get image first
     // NOTE: arboard returns ImageData with raw RGBA pixels, not encoded PNG
-    if let Ok(img) = clipboard.get_image() {
-        // Convert RGBA pixels to PNG format
-        use image::{ImageBuffer, RgbaImage};
+    if settings.enable_images {
+        if let Ok(img) = clipboard.get_image() {
+            // Convert RGBA pixels to PNG format
+            use image::{ImageBuffer, RgbaImage};
 
-        // Create image buffer from raw RGBA data
-        let rgba_image: RgbaImage =
-            ImageBuffer::from_raw(img.width as u32, img.height as u32, img.bytes.to_vec())
-                .ok_or_else(|| anyhow!("Failed to create image from clipboard data"))?;
+            // Create image buffer from raw RGBA data
+            let rgba_image: RgbaImage =
+                ImageBuffer::from_raw(img.width as u32, img.height as u32, img.bytes.to_vec())
+                    .ok_or_else(|| anyhow!("Failed to create image from clipboard data"))?;
 
-        // Encode to PNG
-        let mut png_data = Vec::new();
-        rgba_image.write_to(
-            &mut std::io::Cursor::new(&mut png_data),
-            image::ImageFormat::Png,
-        )?;
+            // Encode to PNG
+            let mut png_data = Vec::new();
+            rgba_image.write_to(
+                &mut std::io::Cursor::new(&mut png_data),
+                image::ImageFormat::Png,
+            )?;
 
-        return Ok(Some(ClipboardContent::Image {
-            data: png_data,
-            format: ImageFormat::Png,
-            pdf_data: None,
-        }));
+            return Ok(Some(ClipboardContent::Image {
+                data: png_data,
+                format: ImageFormat::Png,
+                pdf_data: None,
+            }));
+        }
     }
 
     // Check for HTML via Win32
-    #[cfg(target_os = "windows")]
-    if let Some(html_data) = unsafe { get_format_windows("HTML Format") } {
-        // Find null terminator if present
-        let html_len = html_data
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(html_data.len());
-        let html_string = String::from_utf8_lossy(&html_data[..html_len]).to_string();
-        if !html_string.trim().is_empty() {
-            let plain = clipboard.get_text().unwrap_or_default();
-            return Ok(Some(ClipboardContent::Html {
-                html: html_string,
-                plain,
-            }));
+    if settings.enable_rich_text {
+        #[cfg(target_os = "windows")]
+        if let Some(html_data) = unsafe { get_format_windows("HTML Format") } {
+            // Find null terminator if present
+            let html_len = html_data
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(html_data.len());
+            let html_string = String::from_utf8_lossy(&html_data[..html_len]).to_string();
+            if !html_string.trim().is_empty() {
+                let plain = clipboard.get_text().unwrap_or_default();
+                return Ok(Some(ClipboardContent::Html {
+                    html: html_string,
+                    plain,
+                }));
+            }
+        }
+
+        // Check for RTF via Win32
+        #[cfg(target_os = "windows")]
+        if let Some(rtf_data) = unsafe { get_format_windows("Rich Text Format") } {
+            let rtf_len = rtf_data
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(rtf_data.len());
+            let rtf_string = String::from_utf8_lossy(&rtf_data[..rtf_len]).to_string();
+            if !rtf_string.trim().is_empty() {
+                let plain = clipboard.get_text().unwrap_or_default();
+                return Ok(Some(ClipboardContent::Rtf {
+                    rtf: rtf_string,
+                    plain,
+                }));
+            }
         }
     }
 
-    // Check for RTF via Win32
-    #[cfg(target_os = "windows")]
-    if let Some(rtf_data) = unsafe { get_format_windows("Rich Text Format") } {
-        let rtf_len = rtf_data
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(rtf_data.len());
-        let rtf_string = String::from_utf8_lossy(&rtf_data[..rtf_len]).to_string();
-        if !rtf_string.trim().is_empty() {
-            let plain = clipboard.get_text().unwrap_or_default();
-            return Ok(Some(ClipboardContent::Rtf {
-                rtf: rtf_string,
-                plain,
-            }));
-        }
-    }
-
-    // Fallback to text
+    // Fallback to text (always captured)
     if let Ok(text) = clipboard.get_text() {
         // Check if text is actually a list of files (common on Linux/Nautilus/Dolphin)
-        if let Some(paths) = parse_file_uris(&text) {
-            return Ok(Some(ClipboardContent::Files { paths }));
+        if settings.enable_files {
+            if let Some(paths) = parse_file_uris(&text) {
+                return Ok(Some(ClipboardContent::Files { paths }));
+            }
         }
         return Ok(Some(ClipboardContent::Text { content: text }));
     }

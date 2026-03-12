@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
@@ -235,15 +235,7 @@ export const Settings = () => {
     }
   }, [settings?.global_shortcut])
 
-  useEffect(() => {
-    if (settings?.always_on_top !== undefined) {
-      getCurrentWindow()
-        .setAlwaysOnTop(settings.always_on_top)
-        .catch(err => {
-          console.error('Failed to set always on top:', err)
-        })
-    }
-  }, [settings?.always_on_top])
+
 
   const handleClearAllData = async () => {
     if (

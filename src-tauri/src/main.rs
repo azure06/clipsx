@@ -141,6 +141,13 @@ fn main() {
                     let _ = app_state.settings_repository.save(&settings);
                 }
 
+                // Apply initial window behavior settings
+                if settings.always_on_top {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.set_always_on_top(true);
+                    }
+                }
+
                 // Robust Startup Check for Semantic Models
                 if settings.semantic_search_enabled {
                     let downloaded_models = app_state.semantic_service.get_downloaded_models();

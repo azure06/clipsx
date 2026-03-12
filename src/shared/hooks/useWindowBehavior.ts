@@ -25,11 +25,22 @@ export const useWindowBehavior = () => {
   }, [])
 
   useEffect(() => {
+    // Track whether the mouse cursor is inside the window.
+    // When the OS steals focus (e.g. during a title-bar drag), the window
+    // blurs even though the user is still interacting with it.  We only
+    // want to hide when the user genuinely clicked *outside* the window.
+    let mouseInWindow = true
+
+    const onEnter = () => { mouseInWindow = true }
+    const onLeave = () => { mouseInWindow = false }
+
+    document.addEventListener('mouseenter', onEnter)
+    document.addEventListener('mouseleave', onLeave)
+
     const setupBlurListener = async () => {
       const win = getCurrentWindow()
-      // Listen for window focus changes
       const unlisten = await win.onFocusChanged(({ payload: focused }) => {
-        if (!focused && settings?.hide_on_blur) {
+        if (!focused && settings?.hide_on_blur && !mouseInWindow) {
           void win.hide()
         }
       })
@@ -39,7 +50,19 @@ export const useWindowBehavior = () => {
     const unlistenPromise = setupBlurListener()
 
     return () => {
+      document.removeEventListener('mouseenter', onEnter)
+      document.removeEventListener('mouseleave', onLeave)
       void unlistenPromise.then(unlisten => unlisten())
     }
   }, [settings?.hide_on_blur])
+
+  useEffect(() => {
+    if (settings?.always_on_top !== undefined) {
+      getCurrentWindow()
+        .setAlwaysOnTop(settings.always_on_top)
+        .catch(err => {
+          console.error('Failed to set always on top:', err)
+        })
+    }
+  }, [settings?.always_on_top])
 }
