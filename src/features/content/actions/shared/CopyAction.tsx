@@ -5,7 +5,7 @@ import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useCopyAction = (): SmartAction => {
   const [copied, setCopied] = useState(false)
-  const { copyToClipboard } = useClipboardStore()
+  const { performCopy } = useClipboardStore()
 
   return {
     id: 'copy',
@@ -15,7 +15,7 @@ export const useCopyAction = (): SmartAction => {
     shortcut: '⌘C',
     check: () => true, // Available for all content
     execute: async (content: Content) => {
-      await copyToClipboard(content.text, content.clip.id)
+      await performCopy(content.text, content.clip.id)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     },

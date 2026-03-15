@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from './settingsStore'
 import { useUIStore } from './uiStore'
 import type { ClipItem, Result } from '../shared/types'
@@ -30,6 +31,10 @@ type ClipboardActions = {
   clearAllClips: () => Promise<void>
   copyToClipboard: (text: string, id?: string) => Promise<Result<void>>
   pasteClip: (text: string, id?: string) => Promise<Result<void>>
+  /** Centralized primary action: paste-to-app or copy-to-clipboard based on settings */
+  performPrimaryAction: (text: string, id: string) => Promise<void>
+  /** Centralized explicit copy: always copies, respects paste format and hide_on_copy */
+  performCopy: (text: string, id: string) => Promise<void>
   resetPagination: () => void
   generateEmbedding: (id: string) => Promise<void>
 }
@@ -308,6 +313,35 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     } catch (error) {
       console.error('Failed to paste:', error)
       return { ok: false, error: String(error) }
+    }
+  },
+
+  // ── Centralized Action Handlers ──────────────────────────────────────
+
+  performPrimaryAction: async (text: string, id: string) => {
+    const settings = useSettingsStore.getState().settings
+    // Determine effective ID: if paste format is "plain", skip rich reconstruction
+    const effectiveId = settings?.default_paste_format === 'plain' ? undefined : id
+
+    if (settings?.paste_on_enter) {
+      // Paste to App: copy → hide → Ctrl+V (Rust handles hide + keystroke)
+      await invoke('paste_clip', { text, id: effectiveId })
+    } else {
+      // Copy to Clipboard only
+      await invoke('copy_to_clipboard', { text, id: effectiveId })
+      if (settings?.hide_on_copy) {
+        void getCurrentWindow().hide()
+      }
+    }
+  },
+
+  performCopy: async (text: string, id: string) => {
+    const settings = useSettingsStore.getState().settings
+    const effectiveId = settings?.default_paste_format === 'plain' ? undefined : id
+
+    await invoke('copy_to_clipboard', { text, id: effectiveId })
+    if (settings?.hide_on_copy) {
+      void getCurrentWindow().hide()
     }
   },
 

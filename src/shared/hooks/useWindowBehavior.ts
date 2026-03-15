@@ -31,8 +31,12 @@ export const useWindowBehavior = () => {
     // want to hide when the user genuinely clicked *outside* the window.
     let mouseInWindow = true
 
-    const onEnter = () => { mouseInWindow = true }
-    const onLeave = () => { mouseInWindow = false }
+    const onEnter = () => {
+      mouseInWindow = true
+    }
+    const onLeave = () => {
+      mouseInWindow = false
+    }
 
     document.addEventListener('mouseenter', onEnter)
     document.addEventListener('mouseleave', onLeave)

@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useClipboardStore } from '../../stores'
-import { useSettingsStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
 
@@ -31,13 +29,11 @@ export const ClipboardHistory = ({
     deleteClip,
     toggleFavorite,
     togglePin,
-    copyToClipboard,
-    pasteClip,
+    performPrimaryAction,
+    performCopy,
     enterSearchMode,
     exitSearchMode,
   } = useClipboardStore()
-
-  const settings = useSettingsStore(state => state.settings)
 
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
@@ -170,35 +166,20 @@ export const ClipboardHistory = ({
     return () => observer.disconnect()
   }, [loadMoreClips, clips.length])
 
-  // Unified action handler for Click and Enter
+  // Unified action handler for Click and Enter — delegates to centralized store
   const handleAction = useCallback(
     async (text: string, clipId: string) => {
-      // Primary Action: Paste (default)
-      if (settings?.paste_on_enter) {
-        await pasteClip(text, clipId)
-      } else {
-        // Primary Action: Copy
-        await copyToClipboard(text, clipId)
-        // Hide if "Hide after Copy" is enabled
-        if (settings?.hide_on_copy) {
-          void getCurrentWindow().hide()
-        }
-      }
+      await performPrimaryAction(text, clipId)
     },
-    [settings, pasteClip, copyToClipboard]
+    [performPrimaryAction]
   )
 
-  // Explicit Copy handler (always copies, never pastes)
+  // Explicit Copy handler (copy icon) — delegates to centralized store
   const handleExplicitCopy = useCallback(
     async (text: string, clipId: string) => {
-      await copyToClipboard(text, clipId)
-      // Optional: Hide after explicit copy? User settings might apply here too.
-      // If "Hide after Copy" is ON, we should probably hide.
-      if (settings?.hide_on_copy) {
-        void getCurrentWindow().hide()
-      }
+      await performCopy(text, clipId)
     },
-    [settings, copyToClipboard]
+    [performCopy]
   )
 
   const handleDelete = useCallback(

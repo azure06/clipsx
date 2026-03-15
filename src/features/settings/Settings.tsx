@@ -235,8 +235,6 @@ export const Settings = () => {
     }
   }, [settings?.global_shortcut])
 
-
-
   const handleClearAllData = async () => {
     if (
       confirm(
