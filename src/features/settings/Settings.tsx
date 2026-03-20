@@ -385,8 +385,6 @@ export const Settings = () => {
   const pasteFormatOptions = [
     { value: 'auto' as PasteFormat, label: 'Auto (Original Format)' },
     { value: 'plain' as PasteFormat, label: 'Plain Text' },
-    { value: 'html' as PasteFormat, label: 'HTML' },
-    { value: 'markdown' as PasteFormat, label: 'Markdown' },
   ]
 
   // --- Render ---
@@ -546,38 +544,88 @@ export const Settings = () => {
               <SettingsSection
                 icon={<Clipboard className="h-4 w-4" />}
                 title="Clipboard Interactions"
-                description="Customize how you interact with clips"
+                description="What happens when you click a clip or press Enter"
               >
-                <SettingRow
-                  label="Primary Action"
-                  description="Action to perform when clicking a clip or pressing Enter"
-                >
-                  <Select
-                    value={settings.paste_on_enter ? 'paste' : 'copy'}
-                    onChange={value => void updateSettings({ paste_on_enter: value === 'paste' })}
-                    options={[
-                      { value: 'paste', label: 'Paste to App' },
-                      { value: 'copy', label: 'Copy to Clipboard' },
-                    ]}
-                    className="w-48"
-                  />
-                </SettingRow>
+                <div className="space-y-3">
+                  {/* Option 1: Paste to App */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => void updateSettings({ paste_on_enter: true, hide_on_copy: true })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void updateSettings({ paste_on_enter: true, hide_on_copy: true })
+                      }
+                    }}
+                    className={`p-4 rounded-xl border-2 transition-all cursor-pointer text-left ${
+                      settings.paste_on_enter
+                        ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-500/10 shadow-[0_0_0_2px_rgba(59,130,246,0.1)]'
+                        : 'border-gray-200 dark:border-white/10 bg-slate-100/30 dark:bg-slate-100/5 hover:border-blue-300 dark:hover:border-blue-500/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        settings.paste_on_enter ? 'border-blue-500' : 'border-gray-300 dark:border-gray-600'
+                      }`}>
+                        {settings.paste_on_enter && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                      </div>
+                      <div>
+                        <h4 className={`text-sm font-semibold ${settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                          Paste to Active App (Recommended)
+                        </h4>
+                        <p className={`text-xs mt-1 leading-relaxed ${settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>
+                          Instantly paste the selected item into the application you were just using. The Clips window will close automatically.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
 
-                <SettingRow label="After Copying" description="Hide window after copying a clip">
-                  <Switch
-                    checked={settings.hide_on_copy}
-                    onChange={value => void updateSettings({ hide_on_copy: value })}
-                  />
-                </SettingRow>
+                  {/* Option 2: Copy to Clipboard Only */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => void updateSettings({ paste_on_enter: false, hide_on_copy: false })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        void updateSettings({ paste_on_enter: false, hide_on_copy: false })
+                      }
+                    }}
+                    className={`p-4 rounded-xl border-2 transition-all cursor-pointer text-left ${
+                      !settings.paste_on_enter
+                        ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-500/10 shadow-[0_0_0_2px_rgba(59,130,246,0.1)]'
+                        : 'border-gray-200 dark:border-white/10 bg-slate-100/30 dark:bg-slate-100/5 hover:border-blue-300 dark:hover:border-blue-500/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        !settings.paste_on_enter ? 'border-blue-500' : 'border-gray-300 dark:border-gray-600'
+                      }`}>
+                        {!settings.paste_on_enter && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                      </div>
+                      <div>
+                        <h4 className={`text-sm font-semibold ${!settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                          Copy to Clipboard Only
+                        </h4>
+                        <p className={`text-xs mt-1 leading-relaxed ${!settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>
+                          Copy the item to your system clipboard without pasting it. The Clips window will remain open so you can copy multiple items.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                <SettingRow label="Default Paste Format" description="Format to use when pasting">
-                  <Select
-                    value={settings.default_paste_format}
-                    onChange={value => void updateSettings({ default_paste_format: value })}
-                    options={pasteFormatOptions}
-                    className="w-48"
-                  />
-                </SettingRow>
+                <div className="pt-2 border-t border-gray-100 dark:border-white/5">
+                  <SettingRow label="Default Paste Format" description="Format to use when copying/pasting">
+                    <Select
+                      value={settings.default_paste_format}
+                      onChange={value => void updateSettings({ default_paste_format: value })}
+                      options={pasteFormatOptions}
+                      className="w-48"
+                    />
+                  </SettingRow>
+                </div>
               </SettingsSection>
 
               <SettingsSection

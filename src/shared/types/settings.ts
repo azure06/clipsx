@@ -1,7 +1,7 @@
 export type Theme = 'light' | 'dark' | 'auto'
 export type ViewMode = 'list' | 'grid'
 export type RetentionPolicy = 'unlimited' | 'days' | 'count'
-export type PasteFormat = 'auto' | 'plain' | 'html' | 'markdown'
+export type PasteFormat = 'auto' | 'plain'
 
 export interface AppSettings {
   // General

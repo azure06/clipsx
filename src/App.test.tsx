@@ -8,14 +8,16 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(() => {}), // Returns a mock unlisten function
+  listen: vi.fn().mockImplementation(() => Promise.resolve(() => {})),
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: vi.fn().mockReturnValue({
-    onFocusChanged: vi.fn().mockResolvedValue(() => {}),
-    hide: vi.fn(),
-    show: vi.fn(),
+    onFocusChanged: vi.fn().mockImplementation(() => Promise.resolve(() => {})),
+    setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
+    hide: vi.fn().mockResolvedValue(undefined),
+    show: vi.fn().mockResolvedValue(undefined),
+    label: 'main',
   }),
 }))
 
@@ -27,9 +29,9 @@ describe('App', () => {
         setItem: vi.fn(),
         removeItem: vi.fn(),
       },
-      writable: true
+      writable: true,
     })
-    
+
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({
