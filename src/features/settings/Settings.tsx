@@ -551,8 +551,10 @@ export const Settings = () => {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => void updateSettings({ paste_on_enter: true, hide_on_copy: true })}
-                    onKeyDown={(e) => {
+                    onClick={() =>
+                      void updateSettings({ paste_on_enter: true, hide_on_copy: true })
+                    }
+                    onKeyDown={e => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
                         void updateSettings({ paste_on_enter: true, hide_on_copy: true })
@@ -565,17 +567,28 @@ export const Settings = () => {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                        settings.paste_on_enter ? 'border-blue-500' : 'border-gray-300 dark:border-gray-600'
-                      }`}>
-                        {settings.paste_on_enter && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                      <div
+                        className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                          settings.paste_on_enter
+                            ? 'border-blue-500'
+                            : 'border-gray-300 dark:border-gray-600'
+                        }`}
+                      >
+                        {settings.paste_on_enter && (
+                          <div className="w-2 h-2 rounded-full bg-blue-500" />
+                        )}
                       </div>
                       <div>
-                        <h4 className={`text-sm font-semibold ${settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                        <h4
+                          className={`text-sm font-semibold ${settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}
+                        >
                           Paste to Active App (Recommended)
                         </h4>
-                        <p className={`text-xs mt-1 leading-relaxed ${settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>
-                          Instantly paste the selected item into the application you were just using. The Clips window will close automatically.
+                        <p
+                          className={`text-xs mt-1 leading-relaxed ${settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Instantly paste the selected item into the application you were just
+                          using. The Clips window will close automatically.
                         </p>
                       </div>
                     </div>
@@ -585,8 +598,10 @@ export const Settings = () => {
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => void updateSettings({ paste_on_enter: false, hide_on_copy: false })}
-                    onKeyDown={(e) => {
+                    onClick={() =>
+                      void updateSettings({ paste_on_enter: false, hide_on_copy: false })
+                    }
+                    onKeyDown={e => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
                         void updateSettings({ paste_on_enter: false, hide_on_copy: false })
@@ -599,17 +614,28 @@ export const Settings = () => {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                        !settings.paste_on_enter ? 'border-blue-500' : 'border-gray-300 dark:border-gray-600'
-                      }`}>
-                        {!settings.paste_on_enter && <div className="w-2 h-2 rounded-full bg-blue-500" />}
+                      <div
+                        className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                          !settings.paste_on_enter
+                            ? 'border-blue-500'
+                            : 'border-gray-300 dark:border-gray-600'
+                        }`}
+                      >
+                        {!settings.paste_on_enter && (
+                          <div className="w-2 h-2 rounded-full bg-blue-500" />
+                        )}
                       </div>
                       <div>
-                        <h4 className={`text-sm font-semibold ${!settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                        <h4
+                          className={`text-sm font-semibold ${!settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}
+                        >
                           Copy to Clipboard Only
                         </h4>
-                        <p className={`text-xs mt-1 leading-relaxed ${!settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>
-                          Copy the item to your system clipboard without pasting it. The Clips window will remain open so you can copy multiple items.
+                        <p
+                          className={`text-xs mt-1 leading-relaxed ${!settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}
+                        >
+                          Copy the item to your system clipboard without pasting it. The Clips
+                          window will remain open so you can copy multiple items.
                         </p>
                       </div>
                     </div>
@@ -617,7 +643,10 @@ export const Settings = () => {
                 </div>
 
                 <div className="pt-2 border-t border-gray-100 dark:border-white/5">
-                  <SettingRow label="Default Paste Format" description="Format to use when copying/pasting">
+                  <SettingRow
+                    label="Default Paste Format"
+                    description="Format to use when copying/pasting"
+                  >
                     <Select
                       value={settings.default_paste_format}
                       onChange={value => void updateSettings({ default_paste_format: value })}
