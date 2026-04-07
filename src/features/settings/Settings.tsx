@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { enable, disable } from '@tauri-apps/plugin-autostart'
 
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { Theme, RetentionPolicy, PasteFormat, AppSettings } from '../../shared/types'
+import type { Theme, PasteFormat, AppSettings } from '../../shared/types'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   Palette,
@@ -376,12 +377,6 @@ export const Settings = () => {
     { value: 'zh', label: '中文' },
   ]
 
-  const retentionPolicyOptions = [
-    { value: 'unlimited' as RetentionPolicy, label: 'Keep Everything' },
-    { value: 'days' as RetentionPolicy, label: 'Delete After X Days' },
-    { value: 'count' as RetentionPolicy, label: 'Keep Last X Clips' },
-  ]
-
   const pasteFormatOptions = [
     { value: 'auto' as PasteFormat, label: 'Auto (Original Format)' },
     { value: 'plain' as PasteFormat, label: 'Plain Text' },
@@ -747,25 +742,45 @@ export const Settings = () => {
               <SettingsSection
                 icon={<Database className="h-4 w-4" />}
                 title="History Limits"
-                description="Control memory usage"
+                description="Control your data footprint"
               >
-                <SettingRow label="History Limit" description="Maximum clips to keep in memory">
+                <SettingRow
+                  label="Maximum Clips"
+                  description="How many items to keep in your history"
+                >
                   <ButtonGroup
-                    value={settings.history_limit}
-                    onChange={value => void updateSettings({ history_limit: value })}
+                    value={settings.max_clips}
+                    onChange={value => void updateSettings({ max_clips: value })}
                     options={[
+                      { value: 0, label: 'Unlimited', icon: <InfinityIcon className="h-3 w-3" /> },
                       { value: 100, label: '100' },
                       { value: 500, label: '500' },
                       { value: 1000, label: '1,000' },
                       { value: 5000, label: '5,000' },
-                      { value: 10000, label: '10,000' },
+                    ]}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Delete Clips Older Than"
+                  description="Automatically clean up older clipboard entries"
+                >
+                  <ButtonGroup
+                    value={settings.max_age_days}
+                    onChange={value => void updateSettings({ max_age_days: value })}
+                    options={[
+                      { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
+                      { value: 1, label: '24 hours', icon: <Clock className="h-3 w-3" /> },
+                      { value: 7, label: '1 week', icon: <Calendar className="h-3 w-3" /> },
+                      { value: 30, label: '1 month', icon: <Calendar className="h-3 w-3" /> },
+                      { value: 90, label: '3 months', icon: <Calendar className="h-3 w-3" /> },
                     ]}
                   />
                 </SettingRow>
 
                 <SettingRow
                   label="Max Item Size (Combined)"
-                  description="Maximum combined size for binary items before skipping"
+                  description="Maximum allowed size for images/files before skipping"
                 >
                   <ButtonGroup
                     value={settings.max_item_size_mb}
@@ -831,61 +846,6 @@ export const Settings = () => {
                   />
                 </SettingRow>
               </SettingsSection>
-
-              <SettingsSection
-                icon={<Calendar className="h-4 w-4" />}
-                title="Retention Policy"
-                description="How long to keep clips"
-              >
-                <SettingRow label="Retention Policy" description="Choose retention strategy">
-                  <Select
-                    value={settings.retention_policy}
-                    onChange={value => void updateSettings({ retention_policy: value })}
-                    options={retentionPolicyOptions}
-                    className="w-48"
-                  />
-                </SettingRow>
-
-                {settings.retention_policy !== 'unlimited' && (
-                  <SettingRow
-                    label={
-                      settings.retention_policy === 'days' ? 'Days to Keep' : 'Number of Clips'
-                    }
-                    description={
-                      settings.retention_policy === 'days'
-                        ? 'Delete clips older than this many days'
-                        : 'Keep only this many recent clips'
-                    }
-                  >
-                    <input
-                      type="number"
-                      min="1"
-                      value={settings.retention_value}
-                      onChange={e =>
-                        void updateSettings({ retention_value: parseInt(e.target.value) || 0 })
-                      }
-                      className="w-24 rounded-lg border border-gray-300 dark:border-gray-700 bg-slate-100/10 dark:bg-slate-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </SettingRow>
-                )}
-
-                <SettingRow
-                  label="Auto-delete Old Clips"
-                  description="Remove clips older than a specific age"
-                >
-                  <ButtonGroup
-                    value={settings.auto_delete_days}
-                    onChange={value => void updateSettings({ auto_delete_days: value })}
-                    options={[
-                      { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
-                      { value: 1, label: '24 hours', icon: <Clock className="h-3 w-3" /> },
-                      { value: 7, label: '1 week', icon: <Calendar className="h-3 w-3" /> },
-                      { value: 30, label: '1 month', icon: <Calendar className="h-3 w-3" /> },
-                      { value: 90, label: '3 months', icon: <Calendar className="h-3 w-3" /> },
-                    ]}
-                  />
-                </SettingRow>
-              </SettingsSection>
             </>
           )}
 
@@ -903,7 +863,20 @@ export const Settings = () => {
                 >
                   <Switch
                     checked={settings.auto_start}
-                    onChange={value => void updateSettings({ auto_start: value })}
+                    onChange={value => {
+                      void (async () => {
+                        try {
+                          if (value) {
+                            await enable()
+                          } else {
+                            await disable()
+                          }
+                          void updateSettings({ auto_start: value })
+                        } catch (err) {
+                          console.error('Failed to toggle autostart:', err)
+                        }
+                      })()
+                    }}
                   />
                 </SettingRow>
 

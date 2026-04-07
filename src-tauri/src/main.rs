@@ -19,7 +19,8 @@ mod services;
 use plugins::mac_rounded_corners;
 
 fn main() {
-    let mut builder = tauri::Builder::default();
+    let mut builder =
+        tauri::Builder::default().plugin(tauri_plugin_autostart::Builder::new().build());
 
     // Only use decorum plugin on Windows (macOS uses custom mac_rounded_corners plugin)
     #[cfg(target_os = "windows")]
@@ -30,6 +31,10 @@ fn main() {
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // Initialize database
@@ -222,6 +227,30 @@ fn main() {
             commands::delete_semantic_model,
             commands::generate_embedding,
         ])
+        .on_window_event(|window, event| {
+            // Intercept the window close button (X).
+            // On desktop apps, closing the window normally just hides it (tray app behavior).
+            // We hook here to run cleanup logic when the user actually quits via tray → Quit.
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                if let Some(state) = app.try_state::<commands::AppState>() {
+                    let settings = state.settings_repository.load().unwrap_or_default();
+                    if settings.clear_on_exit {
+                        // Block the current thread briefly to run the async clear.
+                        // We use block_in_place because we're inside a Tokio runtime context.
+                        // JS equivalent: await clearAllClips() just before window.close()
+                        eprintln!("[EXIT] clear_on_exit=true — wiping clipboard history...");
+                        let repo = state.repository.clone();
+                        let _ = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async move {
+                                repo.clear_all().await
+                            })
+                        });
+                        eprintln!("[EXIT] Clipboard history cleared.");
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

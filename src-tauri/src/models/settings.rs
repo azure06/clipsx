@@ -29,20 +29,6 @@ impl Default for ViewMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RetentionPolicy {
-    Unlimited,
-    Days,
-    Count,
-}
-
-impl Default for RetentionPolicy {
-    fn default() -> Self {
-        RetentionPolicy::Unlimited
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum PasteFormat {
     Auto,
     Plain,
@@ -73,10 +59,12 @@ pub struct AppSettings {
     pub excluded_apps: Vec<String>,
 
     // Storage & History
-    pub history_limit: u32,
-    pub retention_policy: RetentionPolicy,
-    pub retention_value: u32,
-    pub auto_delete_days: u32,
+    /// 0 = unlimited
+    #[serde(default = "default_max_clips")]
+    pub max_clips: u32,
+    /// 0 = never delete by age
+    #[serde(default)]
+    pub max_age_days: u32,
     pub max_item_size_mb: u32,
 
     // Privacy & Behavior
@@ -113,6 +101,10 @@ fn default_semantic_model() -> String {
     "all-MiniLM-L6-v2".to_string()
 }
 
+fn default_max_clips() -> u32 {
+    1000
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -128,10 +120,8 @@ impl Default for AppSettings {
             enable_rich_text: true,
             enable_office_formats: true,
             excluded_apps: vec![],
-            history_limit: 1000,
-            retention_policy: RetentionPolicy::default(),
-            retention_value: 0,
-            auto_delete_days: 0,
+            max_clips: 1000,
+            max_age_days: 0,
             max_item_size_mb: 10,
             auto_clear_minutes: 0,
             hide_on_copy: false,

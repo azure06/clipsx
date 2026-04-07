@@ -9,27 +9,45 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
 /// Main clipboard service - coordinates monitoring, storage, and notifications
 ///
-/// JS/TS equivalent: class ClipboardService {
-///   private repository: ClipRepository
-///   private monitor: ClipboardMonitor
-///   private appHandle: AppHandle
-///   private storageDir: string
+/// Think of this as the "hub" of the application. It:
+///   1. Watches the OS clipboard for changes (via a background polling loop)
+///   2. Saves new clips to the SQLite database
+///   3. Tells the frontend that a new clip arrived (via a Tauri event)
+///   4. Runs two additional background tasks: storage cleanup and OS clipboard auto-clear
+///
+/// JS/TS mental model:
+/// class ClipboardService {
+///   private repository: ClipRepository        // database
+///   private settingsRepository: SettingsRepository
+///   private monitor: ClipboardMonitor         // OS clipboard watcher
+///   private appHandle: AppHandle              // Tauri bridge (emit events to frontend)
+///   private storageDir: string               // folder where images/files are saved
+///   private lastCopyAt: Date | null          // for auto-clear timer
 /// }
 pub struct ClipboardService {
     repository: Arc<ClipRepository>,
-    _settings_repository: Arc<SettingsRepository>,
+    settings_repository: Arc<SettingsRepository>,
     semantic_service: Arc<SemanticService>,
-    // NOTE: `Arc<Mutex<T>>` is like a thread-safe shared reference
-    // Arc = Atomic Reference Counted (like shared_ptr in C++)
-    // Mutex = Mutual exclusion lock (prevents concurrent access)
-    // JS equivalent: just `monitor` (JS is single-threaded, no locks needed)
+    // NOTE: Arc<Mutex<T>> is like a thread-safe shared wrapper.
+    // Arc  = Atomic Reference Counter. Like a shared pointer that keeps a count of how
+    //        many places are using the value. When count reaches 0, the value is dropped.
+    //        JS equivalent: all objects are reference-counted by the garbage collector.
+    // Mutex = Mutual Exclusion lock. Only one "thread" (async task) can use the value
+    //         at a time. Think of it as a door with one key — you grab the key (.lock()),
+    //         do your work, then put the key back (key is dropped automatically).
+    //         JS is single-threaded so it never needs explicit locks.
     monitor: Arc<Mutex<Box<dyn ClipboardMonitor>>>,
     app_handle: AppHandle,
     storage_dir: PathBuf,
+    /// Tracks when something was last copied, so the auto-clear timer knows when to fire.
+    /// It's wrapped in Arc<Mutex<>> so both the clipboard loop and the auto-clear task
+    /// can safely read and write it without conflicting.
+    /// JS equivalent: this.lastCopyAt: Date | null (no lock needed in JS)
+    last_copy_at: Arc<Mutex<Option<Instant>>>,
 }
 
 impl ClipboardService {
@@ -54,53 +72,172 @@ impl ClipboardService {
 
         Self {
             repository,
-            _settings_repository: settings_repository,
+            settings_repository,
             semantic_service,
-            // NOTE: Create platform-specific monitor (macOS vs Windows/Linux)
             monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(
                 app_handle.clone(),
             ))),
             app_handle,
             storage_dir,
+            last_copy_at: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Start monitoring clipboard in background
+    /// Start monitoring the clipboard and all ancillary background tasks.
     ///
-    /// NOTE: `self: Arc<Self>` means we take ownership of the Arc
-    /// This allows us to move it into the spawned task
-    /// JS equivalent: async startMonitoring() { ... }
+    /// This spawns THREE separate async background tasks that run forever
+    /// (until the app closes). Think of `tokio::spawn` like `setTimeout`/`setInterval`
+    /// in JS — it starts a task in the background without blocking the current flow.
+    ///
+    /// NOTE: `self: Arc<Self>` instead of `&self` because we need to move a clone of
+    /// the service reference into each background task. Arc makes cloning cheap —
+    /// it just bumps a counter, it does NOT copy the actual data.
     pub async fn start_monitoring(self: Arc<Self>) {
-        // NOTE: `tokio::spawn` is like creating a new async task
-        // JS equivalent: (async () => { while(true) { ... } })()
+        // ═══════════════════════════════════════════════════════════════════════
+        // TASK 1: Clipboard polling loop
+        // ═══════════════════════════════════════════════════════════════════════
+        // This is the heart of the app. Every 500ms (twice per second) it asks
+        // the OS: "Did anything new land on the clipboard?"
+        //
+        // Why 500ms? Fast enough to feel instant, slow enough to not hammer the CPU.
+        // On macOS this is nearly free (just reads a change counter — 1 syscall).
+        // On Windows/Linux it reads the actual clipboard every tick and compares a
+        // hash of the content in memory to detect changes.
+        //
+        // JS mental model:
+        //   setInterval(() => checkClipboard(), 500)
+        let svc = self.clone();
         tokio::spawn(async move {
             loop {
-                if let Err(e) = self.check_clipboard().await {
+                if let Err(e) = svc.check_clipboard().await {
                     eprintln!("[ERROR] Clipboard check error: {}", e);
                 }
-                // NOTE: Poll every 500ms
-                // macOS: Fast path skips read if unchanged (~1μs)
-                // Windows/Linux: Reads clipboard, compares hash in memory
+                // Wait 500ms before the next poll.
+                // `await` here yields control back to Tokio's async runtime so other
+                // tasks (Task 2, Task 3) can run during this wait.
+                // JS equivalent: await new Promise(resolve => setTimeout(resolve, 500))
                 sleep(Duration::from_millis(500)).await;
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TASK 2: Periodic storage-limit enforcement
+        // ═══════════════════════════════════════════════════════════════════════
+        // Every 5 minutes, check if the database has grown too large and prune it.
+        //
+        // This is a safety net — the main pruning happens right after each insert
+        // (in check_clipboard below). This periodic task catches edge cases like
+        // the user lowering their limit setting after already having 2000 clips.
+        //
+        // Pinned and favorited clips are NEVER deleted by this task.
+        //
+        // JS mental model:
+        //   setInterval(() => enforceStorageLimits(), 5 * 60 * 1000)
+        let svc2 = self.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(300)).await;
+                if let Ok(settings) = svc2.settings_repository.load() {
+                    if let Err(e) = svc2
+                        .repository
+                        .enforce_storage_limits(settings.max_clips, settings.max_age_days)
+                        .await
+                    {
+                        eprintln!("[ERROR] Storage limit enforcement failed: {}", e);
+                    }
+                }
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TASK 3: Auto-clear the OS clipboard (Privacy feature)
+        // ═══════════════════════════════════════════════════════════════════════
+        // When this feature is enabled, the app will wipe the OPERATING SYSTEM's
+        // active clipboard after X minutes of inactivity.
+        //
+        // WHY? When you copy a password or a credit card number, it sits on the
+        // OS clipboard until something else replaces it. Any app on your computer
+        // can read it silently. This feature limits that exposure window.
+        //
+        // HOW IT WORKS:
+        // - Every time a new clip is saved (see check_clipboard below), we record
+        //   the current timestamp in `last_copy_at`.
+        // - This task wakes up every 30 seconds and checks: how long ago was the
+        //   last copy? If it exceeds `auto_clear_minutes`, we tell arboard
+        //   (the Rust clipboard library) to clear the OS clipboard.
+        // - We clear `last_copy_at` afterwards so we don't clear repeatedly.
+        //
+        // NOTE: This clears the OS clipboard (what Ctrl+V pastes from), NOT the
+        // Clipsx database history. Your history is still visible in the app.
+        //
+        // JS mental model:
+        //   setInterval(() => {
+        //     if (lastCopyAt && Date.now() - lastCopyAt > autoMinutes * 60000) {
+        //       navigator.clipboard.writeText('') // clear OS clipboard
+        //       lastCopyAt = null
+        //     }
+        //   }, 30000)
+        let svc3 = self.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(30)).await;
+
+                let settings = match svc3.settings_repository.load() {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                let minutes = settings.auto_clear_minutes;
+                if minutes == 0 {
+                    // Feature is disabled — nothing to do
+                    continue;
+                }
+
+                // `*` dereferences the MutexGuard to get the inner Option<Instant>
+                // This is a copy (Instant is Copy), so `last_copy` is its own value
+                let last_copy = *svc3.last_copy_at.lock().await;
+                if let Some(instant) = last_copy {
+                    if instant.elapsed().as_secs() >= (minutes as u64 * 60) {
+                        eprintln!("[PRIVACY] Auto-clearing OS clipboard after {} min", minutes);
+                        // arboard is the cross-platform library that talks to the OS clipboard.
+                        // On Windows this calls the Win32 OpenClipboard / EmptyClipboard API.
+                        // On macOS it calls NSPasteboard.clearContents().
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.clear();
+                        }
+                        // Reset — don't fire again until the next copy event
+                        *svc3.last_copy_at.lock().await = None;
+                    }
+                }
             }
         });
     }
 
-    /// Check clipboard for changes and process new content
+    /// Check clipboard for changes and process new content.
     ///
-    /// Flow:
-    /// 1. Call monitor.check() - platform-specific change detection
-    /// 2. If unchanged → return early (no DB query)
-    /// 3. If changed → create ClipItem, check DB for duplicates
-    /// 4. Insert or update timestamp, notify frontend
-    // Check clipboard for changes and process new content
+    /// This is called by Task 1 (the polling loop) every 500ms.
+    ///
+    /// Full flow:
+    ///   1. Ask the platform monitor: "Did clipboard change?"
+    ///      - macOS: compare NSPasteboard changeCount (basically a version number)
+    ///      - Windows/Linux: read clipboard, compute hash, compare with last known hash
+    ///   2. Unchanged → return immediately (no DB query, very cheap)
+    ///   3. Changed  → build a ClipItem struct from the raw clipboard data
+    ///   4. Check if this content already exists in DB (deduplication by hash)
+    ///      - Duplicate → just bump its `updated_at` timestamp (moves it to top)
+    ///      - New       → insert into DB, enforce storage limits, emit event to frontend
     async fn check_clipboard(&self) -> Result<()> {
+        // Lock the monitor for the duration of the check.
+        // `lock().await` waits until no other task is using the monitor.
+        // `drop(monitor)` releases the lock early so other tasks can use it
+        // before we do the (potentially slow) DB operations below.
         let mut monitor = self.monitor.lock().await;
         let result = monitor.check()?;
         let platform = monitor.platform_name();
-        drop(monitor);
+        drop(monitor); // Release the lock now — we don't need it anymore
 
         let (content, content_hash, source_app) = match result {
+            // Clipboard hasn't changed — exit immediately without touching the DB
             ClipboardCheckResult::Unchanged => return Ok(()),
             ClipboardCheckResult::Changed {
                 content,
@@ -108,6 +245,29 @@ impl ClipboardService {
                 source_app,
             } => (content, hash, source_app),
         };
+
+        // Load current settings on every check so changes take effect immediately
+        // without needing to restart the app. The settings file is tiny so this is
+        // fast (just a JSON file read from disk).
+        let settings = self.settings_repository.load().unwrap_or_default();
+
+        // ── App exclusion check ─────────────────────────────────────────────
+        // The user may have listed apps whose clipboard we should ignore
+        // (e.g. a password manager). If the source app matches any excluded app,
+        // we silently drop this clipboard event without saving anything.
+        // We use a substring, case-insensitive match so e.g. "1password" will
+        // match "1Password 7" (the full macOS/Windows bundle name).
+        if let Some(app) = &source_app {
+            let app_lower = app.to_lowercase();
+            let excluded = settings
+                .excluded_apps
+                .iter()
+                .any(|ex| app_lower.contains(&ex.to_lowercase()));
+            if excluded {
+                eprintln!("[{}] Skipping clip from excluded app: {}", platform, app);
+                return Ok(());
+            }
+        }
 
         eprintln!(
             "[{}] Clipboard changed, hash: {}",
@@ -140,7 +300,11 @@ impl ClipboardService {
                 let detection = crate::services::intelligence::IntelligenceService::detect(&plain);
                 Self::create_rtf_clip(rtf, plain, &content_hash, &detection, source_app.clone())
             }
-            ClipboardContent::Image { data, format, pdf_data } => {
+            ClipboardContent::Image {
+                data,
+                format,
+                pdf_data,
+            } => {
                 self.create_image_clip(data, format, &pdf_data, &content_hash, source_app.clone())
                     .await?
             }
@@ -183,11 +347,48 @@ impl ClipboardService {
                 self.repository.touch(&existing.id).await?;
             }
             None => {
+                // ── Max item size check ───────────────────────────────────────
+                // Binary content (images, Office files) is stored to disk.
+                // For text/html/rtf we check their in-memory size against the
+                // user's limit and silently drop oversized clips.
+                // NOTE: Image size is checked differently (by the file write size)
+                // so we only measure text-based payloads here.
+                let max_bytes = (settings.max_item_size_mb as usize) * 1024 * 1024;
+                let payload_size = clip.content_text.as_ref().map(|t| t.len()).unwrap_or(0)
+                    + clip.content_html.as_ref().map(|h| h.len()).unwrap_or(0)
+                    + clip.content_rtf.as_ref().map(|r| r.len()).unwrap_or(0);
+
+                if max_bytes > 0 && payload_size > max_bytes {
+                    eprintln!(
+                        "[{}] Clip too large ({} bytes > {} MB limit) - skipping",
+                        platform, payload_size, settings.max_item_size_mb
+                    );
+                    return Ok(());
+                }
+
                 eprintln!(
                     "[{}] New {:?} content - inserting",
                     platform, clip.content_type
                 );
                 self.repository.insert(&clip).await?;
+
+                // ── Storage limit enforcement ─────────────────────────────────
+                // After every insert we immediately check if we've exceeded the
+                // user's configured limits and prune if needed. This prevents the
+                // database from ever growing beyond the cap by more than 1 entry.
+                // (A periodic task in Task 2 also handles this as a safety net.)
+                if let Err(e) = self
+                    .repository
+                    .enforce_storage_limits(settings.max_clips, settings.max_age_days)
+                    .await
+                {
+                    eprintln!("[ERROR] Storage limit enforcement failed: {}", e);
+                }
+
+                // ── Update auto-clear timer ───────────────────────────────────
+                // Record "right now" as the moment something was copied. Task 3
+                // reads this value to decide when to clear the OS clipboard.
+                *self.last_copy_at.lock().await = Some(Instant::now());
 
                 // Trigger background embedding generation if a model is loaded
                 if let Some(text) = &clip.content_text {
@@ -512,15 +713,20 @@ impl ClipboardService {
                 // without requiring a base64 dependency. Each entry is small (~100-500 bytes).
                 let extra_json: Vec<serde_json::Value> = extra_types
                     .iter()
-                    .map(|(t, d)| serde_json::json!({
-                        "type": t,
-                        "hex": d.iter().map(|b| format!("{:02x}", b)).collect::<String>()
-                    }))
+                    .map(|(t, d)| {
+                        serde_json::json!({
+                            "type": t,
+                            "hex": d.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+                        })
+                    })
                     .collect();
-                Some(serde_json::json!({
-                    "source_app": source_app,
-                    "extra_types": extra_json
-                }).to_string())
+                Some(
+                    serde_json::json!({
+                        "source_app": source_app,
+                        "extra_types": extra_json
+                    })
+                    .to_string(),
+                )
             },
             created_at: now,
             updated_at: now,

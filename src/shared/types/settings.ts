@@ -1,6 +1,5 @@
 export type Theme = 'light' | 'dark' | 'auto'
 export type ViewMode = 'list' | 'grid'
-export type RetentionPolicy = 'unlimited' | 'days' | 'count'
 export type PasteFormat = 'auto' | 'plain'
 
 export interface AppSettings {
@@ -19,10 +18,8 @@ export interface AppSettings {
   excluded_apps: string[]
 
   // Storage & History
-  history_limit: number
-  retention_policy: RetentionPolicy
-  retention_value: number
-  auto_delete_days: number
+  max_clips: number
+  max_age_days: number
   max_item_size_mb: number
 
   // Privacy & Behavior
@@ -58,10 +55,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enable_rich_text: true,
   enable_office_formats: true,
   excluded_apps: [],
-  history_limit: 1000,
-  retention_policy: 'unlimited',
-  retention_value: 0,
-  auto_delete_days: 0,
+  max_clips: 1000,
+  max_age_days: 0,
   max_item_size_mb: 10,
   auto_clear_minutes: 0,
   hide_on_copy: false,

@@ -451,10 +451,9 @@ async fn reconstruct_clipboard_content(
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(meta) {
                             if let Some(arr) = json["extra_types"].as_array() {
                                 for entry in arr {
-                                    if let (Some(t), Some(hex)) = (
-                                        entry["type"].as_str(),
-                                        entry["hex"].as_str(),
-                                    ) {
+                                    if let (Some(t), Some(hex)) =
+                                        (entry["type"].as_str(), entry["hex"].as_str())
+                                    {
                                         let data: Vec<u8> = (0..hex.len())
                                             .step_by(2)
                                             .filter_map(|i| {
@@ -918,16 +917,25 @@ mod tests {
     #[test]
     fn ole_write_guard_requires_both_data_and_uti() {
         let cases: &[(Option<&[u8]>, Option<&str>, bool)] = &[
-            (Some(b"data"), Some("com.microsoft.PowerPoint-16.0-Slides-Package"), true),
-            (Some(b"data"), None, false),  // UTI unknown — must skip
-            (None, Some("com.microsoft.PowerPoint-16.0-Slides-Package"), false), // no data
+            (
+                Some(b"data"),
+                Some("com.microsoft.PowerPoint-16.0-Slides-Package"),
+                true,
+            ),
+            (Some(b"data"), None, false), // UTI unknown — must skip
+            (
+                None,
+                Some("com.microsoft.PowerPoint-16.0-Slides-Package"),
+                false,
+            ), // no data
             (None, None, false),
         ];
 
         for (ole_data, ole_type, expected_written) in cases {
             let written = matches!((ole_data, ole_type), (Some(_), Some(_)));
             assert_eq!(
-                written, *expected_written,
+                written,
+                *expected_written,
                 "ole_data={} ole_type={} should_write={}",
                 ole_data.is_some(),
                 ole_type.is_some(),

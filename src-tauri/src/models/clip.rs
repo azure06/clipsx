@@ -8,16 +8,16 @@ pub struct ClipItem {
     pub content_text: Option<String>,
     pub content_html: Option<String>,
     pub content_rtf: Option<String>,
-    pub svg_path: Option<String>,         // SVG file path: clipboard_data/svg/{id}.svg
-    pub pdf_path: Option<String>,         // PDF file path: clipboard_data/pdf/{id}.pdf
-    pub image_path: Option<String>,       // Image file path: clipboard_data/images/{id}.{ext}
-    pub attachment_path: Option<String>,  // Office native format: clipboard_data/office/{id}.bin
-    pub attachment_type: Option<String>,  // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
-    pub file_paths: Option<String>,       // JSON array
-    pub detected_type: String,      // New: 'url', 'code', 'text', etc.
-    pub metadata: Option<String>,   // JSON object
-    pub created_at: i64,            // Unix timestamp
-    pub updated_at: i64,            // Last access timestamp
+    pub svg_path: Option<String>, // SVG file path: clipboard_data/svg/{id}.svg
+    pub pdf_path: Option<String>, // PDF file path: clipboard_data/pdf/{id}.pdf
+    pub image_path: Option<String>, // Image file path: clipboard_data/images/{id}.{ext}
+    pub attachment_path: Option<String>, // Office native format: clipboard_data/office/{id}.bin
+    pub attachment_type: Option<String>, // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
+    pub file_paths: Option<String>,      // JSON array
+    pub detected_type: String,           // New: 'url', 'code', 'text', etc.
+    pub metadata: Option<String>,        // JSON object
+    pub created_at: i64,                 // Unix timestamp
+    pub updated_at: i64,                 // Last access timestamp
     pub app_name: Option<String>,
     pub is_pinned: i32,   // SQLite uses INTEGER for boolean
     pub is_favorite: i32, // SQLite uses INTEGER for boolean
@@ -80,11 +80,23 @@ pub struct ClipWithTags {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ClipContent {
-    Text { content: String },
-    Html { html: String, plain: String },
-    Rtf { rtf: String, plain: String },
-    Image { path: String },
-    Files { paths: Vec<String> },
+    Text {
+        content: String,
+    },
+    Html {
+        html: String,
+        plain: String,
+    },
+    Rtf {
+        rtf: String,
+        plain: String,
+    },
+    Image {
+        path: String,
+    },
+    Files {
+        paths: Vec<String>,
+    },
     Office {
         svg_path: Option<String>,
         pdf_path: Option<String>,

@@ -74,7 +74,7 @@ pub enum ClipboardContent {
     Office {
         ole_data: Option<Vec<u8>>, // OLE/Office package → clipboard_data/office/{id}.bin
         ole_type: Option<String>, // Exact UTI captured at read time (e.g. "com.microsoft.PowerPoint-16.0-Slides-Package").
-                                  // None = UTI was not recorded; OLE data MUST NOT be written without a known UTI.
+        // None = UTI was not recorded; OLE data MUST NOT be written without a known UTI.
         /// All other com.microsoft.* binary types (e.g. ole.source.*) captured alongside the package.
         /// These small reference types tell Office apps their native format is on the pasteboard.
         /// Without them, PowerPoint falls back to PNG on paste.
@@ -160,7 +160,11 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
         // Check for images
         if settings.enable_images {
             if let Some((data, format, pdf_data)) = read_image(pasteboard) {
-                return Ok(Some(ClipboardContent::Image { data, format, pdf_data }));
+                return Ok(Some(ClipboardContent::Image {
+                    data,
+                    format,
+                    pdf_data,
+                }));
             }
         }
 
@@ -224,7 +228,11 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                     msg_send![pasteboard, setString:plain_ns forType:NSPasteboardTypeString];
             }
 
-            ClipboardContent::Image { data, format, pdf_data } => {
+            ClipboardContent::Image {
+                data,
+                format,
+                pdf_data,
+            } => {
                 // Write image in its original format
                 let image_data = NSData::from_vec(data.clone());
                 let type_str = match format {
@@ -248,7 +256,8 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                             msg_send![class!(NSString), stringWithUTF8String: type_c_str.as_ptr()];
                         if ns_type != nil {
                             let pdf_ns_data = NSData::from_vec(pdf.clone());
-                            let _: bool = msg_send![pasteboard, setData:pdf_ns_data forType:ns_type];
+                            let _: bool =
+                                msg_send![pasteboard, setData:pdf_ns_data forType:ns_type];
                         }
                     }
                 }
@@ -317,7 +326,12 @@ pub fn write_clipboard(content: &ClipboardContent) -> Result<()> {
                         if ns_type != nil {
                             let ns_data = NSData::from_vec(d.clone());
                             let ok: bool = msg_send![pasteboard, setData:ns_data forType:ns_type];
-                            eprintln!("[DEBUG]   {} extra type '{}' ({} bytes)", if ok { "✓" } else { "✗" }, t, d.len());
+                            eprintln!(
+                                "[DEBUG]   {} extra type '{}' ({} bytes)",
+                                if ok { "✓" } else { "✗" },
+                                t,
+                                d.len()
+                            );
                         }
                     }
                 }

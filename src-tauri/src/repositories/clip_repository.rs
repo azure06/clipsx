@@ -696,6 +696,63 @@ impl ClipRepository {
 
         Ok(())
     }
+
+    /// Enforce storage limits based on settings.
+    ///
+    /// Pinned **and** favorited clips are always exempt from automatic deletion.
+    ///
+    /// 1. Delete clips older than `max_age_days` (if > 0).
+    /// 2. If total non-protected count still exceeds `max_clips` (if > 0), delete the
+    ///    oldest non-protected clips until we're back under the limit.
+    ///
+    /// Returns the number of clips deleted.
+    pub async fn enforce_storage_limits(&self, max_clips: u32, max_age_days: u32) -> Result<u64> {
+        let mut deleted: u64 = 0;
+
+        // --- Step 1: Age-based pruning ---
+        if max_age_days > 0 {
+            let cutoff = chrono::Utc::now().timestamp() - (max_age_days as i64 * 24 * 60 * 60);
+
+            let result = sqlx::query(
+                "DELETE FROM clips WHERE is_pinned = 0 AND is_favorite = 0 AND created_at < ?",
+            )
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+
+            deleted += result.rows_affected();
+        }
+
+        // --- Step 2: Count-based pruning ---
+        if max_clips > 0 {
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM clips WHERE is_pinned = 0 AND is_favorite = 0",
+            )
+            .fetch_one(&self.pool)
+            .await?;
+
+            let overflow = total - max_clips as i64;
+            if overflow > 0 {
+                // Delete the oldest non-protected clips
+                let result = sqlx::query(
+                    "DELETE FROM clips WHERE is_pinned = 0 AND is_favorite = 0 AND id IN \
+                     (SELECT id FROM clips WHERE is_pinned = 0 AND is_favorite = 0 \
+                      ORDER BY updated_at ASC LIMIT ?)",
+                )
+                .bind(overflow)
+                .execute(&self.pool)
+                .await?;
+
+                deleted += result.rows_affected();
+            }
+        }
+
+        if deleted > 0 {
+            eprintln!("[STORAGE] Pruned {} old clip(s)", deleted);
+        }
+
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]

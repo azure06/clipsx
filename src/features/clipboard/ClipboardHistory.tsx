@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { useClipboardStore } from '../../stores'
+import { useClipboardStore, useSettingsStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
+import { useToast } from '../../shared/contexts/ToastContext'
 
 // Re-export for backwards compatibility
 // Re-export for backwards compatibility
@@ -37,6 +38,8 @@ export const ClipboardHistory = ({
 
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
+  const settings = useSettingsStore(state => state.settings)
+  const { toast } = useToast()
 
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -170,16 +173,22 @@ export const ClipboardHistory = ({
   const handleAction = useCallback(
     async (text: string, clipId: string) => {
       await performPrimaryAction(text, clipId)
+      if (settings?.show_copy_toast) {
+        toast({ title: 'Ready to paste', type: 'success' })
+      }
     },
-    [performPrimaryAction]
+    [performPrimaryAction, settings?.show_copy_toast, toast]
   )
 
   // Explicit Copy handler (copy icon) — delegates to centralized store
   const handleExplicitCopy = useCallback(
     async (text: string, clipId: string) => {
       await performCopy(text, clipId)
+      if (settings?.show_copy_toast) {
+        toast({ title: 'Copied to clipboard', type: 'success' })
+      }
     },
-    [performCopy]
+    [performCopy, settings?.show_copy_toast, toast]
   )
 
   const handleDelete = useCallback(
