@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { Theme, PasteFormat, AppSettings } from '../../shared/types'
+import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   Palette,
@@ -277,8 +278,7 @@ export const Settings = () => {
 
   const handleReset = async () => {
     if (confirm('Are you sure you want to reset all settings to defaults?')) {
-      await loadSettings()
-      alert('Settings reset to defaults!')
+      await updateSettings(DEFAULT_SETTINGS)
     }
   }
 
