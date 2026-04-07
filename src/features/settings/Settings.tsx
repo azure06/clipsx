@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { enable, disable } from '@tauri-apps/plugin-autostart'
+import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
@@ -247,37 +249,30 @@ export const Settings = () => {
     }
   }
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!settings) return
-    const json = JSON.stringify(settings, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `clips-settings-${new Date().toISOString().split('T')[0]}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    const path = await save({
+      defaultPath: `clips-settings-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return
+    await writeTextFile(path, JSON.stringify(settings, null, 2))
   }
 
-  const handleImport = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'application/json'
-    input.onchange = async e => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (file) {
-        try {
-          const text = await file.text()
-          const imported = JSON.parse(text) as unknown
-          await updateSettings(imported as Partial<AppSettings>)
-          alert('Settings imported successfully!')
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (_error) {
-          alert('Failed to import settings. Please check the file format.')
-        }
-      }
+  const handleImport = async () => {
+    const path = await openDialog({
+      multiple: false,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return
+    try {
+      const text = await readTextFile(path as string)
+      const imported = JSON.parse(text) as unknown
+      await updateSettings(imported as Partial<AppSettings>)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_error) {
+      alert('Failed to import settings. Please check the file format.')
     }
-    input.click()
   }
 
   const handleReset = async () => {
@@ -896,14 +891,14 @@ export const Settings = () => {
                   <Button
                     variant="outline"
                     leftIcon={<Download className="h-4 w-4" />}
-                    onClick={handleExport}
+                    onClick={() => void handleExport()}
                   >
                     Export
                   </Button>
                   <Button
                     variant="outline"
                     leftIcon={<Upload className="h-4 w-4" />}
-                    onClick={handleImport}
+                    onClick={() => void handleImport()}
                   >
                     Import
                   </Button>

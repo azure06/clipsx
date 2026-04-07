@@ -810,4 +810,240 @@ mod tests {
         let result = ClipRepository::escape_fts5_query("   ");
         assert_eq!(result, "\"\"");
     }
+
+    // ===== Shared test helper =====
+
+    /// Populate an in-memory repository with `normal` plain clips, `pinned` pinned clips,
+    /// and `favs` favourite clips.  Normal clips have staggered `updated_at` so ordering
+    /// is deterministic (clip 0 is always the newest).  Protected clips are pushed far
+    /// into the past to prove the exemption guard works regardless of ordering.
+    async fn make_repo(normal: u32, pinned: u32, favs: u32) -> Result<ClipRepository> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let base = chrono::Utc::now().timestamp();
+
+        for i in 0..normal {
+            let mut c = ClipItem::from_text(format!("normal {}", i), "text".to_string(), None);
+            // clip 0 = most recent, clip N-1 = oldest
+            c.updated_at = base - i as i64 * 10;
+            c.created_at = c.updated_at;
+            repo.insert(&c).await?;
+        }
+
+        for i in 0..pinned {
+            let mut c = ClipItem::from_text(format!("pinned {}", i), "text".to_string(), None);
+            c.is_pinned = 1;
+            c.updated_at = base - 100_000 - i as i64 * 10;
+            c.created_at = c.updated_at;
+            repo.insert(&c).await?;
+        }
+
+        for i in 0..favs {
+            let mut c = ClipItem::from_text(format!("fav {}", i), "text".to_string(), None);
+            c.is_favorite = 1;
+            c.updated_at = base - 200_000 - i as i64 * 10;
+            c.created_at = c.updated_at;
+            repo.insert(&c).await?;
+        }
+
+        Ok(repo)
+    }
+
+    // ===== enforce_storage_limits — count-based =====
+
+    /// 5 normal + 1 pinned + 1 fav → limit 3.
+    /// Expect 2 deletions; protected clips stay.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_basic() -> Result<()> {
+        let repo = make_repo(5, 1, 1).await?;
+
+        let deleted = repo.enforce_storage_limits(3, 0).await?;
+        assert_eq!(deleted, 2, "should delete exactly 2 non-protected clips");
+
+        let remaining = repo.get_recent(20).await?;
+        // 3 normal + 1 pinned + 1 fav
+        assert_eq!(remaining.len(), 5);
+        assert!(remaining.iter().any(|c| c.is_pinned == 1), "pinned must survive");
+        assert!(remaining.iter().any(|c| c.is_favorite == 1), "favorite must survive");
+
+        Ok(())
+    }
+
+    /// max_clips = 0 (unlimited) → nothing deleted.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_unlimited_noop() -> Result<()> {
+        let repo = make_repo(10, 0, 0).await?;
+        let deleted = repo.enforce_storage_limits(0, 0).await?;
+        assert_eq!(deleted, 0, "unlimited mode must not delete anything");
+        assert_eq!(repo.get_recent(20).await?.len(), 10);
+        Ok(())
+    }
+
+    /// Already within the limit → no deletion.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_within_limit_noop() -> Result<()> {
+        let repo = make_repo(3, 0, 0).await?;
+        let deleted = repo.enforce_storage_limits(10, 0).await?;
+        assert_eq!(deleted, 0, "already under limit — nothing to delete");
+        assert_eq!(repo.get_recent(20).await?.len(), 3);
+        Ok(())
+    }
+
+    /// Count equals limit exactly → no deletion.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_exactly_at_limit() -> Result<()> {
+        let repo = make_repo(5, 0, 0).await?;
+        let deleted = repo.enforce_storage_limits(5, 0).await?;
+        assert_eq!(deleted, 0, "exactly at limit — nothing to delete");
+        assert_eq!(repo.get_recent(20).await?.len(), 5);
+        Ok(())
+    }
+
+    /// Limit = 1 with 10 clips → only the newest survives.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_aggressive_trim() -> Result<()> {
+        let repo = make_repo(10, 0, 0).await?;
+        let deleted = repo.enforce_storage_limits(1, 0).await?;
+        assert_eq!(deleted, 9, "should leave exactly 1 clip");
+        let remaining = repo.get_recent(20).await?;
+        assert_eq!(remaining.len(), 1);
+        // clip 0 is the most recent and must be the survivor
+        assert_eq!(
+            remaining[0].content_text.as_deref(),
+            Some("normal 0"),
+            "newest clip should survive"
+        );
+        Ok(())
+    }
+
+    /// Protected clips are NOT counted toward the limit — only normal clips are pruned.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_protected_clips_excluded_from_count() -> Result<()> {
+        // 4 normal + 2 pinned + 2 fav → limit 2 should delete 2 normal
+        let repo = make_repo(4, 2, 2).await?;
+        let deleted = repo.enforce_storage_limits(2, 0).await?;
+        assert_eq!(deleted, 2, "only 2 of the 4 normal clips deleted");
+        let remaining = repo.get_recent(20).await?;
+        // 2 normal + 2 pinned + 2 fav = 6
+        assert_eq!(remaining.len(), 6);
+        assert_eq!(remaining.iter().filter(|c| c.is_pinned == 1).count(), 2);
+        assert_eq!(remaining.iter().filter(|c| c.is_favorite == 1).count(), 2);
+        Ok(())
+    }
+
+    /// Empty DB → 0 deletions, no panic.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_empty_db() -> Result<()> {
+        let repo = make_repo(0, 0, 0).await?;
+        let deleted = repo.enforce_storage_limits(10, 0).await?;
+        assert_eq!(deleted, 0);
+        Ok(())
+    }
+
+    // ===== enforce_storage_limits — age-based =====
+
+    /// Clips older than max_age_days are deleted; protected clips are spared.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_age_prunes_old_clips() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let now = chrono::Utc::now().timestamp();
+
+        // A fresh clip (created now)
+        let mut new_clip = ClipItem::from_text("new clip".to_string(), "text".to_string(), None);
+        new_clip.created_at = now;
+        new_clip.updated_at = now;
+        repo.insert(&new_clip).await?;
+
+        // An old clip (91 days old) — should be pruned
+        let mut old_clip = ClipItem::from_text("old clip".to_string(), "text".to_string(), None);
+        old_clip.created_at = now - 91 * 24 * 60 * 60;
+        old_clip.updated_at = old_clip.created_at;
+        repo.insert(&old_clip).await?;
+
+        // An old pinned clip — must survive despite age
+        let mut old_pinned =
+            ClipItem::from_text("old pinned".to_string(), "text".to_string(), None);
+        old_pinned.is_pinned = 1;
+        old_pinned.created_at = now - 91 * 24 * 60 * 60;
+        old_pinned.updated_at = old_pinned.created_at;
+        repo.insert(&old_pinned).await?;
+
+        let deleted = repo.enforce_storage_limits(0, 90).await?;
+        assert_eq!(deleted, 1, "only the non-protected old clip deleted");
+
+        let remaining = repo.get_recent(10).await?;
+        assert_eq!(remaining.len(), 2, "new clip + old pinned survive");
+
+        let texts: Vec<_> = remaining
+            .iter()
+            .filter_map(|c| c.content_text.as_deref())
+            .collect();
+        assert!(texts.contains(&"new clip"));
+        assert!(texts.contains(&"old pinned"));
+
+        Ok(())
+    }
+
+    /// max_age_days = 0 disables age-based deletion entirely.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_age_zero_is_noop() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let now = chrono::Utc::now().timestamp();
+
+        let mut ancient = ClipItem::from_text("ancient".to_string(), "text".to_string(), None);
+        ancient.created_at = now - 3650 * 24 * 60 * 60; // 10 years old
+        ancient.updated_at = ancient.created_at;
+        repo.insert(&ancient).await?;
+
+        let deleted = repo.enforce_storage_limits(0, 0).await?;
+        assert_eq!(deleted, 0, "age-based deletion disabled when max_age_days=0");
+        Ok(())
+    }
+
+    /// Favourite clips are spared from age-based deletion just like pinned ones.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_age_spares_favorites() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let now = chrono::Utc::now().timestamp();
+
+        let mut fav = ClipItem::from_text("old fav".to_string(), "text".to_string(), None);
+        fav.is_favorite = 1;
+        fav.created_at = now - 91 * 24 * 60 * 60;
+        fav.updated_at = fav.created_at;
+        repo.insert(&fav).await?;
+
+        let deleted = repo.enforce_storage_limits(0, 30).await?;
+        assert_eq!(deleted, 0, "favourite clips must survive age-based pruning");
+        Ok(())
+    }
+
+    /// Age step + count step both fire; deleted counts combine correctly.
+    #[tokio::test]
+    async fn test_enforce_storage_limits_combined_age_and_count() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let now = chrono::Utc::now().timestamp();
+
+        // 3 recent clips
+        for i in 0..3u32 {
+            let mut c = ClipItem::from_text(format!("recent {}", i), "text".to_string(), None);
+            c.created_at = now - i as i64 * 10;
+            c.updated_at = c.created_at;
+            repo.insert(&c).await?;
+        }
+
+        // 2 old clips (> 30 days) — age step removes these
+        for i in 0..2u32 {
+            let mut c = ClipItem::from_text(format!("old {}", i), "text".to_string(), None);
+            c.created_at = now - 31 * 24 * 60 * 60 - i as i64 * 10;
+            c.updated_at = c.created_at;
+            repo.insert(&c).await?;
+        }
+
+        // After age pruning 3 remain; max_clips = 2 → 1 more deleted by count
+        let deleted = repo.enforce_storage_limits(2, 30).await?;
+        assert_eq!(deleted, 3, "2 by age + 1 by count = 3 total");
+
+        let remaining = repo.get_recent(10).await?;
+        assert_eq!(remaining.len(), 2);
+        Ok(())
+    }
 }

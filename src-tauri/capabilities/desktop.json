@@ -9,6 +9,9 @@
     "main"
   ],
   "permissions": [
-    "autostart:default"
+    "autostart:default",
+    "dialog:default",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file"
   ]
 }

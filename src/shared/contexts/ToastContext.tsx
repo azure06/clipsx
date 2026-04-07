@@ -73,7 +73,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   />
                 </div>
               )}
-              
+
               <div className="grid gap-1 flex-1">
                 {title && <ToastTitle>{title}</ToastTitle>}
                 {description && <ToastDescription>{description}</ToastDescription>}

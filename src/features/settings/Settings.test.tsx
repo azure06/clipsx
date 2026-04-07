@@ -152,9 +152,7 @@ describe('Settings — Storage tab: max_clips ButtonGroup', () => {
     fireEvent.click(screen.getByRole('button', { name: /storage/i }))
     fireEvent.click(screen.getByRole('button', { name: /^1,000$/ }))
 
-    await waitFor(() =>
-      expect(mockUpdateSettings).toHaveBeenCalledWith({ max_clips: 1000 })
-    )
+    await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith({ max_clips: 1000 }))
   })
 
   it('calls updateSettings with 0 for Unlimited', async () => {
@@ -164,9 +162,7 @@ describe('Settings — Storage tab: max_clips ButtonGroup', () => {
     fireEvent.click(screen.getByRole('button', { name: /storage/i }))
     fireEvent.click(screen.getByRole('button', { name: /unlimited/i }))
 
-    await waitFor(() =>
-      expect(mockUpdateSettings).toHaveBeenCalledWith({ max_clips: 0 })
-    )
+    await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith({ max_clips: 0 }))
   })
 })
 
@@ -189,9 +185,7 @@ describe('Settings — Show Copy Toast toggle', () => {
     const toggle = row.querySelector('[role="switch"]') as HTMLElement
     fireEvent.click(toggle)
 
-    await waitFor(() =>
-      expect(mockUpdateSettings).toHaveBeenCalledWith({ show_copy_toast: false })
-    )
+    await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith({ show_copy_toast: false }))
   })
 
   it('calls updateSettings({ show_copy_toast: true }) when toggled on', async () => {
@@ -205,8 +199,6 @@ describe('Settings — Show Copy Toast toggle', () => {
     const toggle = row.querySelector('[role="switch"]') as HTMLElement
     fireEvent.click(toggle)
 
-    await waitFor(() =>
-      expect(mockUpdateSettings).toHaveBeenCalledWith({ show_copy_toast: true })
-    )
+    await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith({ show_copy_toast: true }))
   })
 })
