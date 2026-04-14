@@ -4,7 +4,7 @@
 - Full-text search (SQLite FTS5)
 - Semantic search (vector embeddings)
 - Search filters (type, date, source app)
-- Hybrid search ranking
+- Search result ranking for the active mode
 
 ## Components
 - `SearchBar.tsx` - Search input with filters

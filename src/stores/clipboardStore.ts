@@ -52,18 +52,30 @@ const initialState: ClipboardState = {
   activeTab: 'all',
 }
 
+const FILTER_TYPE_MAP: Record<string, string> = {
+  image: 'image',
+  url: 'url',
+  text: 'text',
+  code: 'code',
+  file: 'files',
+  files: 'files',
+  office: 'office',
+}
+
 // Helper to parse slash commands from query
 // Example: "apple /image" -> { query: "apple", filterTypes: ["image"] }
 const parseSearchQuery = (input: string): { query: string; filterTypes: string[] | null } => {
   const typeRegex = /\/([a-z]+)/g
-  const matches = input.match(typeRegex)
+  const matches = [...input.matchAll(typeRegex)]
 
   if (!matches) {
     return { query: input, filterTypes: null }
   }
 
-  // Extract types (remove leading slash)
-  const filterTypes = matches.map(m => m.substring(1).toLowerCase())
+  const filterTypes = matches
+    .map(match => match[1]?.toLowerCase() ?? '')
+    .map(type => FILTER_TYPE_MAP[type] ?? type)
+    .filter(Boolean)
 
   // Remove types from query string
   const query = input.replace(typeRegex, '').trim()
@@ -75,9 +87,6 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   ...initialState,
 
   // Universal pagination - works for both browse and search modes
-  // NOTE: When semantic search is added, check mode and query to decide:
-  // - if searchQuery starts with "semantic:" -> use semantic_search_paginated
-  // - otherwise -> use FTS search_clips_paginated
   loadMoreClips: async (limit = 50) => {
     const { currentOffset, hasMore, loading, mode, searchQuery, activeTab } =
       useClipboardStore.getState()
@@ -101,7 +110,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
           offset: currentOffset,
           favoritesOnly,
           pinnedOnly,
-          useSemanticSearch: isSemanticActive && (!filterTypes || filterTypes.length === 0),
+          useSemanticSearch: isSemanticActive,
         })
       } else {
         // Browse mode: Standard chronological pagination
@@ -194,7 +203,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         offset: 0,
         favoritesOnly,
         pinnedOnly,
-        useSemanticSearch: isSemanticActive && (!filterTypes || filterTypes.length === 0),
+        useSemanticSearch: isSemanticActive,
         similarityThreshold: 0.3,
       })
       set({
@@ -226,7 +235,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set({ loading: true, error: null })
     try {
       const { query, filterTypes } = parseSearchQuery(rawQuery)
-      const settings = useSettingsStore.getState().settings
+      const isSemanticActive = useUIStore.getState().isSemanticActive
 
       const { activeTab } = useClipboardStore.getState()
       const favoritesOnly = activeTab === 'favorites'
@@ -238,9 +247,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         limit,
         favoritesOnly,
         pinnedOnly,
-        useSemanticSearch:
-          (settings?.semantic_search_enabled ?? false) &&
-          (!filterTypes || filterTypes.length === 0),
+        useSemanticSearch: isSemanticActive,
         similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
       })
       set({ clips, loading: false })
