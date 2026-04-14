@@ -3,7 +3,7 @@ use crate::models::{AppSettings, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard::ClipboardService;
 use crate::services::paste;
-use crate::services::semantic::SemanticService;
+use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use std::sync::Arc;
 use tauri::State;
 
@@ -20,6 +20,114 @@ pub struct SemanticIndexStats {
     pub total_text_clips: i64,
     pub indexed_clips: i64,
     pub pending_clips: i64,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticProgressPayload {
+    pub done: u64,
+    pub total: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticStatusPayload {
+    pub state: String,
+    pub enabled: bool,
+    pub configured_model: String,
+    pub loaded_model: Option<String>,
+    pub message: String,
+    pub progress: Option<SemanticProgressPayload>,
+}
+
+fn build_semantic_status(
+    settings: &AppSettings,
+    downloaded_models: &[String],
+    runtime_status: SemanticRuntimeStatus,
+    loaded_model: Option<String>,
+) -> SemanticStatusPayload {
+    let configured_model = settings.semantic_model.clone();
+
+    if !settings.semantic_search_enabled {
+        return SemanticStatusPayload {
+            state: "disabled".to_string(),
+            enabled: false,
+            configured_model,
+            loaded_model,
+            message: "Semantic search is turned off in Plugins.".to_string(),
+            progress: None,
+        };
+    }
+
+    if configured_model.trim().is_empty() || !downloaded_models.contains(&configured_model) {
+        let message = if configured_model.trim().is_empty() {
+            "Choose a semantic model in Plugins before enabling semantic search.".to_string()
+        } else {
+            format!(
+                "{} is enabled in settings, but the model is not installed on disk.",
+                configured_model
+            )
+        };
+
+        return SemanticStatusPayload {
+            state: "missing_model".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model,
+            message,
+            progress: None,
+        };
+    }
+
+    match runtime_status {
+        SemanticRuntimeStatus::Loading { model_name } => SemanticStatusPayload {
+            state: "loading".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model,
+            message: format!("Loading {} into memory.", model_name),
+            progress: None,
+        },
+        SemanticRuntimeStatus::Indexing {
+            model_name,
+            done,
+            total,
+        } => SemanticStatusPayload {
+            state: "indexing".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model,
+            message: format!("Indexing existing clips with {}.", model_name),
+            progress: Some(SemanticProgressPayload { done, total }),
+        },
+        SemanticRuntimeStatus::Ready { model_name } => SemanticStatusPayload {
+            state: "ready".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model,
+            message: format!("{} is ready for semantic search.", model_name),
+            progress: None,
+        },
+        SemanticRuntimeStatus::Error {
+            model_name,
+            message,
+        } => SemanticStatusPayload {
+            state: "error".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model: loaded_model.or(model_name),
+            message,
+            progress: None,
+        },
+        SemanticRuntimeStatus::Idle => SemanticStatusPayload {
+            state: "loading".to_string(),
+            enabled: true,
+            configured_model,
+            loaded_model,
+            message: "Waiting for the semantic model to initialize.".to_string(),
+            progress: None,
+        },
+    }
 }
 
 // ============================================================================
@@ -820,6 +928,14 @@ pub async fn init_semantic_search(
         .load()
         .map_err(|e| e.to_string())?;
 
+    let downloaded_models = state.semantic_service.get_downloaded_models();
+    if !downloaded_models.contains(&settings.semantic_model) {
+        return Err(format!(
+            "Semantic model {} is not installed. Download it from Plugins first.",
+            settings.semantic_model
+        ));
+    }
+
     state
         .semantic_service
         .init_model(settings.semantic_model, Some(app_handle))
@@ -833,15 +949,24 @@ pub async fn set_semantic_search_enabled(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<AppSettings, String> {
+    use tauri::Emitter;
+
     let mut settings = state
         .settings_repository
         .load()
         .map_err(|e| e.to_string())?;
 
     if enabled {
+        let downloaded_models = state.semantic_service.get_downloaded_models();
+        if !downloaded_models.contains(&settings.semantic_model) {
+            return Err(format!(
+                "Semantic model {} is not installed. Download it from Plugins first.",
+                settings.semantic_model
+            ));
+        }
         state
             .semantic_service
-            .init_model(settings.semantic_model.clone(), Some(app_handle))
+            .init_model(settings.semantic_model.clone(), Some(app_handle.clone()))
             .await
             .map_err(|e| e.to_string())?;
         settings.semantic_search_enabled = true;
@@ -854,6 +979,10 @@ pub async fn set_semantic_search_enabled(
         .settings_repository
         .save(&settings)
         .map_err(|e| e.to_string())?;
+
+    if !enabled {
+        let _ = app_handle.emit("semantic-status-changed", ());
+    }
 
     Ok(settings)
 }
@@ -890,8 +1019,27 @@ pub async fn change_semantic_model(
 }
 
 #[tauri::command]
+pub fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatusPayload, String> {
+    let settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    let downloaded_models = state.semantic_service.get_downloaded_models();
+    let loaded_model = state.semantic_service.get_model_info().map(|(name, _)| name);
+
+    Ok(build_semantic_status(
+        &settings,
+        &downloaded_models,
+        state.semantic_service.get_runtime_status(),
+        loaded_model,
+    ))
+}
+
+#[tauri::command]
 pub fn get_semantic_search_status(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.semantic_service.is_ready())
+    let status = get_semantic_status(state)?;
+    Ok(matches!(status.state.as_str(), "ready" | "indexing"))
 }
 
 #[tauri::command]
@@ -922,7 +1070,13 @@ pub async fn get_semantic_index_stats(
 }
 
 #[tauri::command]
-pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn delete_semantic_model(
+    model_name: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
     let mut settings = state
         .settings_repository
         .load()
@@ -940,6 +1094,8 @@ pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> 
             .settings_repository
             .save(&settings)
             .map_err(|e| e.to_string())?;
+
+        let _ = app_handle.emit("semantic-status-changed", ());
     }
 
     Ok(())
@@ -965,19 +1121,21 @@ pub async fn reindex_semantic_embeddings(
 
     let total = candidates.len() as u64;
 
-    #[derive(serde::Serialize, Clone)]
-    #[serde(rename_all = "camelCase")]
-    struct ReindexProgressPayload {
-        done: u64,
-        total: u64,
-    }
+    state.semantic_service.set_indexing_status(0, total);
+    let _ = app_handle.emit("semantic-status-changed", ());
 
     for (index, clip) in candidates.into_iter().enumerate() {
-        let vector = state
-            .semantic_service
-            .embed(clip.content_text)
-            .await
-            .map_err(|e| e.to_string())?;
+        let vector = match state.semantic_service.embed(clip.content_text).await {
+            Ok(vector) => vector,
+            Err(err) => {
+                let message = err.to_string();
+                state
+                    .semantic_service
+                    .set_error_status(Some(model_name.clone()), message.clone());
+                let _ = app_handle.emit("semantic-status-changed", ());
+                return Err(message);
+            }
+        };
 
         state
             .repository
@@ -988,16 +1146,30 @@ pub async fn reindex_semantic_embeddings(
                 dimensions,
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let message = e.to_string();
+                state
+                    .semantic_service
+                    .set_error_status(Some(model_name.clone()), message.clone());
+                let _ = app_handle.emit("semantic-status-changed", ());
+                message
+            })?;
+
+        state
+            .semantic_service
+            .set_indexing_status(index as u64 + 1, total);
 
         let _ = app_handle.emit(
             "semantic-index-progress",
-            ReindexProgressPayload {
+            SemanticProgressPayload {
                 done: index as u64 + 1,
                 total,
             },
         );
     }
+
+    state.semantic_service.set_ready_status();
+    let _ = app_handle.emit("semantic-status-changed", ());
 
     let stats = state
         .repository

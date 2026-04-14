@@ -11,6 +11,7 @@ import {
   Briefcase,
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
+import type { SemanticStatus } from '../../shared/types'
 
 const FILTER_OPTIONS = [
   { prefix: '/image', label: 'Images', description: 'Screenshots, photos', icon: Image },
@@ -27,7 +28,7 @@ interface SearchBarProps {
   onClear: () => void
   placeholder?: string
   autoFocus?: boolean
-  isSemanticAvailable?: boolean
+  semanticStatus?: SemanticStatus | null
   isSemanticActive?: boolean
   onToggleSemantic?: () => void
 }
@@ -38,12 +39,20 @@ export const SearchBar = ({
   onClear,
   placeholder = 'Type to search or paste...',
   autoFocus = true,
-  isSemanticAvailable = false,
+  semanticStatus = null,
   isSemanticActive = false,
   onToggleSemantic,
 }: SearchBarProps) => {
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
+  const isSemanticAvailable =
+    semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
+  const semanticHint =
+    semanticStatus?.state === 'indexing'
+      ? 'Semantic search is available while existing clips finish indexing in the background.'
+      : semanticStatus && semanticStatus.state !== 'ready'
+        ? `${semanticStatus.message}${isSemanticActive ? ' Using text search for now.' : ''}`
+        : null
 
   useEffect(() => {
     if (autoFocus) {
@@ -147,7 +156,7 @@ export const SearchBar = ({
 
         {/* Right Actions */}
         <div className="pr-4 flex items-center gap-2">
-          {/* Semantic Toggle (only visible when a model is loaded) */}
+          {/* Semantic Toggle */}
           {isSemanticAvailable && (
             <button
               onClick={onToggleSemantic}
@@ -166,6 +175,16 @@ export const SearchBar = ({
             </button>
           )}
 
+          {!isSemanticAvailable && semanticStatus && (
+            <div
+              className="hidden sm:flex items-center gap-1 rounded-md border border-amber-200/70 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+              title={semanticStatus.message}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>AI unavailable</span>
+            </div>
+          )}
+
           {value ? (
             <button
               onClick={onClear}
@@ -181,6 +200,10 @@ export const SearchBar = ({
           )}
         </div>
       </div>
+
+      {semanticHint && (
+        <div className="mt-2 px-1 text-xs text-gray-600 dark:text-gray-400">{semanticHint}</div>
+      )}
 
       {/* Slash-Command Filter Menu */}
       {showFilterMenu && (

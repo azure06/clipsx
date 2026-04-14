@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from '../../stores'
 import { Switch } from '../../shared/components/ui'
+import type { SemanticStatus } from '../../shared/types'
 
 const AVAILABLE_MODELS = [
   {
@@ -40,7 +41,7 @@ interface IndexProgressPayload {
 
 export const Plugins = () => {
   const { settings, loadSettings } = useSettingsStore()
-  const [isReady, setIsReady] = useState(false)
+  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
   const [downloadedModels, setDownloadedModels] = useState<string[]>([])
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [activatingId, setActivatingId] = useState<string | null>(null)
@@ -55,7 +56,7 @@ export const Plugins = () => {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    void checkStatus()
+    void fetchSemanticStatus()
     void fetchDownloadedModels()
     void fetchIndexStats()
 
@@ -74,16 +75,22 @@ export const Plugins = () => {
       setIndexProgress(event.payload)
     })
 
+    const unlistenStatus = listen('semantic-status-changed', () => {
+      void fetchSemanticStatus()
+      void fetchIndexStats()
+    })
+
     return () => {
       void unlistenDownload.then(f => f())
       void unlistenIndex.then(f => f())
+      void unlistenStatus.then(f => f())
     }
   }, [settings?.semantic_model])
 
-  const checkStatus = async () => {
+  const fetchSemanticStatus = async () => {
     try {
-      const status = await invoke<boolean>('get_semantic_search_status')
-      setIsReady(status)
+      const status = await invoke<SemanticStatus>('get_semantic_status')
+      setSemanticStatus(status)
     } catch (err) {
       console.error('Failed to check semantic status:', err)
     }
@@ -114,7 +121,7 @@ export const Plugins = () => {
   }
 
   const handleSelectExistingModel = async (modelId: string) => {
-    if (settings?.semantic_model === modelId && isReady) return
+    if (settings?.semantic_model === modelId && semanticStatus?.state === 'ready') return
 
     try {
       setError(null)
@@ -129,8 +136,7 @@ export const Plugins = () => {
 
       await invoke('change_semantic_model', { modelName: modelId })
       await loadSettings()
-
-      setIsReady(true)
+      await fetchSemanticStatus()
       await fetchDownloadedModels()
       await fetchIndexStats()
     } catch (err) {
@@ -150,7 +156,7 @@ export const Plugins = () => {
 
       await invoke('set_semantic_search_enabled', { enabled })
       await loadSettings()
-      await checkStatus()
+      await fetchSemanticStatus()
       await fetchDownloadedModels()
       await fetchIndexStats()
     } catch (err) {
@@ -170,14 +176,8 @@ export const Plugins = () => {
       await invoke('delete_semantic_model', { modelName: modelId })
       await loadSettings()
       await fetchDownloadedModels()
-      await checkStatus()
+      await fetchSemanticStatus()
       await fetchIndexStats()
-
-      // If we just deleted the active model, the backend auto-unloaded it.
-      // We should update UI state accordingly.
-      if (settings?.semantic_model === modelId) {
-        setIsReady(false)
-      }
     } catch (err) {
       setError(String(err))
       console.error('Failed to delete semantic model:', err)
@@ -201,6 +201,22 @@ export const Plugins = () => {
     }
   }
 
+  const statusTone =
+    semanticStatus?.state === 'ready'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : semanticStatus?.state === 'indexing'
+        ? 'text-blue-600 dark:text-blue-400'
+        : semanticStatus?.state === 'loading'
+          ? 'text-amber-600 dark:text-amber-400'
+          : semanticStatus?.state === 'error'
+            ? 'text-red-600 dark:text-red-400'
+            : 'text-gray-500 dark:text-gray-400'
+
+  const activeModelInstalled = settings?.semantic_model
+    ? downloadedModels.includes(settings.semantic_model)
+    : false
+  const isSemanticUsable = semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
+
   return (
     <div className="h-full w-full bg-transparent text-gray-900 dark:text-gray-100 overflow-y-auto custom-scrollbar animate-fade-in relative">
       <div className="p-8 max-w-6xl mx-auto">
@@ -217,17 +233,18 @@ export const Plugins = () => {
               <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
                 Semantic Search
               </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                {settings?.semantic_search_enabled
-                  ? isReady
-                    ? 'Enabled and ready on startup'
-                    : 'Enabled, loading current model'
-                  : 'Disabled on startup'}
+              <div className={`text-xs ${statusTone}`}>
+                {semanticStatus?.message ?? 'Checking semantic model status...'}
               </div>
             </div>
             <Switch
               checked={settings?.semantic_search_enabled ?? false}
-              disabled={isTogglingEnabled || activatingId !== null || downloadingId !== null}
+              disabled={
+                isTogglingEnabled ||
+                activatingId !== null ||
+                downloadingId !== null ||
+                (!activeModelInstalled && !(settings?.semantic_search_enabled ?? false))
+              }
               onChange={value => void handleSemanticEnabledChange(value)}
             />
           </div>
@@ -268,10 +285,12 @@ export const Plugins = () => {
               </div>
               <button
                 onClick={() => void handleReindex()}
-                disabled={!isReady || isReindexing || (indexStats?.pendingClips ?? 0) === 0}
+                disabled={
+                  !isSemanticUsable || isReindexing || (indexStats?.pendingClips ?? 0) === 0
+                }
                 title={
-                  !isReady
-                    ? 'Load a semantic model to index existing clips'
+                  !isSemanticUsable
+                    ? (semanticStatus?.message ?? 'Load a semantic model to index existing clips')
                     : (indexStats?.pendingClips ?? 0) === 0
                       ? 'All text clips are already indexed'
                       : undefined
@@ -307,13 +326,21 @@ export const Plugins = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {AVAILABLE_MODELS.map(model => {
-            const isActive = settings?.semantic_model === model.id && isReady
+            const isConfiguredModel = settings?.semantic_model === model.id
+            const isActive =
+              isConfiguredModel &&
+              (semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing')
             const isDownloaded = downloadedModels.includes(model.id)
             const isDownloadingThis = downloadingId === model.id
             const isActivatingThis = activatingId === model.id
             const isAnotherDownloadingOrActivating =
               (downloadingId !== null && downloadingId !== model.id) ||
               (activatingId !== null && activatingId !== model.id)
+            const isDegraded =
+              isConfiguredModel &&
+              (semanticStatus?.state === 'error' || semanticStatus?.state === 'missing_model')
+            const isLoadingModel = isConfiguredModel && semanticStatus?.state === 'loading'
+            const isIndexingModel = isConfiguredModel && semanticStatus?.state === 'indexing'
 
             let progressPct = 0
             if (isDownloadingThis && downloadProgress && downloadProgress.total > 0) {
@@ -327,7 +354,7 @@ export const Plugins = () => {
               <div
                 key={model.id}
                 className={`flex flex-col p-4 rounded-lg border transition-all duration-200 bg-slate-100/50 dark:bg-slate-800/40 shadow-sm ${
-                  isActive
+                  isActive || isLoadingModel || isIndexingModel || isDegraded
                     ? 'border-blue-500 dark:border-blue-500/50 ring-1 ring-blue-500/20'
                     : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20'
                 }`}
@@ -364,27 +391,31 @@ export const Plugins = () => {
                   </div>
 
                   {/* Delete Button (only if downloaded and NOT active) */}
-                  {isDownloaded && !isActive && !isDownloadingThis && !activatingId && (
-                    <button
-                      onClick={() => void handleDeleteModel(model.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 rounded-md transition-colors"
-                      title="Delete Model"
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
+                  {isDownloaded &&
+                    !isActive &&
+                    !isLoadingModel &&
+                    !isIndexingModel &&
+                    !activatingId && (
+                      <button
+                        onClick={() => void handleDeleteModel(model.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 rounded-md transition-colors"
+                        title="Delete Model"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        />
-                      </svg>
-                    </button>
-                  )}
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    )}
                 </div>
 
                 {/* Description */}
@@ -410,7 +441,29 @@ export const Plugins = () => {
                             d="M5 13l4 4L19 7"
                           />
                         </svg>
-                        Installed & Active
+                        {isIndexingModel ? 'Active • Indexing' : 'Installed & Active'}
+                      </div>
+                      {isIndexingModel && semanticStatus?.progress && (
+                        <div className="text-[11px] text-blue-600 dark:text-blue-400 text-center">
+                          {semanticStatus.progress.done} / {semanticStatus.progress.total} clips
+                          indexed
+                        </div>
+                      )}
+                    </div>
+                  ) : isLoadingModel ? (
+                    <button
+                      disabled
+                      className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200/70 dark:border-amber-500/20 cursor-wait"
+                    >
+                      Loading Model...
+                    </button>
+                  ) : isDegraded ? (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm font-medium border border-red-200/70 dark:border-red-500/20">
+                        Needs Attention
+                      </div>
+                      <div className="text-[11px] text-red-600 dark:text-red-400 leading-relaxed">
+                        {semanticStatus?.message}
                       </div>
                     </div>
                   ) : isDownloadingThis ? (
@@ -487,7 +540,13 @@ export const Plugins = () => {
                       disabled={isAnotherDownloadingOrActivating}
                       className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-slate-100/60 dark:bg-slate-700 text-gray-900 dark:text-gray-100 hover:bg-slate-200/60 dark:hover:bg-slate-600 disabled:opacity-50"
                     >
-                      {isDownloaded ? 'Set as Active' : `Download (${model.size})`}
+                      {isDownloaded
+                        ? isConfiguredModel
+                          ? settings?.semantic_search_enabled
+                            ? 'Set as Active'
+                            : 'Activate Model'
+                          : 'Set as Active'
+                        : `Download (${model.size})`}
                     </button>
                   )}
                 </div>

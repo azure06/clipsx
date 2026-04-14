@@ -4,6 +4,15 @@ use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use tokio::task;
 
+#[derive(Debug, Clone)]
+pub enum SemanticRuntimeStatus {
+    Idle,
+    Loading { model_name: String },
+    Indexing { model_name: String, done: u64, total: u64 },
+    Ready { model_name: String },
+    Error { model_name: Option<String>, message: String },
+}
+
 /// Handes Local Semantic Search functionality using fastembed.
 pub struct SemanticService {
     /// Note: We use std::sync::RwLock because fastembed operations are blocking
@@ -11,6 +20,7 @@ pub struct SemanticService {
     model: Arc<StdRwLock<Option<TextEmbedding>>>,
     // Track the name of the currently loaded model
     loaded_model_name: Arc<StdRwLock<Option<String>>>,
+    runtime_status: Arc<StdRwLock<SemanticRuntimeStatus>>,
     app_data_dir: std::path::PathBuf,
 }
 
@@ -19,7 +29,15 @@ impl SemanticService {
         Self {
             model: Arc::new(StdRwLock::new(None)),
             loaded_model_name: Arc::new(StdRwLock::new(None)),
+            runtime_status: Arc::new(StdRwLock::new(SemanticRuntimeStatus::Idle)),
             app_data_dir,
+        }
+    }
+
+    fn emit_status_changed(app_handle: Option<&tauri::AppHandle>) {
+        if let Some(app) = app_handle {
+            use tauri::Emitter;
+            let _ = app.emit("semantic-status-changed", ());
         }
     }
 
@@ -32,7 +50,16 @@ impl SemanticService {
     ) -> Result<()> {
         let model_arc = self.model.clone();
         let name_arc = self.loaded_model_name.clone();
+        let status_arc = self.runtime_status.clone();
         let cache_dir = self.app_data_dir.join(".fastembed_cache");
+
+        {
+            let mut status = self.runtime_status.write().unwrap();
+            *status = SemanticRuntimeStatus::Loading {
+                model_name: model_name.clone(),
+            };
+        }
+        Self::emit_status_changed(app_handle.as_ref());
 
         // We know the approximate sizes of the repositories for progress bars
         let expected_total_bytes: u64 = match model_name.as_str() {
@@ -46,7 +73,7 @@ impl SemanticService {
         let progress_cancel = Arc::new(StdRwLock::new(false));
 
         if !is_downloaded {
-            if let Some(app) = app_handle {
+            if let Some(app) = app_handle.clone() {
                 let cache_clone = cache_dir.clone();
                 let cancel_clone = progress_cancel.clone();
                 let m_name = model_name.clone();
@@ -95,8 +122,9 @@ impl SemanticService {
             }
         }
 
-        let res = task::spawn_blocking(move || -> Result<()> {
-            let model_enum = match model_name.as_str() {
+        let model_name_for_load = model_name.clone();
+        let join_result = task::spawn_blocking(move || -> Result<()> {
+            let model_enum = match model_name_for_load.as_str() {
                 "all-MiniLM-L6-v2" => EmbeddingModel::AllMiniLML6V2,
                 "paraphrase-multilingual-MiniLM-L12-v2" => EmbeddingModel::ParaphraseMLMiniLML12V2,
                 _ => EmbeddingModel::AllMiniLML6V2, // Default fallback
@@ -112,19 +140,55 @@ impl SemanticService {
             *lock = Some(model);
 
             let mut name_lock = name_arc.write().unwrap();
-            *name_lock = Some(model_name.clone());
+            *name_lock = Some(model_name_for_load.clone());
 
             Ok(())
         })
-        .await?;
+        .await;
 
         // Stop poller
         *progress_cancel.write().unwrap() = true;
 
-        // Flatten the double Result from spawn_blocking
-        res?;
+        match join_result {
+            Ok(Ok(())) => {
+                let model_name = self
+                    .loaded_model_name
+                    .read()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let mut status = self.runtime_status.write().unwrap();
+                *status = SemanticRuntimeStatus::Ready { model_name };
+                Self::emit_status_changed(app_handle.as_ref());
+                Ok(())
+            }
+            Ok(Err(err)) => {
+                {
+                    let mut status = status_arc.write().unwrap();
+                    *status = SemanticRuntimeStatus::Error {
+                        model_name: Some(model_name.clone()),
+                        message: err.to_string(),
+                    };
+                }
+                Self::emit_status_changed(app_handle.as_ref());
+                Err(err)
+            }
+            Err(err) => {
+                {
+                    let mut status = status_arc.write().unwrap();
+                    *status = SemanticRuntimeStatus::Error {
+                        model_name: Some(model_name.clone()),
+                        message: err.to_string(),
+                    };
+                }
+                Self::emit_status_changed(app_handle.as_ref());
+                Err(err.into())
+            }
+        }
+    }
 
-        Ok(())
+    pub fn get_runtime_status(&self) -> SemanticRuntimeStatus {
+        self.runtime_status.read().unwrap().clone()
     }
 
     /// Checks if the model is currently loaded in memory.
@@ -138,6 +202,8 @@ impl SemanticService {
         *lock = None;
         let mut name_lock = self.loaded_model_name.write().unwrap();
         *name_lock = None;
+        let mut status = self.runtime_status.write().unwrap();
+        *status = SemanticRuntimeStatus::Idle;
     }
 
     /// Returns the currently loaded model name and its dimension size.
@@ -153,6 +219,36 @@ impl SemanticService {
         } else {
             None
         }
+    }
+
+    pub fn set_indexing_status(&self, done: u64, total: u64) {
+        let model_name = self.loaded_model_name.read().unwrap().clone();
+        if let Some(model_name) = model_name {
+            let mut status = self.runtime_status.write().unwrap();
+            *status = SemanticRuntimeStatus::Indexing {
+                model_name,
+                done,
+                total,
+            };
+        }
+    }
+
+    pub fn set_ready_status(&self) {
+        let model_name = self.loaded_model_name.read().unwrap().clone();
+        let mut status = self.runtime_status.write().unwrap();
+        *status = if let Some(model_name) = model_name {
+            SemanticRuntimeStatus::Ready { model_name }
+        } else {
+            SemanticRuntimeStatus::Idle
+        };
+    }
+
+    pub fn set_error_status(&self, model_name: Option<String>, message: String) {
+        let mut status = self.runtime_status.write().unwrap();
+        *status = SemanticRuntimeStatus::Error {
+            model_name,
+            message,
+        };
     }
 
     /// Returns a list of model IDs (e.g., "all-MiniLM-L6-v2") that have been downloaded

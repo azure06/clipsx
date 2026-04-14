@@ -12,6 +12,7 @@ import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
+import type { SemanticStatus } from '../../shared/types'
 
 export const AppLayout = () => {
   const {
@@ -27,7 +28,7 @@ export const AppLayout = () => {
   } = useUIStore()
   const { settings, loadSettings } = useSettingsStore()
   const { setThemeMode } = useTheme()
-  const [isModelReady, setIsModelReady] = useState(false)
+  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
 
   // Load settings on app start
   useEffect(() => {
@@ -41,19 +42,25 @@ export const AppLayout = () => {
     }
   }, [settings?.theme, setThemeMode])
 
-  // Check if an AI model is loaded (poll periodically)
   useEffect(() => {
-    const check = async () => {
+    const loadSemanticStatus = async () => {
       try {
-        const ready = await invoke<boolean>('get_semantic_search_status')
-        setIsModelReady(ready)
+        const status = await invoke<SemanticStatus>('get_semantic_status')
+        setSemanticStatus(status)
       } catch {
-        setIsModelReady(false)
+        setSemanticStatus(null)
       }
     }
-    void check()
-    const interval = setInterval(() => void check(), 5000)
-    return () => clearInterval(interval)
+
+    void loadSemanticStatus()
+
+    const unlisten = listen('semantic-status-changed', () => {
+      void loadSemanticStatus()
+    })
+
+    return () => {
+      void unlisten.then(fn => fn())
+    }
   }, [])
 
   // Event Listener for Tray "Settings" click
@@ -94,7 +101,7 @@ export const AppLayout = () => {
                     value={searchQuery}
                     onChange={setSearchQuery}
                     onClear={handleClear}
-                    isSemanticAvailable={isModelReady}
+                    semanticStatus={semanticStatus}
                     isSemanticActive={isSemanticActive}
                     onToggleSemantic={toggleSemantic}
                   />
