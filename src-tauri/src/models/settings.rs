@@ -75,7 +75,6 @@ pub struct AppSettings {
 
     // Paste behavior
     pub default_paste_format: PasteFormat,
-    pub auto_close_after_paste: bool,
     #[serde(default = "default_true")]
     pub paste_on_enter: bool,
     #[serde(default = "default_true")]
@@ -128,7 +127,6 @@ impl Default for AppSettings {
             clear_on_exit: false,
             auto_start: false,
             default_paste_format: PasteFormat::default(),
-            auto_close_after_paste: true,
             paste_on_enter: true,
             hide_on_blur: true,
             always_on_top: false,

@@ -309,28 +309,7 @@ export const Settings = () => {
               void (async () => {
                 try {
                   await invoke('update_settings', {
-                    settings: {
-                      theme: 'auto',
-                      language: 'en',
-                      global_shortcut: 'Cmd+Shift+V',
-                      enable_images: true,
-                      enable_files: true,
-                      enable_rich_text: true,
-                      enable_office_formats: true,
-                      excluded_apps: [],
-                      history_limit: 1000,
-                      retention_policy: 'unlimited',
-                      retention_value: 0,
-                      auto_delete_days: 0,
-                      max_item_size_mb: 10,
-                      auto_clear_minutes: 0,
-                      hide_on_copy: false,
-                      clear_on_exit: false,
-                      auto_start: false,
-                      default_paste_format: 'auto',
-                      auto_close_after_paste: true,
-                      show_copy_toast: true,
-                    },
+                    settings: DEFAULT_SETTINGS,
                   })
                   await loadSettings()
                 } catch (err) {

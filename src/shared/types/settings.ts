@@ -30,7 +30,6 @@ export interface AppSettings {
 
   // Paste behavior
   default_paste_format: PasteFormat
-  auto_close_after_paste: boolean
   paste_on_enter: boolean
   hide_on_blur: boolean
   always_on_top: boolean
@@ -63,7 +62,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   clear_on_exit: false,
   auto_start: false,
   default_paste_format: 'auto',
-  auto_close_after_paste: true,
   paste_on_enter: true,
   hide_on_blur: true,
   always_on_top: false,
