@@ -14,6 +14,14 @@ pub struct AppState {
     pub semantic_service: Arc<SemanticService>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticIndexStats {
+    pub total_text_clips: i64,
+    pub indexed_clips: i64,
+    pub pending_clips: i64,
+}
+
 // ============================================================================
 // Clip Commands
 // ============================================================================
@@ -892,6 +900,28 @@ pub fn get_downloaded_models(state: State<'_, AppState>) -> Result<Vec<String>, 
 }
 
 #[tauri::command]
+pub async fn get_semantic_index_stats(
+    state: State<'_, AppState>,
+) -> Result<SemanticIndexStats, String> {
+    let settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    let stats = state
+        .repository
+        .get_embedding_stats(&settings.semantic_model)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(SemanticIndexStats {
+        total_text_clips: stats.total_text_clips,
+        indexed_clips: stats.indexed_clips,
+        pending_clips: (stats.total_text_clips - stats.indexed_clips).max(0),
+    })
+}
+
+#[tauri::command]
 pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut settings = state
         .settings_repository
@@ -913,6 +943,73 @@ pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> 
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn reindex_semantic_embeddings(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<SemanticIndexStats, String> {
+    use tauri::Emitter;
+
+    let (model_name, dimensions) = state
+        .semantic_service
+        .get_model_info()
+        .ok_or_else(|| "Semantic model is not loaded yet.".to_string())?;
+
+    let candidates = state
+        .repository
+        .get_embedding_candidates_for_model(&model_name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let total = candidates.len() as u64;
+
+    #[derive(serde::Serialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct ReindexProgressPayload {
+        done: u64,
+        total: u64,
+    }
+
+    for (index, clip) in candidates.into_iter().enumerate() {
+        let vector = state
+            .semantic_service
+            .embed(clip.content_text)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        state
+            .repository
+            .create_embedding(
+                &clip.id,
+                SemanticService::vector_to_bytes(&vector),
+                &model_name,
+                dimensions,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let _ = app_handle.emit(
+            "semantic-index-progress",
+            ReindexProgressPayload {
+                done: index as u64 + 1,
+                total,
+            },
+        );
+    }
+
+    let stats = state
+        .repository
+        .get_embedding_stats(&model_name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(SemanticIndexStats {
+        total_text_clips: stats.total_text_clips,
+        indexed_clips: stats.indexed_clips,
+        pending_clips: (stats.total_text_clips - stats.indexed_clips).max(0),
+    })
 }
 
 #[tauri::command]

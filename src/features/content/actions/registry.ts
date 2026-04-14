@@ -34,7 +34,9 @@ export const useActionRegistry = (context?: ActionContext) => {
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
   const openDefaultEditor = useOpenInDefaultEditorAction()
-  const generateEmbedding = useGenerateEmbeddingAction(context?.onGenerateEmbedding)
+  const generateEmbedding = useGenerateEmbeddingAction(
+    context?.canGenerateEmbedding ? context.onGenerateEmbedding : undefined
+  )
 
   // Type Specific
   const openUrl = useOpenURLAction()

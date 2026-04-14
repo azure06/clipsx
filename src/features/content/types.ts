@@ -86,5 +86,6 @@ export interface ActionContext {
   onDelete: (id: string) => void
   onTogglePin: (id: string) => void
   onToggleFavorite: (id: string) => void
+  canGenerateEmbedding?: boolean
   onGenerateEmbedding?: (id: string) => void
 }

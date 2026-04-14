@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import type { ClipItem } from '../../shared/types'
 import { ContentPreview, clipToContent, getTypeColor } from '../content'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
@@ -10,18 +11,31 @@ interface ClipPreviewProps {
 
 export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   const { deleteClip, togglePin, toggleFavorite, generateEmbedding } = useClipboardStore()
+  const [isSemanticReady, setIsSemanticReady] = useState(false)
 
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const ready = await invoke<boolean>('get_semantic_search_status')
+        setIsSemanticReady(ready)
+      } catch {
+        setIsSemanticReady(false)
+      }
+    })()
+  }, [clip.id])
 
   const actionContext = useMemo(
     () => ({
       onDelete: (id: string) => deleteClip(id),
       onTogglePin: (id: string) => togglePin(id),
       onToggleFavorite: (id: string) => toggleFavorite(id),
+      canGenerateEmbedding: isSemanticReady,
       onGenerateEmbedding: (id: string) => void generateEmbedding(id),
     }),
-    [deleteClip, togglePin, toggleFavorite, generateEmbedding]
+    [deleteClip, togglePin, toggleFavorite, isSemanticReady, generateEmbedding]
   )
 
   return (
@@ -58,6 +72,11 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           <span>{content.text.length} chars</span>
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
           {content.metadata.language && <span>{content.metadata.language}</span>}
+          {!content.clip.hasEmbedding && !isSemanticReady && content.type === 'text' && (
+            <span className="text-amber-600 dark:text-amber-400">
+              Load a semantic model to generate embeddings
+            </span>
+          )}
         </div>
         <div>
           {content.clip.appName && (

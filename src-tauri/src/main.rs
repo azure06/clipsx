@@ -227,7 +227,9 @@ fn main() {
             commands::get_semantic_search_status,
             commands::change_semantic_model,
             commands::get_downloaded_models,
+            commands::get_semantic_index_stats,
             commands::delete_semantic_model,
+            commands::reindex_semantic_embeddings,
             commands::generate_embedding,
         ])
         .on_window_event(|window, event| {

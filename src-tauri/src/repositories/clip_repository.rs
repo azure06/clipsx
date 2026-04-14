@@ -4,6 +4,18 @@ use anyhow::Result;
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EmbeddingCandidate {
+    pub id: String,
+    pub content_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingStats {
+    pub total_text_clips: i64,
+    pub indexed_clips: i64,
+}
+
 pub struct ClipRepository {
     pool: SqlitePool,
 }
@@ -685,6 +697,57 @@ impl ClipRepository {
 
         let embeddings = query_builder.fetch_all(&self.pool).await?;
         Ok(embeddings)
+    }
+
+    pub async fn get_embedding_candidates_for_model(
+        &self,
+        model: &str,
+    ) -> Result<Vec<EmbeddingCandidate>> {
+        let clips = sqlx::query_as::<_, EmbeddingCandidate>(
+            r#"
+            SELECT c.id, c.content_text
+            FROM clips c
+            LEFT JOIN embeddings e ON e.clip_id = c.id
+            WHERE c.content_text IS NOT NULL
+              AND TRIM(c.content_text) != ''
+              AND (e.clip_id IS NULL OR e.model != ?)
+            ORDER BY c.updated_at DESC
+            "#,
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(clips)
+    }
+
+    pub async fn get_embedding_stats(&self, model: &str) -> Result<EmbeddingStats> {
+        let total_text_clips = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM clips
+            WHERE content_text IS NOT NULL
+              AND TRIM(content_text) != ''
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let indexed_clips = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM embeddings
+            WHERE model = ?
+            "#,
+        )
+        .bind(model)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(EmbeddingStats {
+            total_text_clips,
+            indexed_clips,
+        })
     }
 
     /// Delete embedding for a clip

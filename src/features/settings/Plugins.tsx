@@ -27,6 +27,17 @@ interface ProgressPayload {
   total: number
 }
 
+interface IndexStats {
+  totalTextClips: number
+  indexedClips: number
+  pendingClips: number
+}
+
+interface IndexProgressPayload {
+  done: number
+  total: number
+}
+
 export const Plugins = () => {
   const { settings, loadSettings } = useSettingsStore()
   const [isReady, setIsReady] = useState(false)
@@ -38,13 +49,17 @@ export const Plugins = () => {
     downloaded: number
     total: number
   } | null>(null)
+  const [indexStats, setIndexStats] = useState<IndexStats | null>(null)
+  const [indexProgress, setIndexProgress] = useState<IndexProgressPayload | null>(null)
+  const [isReindexing, setIsReindexing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     void checkStatus()
     void fetchDownloadedModels()
+    void fetchIndexStats()
 
-    const unlisten = listen<ProgressPayload>('download-progress', event => {
+    const unlistenDownload = listen<ProgressPayload>('download-progress', event => {
       if (event.payload.model) {
         setDownloadingId(event.payload.model)
         setDownloadProgress({
@@ -54,8 +69,14 @@ export const Plugins = () => {
       }
     })
 
+    const unlistenIndex = listen<IndexProgressPayload>('semantic-index-progress', event => {
+      setIsReindexing(true)
+      setIndexProgress(event.payload)
+    })
+
     return () => {
-      void unlisten.then(f => f())
+      void unlistenDownload.then(f => f())
+      void unlistenIndex.then(f => f())
     }
   }, [settings?.semantic_model])
 
@@ -74,6 +95,15 @@ export const Plugins = () => {
       setDownloadedModels(models)
     } catch (err) {
       console.error('Failed to fetch downloaded models:', err)
+    }
+  }
+
+  const fetchIndexStats = async () => {
+    try {
+      const stats = await invoke<IndexStats>('get_semantic_index_stats')
+      setIndexStats(stats)
+    } catch (err) {
+      console.error('Failed to fetch semantic index stats:', err)
     }
   }
 
@@ -102,6 +132,7 @@ export const Plugins = () => {
 
       setIsReady(true)
       await fetchDownloadedModels()
+      await fetchIndexStats()
     } catch (err) {
       setError(String(err))
       console.error('Failed to swap semantic model:', err)
@@ -121,6 +152,7 @@ export const Plugins = () => {
       await loadSettings()
       await checkStatus()
       await fetchDownloadedModels()
+      await fetchIndexStats()
     } catch (err) {
       setError(String(err))
       console.error('Failed to toggle semantic search:', err)
@@ -139,6 +171,7 @@ export const Plugins = () => {
       await loadSettings()
       await fetchDownloadedModels()
       await checkStatus()
+      await fetchIndexStats()
 
       // If we just deleted the active model, the backend auto-unloaded it.
       // We should update UI state accordingly.
@@ -148,6 +181,23 @@ export const Plugins = () => {
     } catch (err) {
       setError(String(err))
       console.error('Failed to delete semantic model:', err)
+    }
+  }
+
+  const handleReindex = async () => {
+    try {
+      setError(null)
+      setIsReindexing(true)
+      setIndexProgress({ done: 0, total: indexStats?.pendingClips ?? 0 })
+      const stats = await invoke<IndexStats>('reindex_semantic_embeddings')
+      setIndexStats(stats)
+    } catch (err) {
+      setError(String(err))
+      console.error('Failed to reindex semantic embeddings:', err)
+    } finally {
+      setIsReindexing(false)
+      setIndexProgress(null)
+      await fetchIndexStats()
     }
   }
 
@@ -188,6 +238,72 @@ export const Plugins = () => {
             {error}
           </div>
         )}
+
+        <div className="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
+            <div className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Text Clips
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+              {indexStats?.totalTextClips ?? 0}
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
+            <div className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Indexed
+            </div>
+            <div className="mt-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+              {indexStats?.indexedClips ?? 0}
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Pending Reindex
+                </div>
+                <div className="mt-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">
+                  {indexStats?.pendingClips ?? 0}
+                </div>
+              </div>
+              <button
+                onClick={() => void handleReindex()}
+                disabled={!isReady || isReindexing || (indexStats?.pendingClips ?? 0) === 0}
+                title={
+                  !isReady
+                    ? 'Load a semantic model to index existing clips'
+                    : (indexStats?.pendingClips ?? 0) === 0
+                      ? 'All text clips are already indexed'
+                      : undefined
+                }
+                className="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isReindexing ? 'Reindexing...' : 'Index Existing Clips'}
+              </button>
+            </div>
+            {indexProgress && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  <span>Embedding progress</span>
+                  <span>
+                    {indexProgress.done} / {indexProgress.total}
+                  </span>
+                </div>
+                <div className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 ease-out"
+                    style={{
+                      width:
+                        indexProgress.total > 0
+                          ? `${Math.round((indexProgress.done / indexProgress.total) * 100)}%`
+                          : '0%',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {AVAILABLE_MODELS.map(model => {
