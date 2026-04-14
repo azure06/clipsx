@@ -494,6 +494,7 @@ async fn reconstruct_clipboard_content(
 pub async fn copy_to_clipboard(
     text: String,
     id: Option<String>,
+    plain: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     // If no ID, just copy plain text (for non-clip text)
@@ -517,7 +518,18 @@ pub async fn copy_to_clipboard(
         .await
         .map_err(|e: anyhow::Error| e.to_string())?;
 
-    // 2. Fetch full ClipItem from database
+    // 2. If plain-text format requested, skip rich reconstruction
+    if plain == Some(true) {
+        state
+            .clipboard_service
+            .set_text(&text)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+        eprintln!("[COPY] copy_to_clipboard complete (plain text)");
+        return Ok(());
+    }
+
+    // 3. Fetch full ClipItem from database
     let clip = state
         .repository
         .get_by_id(&clip_id)
@@ -532,16 +544,16 @@ pub async fn copy_to_clipboard(
               clip.pdf_path.as_ref().map(|_| "set"),
               clip.image_path.as_ref().map(|_| "set"));
 
-    // 3. Reconstruct ClipboardContent based on content_type
+    // 4. Reconstruct ClipboardContent based on content_type
     let content = reconstruct_clipboard_content(&clip, text).await?;
 
-    // 4. Write all formats to clipboard
+    // 5. Write all formats to clipboard
     eprintln!("[COPY] Writing content to clipboard...");
     crate::services::clipboard_platform::write_clipboard(&content)
         .map_err(|e| format!("Failed to write clipboard: {}", e))?;
     eprintln!("[COPY] ✓ Clipboard write complete");
 
-    // 5. Pre-seed monitor hash to prevent re-capturing our own paste
+    // 6. Pre-seed monitor hash to prevent re-capturing our own paste
     eprintln!("[COPY] Pre-seeding monitor hash...");
     {
         let monitor = state.clipboard_service.get_monitor();
@@ -567,12 +579,13 @@ pub fn get_clipboard_text(state: State<'_, AppState>) -> Result<String, String> 
 pub async fn paste_clip(
     text: String,
     id: Option<String>,
+    plain: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    // 1. Write full clip content to clipboard (rich formats preserved)
+    // 1. Write clip content to clipboard
     if let Some(ref clip_id) = id {
         state
             .repository
@@ -580,22 +593,31 @@ pub async fn paste_clip(
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
 
-        let clip = state
-            .repository
-            .get_by_id(clip_id)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?
-            .ok_or_else(|| "Clip not found".to_string())?;
+        if plain == Some(true) {
+            // Plain-text format requested — skip rich reconstruction
+            state
+                .clipboard_service
+                .set_text(&text)
+                .await
+                .map_err(|e: anyhow::Error| e.to_string())?;
+        } else {
+            let clip = state
+                .repository
+                .get_by_id(clip_id)
+                .await
+                .map_err(|e: anyhow::Error| e.to_string())?
+                .ok_or_else(|| "Clip not found".to_string())?;
 
-        let content = reconstruct_clipboard_content(&clip, text).await?;
+            let content = reconstruct_clipboard_content(&clip, text).await?;
 
-        crate::services::clipboard_platform::write_clipboard(&content)
-            .map_err(|e| format!("Failed to write clipboard: {}", e))?;
+            crate::services::clipboard_platform::write_clipboard(&content)
+                .map_err(|e| format!("Failed to write clipboard: {}", e))?;
 
-        {
-            let monitor = state.clipboard_service.get_monitor();
-            let mut monitor = monitor.lock().await;
-            monitor.notify_wrote(&content);
+            {
+                let monitor = state.clipboard_service.get_monitor();
+                let mut monitor = monitor.lock().await;
+                monitor.notify_wrote(&content);
+            }
         }
     } else {
         // No clip ID — plain text only (called without a stored clip)

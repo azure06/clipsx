@@ -320,15 +320,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
 
   performPrimaryAction: async (text: string, id: string) => {
     const settings = useSettingsStore.getState().settings
-    // Determine effective ID: if paste format is "plain", skip rich reconstruction
-    const effectiveId = settings?.default_paste_format === 'plain' ? undefined : id
+    const plain = settings?.default_paste_format === 'plain' ? true : undefined
 
     if (settings?.paste_on_enter) {
       // Paste to App: copy → hide → Ctrl+V (Rust handles hide + keystroke)
-      await invoke('paste_clip', { text, id: effectiveId })
+      await invoke('paste_clip', { text, id, plain })
     } else {
       // Copy to Clipboard only
-      await invoke('copy_to_clipboard', { text, id: effectiveId })
+      await invoke('copy_to_clipboard', { text, id, plain })
       if (settings?.hide_on_copy) {
         void getCurrentWindow().hide()
       }
@@ -337,9 +336,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
 
   performCopy: async (text: string, id: string) => {
     const settings = useSettingsStore.getState().settings
-    const effectiveId = settings?.default_paste_format === 'plain' ? undefined : id
+    const plain = settings?.default_paste_format === 'plain' ? true : undefined
 
-    await invoke('copy_to_clipboard', { text, id: effectiveId })
+    await invoke('copy_to_clipboard', { text, id, plain })
     if (settings?.hide_on_copy) {
       void getCurrentWindow().hide()
     }
