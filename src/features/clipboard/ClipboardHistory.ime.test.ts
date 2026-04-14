@@ -14,7 +14,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 function makeImeTracker() {
   let isComposing = false
-  let timer: ReturnType<typeof window.setTimeout> | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
 
   const onCompositionStart = () => {
     if (timer !== null) {
@@ -25,7 +25,7 @@ function makeImeTracker() {
   }
 
   const onCompositionEnd = () => {
-    timer = window.setTimeout(() => {
+    timer = setTimeout(() => {
       isComposing = false
       timer = null
     }, 100)

@@ -89,7 +89,8 @@ mod tests {
         let (repo, _temp) = create_test_repo();
         let settings = repo.load().unwrap();
         assert_eq!(settings.enable_images, true);
-        assert_eq!(settings.auto_close_after_paste, true);
+        assert_eq!(settings.paste_on_enter, true);
+        assert!(!settings.semantic_search_enabled);
     }
 
     #[test]
@@ -127,5 +128,23 @@ mod tests {
         // Verify persistence
         let loaded = repo.load().unwrap();
         assert_eq!(loaded.enable_images, false);
+    }
+
+    #[test]
+    fn test_save_and_load_semantic_search_settings() {
+        let (repo, _temp) = create_test_repo();
+
+        let mut settings = AppSettings::default();
+        settings.semantic_search_enabled = true;
+        settings.semantic_model = "paraphrase-multilingual-MiniLM-L12-v2".to_string();
+
+        repo.save(&settings).unwrap();
+
+        let loaded = repo.load().unwrap();
+        assert!(loaded.semantic_search_enabled);
+        assert_eq!(
+            loaded.semantic_model,
+            "paraphrase-multilingual-MiniLM-L12-v2"
+        );
     }
 }

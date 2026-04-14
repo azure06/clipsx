@@ -45,7 +45,7 @@ export const ClipboardHistory = ({
 
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const searchTimeoutRef = useRef<number | null>(null)
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // macOS IME fix: we cannot use e.isComposing because on macOS WebKit,
   // compositionend fires *before* the confirming Enter keydown, making
   // e.isComposing already false by the time our handler runs.
@@ -59,7 +59,7 @@ export const ClipboardHistory = ({
   // within 100ms of compositionend we cancel the reset, keeping isComposingRef
   // true for the entire user-visible IME session (all underlines gone).
   const isComposingRef = useRef(false)
-  const compositionEndTimerRef = useRef<number | null>(null)
+  const compositionEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // const searchInputRef = useRef<HTMLInputElement>(null) // Input is now external
 
   // Track IME composition state (see isComposingRef above)
@@ -78,7 +78,7 @@ export const ClipboardHistory = ({
       //    sees isComposingRef.current === true.
       // 2. If macOS fires another compositionstart within 100ms (next segment),
       //    onCompositionStart cancels this timer and keeps the flag true.
-      compositionEndTimerRef.current = window.setTimeout(() => {
+      compositionEndTimerRef.current = setTimeout(() => {
         isComposingRef.current = false
         compositionEndTimerRef.current = null
       }, 100)
