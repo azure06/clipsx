@@ -1,6 +1,6 @@
-# Clips Next - AI-Powered Clipboard Manager
+# ClipsX - Clipboard Manager
 
-> **Blazingly fast, privacy-first clipboard manager with AI superpowers**
+> **Fast, privacy-first clipboard history with semantic search**
 
 Built with Tauri 2.x + React 19 + Rust + TypeScript
 
@@ -9,10 +9,9 @@ Built with Tauri 2.x + React 19 + Rust + TypeScript
 ## 📖 Documentation
 
 - **[README.md](./README.md)** ← You are here (High-level overview)
-- **[PLANNING.md](./docs/PLANNING.md)** - Detailed implementation, code examples, schemas
-- **[CODING_STYLE.md](./docs/CODING_STYLE.md)** - Functional-first style guide for TypeScript & Rust
-- **[DEPENDENCIES.md](./docs/DEPENDENCIES.md)** - Why each dependency is needed
-- **[PROJECT_STATUS.md](./docs/PROJECT_STATUS.md)** - Setup status and next steps
+- **[PLANNING.md](./docs/PLANNING.md)** - Current product direction and roadmap
+- **[CODING_STYLE.md](./docs/CODING_STYLE.md)** - Functional-first style guide for TypeScript and Rust
+- **[DEPENDENCIES.md](./docs/DEPENDENCIES.md)** - Dependency and tooling overview
 
 ---
 
@@ -23,10 +22,10 @@ A clipboard manager that **understands**, **enhances**, and **organizes** everyt
 | Feature | What It Does | Why It Matters |
 |---------|-------------|----------------|
 | **Semantic Search** | Find "Python sorting code" without remembering exact words | Find anything by meaning, not just keywords |
-| **Instant Transform** | Press Cmd+G → Fix grammar, change tone, summarize | Transform text in any app without switching |
-| **Smart Paste** | Auto-detects context (Slack/Email/Excel) → Suggests format | Paste perfectly formatted for destination |
+| **Semantic Reindex** | Backfill embeddings for older clips after enabling a model | Makes existing history immediately useful |
+| **Content Detection** | Recognize URLs, code, JSON, JWTs, paths, CSV, colors, and more | Unlocks smarter previews and actions |
 | **OCR Extractor** | Screenshot table → Paste as Excel data | No more manual data entry |
-| **Predictive Format** | Suggests emojis, mentions, tone based on context | Saves time with smart suggestions |
+| **Planned Organization** | Tags and collections for high-volume clip libraries | Keeps large histories manageable |
 
 ---
 
@@ -130,13 +129,15 @@ When user requests AI feature:
 
 ## �️ Development Roadmap
 
-| Phase | Timeline | Features | Outcome |
-|-------|----------|----------|---------|
-| **1-3** | Weeks 1-4 | Basic monitor, SQLite, rich content, search | Beta 1 |
-| **4-5** | Weeks 5-7 | Semantic search, AI transformers | **V1.0 Launch** 🚀 |
-| **6-8** | Weeks 8-12 | Advanced paste, OCR, predictive | **V2.0** |
+| Status | Focus | Scope | Outcome |
+|-------|-------|-------|---------|
+| **Done** | Semantic search foundation | Persistence, tests, filter alignment, reindexing, status UX | Stable search baseline |
+| **Next** | Manual organization | Tags, collections, and filtering | Better control over large histories |
+| **Later** | OCR workflows | Extract text from screenshots and image clips | Make images searchable and reusable |
+| **Later** | Keyboard productivity | Faster navigation and action execution | Lower-friction daily usage |
+| **Later** | Ecosystem | User scripts, plugins, and deeper app integrations | Extend ClipsX without bloating core |
 
-**V1.0 Strategy:** Ship core + AI features fast (7 weeks), validate with users, iterate
+**Current direction:** Focus on semantic search quality, organization, OCR, keyboard workflows, and extensibility. Bigger differentiators can be revisited later.
 
 ---
 
@@ -148,7 +149,7 @@ clipsx/
 │   ├── features/                 # Feature-based modules
 │   │   ├── clipboard/            # History, monitoring
 │   │   ├── search/               # Text + semantic search
-│   │   ├── transforms/           # AI transformations
+│   │   ├── transforms/           # Legacy placeholder, not on the active roadmap
 │   │   └── settings/             # Config, API keys
 │   ├── shared/                   # Reusable components
 │   └── stores/                   # Zustand state
@@ -185,7 +186,7 @@ clipsx/
 | Cold start | <500ms | First impression |
 | Clipboard detect | <50ms | Feel instant |
 | Search 10k items | <100ms | Stay productive |
-| AI transform | <2s | Don't interrupt flow |
+| OCR extraction | <2s for common screenshots | Keep image workflows practical |
 | Memory usage | <150MB | Don't slow down Mac |
 | Bundle size | <15MB | Fast download/updates |
 | Test coverage | >80% | Ship with confidence |
@@ -229,7 +230,7 @@ clipsx/
 | **Semantic search** | Embedding generation costs | Power users with large histories |
 | **Smart collections** | Advanced organization | Productivity boost |
 | **Team features** | Complex infrastructure | Business use case |
-| **Advanced AI** | OCR, context detection, workflows | Professional workflows |
+| **OCR workflows** | Image processing costs and UX depth | Professional workflows |
 
 ### Free Tier Limits (To Consider)
 | What to Limit | Option A | Option B | Option C |
@@ -277,13 +278,13 @@ npm run dev  # Local development
 npm run deploy  # Deploy to Cloudflare (free tier)
 ```
 
-See [PLANNING.md](./PLANNING.md) for detailed implementation guide.
+See [PLANNING.md](./docs/PLANNING.md) for the current product direction.
 
 ---
 
 **Ready to build? Let's make clipboard management magical! ✨**
 
-*Status: 🚧 Active Development • ✅ Core Features Working*
+*Status: 🚧 Active Development • ✅ Semantic Search Foundation Complete*
 
 ---
 
@@ -292,21 +293,23 @@ See [PLANNING.md](./PLANNING.md) for detailed implementation guide.
 ### ✅ What's Working
 - **Clipboard Monitoring** - Multi-format capture (text, HTML, RTF, images, files)
 - **Smart Duplicate Detection** - Content hashing prevents duplicates across sessions
-- **Platform-Specific Optimization**:
+- **Platform-Specific Optimization**
   - macOS: NSPasteboard.changeCount (efficient, no unnecessary reads)
   - Windows/Linux: Content hash comparison (polling fallback)
 - **SQLite Storage** - FTS5 full-text search, pagination, pin/favorite
+- **Semantic Search Foundation** - Persistent enablement, startup recovery, richer readiness states
+- **Semantic Reindexing** - Existing history can be indexed after a model is enabled
+- **Search Correctness** - Canonical filter alignment across UI and backend
 - **React UI** - List/grid views, infinite scroll, theme toggle, sidebar navigation
 - **Global Shortcut** - System-wide hotkey to toggle app (customizable)
 - **Real-time Updates** - Frontend syncs automatically on clipboard changes
 
 ### 🚧 In Progress
-- **Settings System** - Need persistent storage for user preferences (global shortcut, theme, etc.)
-- **Clipboard Pipeline Refinement** - Abstract OS-specific logic for cleaner architecture
+- **Manual organization** - Tags and collections are the next planned product milestone
+- **Image workflows** - OCR and richer image handling are still pending
 
 ### 🎯 Next Up
-- Customizable global shortcut UI
-- Settings persistence (SQLite or JSON config file)
-- Content type detection (URLs, JSON, code, colors)
-- Keyboard navigation (arrow keys, number shortcuts)
-- AI features (semantic search, transformations)
+- Ship tags and collections end-to-end
+- Add OCR extraction for image clips
+- Improve keyboard-first navigation and quick actions
+- Explore scripting/plugin hooks after the core workflow is stable

@@ -1,4 +1,4 @@
-# Coding Style Guide - Clips Next
+# Coding Style Guide - ClipsX
 
 > **Philosophy:** Functional-first, immutable, composable, type-safe
 
