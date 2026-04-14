@@ -820,20 +820,65 @@ pub async fn init_semantic_search(
 }
 
 #[tauri::command]
+pub async fn set_semantic_search_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<AppSettings, String> {
+    let mut settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    if enabled {
+        state
+            .semantic_service
+            .init_model(settings.semantic_model.clone(), Some(app_handle))
+            .await
+            .map_err(|e| e.to_string())?;
+        settings.semantic_search_enabled = true;
+    } else {
+        state.semantic_service.unload_model();
+        settings.semantic_search_enabled = false;
+    }
+
+    state
+        .settings_repository
+        .save(&settings)
+        .map_err(|e| e.to_string())?;
+
+    Ok(settings)
+}
+
+#[tauri::command]
 pub async fn change_semantic_model(
     model_name: String,
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    let mut settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
     // Unload the existing model first to free memory
     state.semantic_service.unload_model();
 
     // Load the new model
     state
         .semantic_service
-        .init_model(model_name, Some(app_handle))
+        .init_model(model_name.clone(), Some(app_handle))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    settings.semantic_model = model_name;
+    settings.semantic_search_enabled = true;
+    state
+        .settings_repository
+        .save(&settings)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -848,10 +893,26 @@ pub fn get_downloaded_models(state: State<'_, AppState>) -> Result<Vec<String>, 
 
 #[tauri::command]
 pub fn delete_semantic_model(model_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
     state
         .semantic_service
         .delete_model(&model_name)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    if settings.semantic_model == model_name {
+        settings.semantic_search_enabled = false;
+        state.semantic_service.unload_model();
+        state
+            .settings_repository
+            .save(&settings)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

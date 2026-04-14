@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useSettingsStore } from '../../stores'
+import { Switch } from '../../shared/components/ui'
 
 const AVAILABLE_MODELS = [
   {
@@ -27,11 +28,12 @@ interface ProgressPayload {
 }
 
 export const Plugins = () => {
-  const { settings, updateSettings } = useSettingsStore()
+  const { settings, loadSettings } = useSettingsStore()
   const [isReady, setIsReady] = useState(false)
   const [downloadedModels, setDownloadedModels] = useState<string[]>([])
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [activatingId, setActivatingId] = useState<string | null>(null)
+  const [isTogglingEnabled, setIsTogglingEnabled] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<{
     downloaded: number
     total: number
@@ -96,7 +98,7 @@ export const Plugins = () => {
       }
 
       await invoke('change_semantic_model', { modelName: modelId })
-      await updateSettings({ semantic_model: modelId })
+      await loadSettings()
 
       setIsReady(true)
       await fetchDownloadedModels()
@@ -110,11 +112,33 @@ export const Plugins = () => {
     }
   }
 
+  const handleSemanticEnabledChange = async (enabled: boolean) => {
+    try {
+      setError(null)
+      setIsTogglingEnabled(true)
+
+      await invoke('set_semantic_search_enabled', { enabled })
+      await loadSettings()
+      await checkStatus()
+      await fetchDownloadedModels()
+    } catch (err) {
+      setError(String(err))
+      console.error('Failed to toggle semantic search:', err)
+    } finally {
+      setIsTogglingEnabled(false)
+      setDownloadingId(null)
+      setActivatingId(null)
+      setDownloadProgress(null)
+    }
+  }
+
   const handleDeleteModel = async (modelId: string) => {
     try {
       setError(null)
       await invoke('delete_semantic_model', { modelName: modelId })
+      await loadSettings()
       await fetchDownloadedModels()
+      await checkStatus()
 
       // If we just deleted the active model, the backend auto-unloaded it.
       // We should update UI state accordingly.
@@ -137,6 +161,25 @@ export const Plugins = () => {
               Install and manage local AI models for semantic search. Toggle AI mode directly from
               the search bar.
             </p>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 px-4 py-3">
+            <div className="text-right">
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                Semantic Search
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {settings?.semantic_search_enabled
+                  ? isReady
+                    ? 'Enabled and ready on startup'
+                    : 'Enabled, loading current model'
+                  : 'Disabled on startup'}
+              </div>
+            </div>
+            <Switch
+              checked={settings?.semantic_search_enabled ?? false}
+              disabled={isTogglingEnabled || activatingId !== null || downloadingId !== null}
+              onChange={value => void handleSemanticEnabledChange(value)}
+            />
           </div>
         </div>
 

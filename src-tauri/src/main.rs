@@ -223,6 +223,7 @@ fn main() {
             commands::open_text_in_editor,
             commands::open_path,
             commands::init_semantic_search,
+            commands::set_semantic_search_enabled,
             commands::get_semantic_search_status,
             commands::change_semantic_model,
             commands::get_downloaded_models,
