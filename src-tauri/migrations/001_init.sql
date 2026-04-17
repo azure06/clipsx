@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Image: {"format": "image/png"}
     -- Files: {"count": 3, "files": [{"path": "...", "name": "...", "size": 1024, "created": ..., "modified": ...}, ...]}
     -- Office: {"source_app": "Microsoft Word|Excel|PowerPoint"}
+    note TEXT,
+    -- Free-text annotation added by the user, searchable via FTS
     app_name TEXT,
     -- Source app name (e.g., "Safari", "VS Code")
     is_pinned INTEGER DEFAULT 0,
@@ -58,8 +60,8 @@ CREATE TABLE IF NOT EXISTS clips (
 );
 -- =====================================================
 -- TABLE: tags
--- PURPOSE: Labels for quick filtering (multi-label system)
--- EXAMPLES: #work, #urgent, #code, #personal, #design
+-- PURPOSE: Labels for quick filtering and organization
+-- EXAMPLES: work, code, personal, api-key
 -- NOTE: One clip can have multiple tags
 -- =====================================================
 CREATE TABLE IF NOT EXISTS tags (
@@ -74,7 +76,7 @@ CREATE TABLE IF NOT EXISTS tags (
 -- =====================================================
 -- TABLE: clip_tags (Junction Table)
 -- PURPOSE: Many-to-many relationship between clips and tags
--- EXAMPLE: Clip "API docs" can have tags #work, #code, #reference
+-- NOTE: Cascades on clip delete so orphan rows never accumulate
 -- =====================================================
 CREATE TABLE IF NOT EXISTS clip_tags (
     clip_id TEXT NOT NULL,
@@ -84,37 +86,6 @@ CREATE TABLE IF NOT EXISTS clip_tags (
     PRIMARY KEY (clip_id, tag_id),
     FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-);
--- =====================================================
--- TABLE: collections
--- PURPOSE: Project-based folders/groups for organizing clips
--- EXAMPLES: "Project Alpha", "Meeting Notes 2024", "Code Snippets - Python"
--- NOTE: Think of these as folders - more structured than tags
--- =====================================================
-CREATE TABLE IF NOT EXISTS collections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    -- Collection name
-    icon TEXT,
-    -- Emoji or Lucide icon name (e.g., "📁", "folder")
-    description TEXT,
-    -- Optional longer description
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
--- =====================================================
--- TABLE: clip_collections (Junction Table)
--- PURPOSE: Many-to-many relationship between clips and collections
--- EXAMPLE: Same clip can be in multiple collections (rare but possible)
--- =====================================================
-CREATE TABLE IF NOT EXISTS clip_collections (
-    clip_id TEXT NOT NULL,
-    collection_id INTEGER NOT NULL,
-    added_at INTEGER NOT NULL,
-    -- When clip was added to this collection
-    PRIMARY KEY (clip_id, collection_id),
-    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE,
-    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
 -- =====================================================
 -- TABLE: embeddings
@@ -160,13 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_clips_pdf ON clips(pdf_path)
 WHERE pdf_path IS NOT NULL;
 -- Tags: Quick lookup by name
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
--- Junction tables: Efficient queries
+-- Junction table: Efficient queries
 CREATE INDEX IF NOT EXISTS idx_clip_tags_clip ON clip_tags(clip_id);
 CREATE INDEX IF NOT EXISTS idx_clip_tags_tag ON clip_tags(tag_id);
-CREATE INDEX IF NOT EXISTS idx_clip_collections_clip ON clip_collections(clip_id);
-CREATE INDEX IF NOT EXISTS idx_clip_collections_collection ON clip_collections(collection_id);
--- Collections: Lookup by name
-CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name);
 -- Embeddings: Fast vector lookup
 CREATE INDEX IF NOT EXISTS idx_embeddings_clip ON embeddings(clip_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
@@ -174,10 +141,12 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 -- FULL-TEXT SEARCH (FTS5): Keyword-based search
 -- PURPOSE: Fast text search with ranking (complements semantic search)
 -- EXAMPLE: Search "database" finds all clips containing that word
+-- NOTE: Indexes both content_text and note for full coverage
 -- =====================================================
 CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
     id UNINDEXED,
     content_text,
+    note,
     content = clips,
     content_rowid = rowid
 );
@@ -185,19 +154,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS clips_fts_insert
 AFTER
 INSERT ON clips BEGIN
-INSERT INTO clips_fts(rowid, id, content_text)
-VALUES (new.rowid, new.id, new.content_text);
+INSERT INTO clips_fts(rowid, id, content_text, note)
+VALUES (new.rowid, new.id, new.content_text, new.note);
 END;
 CREATE TRIGGER IF NOT EXISTS clips_fts_delete
 AFTER DELETE ON clips BEGIN
-DELETE FROM clips_fts
-WHERE rowid = old.rowid;
+INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
+VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
 END;
 CREATE TRIGGER IF NOT EXISTS clips_fts_update
 AFTER
 UPDATE ON clips BEGIN
-DELETE FROM clips_fts
-WHERE rowid = old.rowid;
-INSERT INTO clips_fts(rowid, id, content_text)
-VALUES (new.rowid, new.id, new.content_text);
+INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
+VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
+INSERT INTO clips_fts(rowid, id, content_text, note)
+VALUES (new.rowid, new.id, new.content_text, new.note);
 END;

@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useClipboardStore, useSettingsStore } from '../../stores'
 import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
+import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
 
 // Re-export for backwards compatibility
@@ -12,7 +13,7 @@ export { ClipboardListItem } from './components'
 interface ClipboardHistoryProps {
   searchQuery?: string
   className?: string
-  onPreviewItem?: (clip: ClipItem | null) => void
+  onPreviewItem?: (clipId: string | null) => void
 }
 
 export const ClipboardHistory = ({
@@ -383,7 +384,7 @@ export const ClipboardHistory = ({
       if (clips.length > 0 && selectedIndex >= 0) {
         const selectedClip = clips[selectedIndex]
         if (selectedClip) {
-          onPreviewItem(selectedClip)
+          onPreviewItem(selectedClip.id)
         } else {
           onPreviewItem(null) // If index is out of bounds
         }
@@ -499,6 +500,8 @@ export const ClipboardHistory = ({
           </button>
         ))}
       </div>
+      {/* Tag filter row — only visible when tags exist */}
+      <TagFilter />
       {renderContent()}
     </div>
   )

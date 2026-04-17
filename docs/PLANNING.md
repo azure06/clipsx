@@ -1,6 +1,6 @@
 # ClipsX Product Direction
 
-*Last Updated: April 15, 2026*
+*Last Updated: April 16, 2026*
 
 ---
 
@@ -36,6 +36,10 @@ The current branch already includes:
 - richer semantic model status in the UI
 - detector-driven content previews and actions
 - repaired frontend and Rust test baseline
+- tags and notes per clip with FTS indexing and tag filter
+
+Known limitation on this branch:
+- semantic search does not yet apply the active `tag_filter`; browse mode and FTS search do
 
 ---
 
@@ -47,9 +51,10 @@ The current branch already includes:
 - [x] Search filter and semantic behavior cleanup
 - [x] Semantic reindex for older clips
 - [x] Semantic model status and search UX improvements
+- [x] Tags and notes: per-clip labels with color, inline editor, tag filter, FTS-indexed notes (collections dropped as redundant)
 
 ### Next
-- [ ] Manual organization: tags, collections, and filtering
+- [ ] Apply `tag_filter` inside semantic search so search results match browse/FTS filtering
 - [ ] OCR workflows for image clips
 - [ ] Keyboard-first navigation and quick actions
 - [ ] User scripts or lightweight extensibility hooks

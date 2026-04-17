@@ -1,2 +1,5 @@
 export * from './ClipboardListItem'
 export { ClipboardGridItem } from './ClipboardGridItem'
+export { TagChips } from './TagChips'
+export { NoteField } from './NoteField'
+export { TagFilter } from './TagFilter'

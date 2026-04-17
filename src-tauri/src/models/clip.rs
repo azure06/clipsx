@@ -18,6 +18,7 @@ pub struct ClipItem {
     pub metadata: Option<String>,        // JSON object
     pub created_at: i64,                 // Unix timestamp
     pub updated_at: i64,                 // Last access timestamp
+    pub note: Option<String>,
     pub app_name: Option<String>,
     pub is_pinned: i32,   // SQLite uses INTEGER for boolean
     pub is_favorite: i32, // SQLite uses INTEGER for boolean
@@ -42,18 +43,6 @@ pub struct Tag {
     pub updated_at: i64,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct Collection {
-    pub id: i64,
-    pub name: String,
-    pub icon: Option<String>,
-    pub description: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Embedding {
@@ -66,6 +55,13 @@ pub struct Embedding {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipTagEntry {
+    pub clip_id: String,
+    pub tag: Tag,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +69,6 @@ pub struct ClipWithTags {
     #[serde(flatten)]
     pub clip: ClipItem,
     pub tags: Vec<Tag>,
-    pub collections: Vec<Collection>,
 }
 
 #[allow(dead_code)]
@@ -128,6 +123,7 @@ impl ClipItem {
             file_paths: None,
             detected_type,
             metadata,
+            note: None,
             created_at: now,
             updated_at: now,
             app_name: None,

@@ -7,10 +7,21 @@ use tokio::task;
 #[derive(Debug, Clone)]
 pub enum SemanticRuntimeStatus {
     Idle,
-    Loading { model_name: String },
-    Indexing { model_name: String, done: u64, total: u64 },
-    Ready { model_name: String },
-    Error { model_name: Option<String>, message: String },
+    Loading {
+        model_name: String,
+    },
+    Indexing {
+        model_name: String,
+        done: u64,
+        total: u64,
+    },
+    Ready {
+        model_name: String,
+    },
+    Error {
+        model_name: Option<String>,
+        message: String,
+    },
 }
 
 /// Handes Local Semantic Search functionality using fastembed.

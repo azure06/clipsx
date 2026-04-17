@@ -10,7 +10,7 @@ import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
-import { useUIStore, useSettingsStore } from '../../stores'
+import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { SemanticStatus } from '../../shared/types'
 
@@ -20,15 +20,25 @@ export const AppLayout = () => {
     setActiveView,
     searchQuery,
     setSearchQuery,
-    previewClip,
-    setPreviewClip,
+    previewClipId,
+    setPreviewClipId,
     resetSearch,
     isSemanticActive,
     toggleSemantic,
   } = useUIStore()
   const { settings, loadSettings } = useSettingsStore()
+  const clips = useClipboardStore(state => state.clips)
   const { setThemeMode } = useTheme()
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
+  const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+
+  useEffect(() => {
+    console.log('[NOTE_DEBUG][AppLayout] preview clip resolved from clipboardStore', {
+      previewClipId,
+      previewClipNote: previewClip?.note ?? null,
+      expected: 'preview should always show the same clip data that lives in clipboardStore',
+    })
+  }, [previewClipId, previewClip])
 
   // Load settings on app start
   useEffect(() => {
@@ -114,7 +124,7 @@ export const AppLayout = () => {
                     <ClipboardHistory
                       searchQuery={searchQuery}
                       className="flex-1"
-                      onPreviewItem={setPreviewClip}
+                      onPreviewItem={setPreviewClipId}
                     />
                   </div>
                   {/* RIGHT PANEL: Preview & Actions */}

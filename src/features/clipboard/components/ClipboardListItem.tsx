@@ -1,11 +1,11 @@
 import { memo } from 'react'
-import type { ClipItem, Tag, Collection } from '../../../shared/types'
+import type { ClipItem, Tag } from '../../../shared/types'
 import { formatClipPreview } from '../../../shared/types'
-import { Star, Sparkles, Pin, Hash, Command, CornerDownLeft } from 'lucide-react'
+import { Star, Sparkles, Pin, Hash, MessageSquare, Command, CornerDownLeft } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
-  readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
+  readonly clip: ClipItem & { readonly tags?: Tag[] }
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
   readonly onDoubleClick?: (text: string, id: string) => void
@@ -26,13 +26,8 @@ const ClipboardListItemComponent = ({
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
-  const collections = clip.collections ?? []
   const hasAttributes =
-    isPinned ||
-    isFavorite ||
-    tags.length > 0 ||
-    collections.length > 0 ||
-    Boolean(clip.hasEmbedding)
+    isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || Boolean(clip.hasEmbedding)
 
   const handleClick = () => {
     if (onSelect) {
@@ -101,6 +96,9 @@ const ClipboardListItemComponent = ({
                 <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />
               )}
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
+              {clip.note && (
+                <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
+              )}
               {clip.hasEmbedding && (
                 <span title="Semantic Search Indexed">
                   <svg width="0" height="0" className="absolute">

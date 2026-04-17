@@ -1,8 +1,48 @@
 #![allow(dead_code)]
-use crate::models::{ClipItem, Collection, Embedding, Tag};
+use crate::models::{ClipItem, Embedding, Tag};
 use anyhow::Result;
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::str::FromStr;
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
+use std::{str::FromStr, time::Duration};
+use tokio::sync::Mutex;
+
+const CLIPS_FTS_TABLE_SQL: &str = r#"
+    CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
+        id UNINDEXED,
+        content_text,
+        note,
+        content = clips,
+        content_rowid = rowid
+    )
+"#;
+
+const CLIPS_FTS_INSERT_TRIGGER_SQL: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS clips_fts_insert
+    AFTER INSERT ON clips BEGIN
+        INSERT INTO clips_fts(rowid, id, content_text, note)
+        VALUES (new.rowid, new.id, new.content_text, new.note);
+    END
+"#;
+
+const CLIPS_FTS_DELETE_TRIGGER_SQL: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS clips_fts_delete
+    AFTER DELETE ON clips BEGIN
+        INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
+        VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
+    END
+"#;
+
+const CLIPS_FTS_UPDATE_TRIGGER_SQL: &str = r#"
+    CREATE TRIGGER IF NOT EXISTS clips_fts_update
+    AFTER UPDATE ON clips BEGIN
+        INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
+        VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
+        INSERT INTO clips_fts(rowid, id, content_text, note)
+        VALUES (new.rowid, new.id, new.content_text, new.note);
+    END
+"#;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EmbeddingCandidate {
@@ -18,30 +58,123 @@ pub struct EmbeddingStats {
 
 pub struct ClipRepository {
     pool: SqlitePool,
+    write_lock: Mutex<()>,
 }
 
 impl ClipRepository {
     pub async fn new(database_url: &str) -> Result<Self> {
-        let options = SqliteConnectOptions::from_str(database_url)?.create_if_missing(true);
+        let options = SqliteConnectOptions::from_str(database_url)?
+            .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true);
 
-        let pool = SqlitePool::connect_with(options).await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
+            .connect_with(options)
+            .await?;
 
         // Run migrations
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        Ok(Self { pool })
+        let repository = Self {
+            pool,
+            write_lock: Mutex::new(()),
+        };
+        repository.ensure_clips_fts_healthy().await?;
+
+        Ok(repository)
+    }
+
+    fn is_malformed_error(error: &anyhow::Error) -> bool {
+        let message = error.to_string().to_lowercase();
+        message.contains("database disk image is malformed")
+            || message.contains("malformed")
+            || message.contains("sql logic error")
+    }
+
+    async fn create_clips_fts_schema(&self) -> Result<()> {
+        sqlx::query(CLIPS_FTS_TABLE_SQL).execute(&self.pool).await?;
+        sqlx::query(CLIPS_FTS_INSERT_TRIGGER_SQL)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(CLIPS_FTS_DELETE_TRIGGER_SQL)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(CLIPS_FTS_UPDATE_TRIGGER_SQL)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn rebuild_clips_fts_unlocked(&self) -> Result<()> {
+        eprintln!(
+            "[NOTE_DEBUG][repository] rebuilding clips_fts | expected=search index should be recreated from clips without losing clip data"
+        );
+
+        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_insert")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_delete")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_update")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DROP TABLE IF EXISTS clips_fts")
+            .execute(&self.pool)
+            .await?;
+
+        self.create_clips_fts_schema().await?;
+
+        sqlx::query("INSERT INTO clips_fts(clips_fts) VALUES('rebuild')")
+            .execute(&self.pool)
+            .await?;
+
+        eprintln!(
+            "[NOTE_DEBUG][repository] rebuilt clips_fts successfully | expected=note and search writes should work again"
+        );
+
+        Ok(())
+    }
+
+    async fn ensure_clips_fts_healthy_unlocked(&self) -> Result<()> {
+        match sqlx::query("INSERT INTO clips_fts(clips_fts) VALUES('integrity-check')")
+            .execute(&self.pool)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if Self::is_malformed_error(&error) {
+                    eprintln!(
+                        "[NOTE_DEBUG][repository] clips_fts integrity check failed; attempting rebuild | error={} | expected=rebuild should restore FTS writes",
+                        error
+                    );
+                    self.rebuild_clips_fts_unlocked().await
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    async fn ensure_clips_fts_healthy(&self) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
+        self.ensure_clips_fts_healthy_unlocked().await
     }
 
     pub async fn insert(&self, clip: &ClipItem) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
         sqlx::query(
             r#"
             INSERT INTO clips (
                 id, content_type, content_text, content_html, content_rtf,
                 svg_path, pdf_path, image_path, attachment_path, attachment_type,
-                file_paths, detected_type, metadata, created_at, updated_at, app_name,
+                file_paths, detected_type, metadata, note, created_at, updated_at, app_name,
                 is_pinned, is_favorite, access_count, content_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&clip.id)
@@ -57,6 +190,7 @@ impl ClipRepository {
         .bind(&clip.file_paths)
         .bind(&clip.detected_type)
         .bind(&clip.metadata)
+        .bind(&clip.note)
         .bind(clip.created_at)
         .bind(clip.updated_at)
         .bind(&clip.app_name)
@@ -87,6 +221,7 @@ impl ClipRepository {
         offset: i32,
         favorites_only: bool,
         pinned_only: bool,
+        tag_filter: Option<i64>,
     ) -> Result<Vec<ClipItem>> {
         let mut sql = String::from(
             "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1"
@@ -98,14 +233,17 @@ impl ClipRepository {
         if pinned_only {
             sql.push_str(" AND clips.is_pinned = 1");
         }
+        if tag_filter.is_some() {
+            sql.push_str(" AND clips.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
+        }
 
         sql.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
 
-        let clips = sqlx::query_as::<_, ClipItem>(&sql)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut q = sqlx::query_as::<_, ClipItem>(&sql);
+        if let Some(tag_id) = tag_filter {
+            q = q.bind(tag_id);
+        }
+        let clips = q.bind(limit).bind(offset).fetch_all(&self.pool).await?;
 
         Ok(clips)
     }
@@ -123,6 +261,7 @@ impl ClipRepository {
 
     pub async fn touch(&self, id: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
+        let _write_guard = self.write_lock.lock().await;
         sqlx::query("UPDATE clips SET updated_at = ? WHERE id = ?")
             .bind(now)
             .bind(id)
@@ -285,6 +424,7 @@ impl ClipRepository {
         offset: i32,
         favorites_only: bool,
         pinned_only: bool,
+        tag_filter: Option<i64>,
     ) -> Result<Vec<ClipItem>> {
         let escaped_query = Self::escape_fts5_query(query);
 
@@ -316,12 +456,14 @@ impl ClipRepository {
             }
         }
 
-        // Add favorites and pinned filters
         if favorites_only {
             sql.push_str(" AND clips.is_favorite = 1");
         }
         if pinned_only {
             sql.push_str(" AND clips.is_pinned = 1");
+        }
+        if tag_filter.is_some() {
+            sql.push_str(" AND clips.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
         }
 
         if has_text_query {
@@ -342,6 +484,10 @@ impl ClipRepository {
             }
         }
 
+        if let Some(tag_id) = tag_filter {
+            query_builder = query_builder.bind(tag_id);
+        }
+
         let clips = query_builder
             .bind(limit)
             .bind(offset)
@@ -352,6 +498,7 @@ impl ClipRepository {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
         sqlx::query("DELETE FROM clips WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -361,6 +508,7 @@ impl ClipRepository {
     }
 
     pub async fn clear_all(&self) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
         sqlx::query("DELETE FROM clips").execute(&self.pool).await?;
 
         Ok(())
@@ -390,6 +538,7 @@ impl ClipRepository {
 
     /// Toggle pin status
     pub async fn toggle_pin(&self, id: &str) -> Result<bool> {
+        let _write_guard = self.write_lock.lock().await;
         let current = sqlx::query_scalar::<_, i32>("SELECT is_pinned FROM clips WHERE id = ?")
             .bind(id)
             .fetch_one(&self.pool)
@@ -408,6 +557,7 @@ impl ClipRepository {
 
     /// Toggle favorite status
     pub async fn toggle_favorite(&self, id: &str) -> Result<bool> {
+        let _write_guard = self.write_lock.lock().await;
         let current = sqlx::query_scalar::<_, i32>("SELECT is_favorite FROM clips WHERE id = ?")
             .bind(id)
             .fetch_one(&self.pool)
@@ -426,6 +576,7 @@ impl ClipRepository {
 
     /// Increment access count
     pub async fn increment_access(&self, id: &str) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
         sqlx::query("UPDATE clips SET access_count = access_count + 1 WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -512,94 +663,110 @@ impl ClipRepository {
         Ok(tags)
     }
 
-    // ===== COLLECTION OPERATIONS =====
-
-    /// Create a new collection
-    pub async fn create_collection(
-        &self,
-        name: &str,
-        icon: Option<String>,
-        description: Option<String>,
-    ) -> Result<Collection> {
-        let now = chrono::Utc::now().timestamp();
-
-        let id = sqlx::query_scalar::<_, i64>(
-            "INSERT INTO collections (name, icon, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id"
-        )
-        .bind(name)
-        .bind(&icon)
-        .bind(&description)
-        .bind(now)
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(Collection {
-            id,
-            name: name.to_string(),
-            icon,
-            description,
-            created_at: now,
-            updated_at: now,
-        })
-    }
-
-    /// Get all collections
-    pub async fn get_all_collections(&self) -> Result<Vec<Collection>> {
-        let collections =
-            sqlx::query_as::<_, Collection>("SELECT * FROM collections ORDER BY name")
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(collections)
-    }
-
-    /// Add clip to collection
-    pub async fn add_clip_to_collection(&self, clip_id: &str, collection_id: i64) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-
-        sqlx::query(
-            "INSERT OR IGNORE INTO clip_collections (clip_id, collection_id, added_at) VALUES (?, ?, ?)"
-        )
-        .bind(clip_id)
-        .bind(collection_id)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Remove clip from collection
-    pub async fn remove_clip_from_collection(
-        &self,
-        clip_id: &str,
-        collection_id: i64,
-    ) -> Result<()> {
-        sqlx::query("DELETE FROM clip_collections WHERE clip_id = ? AND collection_id = ?")
-            .bind(clip_id)
-            .bind(collection_id)
+    /// Delete a tag (cascades to clip_tags via FK)
+    pub async fn delete_tag(&self, tag_id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM tags WHERE id = ?")
+            .bind(tag_id)
             .execute(&self.pool)
             .await?;
 
         Ok(())
     }
 
-    /// Get collections for a specific clip
-    pub async fn get_collections_for_clip(&self, clip_id: &str) -> Result<Vec<Collection>> {
-        let collections = sqlx::query_as::<_, Collection>(
-            r#"
-            SELECT c.* FROM collections c
-            INNER JOIN clip_collections cc ON c.id = cc.collection_id
-            WHERE cc.clip_id = ?
-            ORDER BY c.name
-            "#,
-        )
-        .bind(clip_id)
-        .fetch_all(&self.pool)
-        .await?;
+    /// Fetch tags for multiple clips in one query, returned as (clip_id, Tag) pairs
+    pub async fn get_tags_for_clips(
+        &self,
+        clip_ids: &[String],
+    ) -> Result<Vec<(String, crate::models::Tag)>> {
+        if clip_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders = clip_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "SELECT ct.clip_id, t.id, t.name, t.color, t.created_at, t.updated_at \
+             FROM clip_tags ct JOIN tags t ON t.id = ct.tag_id \
+             WHERE ct.clip_id IN ({})",
+            placeholders
+        );
+        let mut q = sqlx::query(&sql);
+        for id in clip_ids {
+            q = q.bind(id);
+        }
+        let rows = q.fetch_all(&self.pool).await?;
+        let mut result = Vec::with_capacity(rows.len());
+        for row in rows {
+            use sqlx::Row;
+            let clip_id: String = row.try_get("clip_id")?;
+            let tag = crate::models::Tag {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                color: row.try_get("color")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            };
+            result.push((clip_id, tag));
+        }
+        Ok(result)
+    }
 
-        Ok(collections)
+    /// Update the note on a clip and return the saved row
+    pub async fn update_clip_note(&self, clip_id: &str, note: Option<String>) -> Result<ClipItem> {
+        let now = chrono::Utc::now().timestamp();
+        let _write_guard = self.write_lock.lock().await;
+        eprintln!(
+            "[NOTE_DEBUG][repository] executing note update | clip_id={} | note={:?} | expected=rows_affected should be 1 and get_by_id should return the saved note",
+            clip_id, note
+        );
+        let update_result = sqlx::query("UPDATE clips SET note = ?, updated_at = ? WHERE id = ?")
+            .bind(&note)
+            .bind(now)
+            .bind(clip_id)
+            .execute(&self.pool)
+            .await;
+
+        let result = match update_result {
+            Ok(result) => result,
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if Self::is_malformed_error(&error) {
+                    eprintln!(
+                        "[NOTE_DEBUG][repository] note update hit malformed DB error; rebuilding clips_fts and retrying | clip_id={} | error={} | expected=retry should succeed",
+                        clip_id, error
+                    );
+                    self.rebuild_clips_fts_unlocked().await?;
+                    sqlx::query("UPDATE clips SET note = ?, updated_at = ? WHERE id = ?")
+                        .bind(&note)
+                        .bind(now)
+                        .bind(clip_id)
+                        .execute(&self.pool)
+                        .await?
+                } else {
+                    return Err(error);
+                }
+            }
+        };
+
+        eprintln!(
+            "[NOTE_DEBUG][repository] update executed | clip_id={} | rows_affected={} | expected=1",
+            clip_id,
+            result.rows_affected()
+        );
+
+        if result.rows_affected() == 0 {
+            anyhow::bail!("Clip not found for note update: {}", clip_id);
+        }
+
+        let clip = self
+            .get_by_id(clip_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Clip disappeared after note update: {}", clip_id))?;
+
+        eprintln!(
+            "[NOTE_DEBUG][repository] fetched clip after update | clip_id={} | fetched_note={:?} | expected=fetched_note should match the saved note",
+            clip.id, clip.note
+        );
+
+        Ok(clip)
     }
 
     // ===== EMBEDDING OPERATIONS (for semantic search) =====
@@ -925,8 +1092,14 @@ mod tests {
         let remaining = repo.get_recent(20).await?;
         // 3 normal + 1 pinned + 1 fav
         assert_eq!(remaining.len(), 5);
-        assert!(remaining.iter().any(|c| c.is_pinned == 1), "pinned must survive");
-        assert!(remaining.iter().any(|c| c.is_favorite == 1), "favorite must survive");
+        assert!(
+            remaining.iter().any(|c| c.is_pinned == 1),
+            "pinned must survive"
+        );
+        assert!(
+            remaining.iter().any(|c| c.is_favorite == 1),
+            "favorite must survive"
+        );
 
         Ok(())
     }
@@ -1058,7 +1231,10 @@ mod tests {
         repo.insert(&ancient).await?;
 
         let deleted = repo.enforce_storage_limits(0, 0).await?;
-        assert_eq!(deleted, 0, "age-based deletion disabled when max_age_days=0");
+        assert_eq!(
+            deleted, 0,
+            "age-based deletion disabled when max_age_days=0"
+        );
         Ok(())
     }
 
@@ -1107,6 +1283,30 @@ mod tests {
 
         let remaining = repo.get_recent(10).await?;
         assert_eq!(remaining.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_clip_note_keeps_fts_searchable() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("alpha body".to_string(), "text".to_string(), None);
+
+        repo.insert(&clip).await?;
+        let updated = repo
+            .update_clip_note(&clip.id, Some("fresh note".to_string()))
+            .await?;
+
+        assert_eq!(updated.note.as_deref(), Some("fresh note"));
+
+        let results = repo
+            .search_paginated("fresh", None, 20, 0, false, false, None)
+            .await?;
+
+        assert!(
+            results.iter().any(|result| result.id == clip.id),
+            "clip should still be searchable by its updated note"
+        );
+
         Ok(())
     }
 }

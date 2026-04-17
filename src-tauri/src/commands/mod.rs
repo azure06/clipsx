@@ -152,6 +152,7 @@ pub async fn get_recent_clips_paginated(
     offset: Option<i32>,
     favorites_only: Option<bool>,
     pinned_only: Option<bool>,
+    tag_filter: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ClipItem>, String> {
     state
@@ -161,6 +162,7 @@ pub async fn get_recent_clips_paginated(
             offset.unwrap_or(0),
             favorites_only.unwrap_or(false),
             pinned_only.unwrap_or(false),
+            tag_filter,
         )
         .await
         .map_err(|e| e.to_string())
@@ -207,6 +209,7 @@ pub async fn search_clips(
         Some(0),
         Some(false),
         Some(false),
+        None,
         use_semantic_search,
         similarity_threshold,
         state,
@@ -222,6 +225,7 @@ pub async fn search_clips_paginated(
     offset: Option<i32>,
     favorites_only: Option<bool>,
     pinned_only: Option<bool>,
+    tag_filter: Option<i64>,
     use_semantic_search: bool,
     similarity_threshold: Option<f32>,
     state: State<'_, AppState>,
@@ -240,7 +244,9 @@ pub async fn search_clips_paginated(
             .await
             .map_err(|e| e.to_string())?;
 
-        // Fetch embeddings with filters
+        // Fetch embeddings with filters.
+        // TODO: Apply `tag_filter` here too so semantic search respects the same
+        // active tag selection as browse mode and FTS search.
         let all_embeddings = state
             .repository
             .get_embeddings_with_filters(filter_types.clone(), fav_val, pin_val)
@@ -316,6 +322,7 @@ pub async fn search_clips_paginated(
             offset_val,
             fav_val,
             pin_val,
+            tag_filter,
         )
         .await
         .map_err(|e| e.to_string())
@@ -1026,7 +1033,10 @@ pub fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatusP
         .map_err(|e| e.to_string())?;
 
     let downloaded_models = state.semantic_service.get_downloaded_models();
-    let loaded_model = state.semantic_service.get_model_info().map(|(name, _)| name);
+    let loaded_model = state
+        .semantic_service
+        .get_model_info()
+        .map(|(name, _)| name);
 
     Ok(build_semantic_status(
         &settings,
@@ -1217,6 +1227,126 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
     } else {
         Err("Clip does not have text content to embed".to_string())
     }
+}
+
+// ============================================================================
+// Tag & Note Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn get_tags(state: State<'_, AppState>) -> Result<Vec<crate::models::Tag>, String> {
+    state
+        .repository
+        .get_all_tags()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_tag(
+    name: String,
+    color: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<crate::models::Tag, String> {
+    state
+        .repository
+        .create_tag(&name, color)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_tag(tag_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .repository
+        .delete_tag(tag_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_tag_to_clip(
+    clip_id: String,
+    tag_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .repository
+        .add_tag_to_clip(&clip_id, tag_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_tag_from_clip(
+    clip_id: String,
+    tag_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .repository
+        .remove_tag_from_clip(&clip_id, tag_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_tags_for_clip(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::Tag>, String> {
+    state
+        .repository
+        .get_tags_for_clip(&clip_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_tags_for_clips(
+    clip_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::ClipTagEntry>, String> {
+    let pairs = state
+        .repository
+        .get_tags_for_clips(&clip_ids)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(pairs
+        .into_iter()
+        .map(|(clip_id, tag)| crate::models::ClipTagEntry { clip_id, tag })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn update_clip_note(
+    clip_id: String,
+    note: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<crate::models::ClipItem, String> {
+    eprintln!(
+        "[NOTE_DEBUG][command] update_clip_note called | clip_id={} | incoming_note={:?} | expected=repository should save the note and return the updated clip",
+        clip_id, note
+    );
+
+    let result = state
+        .repository
+        .update_clip_note(&clip_id, note)
+        .await
+        .map_err(|e| e.to_string());
+
+    match &result {
+        Ok(clip) => eprintln!(
+            "[NOTE_DEBUG][command] update_clip_note succeeded | clip_id={} | returned_note={:?} | expected=returned_note should equal the saved DB value",
+            clip.id, clip.note
+        ),
+        Err(error) => eprintln!(
+            "[NOTE_DEBUG][command] update_clip_note failed | clip_id={} | error={} | expected=no error",
+            clip_id, error
+        ),
+    }
+
+    result
 }
 
 // ============================================================================

@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event'
 import type { ClipItem } from '../../shared/types'
 import { ContentPreview, clipToContent, getTypeColor } from '../content'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
+import { TagChips } from './components/TagChips'
+import { NoteField } from './components/NoteField'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import type { SemanticStatus } from '../../shared/types'
 
@@ -79,6 +81,12 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
       {/* Main Content Body - Maximized */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-0 relative">
         <ContentPreview content={content} />
+      </div>
+
+      {/* Tags & Note Bar */}
+      <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/20 dark:bg-black/10 border-t border-slate-100/10 dark:border-slate-100/5">
+        <TagChips clipId={clip.id} tags={clip.tags ?? []} />
+        <NoteField clipId={clip.id} />
       </div>
 
       {/* Status Bar: L2 */}

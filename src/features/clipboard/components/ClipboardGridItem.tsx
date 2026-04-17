@@ -1,11 +1,11 @@
 import { memo } from 'react'
-import type { ClipItem, Tag, Collection } from '../../../shared/types'
+import type { ClipItem, Tag } from '../../../shared/types'
 import { formatTimestamp } from '../../../shared/types'
-import { Star, Sparkles, Pin, Folder, Hash } from 'lucide-react'
+import { Star, Sparkles, Pin, Hash } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardGridItemProps = {
-  readonly clip: ClipItem & { readonly tags?: Tag[]; readonly collections?: Collection[] }
+  readonly clip: ClipItem & { readonly tags?: Tag[] }
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
   readonly isSelected?: boolean
@@ -24,13 +24,8 @@ const ClipboardGridItemComponent = ({
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
   const tags = clip.tags ?? []
-  const collections = clip.collections ?? []
   const hasAttributes =
-    isPinned ||
-    isFavorite ||
-    tags.length > 0 ||
-    collections.length > 0 ||
-    Boolean(clip.hasEmbedding)
+    isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || Boolean(clip.hasEmbedding)
 
   const handleClick = () => {
     if (onSelect) {
@@ -139,26 +134,6 @@ const ClipboardGridItemComponent = ({
             {tags.length > 2 && (
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 text-[9px] font-medium">
                 +{tags.length - 2}
-              </span>
-            )}
-
-            {collections.slice(0, 1).map(collection => (
-              <span
-                key={collection.id}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-[9px] font-medium"
-              >
-                {collection.icon ? (
-                  <span className="text-[9px]">{collection.icon}</span>
-                ) : (
-                  <Folder className="h-2 w-2" strokeWidth={2.5} />
-                )}
-                {collection.name.slice(0, 8)}
-              </span>
-            ))}
-
-            {collections.length > 1 && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 text-[9px] font-medium">
-                +{collections.length - 1}
               </span>
             )}
           </div>

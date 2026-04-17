@@ -232,6 +232,14 @@ fn main() {
             commands::delete_semantic_model,
             commands::reindex_semantic_embeddings,
             commands::generate_embedding,
+            commands::get_tags,
+            commands::create_tag,
+            commands::delete_tag,
+            commands::add_tag_to_clip,
+            commands::remove_tag_from_clip,
+            commands::get_tags_for_clip,
+            commands::get_tags_for_clips,
+            commands::update_clip_note,
         ])
         .on_window_event(|window, event| {
             // Intercept the window close button (X).

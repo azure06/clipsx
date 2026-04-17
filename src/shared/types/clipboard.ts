@@ -23,6 +23,7 @@ export type ClipItem = {
   readonly attachmentType: string | null // UTI type for OLE write-back, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
   readonly filePaths: string | null // JSON array
   readonly metadata: string | null // JSON object
+  readonly note: string | null // User annotation, searchable
   readonly createdAt: number // Unix timestamp
   readonly updatedAt: number // Last access timestamp
   readonly appName: string | null
@@ -32,6 +33,7 @@ export type ClipItem = {
   readonly contentHash: string | null
   readonly hasEmbedding?: boolean
   readonly similarityScore?: number
+  readonly tags?: Tag[]
 }
 
 export type Tag = {
@@ -41,18 +43,8 @@ export type Tag = {
   readonly createdAt: number
 }
 
-export type Collection = {
-  readonly id: number
-  readonly name: string
-  readonly icon: string | null // Emoji or lucide icon name
-  readonly description: string | null
-  readonly createdAt: number
-  readonly updatedAt: number
-}
-
 export type ClipWithTags = ClipItem & {
   readonly tags: Tag[]
-  readonly collections: Collection[]
 }
 
 export type Result<T, E = string> = { ok: true; value: T } | { ok: false; error: E }
