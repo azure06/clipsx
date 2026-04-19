@@ -61,6 +61,11 @@ pub struct ClipRepository {
     write_lock: Mutex<()>,
 }
 
+struct TypeFilterClause {
+    sql: String,
+    binds: Vec<String>,
+}
+
 impl ClipRepository {
     pub async fn new(database_url: &str) -> Result<Self> {
         let options = SqliteConnectOptions::from_str(database_url)?
@@ -351,6 +356,35 @@ impl ClipRepository {
         escaped_tokens.join(" AND ")
     }
 
+    fn build_type_filter_clause(alias: &str, filter_types: &[String]) -> Option<TypeFilterClause> {
+        if filter_types.is_empty() {
+            return None;
+        }
+
+        let spreadsheet_office_predicate = format!(
+            "({alias}.detected_type = 'office' AND json_extract({alias}.metadata, '$.office_kind') = 'spreadsheet')"
+        );
+
+        let mut clauses = Vec::with_capacity(filter_types.len());
+        let mut binds = Vec::with_capacity(filter_types.len());
+
+        for filter_type in filter_types {
+            if filter_type == "csv" {
+                clauses.push(format!(
+                    "({alias}.detected_type = ? OR {spreadsheet_office_predicate})"
+                ));
+            } else {
+                clauses.push(format!("{alias}.detected_type = ?"));
+            }
+            binds.push(filter_type.clone());
+        }
+
+        Some(TypeFilterClause {
+            sql: format!(" AND ({})", clauses.join(" OR ")),
+            binds,
+        })
+    }
+
     pub async fn search(
         &self,
         query: &str,
@@ -377,15 +411,8 @@ impl ClipRepository {
 
         // Add filter types if present
         if let Some(types) = &filter_types {
-            if !types.is_empty() {
-                sql.push_str(" AND clips.detected_type IN (");
-                for (i, _) in types.iter().enumerate() {
-                    if i > 0 {
-                        sql.push_str(", ");
-                    }
-                    sql.push('?');
-                }
-                sql.push(')');
+            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
+                sql.push_str(&clause.sql);
             }
         }
 
@@ -403,8 +430,14 @@ impl ClipRepository {
         }
 
         if let Some(types) = &filter_types {
-            for t in types {
-                query_builder = query_builder.bind(t);
+            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
+                for t in clause.binds {
+                    query_builder = query_builder.bind(t);
+                }
+            } else {
+                for t in types {
+                    query_builder = query_builder.bind(t);
+                }
             }
         }
 
@@ -444,15 +477,8 @@ impl ClipRepository {
         }
 
         if let Some(types) = &filter_types {
-            if !types.is_empty() {
-                sql.push_str(" AND clips.detected_type IN (");
-                for (i, _) in types.iter().enumerate() {
-                    if i > 0 {
-                        sql.push_str(", ");
-                    }
-                    sql.push('?');
-                }
-                sql.push(')');
+            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
+                sql.push_str(&clause.sql);
             }
         }
 
@@ -479,8 +505,14 @@ impl ClipRepository {
         }
 
         if let Some(types) = &filter_types {
-            for t in types {
-                query_builder = query_builder.bind(t);
+            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
+                for t in clause.binds {
+                    query_builder = query_builder.bind(t);
+                }
+            } else {
+                for t in types {
+                    query_builder = query_builder.bind(t);
+                }
             }
         }
 
@@ -835,15 +867,8 @@ impl ClipRepository {
         );
 
         if let Some(types) = &filter_types {
-            if !types.is_empty() {
-                sql.push_str(" AND c.detected_type IN (");
-                for (i, _) in types.iter().enumerate() {
-                    if i > 0 {
-                        sql.push_str(", ");
-                    }
-                    sql.push('?');
-                }
-                sql.push(')');
+            if let Some(clause) = Self::build_type_filter_clause("c", types) {
+                sql.push_str(&clause.sql);
             }
         }
 
@@ -857,8 +882,14 @@ impl ClipRepository {
         let mut query_builder = sqlx::query_as::<_, Embedding>(&sql);
 
         if let Some(types) = &filter_types {
-            for t in types {
-                query_builder = query_builder.bind(t);
+            if let Some(clause) = Self::build_type_filter_clause("c", types) {
+                for t in clause.binds {
+                    query_builder = query_builder.bind(t);
+                }
+            } else {
+                for t in types {
+                    query_builder = query_builder.bind(t);
+                }
             }
         }
 
@@ -1306,6 +1337,64 @@ mod tests {
             results.iter().any(|result| result.id == clip.id),
             "clip should still be searchable by its updated note"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_csv_filter_includes_only_csv_and_office_spreadsheets() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let csv_clip = ClipItem::from_text(
+            "name,age\nalice,30".to_string(),
+            "csv".to_string(),
+            Some(serde_json::json!({ "delimiter": ",", "rows": 2, "columns": 2 }).to_string()),
+        );
+        repo.insert(&csv_clip).await?;
+
+        let mut office_spreadsheet =
+            ClipItem::from_text("product\tqty\npens\t12".to_string(), "office".to_string(), None);
+        office_spreadsheet.content_type = "office".to_string();
+        office_spreadsheet.metadata =
+            Some(serde_json::json!({ "office_kind": "spreadsheet" }).to_string());
+        repo.insert(&office_spreadsheet).await?;
+
+        let mut legacy_html_table =
+            ClipItem::from_text("legacy table".to_string(), "office".to_string(), None);
+        legacy_html_table.content_type = "office".to_string();
+        legacy_html_table.content_html =
+            Some("<table><tr><th>A</th></tr><tr><td>1</td></tr></table>".to_string());
+        legacy_html_table.metadata = Some(serde_json::json!({ "source_app": "Microsoft Excel" }).to_string());
+        repo.insert(&legacy_html_table).await?;
+
+        let mut office_document =
+            ClipItem::from_text("Quarterly memo".to_string(), "office".to_string(), None);
+        office_document.content_type = "office".to_string();
+        office_document.metadata =
+            Some(serde_json::json!({ "office_kind": "document" }).to_string());
+        repo.insert(&office_document).await?;
+
+        let csv_results = repo
+            .search_paginated("", Some(vec!["csv".to_string()]), 20, 0, false, false, None)
+            .await?;
+        let csv_ids: std::collections::HashSet<String> =
+            csv_results.into_iter().map(|clip| clip.id).collect();
+
+        assert!(csv_ids.contains(&csv_clip.id));
+        assert!(csv_ids.contains(&office_spreadsheet.id));
+        assert!(!csv_ids.contains(&legacy_html_table.id));
+        assert!(!csv_ids.contains(&office_document.id));
+
+        let office_results = repo
+            .search_paginated("", Some(vec!["office".to_string()]), 20, 0, false, false, None)
+            .await?;
+        let office_ids: std::collections::HashSet<String> =
+            office_results.into_iter().map(|clip| clip.id).collect();
+
+        assert!(office_ids.contains(&office_spreadsheet.id));
+        assert!(office_ids.contains(&legacy_html_table.id));
+        assert!(office_ids.contains(&office_document.id));
+        assert!(!office_ids.contains(&csv_clip.id));
 
         Ok(())
     }
