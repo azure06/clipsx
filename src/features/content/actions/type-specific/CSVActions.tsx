@@ -6,6 +6,7 @@ export const useCsvToJsonAction = (): SmartAction => ({
   label: 'Copy as JSON',
   icon: <FileJson size={16} />,
   category: 'transform',
+  placement: 'preview_menu',
   check: content => content.type === 'csv',
   execute: async content => {
     const lines = content.text.split(/\r?\n/).filter(line => line.trim() !== '')
@@ -37,6 +38,7 @@ export const useCsvToMarkdownAction = (): SmartAction => ({
   label: 'Copy as Markdown',
   icon: <Table size={16} />,
   category: 'transform',
+  placement: 'preview_menu',
   check: content => content.type === 'csv',
   execute: async content => {
     const lines = content.text.split(/\r?\n/).filter(line => line.trim() !== '')

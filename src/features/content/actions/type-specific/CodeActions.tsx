@@ -6,6 +6,7 @@ export const useFormatCodeAction = (): SmartAction => ({
   label: 'Format Code',
   icon: <Code2 size={16} />,
   category: 'transform',
+  placement: 'preview_menu',
   check: content => content.type === 'code',
   execute: async content => {
     // Basic formatting - can be enhanced with prettier/etc
@@ -28,6 +29,7 @@ export const useCopyCodeAction = (): SmartAction => ({
   label: 'Copy Code',
   icon: <FileCode size={16} />,
   category: 'core',
+  placement: 'hidden',
   check: content => content.type === 'code',
   execute: async content => {
     await navigator.clipboard.writeText(content.text)
@@ -39,6 +41,7 @@ export const useDownloadCodeAction = (): SmartAction => ({
   label: 'Download File',
   icon: <Download size={16} />,
   category: 'utility',
+  placement: 'hidden',
   check: content => content.type === 'code',
   execute: content => {
     const lang = content.metadata.language || 'txt'

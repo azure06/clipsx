@@ -6,7 +6,8 @@ export const useCopyResultAction = (): SmartAction => ({
   id: 'copy-math-result',
   label: 'Copy Result',
   icon: <Equal size={16} />,
-  category: 'core', // Changed to core so it appears prominently if needed, or transform
+  category: 'core',
+  placement: 'hidden',
   check: content => content.type === 'math',
   execute: async content => {
     const result = safeEval(content.text)
@@ -19,8 +20,9 @@ export const useCopyResultAction = (): SmartAction => ({
 export const useCopyEquationAction = (): SmartAction => ({
   id: 'copy-equation',
   label: 'Copy Equation',
-  icon: <Calculator size={16} />, // reuse calculator or use specific icon
+  icon: <Calculator size={16} />,
   category: 'core',
+  placement: 'hidden',
   check: content => content.type === 'math',
   execute: async content => {
     await navigator.clipboard.writeText(content.text)

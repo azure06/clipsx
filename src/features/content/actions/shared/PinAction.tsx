@@ -7,6 +7,7 @@ export const usePinAction = (onTogglePin?: (id: string) => void): SmartAction =>
     label: 'Pin / Unpin',
     icon: <Pin size={16} />,
     category: 'core',
+    placement: 'global_bar' as const,
     check: () => true,
     execute: (content: Content) => {
       onTogglePin?.(content.clip.id)

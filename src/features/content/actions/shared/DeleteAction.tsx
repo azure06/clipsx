@@ -6,8 +6,9 @@ export const useDeleteAction = (onDelete?: (id: string) => void): SmartAction =>
   label: 'Delete',
   icon: <Trash2 size={16} />,
   category: 'core',
+  placement: 'global_bar' as const,
   shortcut: '⌘⌫',
-  check: () => true, // Available for all content
+  check: () => true,
   execute: (content: Content) => {
     onDelete?.(content.clip.id)
   },

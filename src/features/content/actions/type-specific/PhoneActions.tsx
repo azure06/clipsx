@@ -6,6 +6,7 @@ export const useCallPhoneAction = (): SmartAction => ({
   label: 'Call',
   icon: <Phone size={16} />,
   category: 'external',
+  placement: 'preview_inline',
   check: content => content.type === 'phone',
   execute: content => {
     window.open(`tel:${content.text}`)
@@ -17,6 +18,7 @@ export const useSmsAction = (): SmartAction => ({
   label: 'Send SMS',
   icon: <MessageSquare size={16} />,
   category: 'external',
+  placement: 'preview_inline',
   check: content => content.type === 'phone',
   execute: content => {
     window.open(`sms:${content.text}`)

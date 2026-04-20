@@ -6,6 +6,7 @@ export const useRevealSecretAction = (): SmartAction => ({
   label: 'Reveal',
   icon: <Eye size={16} />,
   category: 'core',
+  placement: 'hidden',
   check: content => content.type === 'secret',
   execute: () => {
     // This is a UI state toggle, which might be tricky with this stateless action model.

@@ -74,11 +74,14 @@ export type Content = {
 // Smart action definition
 export type ActionCategory = 'core' | 'transform' | 'dev' | 'ai' | 'external' | 'utility'
 
+export type ActionPlacement = 'global_bar' | 'preview_inline' | 'preview_menu' | 'hidden'
+
 export type SmartAction = {
   readonly id: string
   readonly label: string
   readonly icon: ReactNode
   readonly category: ActionCategory
+  readonly placement: ActionPlacement
   readonly shortcut?: string
   readonly check: (content: Content) => boolean
   readonly execute: (content: Content) => Promise<void> | void

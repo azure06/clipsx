@@ -35,15 +35,14 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
   label: 'Open in Editor',
   icon: <SquareArrowOutUpRight size={16} />,
   category: 'utility',
-  shortcut: '⌘Shift+O', // Or another shortcut, check conflicts
-  check: content => {
-    // Available for almost all text-based content
-    // Exclude image/files if they are handled differently, but text preview of them (e.g. base64) might be valid?
-    // For now, allow all, but maybe prioritize text-based.
-    // Actually, files type usually is a list of paths. If it's a list of paths, we might want to open them differently.
-    // But for 'text', 'code', 'json', 'sql', and 'image' etc., this is perfect.
-    return content.type !== 'files' // allow images
-  },
+  placement: 'global_bar' as const,
+  shortcut: '⌘Shift+O',
+  check: content =>
+    content.type === 'text' ||
+    content.type === 'code' ||
+    content.type === 'json' ||
+    content.type === 'csv' ||
+    content.type === 'office',
   execute: async content => {
     try {
       // If it's an image, we should have a local path already saved

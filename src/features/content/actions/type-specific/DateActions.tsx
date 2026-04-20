@@ -6,6 +6,7 @@ export const useCopyIsoDateAction = (): SmartAction => ({
   label: 'Copy ISO 8601',
   icon: <Calendar size={16} />,
   category: 'utility',
+  placement: 'preview_inline',
   check: content => content.type === 'date' || content.type === 'timestamp',
   execute: async content => {
     // If it's already an ISO date (from metadata) or we need to parse it
@@ -25,6 +26,7 @@ export const useCopyTimestampAction = (): SmartAction => ({
   label: 'Copy Timestamp',
   icon: <Clock size={16} />,
   category: 'utility',
+  placement: 'preview_inline',
   check: content => content.type === 'date',
   execute: async content => {
     const date = new Date(content.text)

@@ -12,8 +12,9 @@ export const useCopyAction = (): SmartAction => {
     label: copied ? 'Copied!' : 'Copy',
     icon: copied ? <Check size={16} /> : <Copy size={16} />,
     category: 'core',
+    placement: 'global_bar' as const,
     shortcut: '⌘C',
-    check: () => true, // Available for all content
+    check: () => true,
     execute: async (content: Content) => {
       await performCopy(content.text, content.clip.id)
       setCopied(true)

@@ -6,8 +6,9 @@ export const useFavoriteAction = (onToggle?: (clipId: string) => void): SmartAct
   label: 'Favorite',
   icon: <Star size={16} />,
   category: 'core',
+  placement: 'global_bar' as const,
   shortcut: '⌘F',
-  check: () => true, // Available for all content
+  check: () => true,
   execute: (content: Content) => {
     onToggle?.(content.clip.id)
   },

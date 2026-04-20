@@ -6,6 +6,7 @@ export const useOpenURLAction = (): SmartAction => ({
   label: 'Open Link',
   icon: <Globe size={16} />,
   category: 'external',
+  placement: 'hidden',
   shortcut: '⌘O',
   check: content => content.type === 'url',
   execute: content => {
@@ -19,6 +20,7 @@ export const useSearchURLAction = (): SmartAction => ({
   label: 'Search Domain',
   icon: <Search size={16} />,
   category: 'external',
+  placement: 'preview_menu',
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: content => {
     const domain = content.metadata.domain
@@ -31,6 +33,7 @@ export const useCopyDomainAction = (): SmartAction => ({
   label: 'Copy Domain',
   icon: <Copy size={16} />,
   category: 'utility',
+  placement: 'preview_inline',
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: async content => {
     await navigator.clipboard.writeText(content.metadata.domain || '')

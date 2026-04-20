@@ -7,6 +7,7 @@ export const useGenerateEmbeddingAction = (onGenerate?: (id: string) => void): S
     label: 'Generate AI Embedding',
     icon: <Sparkles size={16} />,
     category: 'core',
+    placement: 'global_bar' as const,
     check: (content: Content) => !content.clip.hasEmbedding && !!onGenerate,
     execute: (content: Content) => {
       onGenerate?.(content.clip.id)

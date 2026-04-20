@@ -12,7 +12,6 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
 
   if (!content) return null
 
-  // Get grouped actions
   const { standard, smart, meta } = getActionGroups(content)
 
   const hasAnyActions = standard.length > 0 || smart.length > 0 || meta.length > 0
@@ -21,27 +20,22 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
-        {/* Standard Actions */}
         {standard.map(action => (
           <ActionIconButton key={action.id} action={action} content={content} />
         ))}
 
-        {/* Separator if we have smart actions */}
         {standard.length > 0 && smart.length > 0 && (
           <div className="w-px h-3 bg-slate-100/10 mx-1" />
         )}
 
-        {/* Smart Actions */}
         {smart.map(action => (
           <ActionIconButton key={action.id} action={action} content={content} />
         ))}
 
-        {/* Separator if we have meta actions */}
         {(standard.length > 0 || smart.length > 0) && meta.length > 0 && (
           <div className="w-px h-3 bg-slate-100/10 mx-1" />
         )}
 
-        {/* Meta Actions */}
         {meta.map(action => (
           <ActionIconButton key={action.id} action={action} content={content} />
         ))}

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import type { Content, SmartAction, ActionContext } from '../types'
+import type { Content, SmartAction, ActionContext, ActionPlacement } from '../types'
+import { getPlacementForAction } from '../presentationSpec'
 
 // Core Actions
 import { useCopyAction } from './shared/CopyAction'
@@ -15,11 +16,13 @@ import {
   useSearchURLAction,
   useCopyDomainAction,
 } from './type-specific/URLActions'
-import { useSendEmailAction } from './type-specific/EmailActions'
+import {
+  useSendEmailAction,
+  useCopyDomainFromEmailAction,
+} from './type-specific/EmailActions'
 
 import { useFormatCodeAction } from './type-specific/CodeActions'
 
-// New Actions
 import { useCopyResultAction } from './type-specific/MathActions'
 import { useCallPhoneAction, useSmsAction } from './type-specific/PhoneActions'
 import { useCopyIsoDateAction, useCopyTimestampAction } from './type-specific/DateActions'
@@ -27,7 +30,6 @@ import { useCsvToJsonAction, useCsvToMarkdownAction } from './type-specific/CSVA
 import { useRevealSecretAction } from './type-specific/SecretActions'
 
 export const useActionRegistry = (context?: ActionContext) => {
-  // 1. Initialize all action hooks
   // Core
   const copyAction = useCopyAction()
   const deleteAction = useDeleteAction(context?.onDelete)
@@ -44,6 +46,7 @@ export const useActionRegistry = (context?: ActionContext) => {
   const copyDomain = useCopyDomainAction()
 
   const sendEmail = useSendEmailAction()
+  const copyEmailDomain = useCopyDomainFromEmailAction()
 
   const formatCode = useFormatCodeAction()
 
@@ -60,93 +63,102 @@ export const useActionRegistry = (context?: ActionContext) => {
 
   const revealSecret = useRevealSecretAction()
 
-  // 2. Define the master list of all available actions
-  // Group 1: Standard Actions (Copy, Open)
-  const standardActions = useMemo(
-    () => [copyAction, openDefaultEditor],
-    [copyAction, openDefaultEditor]
-  )
-
-  // Group 2: Meta Actions (Fav, Pin, Delete)
-  const metaActions = useMemo(
-    () => [favoriteAction, pinAction, generateEmbedding, deleteAction],
-    [favoriteAction, pinAction, generateEmbedding, deleteAction]
-  )
-
-  // Group 3: Smart Actions (Type-specific)
-  const smartActions = useMemo(
+  const allActions = useMemo(
     () => [
-      // Primary Copy (Result/Formatted)
-      copyMathResult, // Math result takes precedence if it exists
-
-      // Open / External
+      copyAction,
+      openDefaultEditor,
+      favoriteAction,
+      pinAction,
+      generateEmbedding,
+      deleteAction,
       openUrl,
-
-      // Specific Actions
       searchUrl,
+      copyDomain,
       sendEmail,
+      copyEmailDomain,
+      formatCode,
+      copyMathResult,
       callPhone,
       sms,
-
-      // Transforms & Utilities
-      copyDomain,
       copyIsoDate,
       copyTimestamp,
       csvToJson,
       csvToMd,
-      formatCode,
       revealSecret,
     ],
     [
-      copyMathResult,
+      copyAction,
+      openDefaultEditor,
+      favoriteAction,
+      pinAction,
+      generateEmbedding,
+      deleteAction,
       openUrl,
       searchUrl,
+      copyDomain,
       sendEmail,
+      copyEmailDomain,
+      formatCode,
+      copyMathResult,
       callPhone,
       sms,
-      copyDomain,
       copyIsoDate,
       copyTimestamp,
       csvToJson,
       csvToMd,
-      formatCode,
       revealSecret,
     ]
   )
 
-  const allActions = useMemo(
-    () => [...standardActions, ...smartActions, ...metaActions],
-    [standardActions, smartActions, metaActions]
-  )
+  const getActionsByPlacement = (
+    content: Content | null,
+    placement: ActionPlacement
+  ): SmartAction[] => {
+    if (!content) return []
+    return allActions
+      .filter(action => action.check(content))
+      .filter(action => getPlacementForAction(action.id, content.type) === placement)
+  }
 
-  // Helper types for grouped return
+  // Returns actions for the global toolbar (global_bar placement only)
+  const getGlobalBarActions = (content: Content | null): SmartAction[] =>
+    getActionsByPlacement(content, 'global_bar')
+
+  // Returns actions for preview-local menu
+  const getPreviewMenuActions = (content: Content | null): SmartAction[] =>
+    getActionsByPlacement(content, 'preview_menu')
+
+  // Returns actions for inline preview interaction
+  const getPreviewInlineActions = (content: Content | null): SmartAction[] =>
+    getActionsByPlacement(content, 'preview_inline')
+
+  // Legacy grouped accessor kept for backwards compatibility
   type ActionGroups = {
     standard: SmartAction[]
     smart: SmartAction[]
     meta: SmartAction[]
   }
 
-  // 3. Helper to get actions for specific content
-  // Returns grouped actions
   const getActionGroups = (content: Content | null): ActionGroups => {
-    if (!content) return { standard: [], smart: [], meta: [] }
-
+    const bar = getGlobalBarActions(content)
+    const coreIds = new Set(['copy', 'open-default-editor'])
+    const metaIds = new Set(['favorite', 'pin', 'core.embeddings.generate', 'delete'])
     return {
-      standard: standardActions.filter(action => action.check(content)),
-      smart: smartActions.filter(action => action.check(content)),
-      meta: metaActions.filter(action => action.check(content)),
+      standard: bar.filter(a => coreIds.has(a.id)),
+      smart: bar.filter(a => !coreIds.has(a.id) && !metaIds.has(a.id)),
+      meta: bar.filter(a => metaIds.has(a.id)),
     }
   }
 
-  // Legacy helper for flat list (if needed elsewhere)
-  const getActionsForContent = (content: Content | null): SmartAction[] => {
-    const groups = getActionGroups(content)
-    return [...groups.standard, ...groups.smart, ...groups.meta]
-  }
+  const getActionsForContent = (content: Content | null): SmartAction[] =>
+    getGlobalBarActions(content)
 
   return {
     getActionGroups,
     getActionsForContent,
+    getGlobalBarActions,
+    getPreviewMenuActions,
+    getPreviewInlineActions,
     allActions,
   }
 }
