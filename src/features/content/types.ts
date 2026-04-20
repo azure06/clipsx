@@ -58,6 +58,7 @@ export type ContentMetadata = {
   readonly pdf?: string
   readonly attachment_path?: string
   readonly source_app?: string
+  readonly office_app?: 'word' | 'excel' | 'powerpoint' | 'office'
   readonly office_kind?: 'spreadsheet' | 'document' | 'slides'
   readonly table_source?: 'html' | 'csv_text' | 'plain_text'
 }

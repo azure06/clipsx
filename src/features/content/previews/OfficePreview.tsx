@@ -2,6 +2,7 @@ import type { Content } from '../types'
 import { useState, useMemo } from 'react'
 import { FileText, Image as ImageIcon, Download, Table } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { getOfficeHtmlTab } from '../office'
 
 type OfficePreviewProps = {
   readonly content: Content
@@ -21,10 +22,12 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
   const hasSvg = !!svg
   const hasImage = !!imagePath
   const hasAttachment = !!attachment_path
-  const hasHtml = !!htmlContent
+  const htmlTab = getOfficeHtmlTab(content.metadata, htmlContent)
+  const hasHtml = htmlTab.isAvailable
 
   // Determine default tab
-  const defaultTab = hasHtml ? 'html' : hasImage ? 'image' : hasSvg ? 'svg' : 'text'
+  const defaultTab =
+    htmlTab.preferHtml && hasHtml ? 'html' : hasImage ? 'image' : hasSvg ? 'svg' : 'text'
 
   // Use default tab if selected tab content is not available
   const activeTab =
@@ -42,7 +45,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
         {hasHtml && (
           <TabButton
             icon={<Table className="w-4 h-4" />}
-            label="Table"
+            label={htmlTab.label}
             active={activeTab === 'html'}
             onClick={() => setSelectedTab('html')}
           />
@@ -94,7 +97,7 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
 
       {/* Content Area */}
       <div className="flex-1 overflow-auto custom-scrollbar">
-        {activeTab === 'html' && hasHtml && <HTMLTab html={htmlContent} />}
+        {activeTab === 'html' && hasHtml && htmlContent && <HTMLTab html={htmlContent} />}
         {activeTab === 'text' && <TextTab content={content} />}
         {activeTab === 'svg' && hasSvg && svgUrl && <SVGTab svgUrl={svgUrl} />}
         {activeTab === 'image' && hasImage && imageUrl && <ImageTab imageUrl={imageUrl} />}

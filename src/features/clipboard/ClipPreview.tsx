@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { ClipItem } from '../../shared/types'
-import { ContentPreview, clipToContent, getTypeColor } from '../content'
+import {
+  ContentPreview,
+  clipToContent,
+  getContentDisplayAccentType,
+  getContentDisplayLabel,
+  getContentSourceLabel,
+  getTypeColor,
+} from '../content'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
@@ -19,6 +26,9 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
 
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
+  const typeLabel = getContentDisplayLabel(content)
+  const typeAccent = getContentDisplayAccentType(content)
+  const sourceLabel = getContentSourceLabel(content)
 
   useEffect(() => {
     const loadSemanticStatus = async () => {
@@ -62,9 +72,9 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
         <div className="flex items-center gap-3">
           {/* Type badge: L3 */}
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/10">
-            <span className={`w-1.5 h-1.5 rounded-full ${getTypeColor(content.type)}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${getTypeColor(typeAccent)}`} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
-              {content.type}
+              {typeLabel}
             </span>
           </div>
           <span className="text-xs text-gray-600 dark:text-gray-500 tabular-nums">
@@ -102,10 +112,10 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           )}
         </div>
         <div>
-          {content.clip.appName && (
+          {sourceLabel && (
             <span className="text-gray-600 dark:text-gray-400">
               <span className="opacity-60 mr-1">Source:</span>
-              {content.clip.appName}
+              {sourceLabel}
             </span>
           )}
         </div>

@@ -5,12 +5,14 @@ import {
   Code2,
   Braces,
   FileText,
+  FileSpreadsheet,
   Key,
   Clock,
   Lock,
   FolderOpen,
   Image as ImageIcon,
   Files,
+  Presentation,
 } from 'lucide-react'
 import type { Content } from '../types'
 
@@ -48,6 +50,17 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
 
   // Icon mapping
   const getIcon = () => {
+    if (content.type === 'office') {
+      switch (content.metadata.office_kind) {
+        case 'spreadsheet':
+          return <FileSpreadsheet size={iconSize} strokeWidth={2.5} />
+        case 'slides':
+          return <Presentation size={iconSize} strokeWidth={2.5} />
+        default:
+          return <FileText size={iconSize} strokeWidth={2.5} />
+      }
+    }
+
     switch (content.type) {
       case 'url':
         return <Link2 size={iconSize} strokeWidth={2.5} />
@@ -78,6 +91,17 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
 
   // Color mapping
   const getColorClasses = () => {
+    if (content.type === 'office') {
+      switch (content.metadata.office_kind) {
+        case 'spreadsheet':
+          return 'bg-lime-500/20 text-lime-400 ring-lime-500/30'
+        case 'slides':
+          return 'bg-orange-500/20 text-orange-400 ring-orange-500/30'
+        default:
+          return 'bg-blue-500/20 text-blue-400 ring-blue-500/30'
+      }
+    }
+
     switch (content.type) {
       case 'url':
         return 'bg-blue-500/20 text-blue-400 ring-blue-500/30'

@@ -2,6 +2,7 @@ use crate::models::ClipItem;
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
+use crate::services::office::classify_office_payload;
 use crate::services::semantic::SemanticService;
 use anyhow::Result;
 use arboard::Clipboard;
@@ -49,131 +50,6 @@ pub struct ClipboardService {
     /// can safely read and write it without conflicting.
     /// JS equivalent: this.lastCopyAt: Date | null (no lock needed in JS)
     last_copy_at: Arc<Mutex<Option<Instant>>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct OfficeClassification {
-    office_kind: &'static str,
-    table_source: Option<&'static str>,
-    delimiter: Option<String>,
-    rows: Option<usize>,
-    columns: Option<usize>,
-}
-
-fn detect_delimited_table(text: &str) -> Option<(String, usize, usize)> {
-    let detection = crate::services::intelligence::IntelligenceService::detect(text);
-    if detection.detected_type != crate::services::intelligence::ContentType::Csv {
-        return None;
-    }
-
-    let delimiter = detection.metadata["delimiter"].as_str()?.to_string();
-    let rows = detection.metadata["rows"]
-        .as_u64()
-        .and_then(|value| usize::try_from(value).ok())?;
-    let columns = detection.metadata["columns"]
-        .as_u64()
-        .and_then(|value| usize::try_from(value).ok())?;
-
-    Some((delimiter, rows, columns))
-}
-
-fn detect_html_table(html: &str) -> Option<(usize, usize)> {
-    let lower = html.to_lowercase();
-    if !lower.contains("<table") {
-        return None;
-    }
-
-    let rows = lower.matches("<tr").count();
-    let columns = lower
-        .split("<tr")
-        .skip(1)
-        .map(|row| row.matches("<td").count() + row.matches("<th").count())
-        .max()
-        .unwrap_or(0);
-
-    if rows == 0 || columns == 0 {
-        return None;
-    }
-
-    Some((rows, columns))
-}
-
-fn classify_office_payload(
-    source_app: &str,
-    ole_type: Option<&str>,
-    html_data: Option<&str>,
-    extracted_text: &str,
-) -> OfficeClassification {
-    let source_app_lower = source_app.to_lowercase();
-    let ole_type_lower = ole_type.unwrap_or_default().to_lowercase();
-
-    let html_table = html_data.and_then(detect_html_table);
-    let delimited_text = detect_delimited_table(extracted_text);
-    let has_tabular_payload = html_table.is_some() || delimited_text.is_some();
-
-    let source_indicates_slides =
-        source_app_lower.contains("powerpoint") || ole_type_lower.contains("slide");
-    let source_indicates_document = source_app_lower.contains("word");
-
-    let source_indicates_spreadsheet = source_app_lower.contains("excel")
-        || ole_type_lower.contains("excel")
-        || ole_type_lower.contains("biff")
-        || ole_type_lower.contains("xml spreadsheet")
-        || ole_type_lower.contains("workbook")
-        || ole_type_lower.contains("worksheet");
-
-    if source_indicates_slides {
-        return OfficeClassification {
-            office_kind: "slides",
-            table_source: None,
-            delimiter: None,
-            rows: None,
-            columns: None,
-        };
-    }
-
-    if source_indicates_document {
-        return OfficeClassification {
-            office_kind: "document",
-            table_source: None,
-            delimiter: None,
-            rows: None,
-            columns: None,
-        };
-    }
-
-    if source_indicates_spreadsheet || has_tabular_payload {
-        let (table_source, delimiter, rows, columns) = if let Some((rows, columns)) = html_table {
-            (
-                Some("html"),
-                delimited_text.as_ref().map(|(delimiter, _, _)| delimiter.clone()),
-                Some(rows),
-                Some(columns),
-            )
-        } else if let Some((delimiter, rows, columns)) = delimited_text {
-            (Some("csv_text"), Some(delimiter), Some(rows), Some(columns))
-        } else if extracted_text.trim().is_empty() {
-            (None, None, None, None)
-        } else {
-            (Some("plain_text"), None, None, None)
-        };
-
-        return OfficeClassification {
-            office_kind: "spreadsheet",
-            table_source,
-            delimiter,
-            rows,
-            columns,
-        };
-    }
-
-    OfficeClassification {
-        office_kind: "document",
-        table_source: None,
-        delimiter: None,
-        rows: None,
-        columns: None,
-    }
 }
 
 impl ClipboardService {
@@ -787,6 +663,7 @@ impl ClipboardService {
         let now = chrono::Utc::now().timestamp();
         let office_classification = classify_office_payload(
             &source_app,
+            app_name.as_deref(),
             ole_type.as_deref(),
             html_data.as_deref(),
             &extracted_text,
@@ -843,32 +720,36 @@ impl ClipboardService {
 
         let mut metadata = Map::new();
         metadata.insert("source_app".to_string(), Value::String(source_app));
+        metadata.insert(
+            "office_app".to_string(),
+            Value::String(office_classification.app.as_metadata_value().to_string()),
+        );
         metadata.insert("extra_types".to_string(), Value::Array(extra_json));
         metadata.insert(
             "office_kind".to_string(),
-            Value::String(office_classification.office_kind.to_string()),
+            Value::String(office_classification.kind.as_metadata_value().to_string()),
         );
 
-        if let Some(table_source) = office_classification.table_source {
+        if let Some(table) = office_classification.table {
             metadata.insert(
                 "table_source".to_string(),
-                Value::String(table_source.to_string()),
+                Value::String(table.source.as_metadata_value().to_string()),
             );
-        }
-        if let Some(delimiter) = office_classification.delimiter {
-            metadata.insert("delimiter".to_string(), Value::String(delimiter));
-        }
-        if let Some(rows) = office_classification.rows {
-            metadata.insert(
-                "rows".to_string(),
-                Value::Number(serde_json::Number::from(rows)),
-            );
-        }
-        if let Some(columns) = office_classification.columns {
-            metadata.insert(
-                "columns".to_string(),
-                Value::Number(serde_json::Number::from(columns)),
-            );
+            if let Some(delimiter) = table.delimiter {
+                metadata.insert("delimiter".to_string(), Value::String(delimiter));
+            }
+            if let Some(rows) = table.rows {
+                metadata.insert(
+                    "rows".to_string(),
+                    Value::Number(serde_json::Number::from(rows)),
+                );
+            }
+            if let Some(columns) = table.columns {
+                metadata.insert(
+                    "columns".to_string(),
+                    Value::Number(serde_json::Number::from(columns)),
+                );
+            }
         }
 
         Ok(ClipItem {
@@ -957,76 +838,5 @@ impl ClipboardService {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{classify_office_payload, detect_html_table};
-
-    #[test]
-    fn classifies_html_table_office_payload_as_spreadsheet() {
-        let result = classify_office_payload(
-            "Microsoft Excel",
-            Some("Biff12"),
-            Some("<table><tr><th>Name</th><th>Qty</th></tr><tr><td>Pens</td><td>12</td></tr></table>"),
-            "",
-        );
-
-        assert_eq!(result.office_kind, "spreadsheet");
-        assert_eq!(result.table_source, Some("html"));
-        assert_eq!(result.rows, Some(2));
-        assert_eq!(result.columns, Some(2));
-    }
-
-    #[test]
-    fn classifies_delimited_text_office_payload_as_spreadsheet() {
-        let result = classify_office_payload(
-            "Microsoft Excel",
-            Some("Native"),
-            None,
-            "name\tage\nalice\t30\nbob\t25",
-        );
-
-        assert_eq!(result.office_kind, "spreadsheet");
-        assert_eq!(result.table_source, Some("csv_text"));
-        assert_eq!(result.delimiter.as_deref(), Some("\t"));
-        assert_eq!(result.rows, Some(3));
-        assert_eq!(result.columns, Some(2));
-    }
-
-    #[test]
-    fn classifies_word_payload_as_document() {
-        let result = classify_office_payload(
-            "Microsoft Word",
-            Some("Embed Source"),
-            None,
-            "Quarterly report body",
-        );
-
-        assert_eq!(result.office_kind, "document");
-        assert_eq!(result.table_source, None);
-    }
-
-    #[test]
-    fn keeps_word_table_payload_as_document() {
-        let result = classify_office_payload(
-            "Microsoft Word",
-            Some("Embed Source"),
-            Some("<table><tr><th>Name</th></tr><tr><td>Pens</td></tr></table>"),
-            "Name\tQty\nPens\t12",
-        );
-
-        assert_eq!(result.office_kind, "document");
-        assert_eq!(result.table_source, None);
-    }
-
-    #[test]
-    fn detects_html_table_dimensions() {
-        let table = detect_html_table(
-            "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>",
-        );
-
-        assert_eq!(table, Some((2, 2)));
     }
 }

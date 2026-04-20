@@ -1,18 +1,6 @@
 import type { ClipItem } from '../../shared/types'
+import { resolveOfficeContent } from './office'
 import type { Content, ContentMetadata, ContentType } from './types'
-
-type DelimitedTable = {
-  delimiter: string
-  rows: number
-  columns: number
-}
-
-type HtmlTable = {
-  text: string
-  rows: number
-  columns: number
-  delimiter: '\t'
-}
 
 // Parse backend metadata JSON string
 export const parseMetadata = (metadataJson?: string | null): ContentMetadata => {
@@ -22,114 +10,6 @@ export const parseMetadata = (metadataJson?: string | null): ContentMetadata => 
     return JSON.parse(metadataJson) as ContentMetadata
   } catch {
     return {}
-  }
-}
-
-export const detectDelimitedText = (text: string): DelimitedTable | null => {
-  const lines = text.split(/\r?\n/).filter((line, index, allLines) => {
-    if (index === allLines.length - 1 && line.trim() === '') {
-      return false
-    }
-    return true
-  })
-
-  if (lines.length < 2) return null
-
-  for (const delimiter of [',', ';', '\t', '|']) {
-    const columnCounts = lines.map(line => line.split(delimiter).length)
-    if (columnCounts.some(count => count < 2)) continue
-
-    const [firstColumnCount] = columnCounts
-    if (!firstColumnCount) continue
-
-    if (columnCounts.every(count => count === firstColumnCount)) {
-      return {
-        delimiter,
-        rows: lines.length,
-        columns: firstColumnCount,
-      }
-    }
-  }
-
-  return null
-}
-
-export const extractTableFromHtml = (html: string): HtmlTable | null => {
-  if (typeof DOMParser === 'undefined') return null
-
-  const doc = new DOMParser().parseFromString(html, 'text/html')
-  const table = doc.querySelector('table')
-  if (!table) return null
-
-  const rowElements = Array.from(table.querySelectorAll('tr'))
-  if (rowElements.length === 0) return null
-
-  const rows = rowElements
-    .map(row =>
-      Array.from(row.querySelectorAll('th, td')).map(cell =>
-        cell.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-      )
-    )
-    .filter(cells => cells.length > 0)
-
-  if (rows.length === 0) return null
-
-  const columns = Math.max(...rows.map(cells => cells.length))
-  if (columns === 0) return null
-
-  return {
-    text: rows.map(cells => cells.join('\t')).join('\n'),
-    rows: rows.length,
-    columns,
-    delimiter: '\t',
-  }
-}
-
-const resolveOfficeContent = (
-  clip: ClipItem,
-  baseMetadata: ContentMetadata
-): Pick<Content, 'type' | 'text' | 'metadata'> => {
-  const htmlTable = clip.contentHtml ? extractTableFromHtml(clip.contentHtml) : null
-  const textTable = clip.contentText ? detectDelimitedText(clip.contentText) : null
-  const hasRenderableTable = Boolean(htmlTable || textTable)
-  const sourceApp = clip.appName ?? baseMetadata.source_app
-  const officeKind = baseMetadata.office_kind
-
-  const metadata: ContentMetadata = {
-    ...baseMetadata,
-    svg: clip.svgPath ?? undefined,
-    pdf: clip.pdfPath ?? undefined,
-    attachment_path: clip.attachmentPath ?? undefined,
-    source_app: sourceApp,
-    office_kind: officeKind,
-  }
-
-  if (officeKind === 'spreadsheet' && hasRenderableTable) {
-    const fallbackTable = htmlTable && !textTable ? htmlTable : null
-    const activeTable = textTable ?? fallbackTable
-    const tableSource =
-      metadata.table_source ??
-      (htmlTable ? 'html' : textTable ? 'csv_text' : clip.contentText?.trim() ? 'plain_text' : undefined)
-
-    const text = fallbackTable ? fallbackTable.text : clip.contentText || ''
-
-    return {
-      type: 'csv',
-      text,
-      metadata: {
-        ...metadata,
-        table_source: tableSource,
-        delimiter: metadata.delimiter ?? activeTable?.delimiter,
-        rows: metadata.rows ?? activeTable?.rows,
-        columns: metadata.columns ?? activeTable?.columns,
-      },
-    }
-  }
-
-  return {
-    type: 'office',
-    text: clip.contentText || '',
-    metadata,
   }
 }
 
@@ -160,6 +40,42 @@ export const clipToContent = (clip: ClipItem): Content => {
     text,
     metadata,
     clip,
+  }
+}
+
+export const getContentDisplayLabel = (content: Content): string => {
+  if (content.type !== 'office') return content.type
+
+  switch (content.metadata.office_kind) {
+    case 'spreadsheet':
+      return 'spreadsheet'
+    case 'document':
+      return 'document'
+    case 'slides':
+      return 'slides'
+    default:
+      return 'office'
+  }
+}
+
+export const getContentDisplayAccentType = (content: Content): ContentType => {
+  if (content.type === 'office' && content.metadata.office_kind === 'spreadsheet') {
+    return 'csv'
+  }
+
+  return content.type
+}
+
+export const getContentSourceLabel = (content: Content): string | undefined => {
+  switch (content.metadata.office_app) {
+    case 'word':
+      return 'Microsoft Word'
+    case 'excel':
+      return 'Microsoft Excel'
+    case 'powerpoint':
+      return 'Microsoft PowerPoint'
+    default:
+      return content.metadata.source_app ?? content.clip.appName ?? undefined
   }
 }
 

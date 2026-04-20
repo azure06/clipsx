@@ -41,7 +41,12 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Secret: {"kind": "aws_access_key|github_token|...", "warning": "..."}
     -- Image: {"format": "image/png"}
     -- Files: {"count": 3, "files": [{"path": "...", "name": "...", "size": 1024, "created": ..., "modified": ...}, ...]}
-    -- Office: {"source_app": "Microsoft Word|Excel|PowerPoint"}
+    -- Office: {
+    --   "source_app": "Microsoft Word|Excel|PowerPoint|Office",
+    --   "office_app": "word|excel|powerpoint|office",
+    --   "office_kind": "document|spreadsheet|slides",
+    --   "table_source": "html|csv_text|plain_text"
+    -- }
     note TEXT,
     -- Free-text annotation added by the user, searchable via FTS
     app_name TEXT,
