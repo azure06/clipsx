@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Copy, Check, MoreHorizontal } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { SmartAction, Content } from '../types'
+import { useClipboardStore } from '../../../stores/clipboardStore'
 
 // ────────────────────────────────────────────────
 // CopyableRow — a clickable row that copies a value
@@ -10,21 +11,23 @@ import type { SmartAction, Content } from '../types'
 type CopyableRowProps = {
   readonly label: string
   readonly value: string
+  readonly sourceClipId: string
   readonly className?: string
 }
 
-export const CopyableRow = ({ label, value, className = '' }: CopyableRowProps) => {
+export const CopyableRow = ({ label, value, sourceClipId, className = '' }: CopyableRowProps) => {
   const [copied, setCopied] = useState(false)
+  const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(value)
+  const handleCopy = async () => {
+    await copyDerivedText(value, sourceClipId)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   return (
     <div
-      onClick={handleCopy}
+      onClick={() => void handleCopy()}
       className={`flex items-center justify-between px-3 py-2 rounded-lg bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/10 cursor-pointer transition-all duration-150 group ${className}`}
     >
       <div className="flex flex-col min-w-0">
@@ -71,25 +74,19 @@ type PreviewHeaderProps = {
   readonly content?: Content
 }
 
-export const PreviewHeader = ({
-  icon,
-  title,
-  meta,
-  menuActions,
-  content,
-}: PreviewHeaderProps) => {
+export const PreviewHeader = ({ icon, title, meta, menuActions, content }: PreviewHeaderProps) => {
   const hasMenu = menuActions && menuActions.length > 0 && content
 
   return (
     <div className="flex items-center gap-2 mb-3">
       <div className="p-1.5 rounded-lg ring-1 ring-white/10">{icon}</div>
       <div className="flex flex-col flex-1 min-w-0">
-        <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">{title}</span>
+        <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+          {title}
+        </span>
         {meta && <div className="flex items-center gap-1.5 flex-wrap mt-0.5">{meta}</div>}
       </div>
-      {hasMenu && (
-        <PreviewLocalMenu actions={menuActions} content={content} />
-      )}
+      {hasMenu && <PreviewLocalMenu actions={menuActions} content={content} />}
     </div>
   )
 }

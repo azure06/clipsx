@@ -1,5 +1,6 @@
 import { Copy, Globe, Search } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useOpenURLAction = (): SmartAction => ({
   id: 'open-url',
@@ -36,6 +37,8 @@ export const useCopyDomainAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: async content => {
-    await navigator.clipboard.writeText(content.metadata.domain || '')
+    await useClipboardStore
+      .getState()
+      .copyDerivedText(content.metadata.domain || '', content.clip.id)
   },
 })

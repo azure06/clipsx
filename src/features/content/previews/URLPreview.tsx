@@ -50,9 +50,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
   const isVideo = raw.match(/\.(mp4|webm|ogg)$/i)
 
   if (!parsed) {
-    return (
-      <div className="p-4 text-sm text-gray-400 font-mono break-all">{raw}</div>
-    )
+    return <div className="p-4 text-sm text-gray-400 font-mono break-all">{raw}</div>
   }
 
   return (
@@ -90,14 +88,18 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
               src={raw}
               alt="URL Preview"
               className="max-w-full max-h-64 object-contain"
-              onError={e => { e.currentTarget.style.display = 'none' }}
+              onError={e => {
+                e.currentTarget.style.display = 'none'
+              }}
             />
           ) : (
             <video
               src={raw}
               controls
               className="max-w-full max-h-64 object-contain"
-              onError={e => { e.currentTarget.style.display = 'none' }}
+              onError={e => {
+                e.currentTarget.style.display = 'none'
+              }}
             />
           )}
         </div>
@@ -109,16 +111,18 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
           <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
             URL Structure
           </span>
-          {menuActions.length > 0 && (
-            <PreviewLocalMenu actions={menuActions} content={content} />
-          )}
+          {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}
         </div>
 
-        <CopyableRow label="Domain" value={parsed.hostname} />
-        {parsed.pathname && <CopyableRow label="Path" value={parsed.pathname} />}
-        {parsed.hash && <CopyableRow label="Fragment" value={parsed.hash} />}
+        <CopyableRow label="Domain" value={parsed.hostname} sourceClipId={content.clip.id} />
+        {parsed.pathname && (
+          <CopyableRow label="Path" value={parsed.pathname} sourceClipId={content.clip.id} />
+        )}
+        {parsed.hash && (
+          <CopyableRow label="Fragment" value={parsed.hash} sourceClipId={content.clip.id} />
+        )}
         {parsed.searchParams.map(([key, val]) => (
-          <CopyableRow key={key} label={`?${key}`} value={val} />
+          <CopyableRow key={key} label={`?${key}`} value={val} sourceClipId={content.clip.id} />
         ))}
       </div>
     </div>

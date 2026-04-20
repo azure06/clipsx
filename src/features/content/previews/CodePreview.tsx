@@ -31,9 +31,7 @@ const CodePreviewComponent = ({ content }: CodePreviewProps) => {
             <MetaChip>{content.metadata.word_count} words</MetaChip>
           )}
         </div>
-        {menuActions.length > 0 && (
-          <PreviewLocalMenu actions={menuActions} content={content} />
-        )}
+        {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}
       </div>
 
       {/* Code content */}

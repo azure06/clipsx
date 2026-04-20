@@ -61,7 +61,7 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
       </div>
 
       {/* Inline domain copy */}
-      {domain && <CopyableRow label="Domain" value={domain} />}
+      {domain && <CopyableRow label="Domain" value={domain} sourceClipId={content.clip.id} />}
     </div>
   )
 }

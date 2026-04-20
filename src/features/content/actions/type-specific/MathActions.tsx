@@ -1,6 +1,7 @@
 import { Calculator, Equal } from 'lucide-react'
 import type { SmartAction } from '../../types'
 import { safeEval } from '../../utils/math'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useCopyResultAction = (): SmartAction => ({
   id: 'copy-math-result',
@@ -12,7 +13,7 @@ export const useCopyResultAction = (): SmartAction => ({
   execute: async content => {
     const result = safeEval(content.text)
     if (result !== null) {
-      await navigator.clipboard.writeText(result.toString())
+      await useClipboardStore.getState().copyDerivedText(result.toString(), content.clip.id)
     }
   },
 })
@@ -25,6 +26,6 @@ export const useCopyEquationAction = (): SmartAction => ({
   placement: 'hidden',
   check: content => content.type === 'math',
   execute: async content => {
-    await navigator.clipboard.writeText(content.text)
+    await useClipboardStore.getState().copyDerivedText(content.text, content.clip.id)
   },
 })

@@ -16,10 +16,7 @@ import {
   useSearchURLAction,
   useCopyDomainAction,
 } from './type-specific/URLActions'
-import {
-  useSendEmailAction,
-  useCopyDomainFromEmailAction,
-} from './type-specific/EmailActions'
+import { useSendEmailAction, useCopyDomainFromEmailAction } from './type-specific/EmailActions'
 
 import { useFormatCodeAction } from './type-specific/CodeActions'
 

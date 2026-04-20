@@ -10,8 +10,12 @@ type PhonePreviewProps = {
 const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
   const number = content.text
 
-  const handleCall = () => { window.open(`tel:${number}`) }
-  const handleSms = () => { window.open(`sms:${number}`) }
+  const handleCall = () => {
+    window.open(`tel:${number}`)
+  }
+  const handleSms = () => {
+    window.open(`sms:${number}`)
+  }
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -33,11 +37,7 @@ const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
           onClick={handleCall}
           variant="primary"
         />
-        <InlineCTAButton
-          icon={<MessageSquare size={16} />}
-          label="Send SMS"
-          onClick={handleSms}
-        />
+        <InlineCTAButton icon={<MessageSquare size={16} />} label="Send SMS" onClick={handleSms} />
       </div>
     </div>
   )

@@ -3,6 +3,7 @@ import { Calculator, Copy, Check, Equal } from 'lucide-react'
 import { useState } from 'react'
 import type { Content } from '../types'
 import { safeEval } from '../utils/math'
+import { useClipboardStore } from '../../../stores/clipboardStore'
 
 type MathPreviewProps = {
   readonly content: Content
@@ -10,12 +11,13 @@ type MathPreviewProps = {
 
 const MathPreviewComponent = ({ content }: MathPreviewProps) => {
   const [copied, setCopied] = useState(false)
+  const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
   const result = safeEval(content.text)
   const hasResult = result !== null && !isNaN(result)
 
-  const handleCopyResult = () => {
+  const handleCopyResult = async () => {
     if (hasResult) {
-      void navigator.clipboard.writeText(result.toString())
+      await copyDerivedText(result.toString(), content.clip.id)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -55,7 +57,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
 
               <div
                 className="text-4xl font-bold text-transparent bg-clip-text bg-linear-to-r from-indigo-200 via-gray-100 to-purple-200 select-all cursor-pointer hover:scale-105 transition-transform duration-200 font-mono"
-                onClick={handleCopyResult}
+                onClick={() => void handleCopyResult()}
                 title="Click to copy result"
               >
                 {
@@ -66,7 +68,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
 
               <div className="h-6 flex items-center justify-center">
                 <button
-                  onClick={handleCopyResult}
+                  onClick={() => void handleCopyResult()}
                   className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/5 hover:border-gray-100/10 transition-colors text-xs font-medium text-gray-400 hover:text-white"
                 >
                   {copied ? (

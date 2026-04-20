@@ -27,7 +27,13 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
 
   const delimiter = content.metadata.delimiter || ','
   const delimiterLabel =
-    delimiter === ',' ? 'comma' : delimiter === '\t' ? 'tab' : delimiter === ';' ? 'semicolon' : delimiter
+    delimiter === ','
+      ? 'comma'
+      : delimiter === '\t'
+        ? 'tab'
+        : delimiter === ';'
+          ? 'semicolon'
+          : delimiter
 
   if (headers.length === 0) {
     return <div className="p-4 text-gray-500">Empty CSV</div>
@@ -48,9 +54,7 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
           <MetaChip>{colCount} cols</MetaChip>
           <MetaChip>{delimiterLabel}</MetaChip>
         </div>
-        {menuActions.length > 0 && (
-          <PreviewLocalMenu actions={menuActions} content={content} />
-        )}
+        {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}
       </div>
 
       {/* Scrollable Table */}

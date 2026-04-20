@@ -49,6 +49,8 @@ type ClipboardActions = {
   clearAllClips: () => Promise<void>
   copyToClipboard: (text: string, id?: string) => Promise<Result<void>>
   pasteClip: (text: string, id?: string) => Promise<Result<void>>
+  /** Centralized preview/derived copy: plain-text only, no hide_on_copy side effects */
+  copyDerivedText: (text: string, sourceClipId: string) => Promise<void>
   /** Centralized primary action: paste-to-app or copy-to-clipboard based on settings */
   performPrimaryAction: (text: string, id: string) => Promise<void>
   /** Centralized explicit copy: always copies, respects paste format and hide_on_copy */
@@ -380,6 +382,10 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
 
   // ── Centralized Action Handlers ──────────────────────────────────────
+
+  copyDerivedText: async (text: string, sourceClipId: string) => {
+    await invoke('copy_to_clipboard', { text, id: sourceClipId, plain: true })
+  },
 
   performPrimaryAction: async (text: string, id: string) => {
     const settings = useSettingsStore.getState().settings

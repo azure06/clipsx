@@ -25,7 +25,9 @@ const SecretPreviewComponent = ({ content }: SecretPreviewProps) => {
         </div>
         <div className="flex flex-col items-center gap-1">
           <span className="text-sm font-semibold text-red-300">Sensitive Content Detected</span>
-          <MetaChip className="bg-red-500/10 text-red-400 border-red-500/20 uppercase">{kind}</MetaChip>
+          <MetaChip className="bg-red-500/10 text-red-400 border-red-500/20 uppercase">
+            {kind}
+          </MetaChip>
         </div>
         <p className="text-xs text-gray-500 text-center max-w-xs">
           This clip contains potentially sensitive data. The content is masked for safety.

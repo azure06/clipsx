@@ -1,5 +1,6 @@
 import { Send, AtSign, Mail } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useSendEmailAction = (): SmartAction => ({
   id: 'send-email',
@@ -24,7 +25,7 @@ export const useCopyEmailAction = (): SmartAction => ({
   check: content => content.type === 'email',
   execute: async content => {
     const email = content.metadata.email || content.text
-    await navigator.clipboard.writeText(email)
+    await useClipboardStore.getState().copyDerivedText(email, content.clip.id)
   },
 })
 
@@ -36,6 +37,8 @@ export const useCopyDomainFromEmailAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'email' && Boolean(content.metadata.domain),
   execute: async content => {
-    await navigator.clipboard.writeText(content.metadata.domain || '')
+    await useClipboardStore
+      .getState()
+      .copyDerivedText(content.metadata.domain || '', content.clip.id)
   },
 })

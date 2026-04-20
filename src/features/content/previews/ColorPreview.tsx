@@ -2,23 +2,31 @@ import { memo, useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import type { Content } from '../types'
 import { hexToRgb, hexToHsl } from '../utils/color'
+import { useClipboardStore } from '../../../stores/clipboardStore'
 
 type ColorPreviewProps = {
   readonly content: Content
 }
 
-const ColorFormatRow = ({ label, value }: { label: string; value: string }) => {
-  const [copied, setCopied] = useState(false)
+type ColorFormatRowProps = {
+  readonly label: string
+  readonly value: string
+  readonly sourceClipId: string
+}
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(value)
+const ColorFormatRow = ({ label, value, sourceClipId }: ColorFormatRowProps) => {
+  const [copied, setCopied] = useState(false)
+  const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
+
+  const handleCopy = async () => {
+    await copyDerivedText(value, sourceClipId)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   return (
     <div
-      onClick={handleCopy}
+      onClick={() => void handleCopy()}
       className="flex items-center justify-between p-3 rounded-lg bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/10 cursor-pointer transition-all duration-200 group"
     >
       <div className="flex flex-col">
@@ -77,9 +85,13 @@ const ColorPreviewComponent = ({ content }: ColorPreviewProps) => {
 
       {/* Formats List */}
       <div className="flex flex-col gap-2">
-        <ColorFormatRow label="HEX" value={hex.toUpperCase()} />
-        {rgbString && <ColorFormatRow label="RGB" value={rgbString} />}
-        {hslString && <ColorFormatRow label="HSL" value={hslString} />}
+        <ColorFormatRow label="HEX" value={hex.toUpperCase()} sourceClipId={content.clip.id} />
+        {rgbString && (
+          <ColorFormatRow label="RGB" value={rgbString} sourceClipId={content.clip.id} />
+        )}
+        {hslString && (
+          <ColorFormatRow label="HSL" value={hslString} sourceClipId={content.clip.id} />
+        )}
       </div>
     </div>
   )

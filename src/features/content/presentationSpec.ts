@@ -158,10 +158,7 @@ const SPEC_MAP = new Map<ContentType, ContentPresentationSpec>(SPECS.map(s => [s
 export const getPresentationSpec = (type: ContentType): ContentPresentationSpec =>
   SPEC_MAP.get(type) ?? SPECS[0]!
 
-export const getPlacementForAction = (
-  actionId: string,
-  type: ContentType
-): ActionPlacement => {
+export const getPlacementForAction = (actionId: string, type: ContentType): ActionPlacement => {
   const spec = getPresentationSpec(type)
   if (spec.hiddenActions.includes(actionId)) return 'hidden'
   if (spec.previewInlineActions.includes(actionId)) return 'preview_inline'

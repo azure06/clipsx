@@ -1,5 +1,6 @@
 import { Calendar, Clock } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useCopyIsoDateAction = (): SmartAction => ({
   id: 'copy-iso-date',
@@ -17,7 +18,7 @@ export const useCopyIsoDateAction = (): SmartAction => ({
       )
       iso = date.toISOString()
     }
-    await navigator.clipboard.writeText(iso)
+    await useClipboardStore.getState().copyDerivedText(iso, content.clip.id)
   },
 })
 
@@ -31,7 +32,9 @@ export const useCopyTimestampAction = (): SmartAction => ({
   execute: async content => {
     const date = new Date(content.text)
     if (!isNaN(date.getTime())) {
-      await navigator.clipboard.writeText(Math.floor(date.getTime() / 1000).toString())
+      await useClipboardStore
+        .getState()
+        .copyDerivedText(Math.floor(date.getTime() / 1000).toString(), content.clip.id)
     }
   },
 })

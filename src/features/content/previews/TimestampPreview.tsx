@@ -42,7 +42,9 @@ const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
           <Clock size={22} strokeWidth={2} />
         </div>
         <span className="text-3xl font-bold font-mono text-white/90">{tsValue}</span>
-        <MetaChip className="bg-purple-500/10 text-purple-400 border-purple-500/20">{unit}</MetaChip>
+        <MetaChip className="bg-purple-500/10 text-purple-400 border-purple-500/20">
+          {unit}
+        </MetaChip>
         {humanReadable && (
           <span className="text-sm text-gray-400 text-center">{humanReadable}</span>
         )}
@@ -50,8 +52,8 @@ const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
 
       {/* Copyable fields */}
       <div className="flex flex-col gap-2">
-        <CopyableRow label="Original" value={tsValue} />
-        {iso && <CopyableRow label="ISO 8601" value={iso} />}
+        <CopyableRow label="Original" value={tsValue} sourceClipId={content.clip.id} />
+        {iso && <CopyableRow label="ISO 8601" value={iso} sourceClipId={content.clip.id} />}
       </div>
     </div>
   )

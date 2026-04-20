@@ -1,5 +1,6 @@
 import { Code2, FileCode, Download } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useFormatCodeAction = (): SmartAction => ({
   id: 'format-code',
@@ -9,18 +10,19 @@ export const useFormatCodeAction = (): SmartAction => ({
   placement: 'preview_menu',
   check: content => content.type === 'code',
   execute: async content => {
+    let textToCopy = content.text
+
     // Basic formatting - can be enhanced with prettier/etc
     try {
       if (content.metadata.language === 'json') {
         const parsed = JSON.parse(content.text) as unknown
-        const formatted = JSON.stringify(parsed, null, 2)
-        await navigator.clipboard.writeText(formatted)
-      } else {
-        await navigator.clipboard.writeText(content.text)
+        textToCopy = JSON.stringify(parsed, null, 2)
       }
     } catch {
-      await navigator.clipboard.writeText(content.text)
+      textToCopy = content.text
     }
+
+    await useClipboardStore.getState().copyDerivedText(textToCopy, content.clip.id)
   },
 })
 
@@ -32,7 +34,7 @@ export const useCopyCodeAction = (): SmartAction => ({
   placement: 'hidden',
   check: content => content.type === 'code',
   execute: async content => {
-    await navigator.clipboard.writeText(content.text)
+    await useClipboardStore.getState().copyDerivedText(content.text, content.clip.id)
   },
 })
 

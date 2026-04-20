@@ -1,5 +1,6 @@
 import { FileJson, Table } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { useClipboardStore } from '../../../../stores/clipboardStore'
 
 export const useCsvToJsonAction = (): SmartAction => ({
   id: 'csv-to-json',
@@ -29,7 +30,9 @@ export const useCsvToJsonAction = (): SmartAction => ({
       )
     })
 
-    await navigator.clipboard.writeText(JSON.stringify(json, null, 2))
+    await useClipboardStore
+      .getState()
+      .copyDerivedText(JSON.stringify(json, null, 2), content.clip.id)
   },
 })
 
@@ -62,6 +65,6 @@ export const useCsvToMarkdownAction = (): SmartAction => ({
       .join('\n')
 
     const markdown = `${headers.join('|')}\n${separator}\n${body}`
-    await navigator.clipboard.writeText(markdown)
+    await useClipboardStore.getState().copyDerivedText(markdown, content.clip.id)
   },
 })

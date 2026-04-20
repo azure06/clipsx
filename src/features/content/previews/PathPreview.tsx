@@ -13,7 +13,7 @@ const parsePath = (raw: string) => {
   const sep = isWindows ? '\\' : '/'
   const parts = raw.split(sep)
   const filename = parts[parts.length - 1] || ''
-  const ext = filename.includes('.') ? filename.split('.').pop() ?? '' : ''
+  const ext = filename.includes('.') ? (filename.split('.').pop() ?? '') : ''
   const dir = parts.slice(0, -1).join(sep) || sep
   const platform = isWindows ? 'Windows' : 'Unix'
   return { filename, ext, dir, platform }
@@ -42,7 +42,11 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
           {filename || raw}
         </span>
         <div className="flex items-center gap-1.5 flex-wrap justify-center">
-          {ext && <MetaChip className="bg-orange-500/10 text-orange-400 border-orange-500/20">.{ext}</MetaChip>}
+          {ext && (
+            <MetaChip className="bg-orange-500/10 text-orange-400 border-orange-500/20">
+              .{ext}
+            </MetaChip>
+          )}
           <MetaChip>{platform}</MetaChip>
         </div>
       </div>
@@ -59,9 +63,13 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
 
       {/* Copyable fields */}
       <div className="flex flex-col gap-2">
-        <CopyableRow label="Full Path" value={raw} />
-        {filename && <CopyableRow label="Filename" value={filename} />}
-        {dir && dir !== raw && <CopyableRow label="Directory" value={dir} />}
+        <CopyableRow label="Full Path" value={raw} sourceClipId={content.clip.id} />
+        {filename && (
+          <CopyableRow label="Filename" value={filename} sourceClipId={content.clip.id} />
+        )}
+        {dir && dir !== raw && (
+          <CopyableRow label="Directory" value={dir} sourceClipId={content.clip.id} />
+        )}
       </div>
     </div>
   )

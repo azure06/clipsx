@@ -45,15 +45,15 @@ const DatePreviewComponent = ({ content }: DatePreviewProps) => {
         <div className="p-3 rounded-full bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/30">
           <CalendarDays size={22} strokeWidth={2} />
         </div>
-        <span className="text-xl font-semibold text-white/90 text-center">
-          {original}
-        </span>
-        {format && <MetaChip className="bg-sky-500/10 text-sky-400 border-sky-500/20">{format}</MetaChip>}
+        <span className="text-xl font-semibold text-white/90 text-center">{original}</span>
+        {format && (
+          <MetaChip className="bg-sky-500/10 text-sky-400 border-sky-500/20">{format}</MetaChip>
+        )}
       </div>
 
       {/* Copyable fields */}
       <div className="flex flex-col gap-2">
-        {iso && <CopyableRow label="ISO 8601" value={iso} />}
+        {iso && <CopyableRow label="ISO 8601" value={iso} sourceClipId={content.clip.id} />}
       </div>
     </div>
   )
