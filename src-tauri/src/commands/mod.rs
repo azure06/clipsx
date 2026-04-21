@@ -5,15 +5,92 @@ use crate::services::clipboard::ClipboardService;
 use crate::services::paste;
 use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use std::sync::Arc;
-use tauri::State;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
+use tauri::{Manager, State};
 
 pub struct AppState {
     pub repository: Arc<ClipRepository>,
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
     pub semantic_service: Arc<SemanticService>,
+    #[cfg(target_os = "macos")]
+    pub previous_app_pid: Mutex<Option<i32>>,
 }
 
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn get_frontmost_app_pid() -> Option<i32> {
+    use cocoa::base::{id, nil};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace == nil {
+            return None;
+        }
+
+        let frontmost_app: id = msg_send![workspace, frontmostApplication];
+        if frontmost_app == nil {
+            return None;
+        }
+
+        let pid: i32 = msg_send![frontmost_app, processIdentifier];
+        let self_pid = std::process::id() as i32;
+
+        if pid <= 0 || pid == self_pid {
+            None
+        } else {
+            Some(pid)
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn remember_frontmost_app(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+
+    if let Ok(mut previous_app_pid) = state.previous_app_pid.lock() {
+        let pid = get_frontmost_app_pid();
+        eprintln!("[PASTE] remember_frontmost_app: pid={:?}", pid);
+        *previous_app_pid = pid;
+    };
+}
+
+#[cfg(target_os = "macos")]
+fn take_previous_app_pid(app: &tauri::AppHandle) -> Option<i32> {
+    let state = app.try_state::<AppState>()?;
+    let Ok(mut previous_app_pid) = state.previous_app_pid.lock() else {
+        return None;
+    };
+
+    previous_app_pid.take()
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn activate_app_by_pid(pid: i32) -> bool {
+    use cocoa::appkit::{NSApplicationActivationOptions, NSRunningApplication};
+    use cocoa::base::{id, nil};
+
+    unsafe {
+        let running_app: id =
+            NSRunningApplication::runningApplicationWithProcessIdentifier(nil, pid as _);
+        if running_app == nil {
+            return false;
+        }
+
+        NSRunningApplication::activateWithOptions_(
+            running_app,
+            NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticIndexStats {
@@ -751,16 +828,49 @@ pub async fn paste_clip(
             .map_err(|e: anyhow::Error| e.to_string())?;
     }
 
-    // 2. Hide the overlay window — OS auto-refocuses previous app
+    // 2. Hide the overlay window
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
 
-    // 3. Wait for OS to settle the focus change
+    #[cfg(target_os = "macos")]
+    let previous_app_pid = take_previous_app_pid(&app);
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(previous_app_pid) = previous_app_pid {
+            eprintln!("[PASTE] activating and targeting pid={}", previous_app_pid);
+            let app_handle = app.clone();
+            let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+            let _ = app_handle.run_on_main_thread(move || {
+                let ok = activate_app_by_pid(previous_app_pid);
+                eprintln!("[PASTE] activate_app_by_pid returned={}", ok);
+                let _ = tx.send(ok);
+            });
+            let _ = rx.await;
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        } else {
+            eprintln!("[PASTE] no previous_app_pid — using session paste fallback");
+            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // 4. Simulate paste keystroke (Ctrl+V / ⌘V)
-    paste::simulate_paste().map_err(|e| e.to_string())?;
+    eprintln!("[PASTE] simulate_paste firing");
+    let paste_result = paste::simulate_paste({
+        #[cfg(target_os = "macos")]
+        {
+            previous_app_pid
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            None
+        }
+    });
+    eprintln!("[PASTE] simulate_paste result={:?}", paste_result);
+    paste_result.map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -828,13 +938,27 @@ pub fn toggle_window(app: &tauri::AppHandle) -> Result<(), String> {
         // Fully visible and focused → toggle off
         let _ = window.hide();
     } else {
-        // Any other state (hidden / minimized / visible-but-unfocused) → bring forward
-        if is_minimized {
-            let _ = window.unminimize();
-        }
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_main_window(app)?;
     }
+
+    Ok(())
+}
+
+pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    #[cfg(target_os = "macos")]
+    remember_frontmost_app(app);
+
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
 
     Ok(())
 }

@@ -18,17 +18,22 @@ mod services;
 
 use plugins::mac_rounded_corners;
 
-fn main() {
-    let mut builder =
-        tauri::Builder::default().plugin(tauri_plugin_autostart::Builder::new().build());
+fn app_builder() -> tauri::Builder<tauri::Wry> {
+    let builder = tauri::Builder::default().plugin(tauri_plugin_autostart::Builder::new().build());
 
-    // Only use decorum plugin on Windows (macOS uses custom mac_rounded_corners plugin)
     #[cfg(target_os = "windows")]
     {
-        builder = builder.plugin(tauri_plugin_decorum::init());
+        builder.plugin(tauri_plugin_decorum::init())
     }
 
-    builder
+    #[cfg(not(target_os = "windows"))]
+    {
+        builder
+    }
+}
+
+fn main() {
+    app_builder()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -39,6 +44,9 @@ fn main() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             // Initialize database
             let app_dir = app
                 .path()
@@ -67,12 +75,10 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => {
-                        let _ = commands::toggle_window(app);
+                        let _ = commands::show_main_window(app);
                     }
                     "settings" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                        if commands::show_main_window(app).is_ok() {
                             let _ = app.emit("open-settings", ());
                         }
                     }
@@ -91,13 +97,7 @@ fn main() {
                         // Always show — tray click should never hide the window.
                         // (toggle_window caused a flash because the click can briefly
                         //  focus the window right as the handler fires, making it hide.)
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_minimized().unwrap_or(false) {
-                                let _ = window.unminimize();
-                            }
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        let _ = commands::show_main_window(app);
                     }
                 })
                 .build(app)?;
@@ -135,15 +135,14 @@ fn main() {
                     clipboard_service,
                     settings_repository: settings_repository.clone(),
                     semantic_service: semantic_service.clone(),
+                    #[cfg(target_os = "macos")]
+                    previous_app_pid: std::sync::Mutex::new(None),
                 };
 
                 // Handle first launch
                 let mut settings = app_state.settings_repository.load().unwrap_or_default();
                 if !settings.has_seen_welcome {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    let _ = commands::show_main_window(&app_handle);
                     settings.has_seen_welcome = true;
                     let _ = app_state.settings_repository.save(&settings);
                 }
