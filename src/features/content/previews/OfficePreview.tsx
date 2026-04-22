@@ -1,6 +1,6 @@
 import type { Content } from '../types'
 import { useState, useMemo } from 'react'
-import { FileText, Image as ImageIcon, Download, Table } from 'lucide-react'
+import { FileText, Image as ImageIcon, Table } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { getOfficeHtmlTab } from '../office'
 
@@ -11,7 +11,7 @@ type OfficePreviewProps = {
 export const OfficePreview = ({ content }: OfficePreviewProps) => {
   const [selectedTab, setSelectedTab] = useState<'html' | 'text' | 'svg' | 'image' | null>(null)
 
-  const { svg, attachment_path } = content.metadata
+  const { svg } = content.metadata
   const imagePath = content.clip.imagePath
   const htmlContent = content.clip.contentHtml
 
@@ -21,7 +21,6 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
 
   const hasSvg = !!svg
   const hasImage = !!imagePath
-  const hasAttachment = !!attachment_path
   const htmlTab = getOfficeHtmlTab(content.metadata, htmlContent)
   const hasHtml = htmlTab.isAvailable
 
@@ -74,24 +73,6 @@ export const OfficePreview = ({ content }: OfficePreviewProps) => {
             active={activeTab === 'image'}
             onClick={() => setSelectedTab('image')}
           />
-        )}
-
-        {hasAttachment && (
-          <div className="ml-auto">
-            <button
-              type="button"
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-300 bg-slate-100/5 hover:bg-slate-100/10 rounded-md transition-colors"
-              onClick={() => {
-                if (attachment_path) {
-                  // TODO: Implement attachment download
-                  console.log('Download attachment:', attachment_path)
-                }
-              }}
-            >
-              <Download className="w-3 h-3" />
-              Attachment
-            </button>
-          </div>
         )}
       </div>
 

@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import type { Content, SmartAction, ActionContext, ActionPlacement } from '../types'
 import { getPlacementForAction } from '../presentationSpec'
+import { useSettingsStore } from '../../../stores/settingsStore'
 
 // Core Actions
 import { useCopyAction } from './shared/CopyAction'
+import { usePasteAction } from './shared/PasteAction'
 import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
@@ -27,8 +29,11 @@ import { useCsvToJsonAction, useCsvToMarkdownAction } from './type-specific/CSVA
 import { useRevealSecretAction } from './type-specific/SecretActions'
 
 export const useActionRegistry = (context?: ActionContext) => {
+  const pasteOnEnter = useSettingsStore(s => s.settings?.paste_on_enter ?? true)
+
   // Core
   const copyAction = useCopyAction()
+  const pasteAction = usePasteAction()
   const deleteAction = useDeleteAction(context?.onDelete)
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
@@ -62,7 +67,7 @@ export const useActionRegistry = (context?: ActionContext) => {
 
   const allActions = useMemo(
     () => [
-      copyAction,
+      pasteOnEnter ? pasteAction : copyAction,
       openDefaultEditor,
       favoriteAction,
       pinAction,
@@ -84,6 +89,8 @@ export const useActionRegistry = (context?: ActionContext) => {
       revealSecret,
     ],
     [
+      pasteOnEnter,
+      pasteAction,
       copyAction,
       openDefaultEditor,
       favoriteAction,

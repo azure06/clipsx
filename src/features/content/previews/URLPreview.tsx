@@ -1,5 +1,6 @@
 import { memo, useMemo } from 'react'
 import { ExternalLink, Link2 } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { CopyableRow, MetaChip, PreviewLocalMenu } from './PreviewShell'
@@ -43,7 +44,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
   const menuActions = getPreviewMenuActions(content)
 
   const handleOpen = () => {
-    window.open(raw, '_blank', 'noopener,noreferrer')
+    void invoke('open_path', { path: raw })
   }
 
   const isImage = raw.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)

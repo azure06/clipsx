@@ -1,4 +1,5 @@
 import { Copy, Globe, Search } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
 import type { SmartAction } from '../../types'
 import { useClipboardStore } from '../../../../stores/clipboardStore'
 
@@ -12,7 +13,7 @@ export const useOpenURLAction = (): SmartAction => ({
   check: content => content.type === 'url',
   execute: content => {
     const url = content.metadata.url || content.text
-    window.open(url, '_blank', 'noopener,noreferrer')
+    void invoke('open_path', { path: url })
   },
 })
 
@@ -25,7 +26,9 @@ export const useSearchURLAction = (): SmartAction => ({
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: content => {
     const domain = content.metadata.domain
-    window.open(`https://www.google.com/search?q=${encodeURIComponent(domain || '')}`, '_blank')
+    void invoke('open_path', {
+      path: `https://www.google.com/search?q=${encodeURIComponent(domain || '')}`,
+    })
   },
 })
 

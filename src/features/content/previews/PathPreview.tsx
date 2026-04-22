@@ -2,7 +2,7 @@ import { memo } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Content } from '../types'
-import { CopyableRow, InlineCTAButton, MetaChip } from './PreviewShell'
+import { CopyableRow, MetaChip } from './PreviewShell'
 
 type PathPreviewProps = {
   readonly content: Content
@@ -34,8 +34,11 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
   return (
     <div className="flex flex-col gap-4 p-4">
       {/* Header card */}
-      <div className="flex flex-col items-center gap-2 p-5 rounded-xl bg-linear-to-br from-orange-500/10 to-amber-500/10 border border-orange-500/20">
-        <div className="p-3 rounded-full bg-orange-500/20 text-orange-400 ring-1 ring-orange-500/30">
+      <div
+        onClick={() => void handleOpen()}
+        className="group flex flex-col items-center gap-2 p-5 rounded-xl bg-linear-to-br from-orange-500/10 to-amber-500/10 border border-orange-500/20 hover:border-orange-400/40 cursor-pointer transition-all duration-300 hover:shadow-[0_0_20px_rgba(251,146,60,0.15)]"
+      >
+        <div className="p-3 rounded-full bg-orange-500/20 text-orange-400 ring-1 ring-orange-500/30 group-hover:scale-110 transition-transform duration-200">
           <FolderOpen size={22} strokeWidth={2} />
         </div>
         <span className="text-lg font-semibold text-white/90 font-mono text-center break-all">
@@ -48,17 +51,10 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
             </MetaChip>
           )}
           <MetaChip>{platform}</MetaChip>
+          <MetaChip className="bg-orange-500/10 text-orange-400 border-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity">
+            Open
+          </MetaChip>
         </div>
-      </div>
-
-      {/* Open CTA */}
-      <div className="flex justify-center">
-        <InlineCTAButton
-          icon={<FolderOpen size={16} />}
-          label="Open Path"
-          onClick={() => void handleOpen()}
-          variant="primary"
-        />
       </div>
 
       {/* Copyable fields */}

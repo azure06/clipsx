@@ -6,7 +6,10 @@ use tauri::{AppHandle, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
 use cocoa::{
-    appkit::{NSWindow, NSWindowStyleMask, NSView, NSWindowTitleVisibility},
+    appkit::{
+        NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask, NSView,
+        NSWindowTitleVisibility,
+    },
     base::id,
     foundation::NSPoint,
 };
@@ -31,6 +34,30 @@ impl Default for TrafficLightsConfig {
     }
 }
 
+#[cfg(target_os = "macos")]
+const NS_NONACTIVATING_PANEL_MASK: u64 = 1 << 7;
+
+#[cfg(target_os = "macos")]
+unsafe fn configure_overlay_window(ns_window: id) {
+    let mut style_mask = ns_window.styleMask();
+    style_mask |= NSWindowStyleMask::from_bits_truncate(NS_NONACTIVATING_PANEL_MASK);
+    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
+    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
+    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
+    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+    ns_window.setStyleMask_(style_mask);
+
+    // `MoveToActiveSpace` conflicts with `CanJoinAllSpaces` on AppKit and will
+    // crash at runtime if both are set on the same window.
+    let behavior =
+        NSWindowCollectionBehavior::NSWindowCollectionBehaviorMoveToActiveSpace
+            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorTransient
+            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary;
+    ns_window.setCollectionBehavior_(behavior);
+    ns_window.setHidesOnDeactivate_(cocoa::base::YES);
+}
+
 /// Enables rounded corners for the window (macOS only)
 /// Uses only public APIs - App Store compatible
 #[tauri::command]
@@ -52,22 +79,12 @@ pub fn enable_rounded_corners<R: Runtime>(
                 #[cfg(target_os = "macos")]
                 unsafe {
                     let ns_window = webview.ns_window() as id;
-                    
-                    let mut style_mask = ns_window.styleMask();
-                    
-                    // Add necessary styles for rounded corners
-                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
-                    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
-                    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
-                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
-                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
-                    
-                    ns_window.setStyleMask_(style_mask);
+                    configure_overlay_window(ns_window);
                     ns_window.setTitlebarAppearsTransparent_(cocoa::base::YES);
-                    
+
                     let content_view = ns_window.contentView();
                     content_view.setWantsLayer(cocoa::base::YES);
-                    
+
                     position_traffic_lights(ns_window, config.offset_x, config.offset_y);
                 }
             })
@@ -104,24 +121,15 @@ pub fn enable_modern_window_style<R: Runtime>(
                 #[cfg(target_os = "macos")]
                 unsafe {
                     let ns_window = webview.ns_window() as id;
-                    
-                    let mut style_mask = ns_window.styleMask();
-                    
-                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
-                    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
-                    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
-                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
-                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
-                    
-                    ns_window.setStyleMask_(style_mask);
+                    configure_overlay_window(ns_window);
                     ns_window.setTitlebarAppearsTransparent_(cocoa::base::YES);
                     ns_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
                     ns_window.setHasShadow_(cocoa::base::YES);
                     ns_window.setOpaque_(cocoa::base::NO);
-                    
+
                     let content_view = ns_window.contentView();
                     content_view.setWantsLayer(cocoa::base::YES);
-                    
+
                     let layer: id = msg_send![content_view, layer];
                     if !layer.is_null() {
                         let _: () = msg_send![layer, setCornerRadius: radius];
