@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Lightbulb } from 'lucide-react'
 import { useUIStore } from '../../stores'
+import { getDeleteShortcutHint } from '../../features/clipboard/utils/deleteShortcut'
 
 const Kbd = ({ children }: { children: ReactNode }) => (
   <span className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-slate-100/80 dark:bg-slate-100/10 border border-gray-300/70 dark:border-gray-100/10 text-[10px] font-mono font-semibold text-gray-700 dark:text-gray-200 leading-none">
@@ -8,29 +9,32 @@ const Kbd = ({ children }: { children: ReactNode }) => (
   </span>
 )
 
-// Array of helpful tips for the user
-const TIPS: ReactNode[] = [
-  <>
-    Press <Kbd>Enter</Kbd> to paste the selected clip.
-  </>,
-  <>
-    Use <Kbd>↑</Kbd> <Kbd>↓</Kbd> arrows or <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate.
-  </>,
-  <>
-    Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/text</Kbd> to filter clips.
-  </>,
-  <>
-    Press <Kbd>F</Kbd> to favorite a clip or <Kbd>P</Kbd> to pin it.
-  </>,
-  <>
-    Press <Kbd>Delete</Kbd> or <Kbd>Backspace</Kbd> to remove a clip.
-  </>,
-]
-
 export const BottomBar = () => {
   const { activeView } = useUIStore()
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
   const [isFading, setIsFading] = useState(false)
+  const deleteShortcutHint = getDeleteShortcutHint()
+  const tips: ReactNode[] = [
+    <>
+      Press <Kbd>Enter</Kbd> to paste the selected clip.
+    </>,
+    <>
+      Use <Kbd>↑</Kbd> <Kbd>↓</Kbd> arrows or <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate.
+    </>,
+    <>
+      Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/text</Kbd> to filter clips.
+    </>,
+    <>
+      Press <Kbd>F</Kbd> to favorite a clip or <Kbd>P</Kbd> to pin it.
+    </>,
+    <>
+      Press{' '}
+      {deleteShortcutHint.map(part => (
+        <Kbd key={part}>{part}</Kbd>
+      ))}{' '}
+      to remove a clip.
+    </>,
+  ]
 
   // Rotate tips every 10 seconds
   useEffect(() => {
@@ -40,7 +44,7 @@ export const BottomBar = () => {
 
       // Change tip after fade out completes (500ms)
       setTimeout(() => {
-        setCurrentTipIndex(prev => (prev + 1) % TIPS.length)
+        setCurrentTipIndex(prev => (prev + 1) % tips.length)
         // Start fade in
         setIsFading(false)
       }, 500)
@@ -60,7 +64,7 @@ export const BottomBar = () => {
             isFading ? 'opacity-0' : 'opacity-100'
           }`}
         >
-          {TIPS[currentTipIndex]}
+          {tips[currentTipIndex]}
         </span>
       </div>
 

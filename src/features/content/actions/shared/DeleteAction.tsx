@@ -1,5 +1,6 @@
 import { Trash2 } from 'lucide-react'
 import type { SmartAction, Content } from '../../types'
+import { getDeleteShortcutLabel } from '../../../clipboard/utils/deleteShortcut'
 
 export const useDeleteAction = (onDelete?: (id: string) => void): SmartAction => ({
   id: 'delete',
@@ -7,7 +8,7 @@ export const useDeleteAction = (onDelete?: (id: string) => void): SmartAction =>
   icon: <Trash2 size={16} />,
   category: 'core',
   placement: 'global_bar' as const,
-  shortcut: '⌘⌫',
+  shortcut: getDeleteShortcutLabel(),
   check: () => true,
   execute: (content: Content) => {
     onDelete?.(content.clip.id)

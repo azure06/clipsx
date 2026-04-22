@@ -5,6 +5,7 @@ import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
+import { shouldDeleteSelectedClip } from './utils/deleteShortcut'
 
 // Re-export for backwards compatibility
 // Re-export for backwards compatibility
@@ -332,12 +333,16 @@ export const ClipboardHistory = ({
         }
         case 'Delete':
         case 'Backspace': {
-          // Do not delete a clip while the search input has focus — the key should
-          // edit the text instead. The outer `isInput` guard already blocks plain
-          // Delete/Backspace, but Cmd+Backspace (common Mac "delete to line start")
-          // bypasses it because the guard passes through all meta/ctrl combos for
-          // the Cmd+1..9 shortcuts. Guard explicitly here instead.
           if (isInput) break
+          if (
+            !shouldDeleteSelectedClip({
+              key: e.key,
+              metaKey: e.metaKey,
+              ctrlKey: e.ctrlKey,
+            })
+          ) {
+            break
+          }
           e.preventDefault()
           const clip = clips[selectedIndex]
           if (clip) {

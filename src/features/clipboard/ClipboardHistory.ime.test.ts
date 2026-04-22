@@ -7,6 +7,11 @@
  * depends on Tauri APIs that require extensive mocking.
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import {
+  getDeleteShortcutHint,
+  getDeleteShortcutLabel,
+  shouldDeleteSelectedClip,
+} from './utils/deleteShortcut'
 
 // ---------------------------------------------------------------------------
 // Mirror of the exact debounce logic from ClipboardHistory.tsx
@@ -110,56 +115,68 @@ describe('IME composition debounce', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Cmd+Backspace guard — the isInput check prevents clip deletion while the
-// search input has focus. Tests the logic captured in the keyboard handler.
+// Platform delete shortcut behavior
 // ---------------------------------------------------------------------------
 
-describe('Cmd+Backspace isInput guard', () => {
-  it('should not delete when isInput is true', () => {
-    let deleted = false
-    const isInput = true
-
-    // Mirror of the keyboard handler case body
-    const handleKey = (key: string, metaKey: boolean) => {
-      if (key === 'Backspace' || key === 'Delete') {
-        if (isInput) return // the guard
-        deleted = true
-      }
-      void metaKey
-    }
-
-    handleKey('Backspace', true) // Cmd+Backspace
-    expect(deleted).toBe(false)
+describe('platform delete shortcuts', () => {
+  it('uses Cmd+Backspace on macOS', () => {
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Backspace',
+        metaKey: true,
+        ctrlKey: false,
+        platform: 'MacIntel',
+      })
+    ).toBe(true)
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Backspace',
+        metaKey: false,
+        ctrlKey: false,
+        platform: 'MacIntel',
+      })
+    ).toBe(false)
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Delete',
+        metaKey: false,
+        ctrlKey: false,
+        platform: 'MacIntel',
+      })
+    ).toBe(false)
   })
 
-  it('should delete when isInput is false', () => {
-    let deleted = false
-    const isInput = false
-
-    const handleKey = (key: string, metaKey: boolean) => {
-      if (key === 'Backspace' || key === 'Delete') {
-        if (isInput) return
-        deleted = true
-      }
-      void metaKey
-    }
-
-    handleKey('Backspace', true)
-    expect(deleted).toBe(true)
+  it('uses Delete on Windows/Linux', () => {
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Delete',
+        metaKey: false,
+        ctrlKey: false,
+        platform: 'Win32',
+      })
+    ).toBe(true)
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Backspace',
+        metaKey: false,
+        ctrlKey: false,
+        platform: 'Win32',
+      })
+    ).toBe(false)
+    expect(
+      shouldDeleteSelectedClip({
+        key: 'Delete',
+        metaKey: true,
+        ctrlKey: false,
+        platform: 'Linux x86_64',
+      })
+    ).toBe(false)
   })
 
-  it('guard applies to Delete key as well', () => {
-    let deleted = false
-    const isInput = true
-
-    const handleKey = (key: string) => {
-      if (key === 'Backspace' || key === 'Delete') {
-        if (isInput) return
-        deleted = true
-      }
-    }
-
-    handleKey('Delete')
-    expect(deleted).toBe(false)
+  it('returns platform-matching labels and hints', () => {
+    expect(getDeleteShortcutLabel('MacIntel')).toBe('⌘⌫')
+    expect(getDeleteShortcutHint('MacIntel')).toEqual(['Cmd', 'Delete'])
+    expect(getDeleteShortcutLabel('Win32')).toBe('Del')
+    expect(getDeleteShortcutHint('Win32')).toEqual(['Delete'])
   })
 })
