@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
-import { SearchBar } from '../search/SearchBar'
+import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import { Sidebar } from '../../shared/components/Sidebar'
 import { TitleBar } from '../../shared/components/TitleBar'
@@ -30,7 +31,27 @@ export const AppLayout = () => {
   const clips = useClipboardStore(state => state.clips)
   const { setThemeMode } = useTheme()
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
+  const searchBarRef = useRef<SearchBarHandle>(null)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+
+  const shouldPreserveFocusedEditor = () => {
+    const active = document.activeElement
+    if (!active || active === document.body) return false
+    if (active instanceof HTMLTextAreaElement) return true
+    if (active instanceof HTMLInputElement) return active.type !== 'search'
+    return (active as HTMLElement).isContentEditable
+  }
+
+  const focusSearchBar = () => {
+    if (activeView !== 'clips') return
+    if (shouldPreserveFocusedEditor()) return
+
+    requestAnimationFrame(() => {
+      if (activeView !== 'clips') return
+      if (shouldPreserveFocusedEditor()) return
+      searchBarRef.current?.focus()
+    })
+  }
 
   useEffect(() => {
     console.log('[NOTE_DEBUG][AppLayout] preview clip resolved from clipboardStore', {
@@ -84,6 +105,32 @@ export const AppLayout = () => {
     }
   }, [setActiveView, resetSearch])
 
+  useEffect(() => {
+    focusSearchBar()
+  }, [activeView])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const setupFocusListener = async () => {
+      const win = getCurrentWindow()
+      const unlisten = await win.onFocusChanged(({ payload: focused }) => {
+        if (focused && !cancelled) {
+          focusSearchBar()
+        }
+      })
+
+      return unlisten
+    }
+
+    const unlistenPromise = setupFocusListener()
+
+    return () => {
+      cancelled = true
+      void unlistenPromise.then(unlisten => unlisten())
+    }
+  }, [activeView])
+
   const handleClear = () => {
     resetSearch()
   }
@@ -108,9 +155,11 @@ export const AppLayout = () => {
                 {/* Search Bar - Always Top */}
                 <div className="w-full max-w-4xl mx-auto shrink-0 mb-6">
                   <SearchBar
+                    ref={searchBarRef}
                     value={searchQuery}
                     onChange={setSearchQuery}
                     onClear={handleClear}
+                    autoFocus={false}
                     semanticStatus={semanticStatus}
                     isSemanticActive={isSemanticActive}
                     onToggleSemantic={toggleSemantic}

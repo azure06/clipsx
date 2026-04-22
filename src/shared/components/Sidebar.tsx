@@ -15,7 +15,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
       <div className="flex flex-col items-center gap-1">
         <button
           onClick={() => setActiveView('clips')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
             activeView === 'clips'
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
@@ -30,7 +30,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
 
         <button
           onClick={() => setActiveView('plugins')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
             activeView === 'plugins'
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
@@ -51,7 +51,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
       <div className="flex flex-col items-center gap-1">
         <button
           onClick={onLoginClick}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 transition-colors cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-gray-800 dark:hover:text-gray-300"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 transition-colors cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-gray-800 dark:hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
           title="Account"
         >
           <User className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -59,7 +59,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
 
         <button
           onClick={() => setActiveView('settings')}
-          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
             activeView === 'settings'
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'

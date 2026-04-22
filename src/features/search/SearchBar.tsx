@@ -10,7 +10,7 @@ import {
   FileText,
   Briefcase,
 } from 'lucide-react'
-import { useRef, useEffect, useState } from 'react'
+import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import type { SemanticStatus } from '../../shared/types'
 
 const FILTER_OPTIONS = [
@@ -33,16 +33,23 @@ interface SearchBarProps {
   onToggleSemantic?: () => void
 }
 
-export const SearchBar = ({
-  value,
-  onChange,
-  onClear,
-  placeholder = 'Type to search or paste...',
-  autoFocus = true,
-  semanticStatus = null,
-  isSemanticActive = false,
-  onToggleSemantic,
-}: SearchBarProps) => {
+export interface SearchBarHandle {
+  focus: () => void
+}
+
+export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar(
+  {
+    value,
+    onChange,
+    onClear,
+    placeholder = 'Type to search or paste...',
+    autoFocus = true,
+    semanticStatus = null,
+    isSemanticActive = false,
+    onToggleSemantic,
+  },
+  ref
+) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
   const isSemanticAvailable =
@@ -59,6 +66,16 @@ export const SearchBar = ({
       inputRef.current?.focus()
     }
   }, [autoFocus])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => {
+        inputRef.current?.focus()
+      },
+    }),
+    []
+  )
 
   // Derive filter menu visibility from value (no useEffect needed)
   // Only show menu if the ENTIRE value is a slash command (no trailing string/space yet)
@@ -241,4 +258,4 @@ export const SearchBar = ({
       )}
     </div>
   )
-}
+})
