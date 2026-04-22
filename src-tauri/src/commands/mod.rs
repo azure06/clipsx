@@ -1,4 +1,5 @@
 // Tauri commands (IPC handlers)
+use crate::events::emit_clip_updated;
 use crate::models::{AppSettings, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard::ClipboardService;
@@ -1346,6 +1347,10 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
             .create_embedding(&id, vector_bytes, &model_name, dimensions)
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
+
+        emit_clip_updated(state.clipboard_service.app_handle(), state.repository.as_ref(), &id)
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     } else {

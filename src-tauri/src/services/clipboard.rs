@@ -1,5 +1,6 @@
 use crate::models::ClipItem;
 use crate::repositories::{ClipRepository, SettingsRepository};
+use crate::events::emit_clip_updated;
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
 use crate::services::office::classify_office_payload;
@@ -399,6 +400,7 @@ impl ClipboardService {
                         let clip_id = clip.id.clone();
                         let repo = self.repository.clone();
                         let semantic = self.semantic_service.clone();
+                        let app_handle = self.app_handle.clone();
 
                         tokio::spawn(async move {
                             match semantic.embed(text_clone).await {
@@ -413,6 +415,13 @@ impl ClipboardService {
                                         .await
                                     {
                                         eprintln!("[ERROR] Failed to save embedding: {}", e);
+                                    } else if let Err(e) =
+                                        emit_clip_updated(&app_handle, repo.as_ref(), &clip_id).await
+                                    {
+                                        eprintln!(
+                                            "[ERROR] Failed to emit clip-updated after embedding save: {}",
+                                            e
+                                        );
                                     }
                                 }
                                 Err(e) => eprintln!("[ERROR] Failed to generate embedding: {}", e),
@@ -802,6 +811,10 @@ impl ClipboardService {
     /// Get access to the monitor (for notify_wrote)
     pub fn get_monitor(&self) -> Arc<Mutex<Box<dyn clipboard_monitor::ClipboardMonitor>>> {
         Arc::clone(&self.monitor)
+    }
+
+    pub fn app_handle(&self) -> &AppHandle {
+        &self.app_handle
     }
 
     /// Delete all files associated with a clip (images, attachments)

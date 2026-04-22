@@ -11,6 +11,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_decorum::WebviewWindowExt;
 
 mod commands;
+mod events;
 mod models;
 mod plugins;
 mod repositories;
