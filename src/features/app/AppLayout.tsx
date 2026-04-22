@@ -13,7 +13,7 @@ import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { SemanticStatus } from '../../shared/types'
+import type { ClipItem, SemanticStatus } from '../../shared/types'
 
 export const AppLayout = () => {
   const {
@@ -29,6 +29,8 @@ export const AppLayout = () => {
   } = useUIStore()
   const { settings, loadSettings } = useSettingsStore()
   const clips = useClipboardStore(state => state.clips)
+  const addNewClip = useClipboardStore(state => state.addNewClip)
+  const mergeClipUpdate = useClipboardStore(state => state.mergeClipUpdate)
   const { setThemeMode } = useTheme()
   const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
@@ -93,6 +95,28 @@ export const AppLayout = () => {
       void unlisten.then(fn => fn())
     }
   }, [])
+
+  useEffect(() => {
+    let unlistenClipboardChanged: (() => void) | undefined
+    let unlistenClipUpdated: (() => void) | undefined
+
+    const setup = async () => {
+      unlistenClipboardChanged = await listen('clipboard_changed', event => {
+        addNewClip(event.payload as ClipItem)
+      })
+
+      unlistenClipUpdated = await listen('clip-updated', event => {
+        mergeClipUpdate(event.payload as ClipItem)
+      })
+    }
+
+    void setup()
+
+    return () => {
+      unlistenClipboardChanged?.()
+      unlistenClipUpdated?.()
+    }
+  }, [addNewClip, mergeClipUpdate])
 
   // Event Listener for Tray "Settings" click
   useEffect(() => {

@@ -31,6 +31,7 @@ type ClipboardState = {
 type ClipboardActions = {
   loadMoreClips: (limit?: number) => Promise<void>
   addNewClip: (clip: ClipItem) => void
+  mergeClipUpdate: (clip: ClipItem) => void
   searchClips: (query: string, limit?: number) => Promise<void>
   // NEW: Search with pagination (for infinite scroll)
   enterSearchMode: (query: string) => Promise<void>
@@ -206,6 +207,21 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
           clips: [mergedClip, ...state.clips],
           currentOffset: state.currentOffset + 1,
         }
+      }
+    })
+  },
+
+  mergeClipUpdate: (clip: ClipItem) => {
+    set(state => {
+      const existingIndex = state.clips.findIndex(c => c.id === clip.id)
+      if (existingIndex === -1) {
+        return state
+      }
+
+      return {
+        clips: state.clips.map((currentClip, index) =>
+          index === existingIndex ? mergeClipState(currentClip, clip) : currentClip
+        ),
       }
     })
   },
@@ -602,10 +618,6 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   generateEmbedding: async (id: string) => {
     try {
       await invoke('generate_embedding', { id })
-      // Update local state to reflect the change visually immediately
-      set(state => ({
-        clips: state.clips.map(c => (c.id === id ? { ...c, hasEmbedding: true } : c)),
-      }))
     } catch (error) {
       console.error('Failed to generate embedding:', error)
     }

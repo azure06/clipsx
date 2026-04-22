@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { listen } from '@tauri-apps/api/event'
 import { useClipboardStore, useSettingsStore } from '../../stores'
-import type { ClipItem } from '../../shared/types'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
@@ -28,7 +26,6 @@ export const ClipboardHistory = ({
     error,
     mode,
     loadMoreClips,
-    addNewClip,
     deleteClip,
     toggleFavorite,
     togglePin,
@@ -127,20 +124,6 @@ export const ClipboardHistory = ({
       }
     }
   }, [searchQuery, mode, enterSearchMode, exitSearchMode])
-
-  // Listen for new clips from Rust
-  useEffect(() => {
-    let unlistenFn: (() => void) | undefined
-
-    const setup = async () => {
-      unlistenFn = await listen('clipboard_changed', event => {
-        addNewClip(event.payload as ClipItem)
-      })
-    }
-
-    void setup()
-    return () => unlistenFn?.()
-  }, [addNewClip])
 
   // Infinite scroll observer
   useEffect(() => {

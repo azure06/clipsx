@@ -1,12 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
 import { useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
 
-const { listenMock, invokeMock, focusChangeHandlers } = vi.hoisted(() => ({
+const { listenMock, invokeMock, focusChangeHandlers, eventHandlers } = vi.hoisted(() => ({
   listenMock: vi.fn(),
   invokeMock: vi.fn(),
   focusChangeHandlers: [] as Array<(event: { payload: boolean }) => void>,
+  eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -64,7 +65,15 @@ describe('AppLayout search focus ownership', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     focusChangeHandlers.length = 0
-    listenMock.mockResolvedValue(vi.fn())
+    eventHandlers.clear()
+    listenMock.mockImplementation(
+      async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+        const handlers = eventHandlers.get(eventName) ?? []
+        handlers.push(handler)
+        eventHandlers.set(eventName, handlers)
+        return vi.fn()
+      }
+    )
     invokeMock.mockResolvedValue({
       state: 'disabled',
       enabled: false,
@@ -167,5 +176,83 @@ describe('AppLayout search focus ownership', () => {
     expect(input).not.toHaveFocus()
 
     noteField.remove()
+  })
+
+  it('merges clip-updated events into clipboard store state', async () => {
+    useClipboardStore.setState({
+      clips: [
+        {
+          id: 'clip-1',
+          contentType: 'text',
+          detectedType: 'text',
+          contentText: 'hello',
+          contentHtml: null,
+          contentRtf: null,
+          svgPath: null,
+          pdfPath: null,
+          imagePath: null,
+          attachmentPath: null,
+          attachmentType: null,
+          filePaths: null,
+          metadata: null,
+          note: 'keep me',
+          createdAt: 1,
+          updatedAt: 1,
+          appName: null,
+          isPinned: false,
+          isFavorite: false,
+          accessCount: 0,
+          contentHash: null,
+          hasEmbedding: false,
+          tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
+        },
+      ],
+    })
+
+    render(<AppLayout />)
+
+    await waitFor(() => {
+      expect(eventHandlers.get('clip-updated')).toHaveLength(1)
+    })
+
+    const clipUpdatedHandlers = eventHandlers.get('clip-updated')
+
+    await act(async () => {
+      clipUpdatedHandlers?.[0]?.({
+        payload: {
+          id: 'clip-1',
+          contentType: 'text',
+          detectedType: 'text',
+          contentText: 'hello',
+          contentHtml: null,
+          contentRtf: null,
+          svgPath: null,
+          pdfPath: null,
+          imagePath: null,
+          attachmentPath: null,
+          attachmentType: null,
+          filePaths: null,
+          metadata: null,
+          note: null,
+          createdAt: 1,
+          updatedAt: 2,
+          appName: null,
+          isPinned: false,
+          isFavorite: false,
+          accessCount: 0,
+          contentHash: null,
+          hasEmbedding: true,
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(useClipboardStore.getState().clips[0]).toMatchObject({
+        id: 'clip-1',
+        hasEmbedding: true,
+        note: 'keep me',
+        tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
+      })
+    })
   })
 })
