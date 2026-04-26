@@ -178,9 +178,16 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      # NOTE: we use --bin clipsx (main.rs) instead of plain `cargo test`.
+      # The [lib] crate-type includes "cdylib" (needed for mobile targets), which
+      # forces the lib test binary to link Tauri's WebView2 GUI runtime on Windows.
+      # Running that binary headlessly crashes with STATUS_ENTRYPOINT_NOT_FOUND
+      # (exit 0xc0000139) before any test executes. The bin target links correctly
+      # and covers all the same modules, so no tests are lost.
+      # See: src-tauri/Cargo.toml [lib] section for the full explanation.
       - name: Run tests
         working-directory: src-tauri
-        run: cargo test --all-features
+        run: cargo test --all-features --bin clipsx
 
   # ---------------------------------------------------------------------------
   # 5. Build check (PR only)

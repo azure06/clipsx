@@ -7,6 +7,20 @@ edition = "2021"
 
 [lib]
 name = "clipsx_lib"
+# "staticlib" and "cdylib" are required by the Tauri build system for mobile
+# targets (iOS = staticlib, Android = cdylib). They are NOT needed for desktop-only
+# builds but are kept here for future mobile support.
+#
+# SIDE EFFECT ON WINDOWS TESTS:
+# The "cdylib" type causes the lib test binary to link Tauri's WebView2 GUI
+# runtime at load time. When `cargo test --lib` tries to run that binary
+# headlessly, Windows cannot find the expected GUI entrypoint and crashes with:
+#   STATUS_ENTRYPOINT_NOT_FOUND (exit code 0xc0000139)
+#
+# WORKAROUND: run tests via `--bin clipsx` (main.rs) instead of `--lib`.
+# main.rs declares all the same modules as lib.rs — plus `plugins` — so no
+# tests are skipped. If mobile targets are ever dropped, remove "staticlib"
+# and "cdylib" from this list and you can go back to plain `cargo test`.
 crate-type = ["staticlib", "cdylib", "lib"]
 
 [[bin]]
