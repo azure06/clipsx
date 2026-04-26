@@ -1,4 +1,17 @@
-name: CI/CD
+# =============================================================================
+# CI — Runs on every push and PR to main/develop
+# =============================================================================
+# Purpose: catch regressions fast. No releases, no heavy builds.
+#
+# Jobs:
+#   1. frontend-quality  — lint, format, type-check (ubuntu, fast)
+#   2. frontend-test     — vitest across all 3 platforms
+#   3. rust-quality      — cargo fmt + clippy (ubuntu, fast)
+#   4. rust-test         — cargo test across all 3 platforms
+#   5. build-check       — verify Tauri app compiles (PR only, ubuntu)
+# =============================================================================
+
+name: CI
 
 on:
   push:
@@ -6,75 +19,215 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: "stable"
+
 jobs:
-  lint-and-test:
-    name: Lint and Test
-    runs-on: macos-latest
-    
+  # ---------------------------------------------------------------------------
+  # 1. Frontend quality checks (lint, format, types)
+  #    Runs on Ubuntu only — these checks are platform-independent.
+  # ---------------------------------------------------------------------------
+  frontend-quality:
+    name: "Frontend · Lint & Format"
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-      
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Run linter
+
+      - name: ESLint
         run: npm run lint
-      
-      - name: Check formatting
+
+      - name: Prettier (check)
         run: npm run format:check
-      
-      - name: Type check
+
+      - name: TypeScript type-check
         run: npm run type-check
-      
+
+  # ---------------------------------------------------------------------------
+  # 2. Frontend tests (vitest)
+  #    Runs on all 3 platforms — UI behavior can differ per OS.
+  # ---------------------------------------------------------------------------
+  frontend-test:
+    name: "Frontend · Test (${{ matrix.os }})"
+    needs: frontend-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run tests
-        run: npm test
-      
+        run: npx vitest run
+
       - name: Generate coverage
-        run: npm run test:coverage
-      
+        if: matrix.os == 'ubuntu-latest'
+        run: npx vitest run --coverage
+
       - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4
-        if: always()
+        continue-on-error: true
         with:
           files: ./coverage/coverage-final.json
           flags: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-  build-tauri:
-    name: Build Tauri App
-    needs: lint-and-test
-    runs-on: macos-latest
-    
+  # ---------------------------------------------------------------------------
+  # 3. Rust quality checks (fmt + clippy)
+  #    Runs on Ubuntu only — style checks are platform-independent.
+  #    Needs system libs that Tauri depends on for compilation.
+  # ---------------------------------------------------------------------------
+  rust-quality:
+    name: "Rust · Fmt & Clippy"
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-      
+        with:
+          components: rustfmt, clippy
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build Tauri app
-        run: npm run tauri:build
-      
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+          workspaces: "./src-tauri -> target"
+
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ---------------------------------------------------------------------------
+  # 4. Rust tests
+  #    Runs on all 3 platforms — clipboard/platform code is OS-specific.
+  #    Each runner installs its own system dependencies.
+  # ---------------------------------------------------------------------------
+  rust-test:
+    name: "Rust · Test (${{ matrix.platform.name }})"
+    needs: rust-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Linux system deps ---
+      - name: Install system dependencies (Linux)
+        if: matrix.platform.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
-          name: tauri-app-macos
-          path: src-tauri/target/release/bundle/
+          workspaces: "./src-tauri -> target"
+
+      - name: Run tests
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+  # ---------------------------------------------------------------------------
+  # 5. Build check (PR only)
+  #    Verifies the full Tauri app compiles — catches issues that lint/tests
+  #    miss (broken imports, missing Tauri plugin configs, etc.).
+  #    Runs on Ubuntu only — enough to catch 95% of compilation issues.
+  #    Full cross-platform builds happen in the release workflow.
+  # ---------------------------------------------------------------------------
+  build-check:
+    name: "Build · Compile Check"
+    if: github.event_name == 'pull_request'
+    needs: [frontend-test, rust-test]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libxdo-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Compile Rust (debug, faster than release)
+        working-directory: src-tauri
+        run: cargo build
+
