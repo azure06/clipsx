@@ -14,6 +14,19 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration, Instant};
 
+struct CreateOfficeClipParams {
+    ole_data: Option<Vec<u8>>,
+    ole_type: Option<String>,
+    extra_types: Vec<(String, Vec<u8>)>,
+    svg_data: Option<Vec<u8>>,
+    pdf_data: Option<Vec<u8>>,
+    png_data: Option<Vec<u8>>,
+    html_data: Option<String>,
+    rtf_data: Option<String>,
+    extracted_text: String,
+    source_app: String,
+}
+
 /// Main clipboard service - coordinates monitoring, storage, and notifications
 ///
 /// Think of this as the "hub" of the application. It:
@@ -68,10 +81,10 @@ impl ClipboardService {
             .join("clipboard_data");
 
         // Create per-type subdirectories (professional organization)
-        std::fs::create_dir_all(&storage_dir.join("images")).ok();
-        std::fs::create_dir_all(&storage_dir.join("svg")).ok();
-        std::fs::create_dir_all(&storage_dir.join("pdf")).ok();
-        std::fs::create_dir_all(&storage_dir.join("office")).ok();
+        std::fs::create_dir_all(storage_dir.join("images")).ok();
+        std::fs::create_dir_all(storage_dir.join("svg")).ok();
+        std::fs::create_dir_all(storage_dir.join("pdf")).ok();
+        std::fs::create_dir_all(storage_dir.join("office")).ok();
 
         Self {
             repository,
@@ -246,7 +259,7 @@ impl ClipboardService {
                 content,
                 hash,
                 source_app,
-            } => (content, hash, source_app),
+            } => (*content, hash, source_app),
         };
 
         // Load current settings on every check so changes take effect immediately
@@ -327,16 +340,18 @@ impl ClipboardService {
                 source_app: office_app,
             } => {
                 self.create_office_clip(
-                    ole_data,
-                    ole_type,
-                    extra_types,
-                    svg_data,
-                    pdf_data,
-                    png_data,
-                    html_data,
-                    rtf_data,
-                    extracted_text,
-                    office_app,
+                    CreateOfficeClipParams {
+                        ole_data,
+                        ole_type,
+                        extra_types,
+                        svg_data,
+                        pdf_data,
+                        png_data,
+                        html_data,
+                        rtf_data,
+                        extracted_text,
+                        source_app: office_app,
+                    },
                     &content_hash,
                     source_app.clone(),
                 )
@@ -656,19 +671,22 @@ impl ClipboardService {
 
     async fn create_office_clip(
         &self,
-        ole_data: Option<Vec<u8>>,
-        ole_type: Option<String>,
-        extra_types: Vec<(String, Vec<u8>)>,
-        svg_data: Option<Vec<u8>>,
-        pdf_data: Option<Vec<u8>>,
-        png_data: Option<Vec<u8>>,
-        html_data: Option<String>,
-        rtf_data: Option<String>,
-        extracted_text: String,
-        source_app: String,
+        params: CreateOfficeClipParams,
         hash: &str,
         app_name: Option<String>,
     ) -> Result<ClipItem> {
+        let CreateOfficeClipParams {
+            ole_data,
+            ole_type,
+            extra_types,
+            svg_data,
+            pdf_data,
+            png_data,
+            html_data,
+            rtf_data,
+            extracted_text,
+            source_app,
+        } = params;
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
         let office_classification = classify_office_payload(

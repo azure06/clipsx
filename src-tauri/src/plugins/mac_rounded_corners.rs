@@ -17,6 +17,7 @@ use cocoa::{
 use objc::{msg_send, sel, sel_impl};
 
 /// Configuration for Traffic Lights positioning
+#[allow(dead_code)]
 pub struct TrafficLightsConfig {
     /// Offset in pixels from default position (positive = right, negative = left)
     pub offset_x: f64,
@@ -61,9 +62,9 @@ unsafe fn configure_overlay_window(ns_window: id) {
 #[tauri::command]
 pub fn enable_rounded_corners<R: Runtime>(
     _app: AppHandle<R>,
-    window: WebviewWindow<R>,
-    offset_x: Option<f64>,
-    offset_y: Option<f64>,
+    _window: WebviewWindow<R>,
+    _offset_x: Option<f64>,
+    _offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -101,10 +102,10 @@ pub fn enable_rounded_corners<R: Runtime>(
 #[tauri::command]
 pub fn enable_modern_window_style<R: Runtime>(
     _app: AppHandle<R>,
-    window: WebviewWindow<R>,
-    corner_radius: Option<f64>,
-    offset_x: Option<f64>,
-    offset_y: Option<f64>,
+    _window: WebviewWindow<R>,
+    _corner_radius: Option<f64>,
+    _offset_x: Option<f64>,
+    _offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -152,9 +153,9 @@ pub fn enable_modern_window_style<R: Runtime>(
 #[tauri::command]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,
-    window: WebviewWindow<R>,
-    offset_x: Option<f64>,
-    offset_y: Option<f64>,
+    _window: WebviewWindow<R>,
+    _offset_x: Option<f64>,
+    _offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

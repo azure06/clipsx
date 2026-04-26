@@ -3,7 +3,6 @@
 /// Strategy: the Clips window is minimized/hidden, which lets the OS
 /// automatically refocus whatever was behind it. Then we simulate
 /// Ctrl+V (Windows) or ⌘V (macOS) to paste into that app.
-
 // =============================================================================
 // Windows Implementation
 // =============================================================================

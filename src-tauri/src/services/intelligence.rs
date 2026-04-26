@@ -215,7 +215,7 @@ fn detect_color(text: &str) -> Option<DetectionResult> {
         let hex6 = if hex_body.len() == 3 {
             hex_body
                 .chars()
-                .flat_map(|c| std::iter::repeat(c).take(2))
+                .flat_map(|c| std::iter::repeat_n(c, 2))
                 .collect::<String>()
         } else {
             hex_body[..6].to_string() // Take first 6 chars (ignore alpha for hex field)
@@ -420,7 +420,7 @@ fn detect_timestamp(text: &str) -> Option<DetectionResult> {
     let value: i64 = text.parse().ok()?;
 
     // Check seconds range
-    if value >= MIN_TIMESTAMP && value <= MAX_TIMESTAMP {
+    if (MIN_TIMESTAMP..=MAX_TIMESTAMP).contains(&value) {
         let dt = chrono::DateTime::from_timestamp(value, 0)?;
         return Some(DetectionResult {
             detected_type: ContentType::Timestamp,
@@ -435,7 +435,7 @@ fn detect_timestamp(text: &str) -> Option<DetectionResult> {
     }
 
     // Check milliseconds range
-    if value >= MIN_TIMESTAMP_MS && value <= MAX_TIMESTAMP_MS {
+    if (MIN_TIMESTAMP_MS..=MAX_TIMESTAMP_MS).contains(&value) {
         let secs = value / 1000;
         let dt = chrono::DateTime::from_timestamp(secs, 0)?;
         return Some(DetectionResult {
@@ -745,23 +745,15 @@ fn detect_csv(text: &str) -> Option<DetectionResult> {
         }
     }
 
-    if let Some(delimiter) = best_delimiter {
-        // Final heuristic: avoid false positives like "Hello, world.\nI am here."
-        // If delimiter is comma and columns are few (e.g. 2), it's risky.
-        // But for now, we trust the consistency check.
-
-        Some(DetectionResult {
-            detected_type: ContentType::Csv,
-            confidence: 0.85,
-            metadata: json!({
-                "delimiter": delimiter.to_string(),
-                "rows": lines.len(),
-                "columns": best_cols,
-            }),
-        })
-    } else {
-        None
-    }
+    best_delimiter.map(|delimiter| DetectionResult {
+        detected_type: ContentType::Csv,
+        confidence: 0.85,
+        metadata: json!({
+            "delimiter": delimiter.to_string(),
+            "rows": lines.len(),
+            "columns": best_cols,
+        }),
+    })
 }
 
 /// Detect phone numbers.

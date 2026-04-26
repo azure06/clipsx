@@ -2,44 +2,33 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Theme {
     Light,
     Dark,
+    #[default]
     Auto,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Auto
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
+#[allow(dead_code)]
 pub enum ViewMode {
+    #[default]
     List,
     Grid,
 }
 
-impl Default for ViewMode {
-    fn default() -> Self {
-        ViewMode::List
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum PasteFormat {
+    #[default]
     Auto,
     Plain,
     Html,
     Markdown,
-}
-
-impl Default for PasteFormat {
-    fn default() -> Self {
-        PasteFormat::Auto
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

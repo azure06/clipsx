@@ -295,6 +295,7 @@ pub async fn search_clips(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn search_clips_paginated(
     query: String,
     filter_types: Option<Vec<String>>,
@@ -377,7 +378,7 @@ pub async fn search_clips_paginated(
             page_ids
                 .iter()
                 .position(|id| id == &c.id)
-                .unwrap_or(std::usize::MAX)
+                .unwrap_or(usize::MAX)
         });
 
         for clip in &mut clips {
@@ -1487,6 +1488,8 @@ pub async fn update_clip_note(
 
 #[cfg(test)]
 mod tests {
+    type OleWriteCase = (Option<&'static [u8]>, Option<&'static str>, bool);
+
     /// Decode a hex string using the same safe `str::get` pattern used in
     /// `reconstruct_clipboard_content` for `extra_types`.
     fn hex_decode(hex: &str) -> Vec<u8> {
@@ -1530,7 +1533,7 @@ mod tests {
     /// are present. If either is None, we must skip to avoid pasteboard corruption.
     #[test]
     fn ole_write_guard_requires_both_data_and_uti() {
-        let cases: &[(Option<&[u8]>, Option<&str>, bool)] = &[
+        let cases: &[OleWriteCase] = &[
             (
                 Some(b"data"),
                 Some("com.microsoft.PowerPoint-16.0-Slides-Package"),

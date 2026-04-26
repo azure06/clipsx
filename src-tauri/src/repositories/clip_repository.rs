@@ -449,6 +449,7 @@ impl ClipRepository {
     /// Search clips with FTS and pagination
     /// NOTE: For future semantic search, replace FTS query with embedding similarity
     /// TODO: Add semantic_search_paginated() method that uses embeddings table
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_paginated(
         &self,
         query: &str,

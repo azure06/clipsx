@@ -414,6 +414,6 @@ mod tests {
         // Norm A = 1.0, Norm B = sqrt(2) ~ 1.414
         // Sim = 1 / 1.414 ~ 0.707
         let sim = SemanticService::cosine_similarity(&vec1, &vec4);
-        assert!((sim - 0.7071).abs() < 0.001);
+        assert!((sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 }

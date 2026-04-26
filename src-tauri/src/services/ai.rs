@@ -4,6 +4,12 @@
 pub struct AiService;
 
 #[allow(dead_code)]
+impl Default for AiService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AiService {
     pub fn new() -> Self {
         Self

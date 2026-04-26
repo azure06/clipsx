@@ -1632,12 +1632,12 @@ unsafe fn read_office_content_windows() -> Option<ClipboardContent> {
         let mut end_idx = raw_html.len();
 
         for line in raw_html.lines().take(15) {
-            if line.starts_with("StartHTML:") {
-                if let Ok(val) = line[10..].trim().parse::<usize>() {
+            if let Some(rest) = line.strip_prefix("StartHTML:") {
+                if let Ok(val) = rest.trim().parse::<usize>() {
                     start_idx = val;
                 }
-            } else if line.starts_with("EndHTML:") {
-                if let Ok(val) = line[8..].trim().parse::<usize>() {
+            } else if let Some(rest) = line.strip_prefix("EndHTML:") {
+                if let Ok(val) = rest.trim().parse::<usize>() {
                     end_idx = val;
                 }
             }
