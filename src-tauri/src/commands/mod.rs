@@ -8,7 +8,7 @@ use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::State;
 
 pub struct AppState {
     pub repository: Arc<ClipRepository>,
