@@ -18,8 +18,8 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "test:all": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx",
+    "test:all": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx",
     "prepare": "simple-git-hooks"
   },
   "simple-git-hooks": {
