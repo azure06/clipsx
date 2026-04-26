@@ -11,3 +11,9 @@ impl OcrService {
 
     // TODO: Implement OCR functionality
 }
+
+impl Default for OcrService {
+    fn default() -> Self {
+        Self::new()
+    }
+}

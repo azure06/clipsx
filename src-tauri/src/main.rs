@@ -78,11 +78,10 @@ fn main() {
                     "open" => {
                         let _ = commands::show_main_window(app);
                     }
-                    "settings" => {
-                        if commands::show_main_window(app).is_ok() {
+                    "settings"
+                        if commands::show_main_window(app).is_ok() => {
                             let _ = app.emit("open-settings", ());
                         }
-                    }
                     "quit" => {
                         app.exit(0);
                     }

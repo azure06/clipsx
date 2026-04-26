@@ -10,7 +10,7 @@ use anyhow::Result;
 pub enum ClipboardCheckResult {
     Unchanged,
     Changed {
-        content: ClipboardContent,
+        content: Box<ClipboardContent>,
         hash: String,
         source_app: Option<String>,
     },
@@ -103,7 +103,7 @@ impl ClipboardMonitor for MacOSMonitor {
         self.last_change_count = current;
 
         Ok(ClipboardCheckResult::Changed {
-            content,
+            content: Box::new(content),
             hash,
             source_app: self.provider.get_active_app_name(),
         })
@@ -189,7 +189,7 @@ impl ClipboardMonitor for PollingMonitor {
         self.last_hash = Some(hash.clone());
 
         Ok(ClipboardCheckResult::Changed {
-            content,
+            content: Box::new(content),
             hash,
             source_app: self.provider.get_active_app_name(),
         })
@@ -566,7 +566,7 @@ mod tests {
         let result = monitor.check().unwrap();
         match result {
             ClipboardCheckResult::Changed { content, .. } => {
-                if let ClipboardContent::Text { content } = content {
+                if let ClipboardContent::Text { content } = *content {
                     assert_eq!(content, "hello");
                 } else {
                     panic!("Wrong content type");
@@ -590,7 +590,7 @@ mod tests {
         let result = monitor.check().unwrap();
         match result {
             ClipboardCheckResult::Changed { content, .. } => {
-                if let ClipboardContent::Text { content } = content {
+                if let ClipboardContent::Text { content } = *content {
                     assert_eq!(content, "world");
                 } else {
                     panic!("Wrong content type");

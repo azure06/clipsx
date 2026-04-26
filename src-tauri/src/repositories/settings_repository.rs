@@ -88,8 +88,8 @@ mod tests {
     fn test_load_defaults_when_file_missing() {
         let (repo, _temp) = create_test_repo();
         let settings = repo.load().unwrap();
-        assert_eq!(settings.enable_images, true);
-        assert_eq!(settings.paste_on_enter, true);
+        assert!(settings.enable_images);
+        assert!(settings.paste_on_enter);
         assert!(!settings.semantic_search_enabled);
     }
 
@@ -104,7 +104,7 @@ mod tests {
         repo.save(&settings).unwrap();
 
         let loaded = repo.load().unwrap();
-        assert_eq!(loaded.enable_images, false);
+        assert!(!loaded.enable_images);
     }
 
     #[test]
@@ -122,21 +122,23 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(updated.enable_images, false);
+        assert!(!updated.enable_images);
         assert_eq!(updated.excluded_apps.len(), 1);
 
         // Verify persistence
         let loaded = repo.load().unwrap();
-        assert_eq!(loaded.enable_images, false);
+        assert!(!loaded.enable_images);
     }
 
     #[test]
     fn test_save_and_load_semantic_search_settings() {
         let (repo, _temp) = create_test_repo();
 
-        let mut settings = AppSettings::default();
-        settings.semantic_search_enabled = true;
-        settings.semantic_model = "paraphrase-multilingual-MiniLM-L12-v2".to_string();
+        let settings = AppSettings {
+            semantic_search_enabled: true,
+            semantic_model: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
+            ..AppSettings::default()
+        };
 
         repo.save(&settings).unwrap();
 
