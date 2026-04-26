@@ -267,8 +267,9 @@ export const Settings = () => {
     })
     if (!path) return
     try {
-      const text = await readTextFile(path as string)
-      const imported = JSON.parse(text) as unknown
+      const text = await readTextFile(path)
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const imported = JSON.parse(text)
       await updateSettings(imported as Partial<AppSettings>)
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (_error) {

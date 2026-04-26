@@ -131,6 +131,7 @@ export const AppLayout = () => {
 
   useEffect(() => {
     focusSearchBar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView])
 
   useEffect(() => {
@@ -153,6 +154,7 @@ export const AppLayout = () => {
       cancelled = true
       void unlistenPromise.then(unlisten => unlisten())
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView])
 
   const handleClear = () => {

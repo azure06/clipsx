@@ -37,6 +37,7 @@ describe('useSettingsStore', () => {
     await useSettingsStore.getState().updateSettings({ show_copy_toast: false })
 
     expect(mockInvoke).toHaveBeenCalledWith('update_settings', {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       settings: expect.objectContaining({
         show_copy_toast: false,
         theme: DEFAULT_SETTINGS.theme,

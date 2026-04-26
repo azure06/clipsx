@@ -1352,8 +1352,11 @@ mod tests {
         );
         repo.insert(&csv_clip).await?;
 
-        let mut office_spreadsheet =
-            ClipItem::from_text("product\tqty\npens\t12".to_string(), "office".to_string(), None);
+        let mut office_spreadsheet = ClipItem::from_text(
+            "product\tqty\npens\t12".to_string(),
+            "office".to_string(),
+            None,
+        );
         office_spreadsheet.content_type = "office".to_string();
         office_spreadsheet.metadata =
             Some(serde_json::json!({ "office_kind": "spreadsheet" }).to_string());
@@ -1364,7 +1367,8 @@ mod tests {
         legacy_html_table.content_type = "office".to_string();
         legacy_html_table.content_html =
             Some("<table><tr><th>A</th></tr><tr><td>1</td></tr></table>".to_string());
-        legacy_html_table.metadata = Some(serde_json::json!({ "source_app": "Microsoft Excel" }).to_string());
+        legacy_html_table.metadata =
+            Some(serde_json::json!({ "source_app": "Microsoft Excel" }).to_string());
         repo.insert(&legacy_html_table).await?;
 
         let mut office_document =
@@ -1386,7 +1390,15 @@ mod tests {
         assert!(!csv_ids.contains(&office_document.id));
 
         let office_results = repo
-            .search_paginated("", Some(vec!["office".to_string()]), 20, 0, false, false, None)
+            .search_paginated(
+                "",
+                Some(vec!["office".to_string()]),
+                20,
+                0,
+                false,
+                false,
+                None,
+            )
             .await?;
         let office_ids: std::collections::HashSet<String> =
             office_results.into_iter().map(|clip| clip.id).collect();

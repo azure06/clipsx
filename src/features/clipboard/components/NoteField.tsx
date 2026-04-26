@@ -60,6 +60,7 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
     }
 
     lastCommittedRef.current = nextStoreNote
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipId, note, isFocused])
 
   const commitNote = async (rawValue: string) => {
