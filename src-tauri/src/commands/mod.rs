@@ -91,7 +91,6 @@ fn activate_app_by_pid(pid: i32) -> bool {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticIndexStats {
@@ -1348,9 +1347,13 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
 
-        emit_clip_updated(state.clipboard_service.app_handle(), state.repository.as_ref(), &id)
-            .await
-            .map_err(|e| e.to_string())?;
+        emit_clip_updated(
+            state.clipboard_service.app_handle(),
+            state.repository.as_ref(),
+            &id,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     } else {

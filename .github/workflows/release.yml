@@ -168,7 +168,7 @@ jobs:
       # --- Build + Release ---
       - name: Build & upload to release
         if: needs.check-version.outputs.should_release == 'true'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Uncomment if you enable the Tauri updater:
@@ -195,7 +195,7 @@ jobs:
       # --- Build only (no release — dry run or version unchanged) ---
       - name: Build only (no release)
         if: needs.check-version.outputs.should_release != 'true'
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0
         with:
           args: ${{ matrix.settings.args }}
 

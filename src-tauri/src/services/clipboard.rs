@@ -1,6 +1,6 @@
+use crate::events::emit_clip_updated;
 use crate::models::ClipItem;
 use crate::repositories::{ClipRepository, SettingsRepository};
-use crate::events::emit_clip_updated;
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
 use crate::services::office::classify_office_payload;
@@ -416,7 +416,8 @@ impl ClipboardService {
                                     {
                                         eprintln!("[ERROR] Failed to save embedding: {}", e);
                                     } else if let Err(e) =
-                                        emit_clip_updated(&app_handle, repo.as_ref(), &clip_id).await
+                                        emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
+                                            .await
                                     {
                                         eprintln!(
                                             "[ERROR] Failed to emit clip-updated after embedding save: {}",

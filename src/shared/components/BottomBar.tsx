@@ -51,7 +51,7 @@ export const BottomBar = () => {
     }, 10000)
 
     return () => clearInterval(intervalId)
-  }, [])
+  }, [tips.length])
 
   return (
     <div className="flex h-8 w-full shrink-0 select-none items-center justify-between px-4 text-[11px] text-gray-600 dark:text-gray-500">

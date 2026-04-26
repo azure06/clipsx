@@ -20,9 +20,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
-    onFocusChanged: vi.fn(async handler => {
+    onFocusChanged: vi.fn((handler: (event: { payload: boolean }) => void) => {
       focusChangeHandlers.push(handler)
-      return vi.fn()
+      return Promise.resolve(vi.fn())
     }),
   }),
 }))
@@ -67,11 +67,11 @@ describe('AppLayout search focus ownership', () => {
     focusChangeHandlers.length = 0
     eventHandlers.clear()
     listenMock.mockImplementation(
-      async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+      (eventName: string, handler: (event: { payload: unknown }) => void) => {
         const handlers = eventHandlers.get(eventName) ?? []
         handlers.push(handler)
         eventHandlers.set(eventName, handlers)
-        return vi.fn()
+        return Promise.resolve(vi.fn())
       }
     )
     invokeMock.mockResolvedValue({
@@ -217,7 +217,7 @@ describe('AppLayout search focus ownership', () => {
 
     const clipUpdatedHandlers = eventHandlers.get('clip-updated')
 
-    await act(async () => {
+    act(() => {
       clipUpdatedHandlers?.[0]?.({
         payload: {
           id: 'clip-1',
