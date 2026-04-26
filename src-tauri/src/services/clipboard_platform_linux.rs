@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 pub fn get_active_app_name() -> Option<String> {
     use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt, Window};
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 
     // Connect to X server
     let (conn, screen_num) = x11rb::connect(None).ok()?;

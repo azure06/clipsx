@@ -1106,6 +1106,7 @@ pub fn read_clipboard(_app: &tauri::AppHandle) -> Result<Option<ClipboardContent
     // Check for files first (CF_HDROP)
     // NOTE: This uses native Windows API because arboard doesn't support files
     if settings.enable_files {
+        #[cfg(target_os = "windows")]
         if let Some(files) = unsafe { read_files() } {
             return Ok(Some(ClipboardContent::Files { paths: files }));
         }
