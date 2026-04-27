@@ -1,6 +1,7 @@
 // Unterdrücke Warnings von veralteten Cocoa APIs
 #![allow(unexpected_cfgs)]
 #![allow(deprecated)]
+#![allow(unused_variables)]
 
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
@@ -62,9 +63,9 @@ unsafe fn configure_overlay_window(ns_window: id) {
 #[tauri::command]
 pub fn enable_rounded_corners<R: Runtime>(
     _app: AppHandle<R>,
-    _window: WebviewWindow<R>,
-    _offset_x: Option<f64>,
-    _offset_y: Option<f64>,
+    window: WebviewWindow<R>,
+    offset_x: Option<f64>,
+    offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -102,10 +103,10 @@ pub fn enable_rounded_corners<R: Runtime>(
 #[tauri::command]
 pub fn enable_modern_window_style<R: Runtime>(
     _app: AppHandle<R>,
-    _window: WebviewWindow<R>,
-    _corner_radius: Option<f64>,
-    _offset_x: Option<f64>,
-    _offset_y: Option<f64>,
+    window: WebviewWindow<R>,
+    corner_radius: Option<f64>,
+    offset_x: Option<f64>,
+    offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -153,9 +154,9 @@ pub fn enable_modern_window_style<R: Runtime>(
 #[tauri::command]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,
-    _window: WebviewWindow<R>,
-    _offset_x: Option<f64>,
-    _offset_y: Option<f64>,
+    window: WebviewWindow<R>,
+    offset_x: Option<f64>,
+    offset_y: Option<f64>,
 ) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

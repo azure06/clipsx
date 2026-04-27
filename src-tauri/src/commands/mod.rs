@@ -8,6 +8,8 @@ use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 use tauri::State;
 
 pub struct AppState {

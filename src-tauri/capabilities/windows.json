@@ -1,0 +1,11 @@
+{
+  "identifier": "windows-capability",
+  "description": "Windows-only permissions",
+  "platforms": ["windows"],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "decorum:allow-show-snap-overlay"
+  ]
+}
