@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "20.19.0"
   RUST_TOOLCHAIN: "stable"
 
 jobs:
@@ -104,7 +104,7 @@ jobs:
   # ---------------------------------------------------------------------------
   rust-quality:
     name: "Rust · Fmt & Clippy"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -132,6 +132,10 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
+      - name: Create stub dist (required by tauri::generate_context!)
+        shell: bash
+        run: mkdir -p dist && echo '<!DOCTYPE html><html></html>' > dist/index.html
+
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -149,7 +153,7 @@ jobs:
       matrix:
         platform:
           - name: Linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - name: macOS
             os: macos-latest
           - name: Windows
@@ -160,7 +164,7 @@ jobs:
 
       # --- Linux system deps ---
       - name: Install system dependencies (Linux)
-        if: matrix.platform.os == 'ubuntu-latest'
+        if: matrix.platform.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -185,6 +189,10 @@ jobs:
       # (exit 0xc0000139) before any test executes. The bin target links correctly
       # and covers all the same modules, so no tests are lost.
       # See: src-tauri/Cargo.toml [lib] section for the full explanation.
+      - name: Create stub dist (required by tauri::generate_context!)
+        shell: bash
+        run: mkdir -p dist && echo '<!DOCTYPE html><html></html>' > dist/index.html
+
       - name: Run tests
         working-directory: src-tauri
         run: cargo test --all-features --bin clipsx
@@ -200,7 +208,7 @@ jobs:
     name: "Build · Compile Check"
     if: github.event_name == 'pull_request'
     needs: [frontend-test, rust-test]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -237,4 +245,3 @@ jobs:
       - name: Compile Rust (debug, faster than release)
         working-directory: src-tauri
         run: cargo build
-
