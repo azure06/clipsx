@@ -8,15 +8,21 @@ import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 import { usePinAction } from '../content/actions/shared/PinAction'
 
-const { invokeMock, toastMock, deleteClipMock, toggleFavoriteMock, togglePinMock, loadMoreClipsMock } =
-  vi.hoisted(() => ({
-    invokeMock: vi.fn(),
-    toastMock: vi.fn(),
-    deleteClipMock: vi.fn(),
-    toggleFavoriteMock: vi.fn(),
-    togglePinMock: vi.fn(),
-    loadMoreClipsMock: vi.fn(),
-  }))
+const {
+  invokeMock,
+  toastMock,
+  deleteClipMock,
+  toggleFavoriteMock,
+  togglePinMock,
+  loadMoreClipsMock,
+} = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  toastMock: vi.fn(),
+  deleteClipMock: vi.fn(),
+  toggleFavoriteMock: vi.fn(),
+  togglePinMock: vi.fn(),
+  loadMoreClipsMock: vi.fn(),
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
