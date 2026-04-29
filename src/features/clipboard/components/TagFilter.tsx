@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Trash2, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useClipboardStore } from '../../../stores/clipboardStore'
 
 export const TagFilter = () => {
@@ -43,20 +43,29 @@ export const TagFilter = () => {
 
       {!activeTag &&
         tags.map(tag => (
-          <div key={tag.id} className="inline-flex items-center shrink-0">
+          <div
+            key={tag.id}
+            className="group relative inline-flex items-center shrink-0 h-5"
+            onMouseEnter={event => {
+              const pill = event.currentTarget.querySelector<HTMLElement>('.tag-pill')
+              if (pill) {
+                pill.style.backgroundColor = tag.color ?? '#6b7280'
+                pill.style.borderColor = tag.color ?? '#6b7280'
+                pill.style.color = '#fff'
+              }
+            }}
+            onMouseLeave={event => {
+              const pill = event.currentTarget.querySelector<HTMLElement>('.tag-pill')
+              if (pill) {
+                pill.style.backgroundColor = ''
+                pill.style.borderColor = ''
+                pill.style.color = ''
+              }
+            }}
+          >
             <button
               onClick={() => void setTagFilter(tag.id)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-l-md text-[10px] font-medium border-y border-l text-gray-500 dark:text-gray-400 border-gray-200/60 dark:border-gray-600/40 transition-colors hover:text-white"
-              onMouseEnter={event => {
-                event.currentTarget.style.backgroundColor = tag.color ?? '#6b7280'
-                event.currentTarget.style.borderColor = tag.color ?? '#6b7280'
-                event.currentTarget.style.color = '#fff'
-              }}
-              onMouseLeave={event => {
-                event.currentTarget.style.backgroundColor = ''
-                event.currentTarget.style.borderColor = ''
-                event.currentTarget.style.color = ''
-              }}
+              className="tag-pill inline-flex items-center gap-1 pl-2 pr-2 group-hover:pr-5 h-full rounded-md text-[10px] font-medium border text-gray-500 dark:text-gray-400 border-gray-200/60 dark:border-gray-600/40 transition-[padding,background-color,border-color,color] duration-150"
             >
               <span
                 className="w-1.5 h-1.5 rounded-sm shrink-0"
@@ -64,13 +73,15 @@ export const TagFilter = () => {
               />
               {tag.name}
             </button>
-
             <button
-              onClick={() => void handleDelete(tag.id)}
-              title="Delete tag globally"
-              className="inline-flex items-center px-1 py-0.5 rounded-r-md text-[10px] border-y border-r text-gray-400 border-gray-200/60 dark:border-gray-600/40 hover:text-red-400 hover:border-red-400/40 transition-colors"
+              onClick={event => {
+                event.stopPropagation()
+                void handleDelete(tag.id)
+              }}
+              title="Delete tag"
+              className="absolute right-1 opacity-0 group-hover:opacity-100 transition-opacity text-white/70 hover:text-white"
             >
-              <Trash2 className="h-2.5 w-2.5" />
+              <X className="h-2.5 w-2.5" />
             </button>
           </div>
         ))}
