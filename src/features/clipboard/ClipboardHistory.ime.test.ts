@@ -8,10 +8,11 @@
  */
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
-  getDeleteShortcutHint,
-  getDeleteShortcutLabel,
-  shouldDeleteSelectedClip,
-} from './utils/deleteShortcut'
+  formatShortcut,
+  getDeleteShortcut,
+  getShortcutChips,
+  matchShortcut,
+} from '../../shared/keyboard/shortcuts'
 
 // ---------------------------------------------------------------------------
 // Mirror of the exact debounce logic from ClipboardHistory.tsx
@@ -121,62 +122,92 @@ describe('IME composition debounce', () => {
 describe('platform delete shortcuts', () => {
   it('uses Cmd+Backspace on macOS', () => {
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Backspace',
         metaKey: true,
         ctrlKey: false,
-        platform: 'MacIntel',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('macos'),
+        'macos'
+      )
     ).toBe(true)
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Backspace',
         metaKey: false,
         ctrlKey: false,
-        platform: 'MacIntel',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('macos'),
+        'macos'
+      )
     ).toBe(false)
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Delete',
         metaKey: false,
         ctrlKey: false,
-        platform: 'MacIntel',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('macos'),
+        'macos'
+      )
     ).toBe(false)
   })
 
   it('uses Delete on Windows/Linux', () => {
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Delete',
         metaKey: false,
         ctrlKey: false,
-        platform: 'Win32',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('windows'),
+        'windows'
+      )
     ).toBe(true)
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Backspace',
         metaKey: false,
         ctrlKey: false,
-        platform: 'Win32',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('windows'),
+        'windows'
+      )
     ).toBe(false)
     expect(
-      shouldDeleteSelectedClip({
+      matchShortcut(
+        {
         key: 'Delete',
         metaKey: true,
         ctrlKey: false,
-        platform: 'Linux x86_64',
-      })
+        altKey: false,
+        shiftKey: false,
+      },
+        getDeleteShortcut('linux'),
+        'linux'
+      )
     ).toBe(false)
   })
 
   it('returns platform-matching labels and hints', () => {
-    expect(getDeleteShortcutLabel('MacIntel')).toBe('⌘⌫')
-    expect(getDeleteShortcutHint('MacIntel')).toEqual(['Cmd', 'Delete'])
-    expect(getDeleteShortcutLabel('Win32')).toBe('Del')
-    expect(getDeleteShortcutHint('Win32')).toEqual(['Delete'])
+    expect(formatShortcut(getDeleteShortcut('macos'), 'macos')).toBe('⌘⌫')
+    expect(getShortcutChips(getDeleteShortcut('macos'), 'macos')).toEqual(['⌘', '⌫'])
+    expect(formatShortcut(getDeleteShortcut('windows'), 'windows')).toBe('Del')
+    expect(getShortcutChips(getDeleteShortcut('windows'), 'windows')).toEqual(['Del'])
   })
 })

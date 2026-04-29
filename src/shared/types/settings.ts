@@ -1,3 +1,5 @@
+import { getDefaultGlobalShortcut } from '../keyboard/shortcuts'
+
 export type Theme = 'light' | 'dark' | 'auto'
 export type ViewMode = 'list' | 'grid'
 export type PasteFormat = 'auto' | 'plain'
@@ -48,7 +50,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'auto',
   language: 'en',
-  global_shortcut: 'Cmd+Shift+V',
+  global_shortcut: getDefaultGlobalShortcut(),
   enable_images: true,
   enable_files: true,
   enable_rich_text: true,

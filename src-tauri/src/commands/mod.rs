@@ -988,6 +988,16 @@ pub fn update_settings(
 }
 
 #[tauri::command]
+pub fn reset_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
+    let settings = AppSettings::default();
+    state
+        .settings_repository
+        .save(&settings)
+        .map_err(|e| e.to_string())?;
+    Ok(settings)
+}
+
+#[tauri::command]
 pub fn get_settings_path(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state
         .settings_repository

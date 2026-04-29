@@ -2,6 +2,12 @@ import { Copy, Globe, Search } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { SmartAction } from '../../types'
 import { useClipboardStore } from '../../../../stores/clipboardStore'
+import type { ShortcutDef } from '../../../../shared/keyboard/shortcuts'
+
+const OPEN_URL_SHORTCUT: ShortcutDef = {
+  modifiers: ['primary'],
+  key: 'O',
+}
 
 export const useOpenURLAction = (): SmartAction => ({
   id: 'open-url',
@@ -9,7 +15,7 @@ export const useOpenURLAction = (): SmartAction => ({
   icon: <Globe size={16} />,
   category: 'external',
   placement: 'hidden',
-  shortcut: '⌘O',
+  shortcut: OPEN_URL_SHORTCUT,
   check: content => content.type === 'url',
   execute: content => {
     const url = content.metadata.url || content.text

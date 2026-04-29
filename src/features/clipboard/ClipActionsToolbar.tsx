@@ -1,6 +1,7 @@
 import { useActionRegistry } from '../content'
 import type { Content, SmartAction, ActionContext } from '../content'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import { formatShortcut } from '../../shared/keyboard/shortcuts'
 
 interface ClipActionsToolbarProps {
   content: Content
@@ -46,6 +47,7 @@ export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps
 
 const ActionIconButton = ({ action, content }: { action: SmartAction; content: Content }) => {
   const isActive = action.isActive?.(content)
+  const shortcutLabel = formatShortcut(action.shortcut)
 
   return (
     <Tooltip.Root>
@@ -67,7 +69,7 @@ const ActionIconButton = ({ action, content }: { action: SmartAction; content: C
           sideOffset={5}
         >
           {action.label}
-          {action.shortcut && <span className="ml-1.5 text-gray-500">{action.shortcut}</span>}
+          {shortcutLabel && <span className="ml-1.5 text-gray-500">{shortcutLabel}</span>}
           <Tooltip.Arrow className="fill-gray-900" />
         </Tooltip.Content>
       </Tooltip.Portal>

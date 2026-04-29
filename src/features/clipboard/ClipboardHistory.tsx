@@ -3,7 +3,7 @@ import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { shouldDeleteSelectedClip } from './utils/deleteShortcut'
+import { getDeleteShortcut, matchShortcut } from '../../shared/keyboard/shortcuts'
 
 // Re-export for backwards compatibility
 // Re-export for backwards compatibility
@@ -271,7 +271,7 @@ export const ClipboardHistory = ({
         }
       }
 
-      // Handle Cmd+1 to Cmd+9
+      // Handle primary+1 to primary+9
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
         e.preventDefault()
         const index = parseInt(e.key, 10) - 1
@@ -317,13 +317,7 @@ export const ClipboardHistory = ({
         case 'Delete':
         case 'Backspace': {
           if (isInput) break
-          if (
-            !shouldDeleteSelectedClip({
-              key: e.key,
-              metaKey: e.metaKey,
-              ctrlKey: e.ctrlKey,
-            })
-          ) {
+          if (!matchShortcut(e, getDeleteShortcut())) {
             break
           }
           e.preventDefault()

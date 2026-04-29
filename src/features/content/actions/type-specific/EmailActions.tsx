@@ -1,6 +1,12 @@
 import { Send, AtSign, Mail } from 'lucide-react'
 import type { SmartAction } from '../../types'
 import { useClipboardStore } from '../../../../stores/clipboardStore'
+import type { ShortcutDef } from '../../../../shared/keyboard/shortcuts'
+
+const SEND_EMAIL_SHORTCUT: ShortcutDef = {
+  modifiers: ['primary'],
+  key: 'E',
+}
 
 export const useSendEmailAction = (): SmartAction => ({
   id: 'send-email',
@@ -8,7 +14,7 @@ export const useSendEmailAction = (): SmartAction => ({
   icon: <Send size={16} />,
   category: 'external',
   placement: 'hidden',
-  shortcut: '⌘E',
+  shortcut: SEND_EMAIL_SHORTCUT,
   check: content => content.type === 'email',
   execute: content => {
     const email = content.metadata.email || content.text

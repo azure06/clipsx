@@ -17,6 +17,7 @@ describe('useSettingsStore', () => {
       settings: null,
       isLoading: false,
       error: null,
+      resetSettings: useSettingsStore.getState().resetSettings,
     })
   })
 
@@ -56,5 +57,15 @@ describe('useSettingsStore', () => {
 
     expect(useSettingsStore.getState().settings?.auto_start).toBe(false)
     expect(useSettingsStore.getState().error).toContain('save failed')
+  })
+
+  it('resets settings through backend defaults', async () => {
+    mockInvoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, global_shortcut: 'Ctrl+Shift+V' })
+
+    await useSettingsStore.getState().resetSettings()
+
+    expect(mockInvoke).toHaveBeenCalledWith('reset_settings')
+    expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
+    expect(useSettingsStore.getState().isLoading).toBe(false)
   })
 })
