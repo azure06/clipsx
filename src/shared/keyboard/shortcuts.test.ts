@@ -89,26 +89,32 @@ describe('shortcut helpers', () => {
   it('normalizes recorded shortcuts into accelerators', () => {
     expect(
       toAccelerator(
-        getShortcutFromKeyboardEvent({
-          key: 'v',
-          metaKey: true,
-          ctrlKey: false,
-          altKey: false,
-          shiftKey: true,
-        }, 'macos'),
+        getShortcutFromKeyboardEvent(
+          {
+            key: 'v',
+            metaKey: true,
+            ctrlKey: false,
+            altKey: false,
+            shiftKey: true,
+          },
+          'macos'
+        ),
         'macos'
       )
     ).toBe('Cmd+Shift+V')
 
     expect(
       toAccelerator(
-        getShortcutFromKeyboardEvent({
-          key: 'v',
-          metaKey: false,
-          ctrlKey: true,
-          altKey: false,
-          shiftKey: true,
-        }, 'windows'),
+        getShortcutFromKeyboardEvent(
+          {
+            key: 'v',
+            metaKey: false,
+            ctrlKey: true,
+            altKey: false,
+            shiftKey: true,
+          },
+          'windows'
+        ),
         'windows'
       )
     ).toBe('Ctrl+Shift+V')
