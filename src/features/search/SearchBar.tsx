@@ -20,12 +20,31 @@ const FILTER_OPTIONS = [
   { prefix: '/code', label: 'Code', description: 'Code snippets', icon: Code },
   { prefix: '/file', label: 'Files', description: 'File paths', icon: FileText },
   { prefix: '/office', label: 'Office', description: 'Word, Excel, PPT', icon: Briefcase },
+] as const
+
+const SCOPE_OPTIONS = [
+  { prefix: '/all', label: 'All Clips', description: 'Browse full history', scope: 'all' },
+  {
+    prefix: '/favorites',
+    label: 'Favorites',
+    description: 'Browse favorited clips',
+    scope: 'favorites',
+  },
+  { prefix: '/pinned', label: 'Pinned', description: 'Browse pinned clips', scope: 'pinned' },
+] as const
+
+const COMMAND_OPTIONS = [
+  ...SCOPE_OPTIONS.map(option => ({ ...option, kind: 'scope' as const, icon: Search })),
+  ...FILTER_OPTIONS.map(option => ({ ...option, kind: 'filter' as const })),
 ]
+
+type ScopeCommand = (typeof SCOPE_OPTIONS)[number]['scope']
 
 interface SearchBarProps {
   value: string
   onChange: (value: string) => void
   onClear: () => void
+  onScopeChange?: (scope: ScopeCommand) => void
   placeholder?: string
   autoFocus?: boolean
   semanticStatus?: SemanticStatus | null
@@ -42,6 +61,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     value,
     onChange,
     onClear,
+    onScopeChange,
     placeholder = 'Type to search or paste...',
     autoFocus = true,
     semanticStatus = null,
@@ -52,6 +72,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 ) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
+  const lastAppliedScopeValueRef = useRef<string | null>(null)
   const isSemanticAvailable =
     semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
   const semanticHint =
@@ -83,8 +104,8 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const currentSlash = slashMatch ? slashMatch[1] : null
 
   const filteredOptions = currentSlash
-    ? FILTER_OPTIONS.filter(opt => opt.prefix.toLowerCase().startsWith(currentSlash.toLowerCase()))
-    : FILTER_OPTIONS
+    ? COMMAND_OPTIONS.filter(opt => opt.prefix.toLowerCase().startsWith(currentSlash.toLowerCase()))
+    : COMMAND_OPTIONS
 
   const showFilterMenu = currentSlash !== null && filteredOptions.length > 0
 
@@ -93,11 +114,28 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const firstWordMatch = trimmedValue.match(/^(\/\S+)/)
   const firstWord = firstWordMatch?.[1] ? firstWordMatch[1].toLowerCase() : null
 
-  const activeFilter = firstWord ? FILTER_OPTIONS.find(opt => opt.prefix === firstWord) : undefined
+  const activeCommand = firstWord
+    ? COMMAND_OPTIONS.find(opt => opt.prefix === firstWord)
+    : undefined
 
-  const displayValue = activeFilter
-    ? value.slice(value.indexOf(activeFilter.prefix) + activeFilter.prefix.length).trimStart()
+  const displayValue = activeCommand
+    ? value.slice(value.indexOf(activeCommand.prefix) + activeCommand.prefix.length).trimStart()
     : value
+
+  useEffect(() => {
+    if (!activeCommand || activeCommand.kind !== 'scope') {
+      lastAppliedScopeValueRef.current = null
+      return
+    }
+
+    if (lastAppliedScopeValueRef.current === value) {
+      return
+    }
+
+    lastAppliedScopeValueRef.current = value
+    onScopeChange?.(activeCommand.scope)
+    onChange(displayValue)
+  }, [activeCommand, displayValue, onChange, onScopeChange, value])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (showFilterMenu) {
@@ -117,24 +155,34 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           e.stopPropagation()
           const selected = filteredOptions[selectedFilterIndex]
           const rest = value.replace(/^\/\S*/, '').trim()
-          onChange(selected.prefix + ' ' + rest)
+          if (selected.kind === 'scope') {
+            onScopeChange?.(selected.scope)
+            onChange(rest)
+          } else {
+            onChange(selected.prefix + ' ' + rest)
+          }
         }
         return
       }
     }
 
-    if (e.key === 'Backspace' && displayValue === '' && activeFilter) {
+    if (e.key === 'Backspace' && displayValue === '' && activeCommand) {
       e.preventDefault()
       // Remove pill, leave just the prefix minus last char so they can keep editing or deleting
-      onChange(activeFilter.prefix.slice(0, -1))
+      onChange(activeCommand.prefix.slice(0, -1))
     } else if (e.key === 'Escape') {
       onClear()
     }
   }
 
-  const handleFilterClick = (prefix: string) => {
+  const handleFilterClick = (option: (typeof COMMAND_OPTIONS)[number]) => {
     const rest = value.replace(/^\/\S*/, '').trim()
-    onChange(prefix + ' ' + rest)
+    if (option.kind === 'scope') {
+      onScopeChange?.(option.scope)
+      onChange(rest)
+    } else {
+      onChange(option.prefix + ' ' + rest)
+    }
     inputRef.current?.focus()
   }
 
@@ -147,10 +195,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         </div>
 
         {/* Active Pill */}
-        {activeFilter && (
+        {activeCommand && (
           <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-md border border-blue-200 dark:border-blue-500/30 whitespace-nowrap shadow-sm">
-            <activeFilter.icon className="w-4 h-4" />
-            <span className="text-sm font-medium">{activeFilter.label}</span>
+            <activeCommand.icon className="w-4 h-4" />
+            <span className="text-sm font-medium">{activeCommand.label}</span>
           </div>
         )}
 
@@ -160,15 +208,19 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           type="text"
           value={displayValue}
           onChange={e => {
-            if (activeFilter) {
-              onChange(`${activeFilter.prefix} ${e.target.value}`)
+            if (activeCommand) {
+              if (activeCommand.kind === 'scope') {
+                onChange(e.target.value)
+              } else {
+                onChange(`${activeCommand.prefix} ${e.target.value}`)
+              }
             } else {
               onChange(e.target.value)
             }
           }}
           onKeyDown={handleKeyDown}
-          placeholder={activeFilter ? `Search in ${activeFilter.label}...` : placeholder}
-          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeFilter ? 'px-3' : 'px-4'}`}
+          placeholder={activeCommand ? `Search in ${activeCommand.label}...` : placeholder}
+          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand ? 'px-3' : 'px-4'}`}
         />
 
         {/* Right Actions */}
@@ -227,14 +279,14 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-gray-200/60 dark:border-white/10 bg-slate-100/80 dark:bg-slate-900/95 backdrop-blur-2xl shadow-xl shadow-black/5 dark:shadow-2xl overflow-hidden z-50 animate-fade-in">
           <div className="p-1.5">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-              Filters
+              Commands
             </div>
             {filteredOptions.map((option, index) => {
               const Icon = option.icon
               return (
                 <button
                   key={option.prefix}
-                  onClick={() => handleFilterClick(option.prefix)}
+                  onClick={() => handleFilterClick(option)}
                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
                     index === selectedFilterIndex
                       ? 'bg-slate-100/80 dark:bg-slate-100/10 text-gray-900 dark:text-white'

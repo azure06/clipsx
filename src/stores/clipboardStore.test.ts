@@ -245,4 +245,32 @@ describe('useClipboardStore filtered view stability', () => {
     expect(useClipboardStore.getState().clips).toEqual([])
     expect(useClipboardStore.getState().currentOffset).toBe(0)
   })
+
+  it('re-runs search when active tab changes during search mode', async () => {
+    mockInvoke.mockResolvedValueOnce([])
+    mockInvoke.mockResolvedValueOnce([])
+
+    useClipboardStore.setState({
+      mode: 'search',
+      searchQuery: 'hello',
+      activeTab: 'all',
+      clips: [],
+      currentOffset: 0,
+      hasMore: true,
+    })
+
+    await useClipboardStore.getState().setActiveTab('favorites')
+
+    expect(mockInvoke).toHaveBeenCalledWith('search_clips_paginated', {
+      query: 'hello',
+      filterTypes: [],
+      limit: 50,
+      offset: 0,
+      favoritesOnly: true,
+      pinnedOnly: false,
+      tagFilter: null,
+      useSemanticSearch: true,
+      similarityThreshold: 0.3,
+    })
+  })
 })
