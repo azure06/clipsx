@@ -324,12 +324,9 @@ pub async fn search_clips_paginated(
             .await
             .map_err(|e| e.to_string())?;
 
-        // Fetch embeddings with filters.
-        // TODO: Apply `tag_filter` here too so semantic search respects the same
-        // active tag selection as browse mode and FTS search.
         let all_embeddings = state
             .repository
-            .get_embeddings_with_filters(filter_types.clone(), fav_val, pin_val)
+            .get_embeddings_with_filters(filter_types.clone(), fav_val, pin_val, tag_filter)
             .await
             .map_err(|e| e.to_string())?;
 

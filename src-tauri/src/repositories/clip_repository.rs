@@ -862,6 +862,7 @@ impl ClipRepository {
         filter_types: Option<Vec<String>>,
         favorites_only: bool,
         pinned_only: bool,
+        tag_filter: Option<i64>,
     ) -> Result<Vec<Embedding>> {
         let mut sql = String::from(
             "SELECT e.* FROM embeddings e INNER JOIN clips c ON e.clip_id = c.id WHERE 1=1",
@@ -879,6 +880,9 @@ impl ClipRepository {
         if pinned_only {
             sql.push_str(" AND c.is_pinned = 1");
         }
+        if tag_filter.is_some() {
+            sql.push_str(" AND c.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
+        }
 
         let mut query_builder = sqlx::query_as::<_, Embedding>(&sql);
 
@@ -892,6 +896,10 @@ impl ClipRepository {
                     query_builder = query_builder.bind(t);
                 }
             }
+        }
+
+        if let Some(tag_id) = tag_filter {
+            query_builder = query_builder.bind(tag_id);
         }
 
         let embeddings = query_builder.fetch_all(&self.pool).await?;
@@ -1338,6 +1346,56 @@ mod tests {
             results.iter().any(|result| result.id == clip.id),
             "clip should still be searchable by its updated note"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_paginated_does_not_match_tag_names_as_text() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("boring body".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+
+        let tag = repo.create_tag("urgent", None).await?;
+        repo.add_tag_to_clip(&clip.id, tag.id).await?;
+
+        let results = repo
+            .search_paginated("urgent", None, 20, 0, false, false, None)
+            .await?;
+
+        assert!(
+            results.iter().all(|result| result.id != clip.id),
+            "FTS should not search tag names as text"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_embeddings_with_filters_respects_tag_filter() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let tagged_clip = ClipItem::from_text("tagged body".to_string(), "text".to_string(), None);
+        let untagged_clip =
+            ClipItem::from_text("untagged body".to_string(), "text".to_string(), None);
+
+        repo.insert(&tagged_clip).await?;
+        repo.insert(&untagged_clip).await?;
+
+        repo.create_embedding(&tagged_clip.id, vec![1, 2, 3, 4], "test-model", 1)
+            .await?;
+        repo.create_embedding(&untagged_clip.id, vec![5, 6, 7, 8], "test-model", 1)
+            .await?;
+
+        let tag = repo.create_tag("focus", None).await?;
+        repo.add_tag_to_clip(&tagged_clip.id, tag.id).await?;
+
+        let filtered = repo
+            .get_embeddings_with_filters(None, false, false, Some(tag.id))
+            .await?;
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].clip_id, tagged_clip.id);
 
         Ok(())
     }
