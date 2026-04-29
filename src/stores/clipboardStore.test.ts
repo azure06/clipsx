@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from './clipboardStore'
+import type { ClipItem, Tag } from '../shared/types'
 
 const { mockInvoke, mockHide } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -110,5 +111,138 @@ describe('useClipboardStore.mergeClipUpdate', () => {
       note: 'keep me',
       tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
     })
+  })
+})
+
+const makeClip = (overrides: Partial<ClipItem> = {}): ClipItem => ({
+  id: 'clip-1',
+  contentType: 'text',
+  detectedType: 'text',
+  contentText: 'hello',
+  contentHtml: null,
+  contentRtf: null,
+  svgPath: null,
+  pdfPath: null,
+  imagePath: null,
+  attachmentPath: null,
+  attachmentType: null,
+  filePaths: null,
+  metadata: null,
+  note: null,
+  createdAt: 1,
+  updatedAt: 1,
+  appName: null,
+  isPinned: false,
+  isFavorite: false,
+  accessCount: 0,
+  contentHash: null,
+  hasEmbedding: false,
+  tags: [],
+  ...overrides,
+})
+
+const workTag: Tag = {
+  id: 7,
+  name: 'work',
+  color: '#fff',
+  createdAt: 1,
+}
+
+describe('useClipboardStore filtered view stability', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useClipboardStore.setState({
+      clips: [],
+      availableTags: [],
+      loading: false,
+      error: null,
+      hasMore: false,
+      currentOffset: 0,
+      mode: 'browse',
+      searchQuery: '',
+      activeTab: 'all',
+      tagFilter: null,
+    })
+  })
+
+  it('does not inject new non-favorite clips into favorites tab', () => {
+    useClipboardStore.setState({
+      activeTab: 'favorites',
+      clips: [makeClip({ id: 'fav-1', isFavorite: true })],
+      currentOffset: 1,
+    })
+
+    useClipboardStore.getState().addNewClip(makeClip({ id: 'clip-2', isFavorite: false }))
+
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['fav-1'])
+    expect(useClipboardStore.getState().currentOffset).toBe(1)
+  })
+
+  it('does not inject new non-pinned clips into pinned tab', () => {
+    useClipboardStore.setState({
+      activeTab: 'pinned',
+      clips: [makeClip({ id: 'pin-1', isPinned: true })],
+      currentOffset: 1,
+    })
+
+    useClipboardStore.getState().addNewClip(makeClip({ id: 'clip-2', isPinned: false }))
+
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['pin-1'])
+    expect(useClipboardStore.getState().currentOffset).toBe(1)
+  })
+
+  it('does not inject unmatched new clips when a tag filter is active', () => {
+    useClipboardStore.setState({
+      tagFilter: workTag.id,
+      clips: [makeClip({ id: 'tagged-1', tags: [workTag] })],
+      currentOffset: 1,
+    })
+
+    useClipboardStore.getState().addNewClip(makeClip({ id: 'clip-2', tags: [] }))
+
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['tagged-1'])
+    expect(useClipboardStore.getState().currentOffset).toBe(1)
+  })
+
+  it('keeps search results stable when new clips arrive', () => {
+    useClipboardStore.setState({
+      mode: 'search',
+      searchQuery: 'hello',
+      clips: [makeClip({ id: 'result-1' })],
+      currentOffset: 1,
+    })
+
+    useClipboardStore.getState().addNewClip(makeClip({ id: 'clip-2' }))
+
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['result-1'])
+    expect(useClipboardStore.getState().currentOffset).toBe(1)
+  })
+
+  it('removes a clip from favorites tab immediately when unfavorited', async () => {
+    useClipboardStore.setState({
+      activeTab: 'favorites',
+      clips: [makeClip({ id: 'fav-1', isFavorite: true })],
+      currentOffset: 1,
+    })
+    mockInvoke.mockResolvedValueOnce(false)
+
+    await useClipboardStore.getState().toggleFavorite('fav-1')
+
+    expect(useClipboardStore.getState().clips).toEqual([])
+    expect(useClipboardStore.getState().currentOffset).toBe(0)
+  })
+
+  it('removes a clip from pinned tab immediately when unpinned', async () => {
+    useClipboardStore.setState({
+      activeTab: 'pinned',
+      clips: [makeClip({ id: 'pin-1', isPinned: true })],
+      currentOffset: 1,
+    })
+    mockInvoke.mockResolvedValueOnce(false)
+
+    await useClipboardStore.getState().togglePin('pin-1')
+
+    expect(useClipboardStore.getState().clips).toEqual([])
+    expect(useClipboardStore.getState().currentOffset).toBe(0)
   })
 })

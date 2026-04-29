@@ -134,6 +134,27 @@ const mergeClipState = (existing: ClipItem | undefined, incoming: ClipItem): Cli
 const replaceClipInList = (clips: ClipItem[], updatedClip: ClipItem): ClipItem[] =>
   clips.map(clip => (clip.id === updatedClip.id ? mergeClipState(clip, updatedClip) : clip))
 
+const matchesActiveScope = (
+  clip: ClipItem,
+  {
+    activeTab,
+    tagFilter,
+  }: Pick<ClipboardState, 'activeTab' | 'tagFilter'>
+): boolean => {
+  if (activeTab === 'favorites' && !clip.isFavorite) return false
+  if (activeTab === 'pinned' && !clip.isPinned) return false
+  if (tagFilter !== null && !(clip.tags ?? []).some(tag => tag.id === tagFilter)) return false
+  return true
+}
+
+const shouldInsertIncomingClip = (
+  clip: ClipItem,
+  state: Pick<ClipboardState, 'mode' | 'activeTab' | 'tagFilter'>
+): boolean => {
+  if (state.mode === 'search') return false
+  return matchesActiveScope(clip, state)
+}
+
 export const useClipboardStore = create<ClipboardStore>(set => ({
   ...initialState,
 
@@ -199,14 +220,25 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       })
 
       if (existingIndex !== -1) {
+        if (!matchesActiveScope(mergedClip, state)) {
+          return {
+            clips: state.clips.filter(currentClip => currentClip.id !== clip.id),
+            currentOffset: Math.max(0, state.currentOffset - 1),
+          }
+        }
+
         return {
           clips: state.clips.map((c, i) => (i === existingIndex ? mergedClip : c)),
         }
-      } else {
-        return {
-          clips: [mergedClip, ...state.clips],
-          currentOffset: state.currentOffset + 1,
-        }
+      }
+
+      if (!shouldInsertIncomingClip(mergedClip, state)) {
+        return state
+      }
+
+      return {
+        clips: [mergedClip, ...state.clips],
+        currentOffset: state.currentOffset + 1,
       }
     })
   },
@@ -218,9 +250,18 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         return state
       }
 
+      const mergedClip = mergeClipState(state.clips[existingIndex], clip)
+
+      if (!matchesActiveScope(mergedClip, state)) {
+        return {
+          clips: state.clips.filter(currentClip => currentClip.id !== clip.id),
+          currentOffset: Math.max(0, state.currentOffset - 1),
+        }
+      }
+
       return {
         clips: state.clips.map((currentClip, index) =>
-          index === existingIndex ? mergeClipState(currentClip, clip) : currentClip
+          index === existingIndex ? mergedClip : currentClip
         ),
       }
     })
@@ -347,7 +388,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       const isFavorite = await invoke<boolean>('toggle_favorite', { id })
       set(state => ({
-        clips: state.clips.map(clip => (clip.id === id ? { ...clip, isFavorite } : clip)),
+        clips: state.clips.flatMap(clip => {
+          if (clip.id !== id) return [clip]
+
+          const updatedClip = { ...clip, isFavorite }
+          return matchesActiveScope(updatedClip, state) ? [updatedClip] : []
+        }),
+        currentOffset:
+          state.clips.some(clip => clip.id === id) &&
+          !matchesActiveScope(
+            { ...(state.clips.find(clip => clip.id === id) ?? { tags: [] }), isFavorite } as ClipItem,
+            state
+          )
+            ? Math.max(0, state.currentOffset - 1)
+            : state.currentOffset,
       }))
     } catch (error) {
       console.error('Failed to toggle favorite:', error)
@@ -359,7 +413,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       const isPinned = await invoke<boolean>('toggle_pin', { id })
       set(state => ({
-        clips: state.clips.map(clip => (clip.id === id ? { ...clip, isPinned } : clip)),
+        clips: state.clips.flatMap(clip => {
+          if (clip.id !== id) return [clip]
+
+          const updatedClip = { ...clip, isPinned }
+          return matchesActiveScope(updatedClip, state) ? [updatedClip] : []
+        }),
+        currentOffset:
+          state.clips.some(clip => clip.id === id) &&
+          !matchesActiveScope(
+            { ...(state.clips.find(clip => clip.id === id) ?? { tags: [] }), isPinned } as ClipItem,
+            state
+          )
+            ? Math.max(0, state.currentOffset - 1)
+            : state.currentOffset,
       }))
     } catch (error) {
       console.error('Failed to toggle pin:', error)
