@@ -8,6 +8,7 @@ type ClipboardGridItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[] }
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
+  readonly onDoubleClick?: (text: string, id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
 }
@@ -16,6 +17,7 @@ const ClipboardGridItemComponent = ({
   clip,
   onCopy,
   onSelect,
+  onDoubleClick,
   isSelected = false,
   index,
 }: ClipboardGridItemProps) => {
@@ -38,6 +40,7 @@ const ClipboardGridItemComponent = ({
   return (
     <div
       onClick={handleClick}
+      onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
       data-clip-index={index}
       className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${
         isSelected

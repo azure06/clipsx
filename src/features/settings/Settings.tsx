@@ -7,7 +7,7 @@ import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { Theme, PasteFormat, AppSettings } from '../../shared/types'
+import type { Theme, PasteFormat, AppSettings, ItemActivationMode } from '../../shared/types'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
 import {
   getShortcutChips,
@@ -349,7 +349,10 @@ export const Settings = () => {
     { value: 'plain' as PasteFormat, label: 'Plain Text' },
   ]
 
-  // --- Render ---
+  const itemActivationOptions = [
+    { value: 'single_click_copy' as ItemActivationMode, label: 'Single click copies' },
+    { value: 'double_click_primary' as ItemActivationMode, label: 'Double click activates' },
+  ]
 
   // --- Render ---
 
@@ -604,7 +607,7 @@ export const Settings = () => {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-gray-100 dark:border-white/5">
+                <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
                   <SettingRow
                     label="Default Paste Format"
                     description="Format to use when copying/pasting"
@@ -614,6 +617,20 @@ export const Settings = () => {
                       onChange={value => void updateSettings({ default_paste_format: value })}
                       options={pasteFormatOptions}
                       className="w-48"
+                    />
+                  </SettingRow>
+
+                  <SettingRow
+                    label="Click Behavior"
+                    description="Single click copies, or double click to activate"
+                  >
+                    <Select
+                      value={settings.item_activation_mode}
+                      onChange={value =>
+                        void updateSettings({ item_activation_mode: value as ItemActivationMode })
+                      }
+                      options={itemActivationOptions}
+                      className="w-56"
                     />
                   </SettingRow>
                 </div>

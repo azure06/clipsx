@@ -68,4 +68,8 @@ describe('useSettingsStore', () => {
     expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
+
+  it('uses single_click_copy as the frontend default activation mode', () => {
+    expect(DEFAULT_SETTINGS.item_activation_mode).toBe('single_click_copy')
+  })
 })

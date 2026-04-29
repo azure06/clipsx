@@ -136,10 +136,7 @@ const replaceClipInList = (clips: ClipItem[], updatedClip: ClipItem): ClipItem[]
 
 const matchesActiveScope = (
   clip: ClipItem,
-  {
-    activeTab,
-    tagFilter,
-  }: Pick<ClipboardState, 'activeTab' | 'tagFilter'>
+  { activeTab, tagFilter }: Pick<ClipboardState, 'activeTab' | 'tagFilter'>
 ): boolean => {
   if (activeTab === 'favorites' && !clip.isFavorite) return false
   if (activeTab === 'pinned' && !clip.isPinned) return false
@@ -397,7 +394,10 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         currentOffset:
           state.clips.some(clip => clip.id === id) &&
           !matchesActiveScope(
-            { ...(state.clips.find(clip => clip.id === id) ?? { tags: [] }), isFavorite } as ClipItem,
+            {
+              ...(state.clips.find(clip => clip.id === id) ?? { tags: [] }),
+              isFavorite,
+            } as ClipItem,
             state
           )
             ? Math.max(0, state.currentOffset - 1)
