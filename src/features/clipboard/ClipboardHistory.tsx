@@ -195,24 +195,29 @@ export const ClipboardHistory = ({
     [deleteClip]
   )
 
+  const itemActivationMode = settings?.item_activation_mode ?? 'single_click_copy'
+
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
-    (_text: string, clipId: string) => {
-      // Single Click: Just select for preview
+    (text: string, clipId: string) => {
       const index = clips.findIndex(c => c.id === clipId)
       if (index !== -1) {
         setSelectedIndex(index)
       }
+
+      if (itemActivationMode === 'single_click_copy') {
+        void handleExplicitCopy(text, clipId)
+      }
     },
-    [clips]
+    [clips, handleExplicitCopy, itemActivationMode]
   )
 
   const onDoubleClickHandler = useCallback(
     (text: string, clipId: string) => {
-      // Double Click: Perform primary action (Copy/Paste)
+      if (itemActivationMode !== 'double_click_primary') return
       void handleAction(text, clipId)
     },
-    [handleAction]
+    [handleAction, itemActivationMode]
   )
 
   const onCopyHandler = useCallback(

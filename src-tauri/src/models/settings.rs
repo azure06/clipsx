@@ -32,6 +32,15 @@ pub enum PasteFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum ItemActivationMode {
+    #[default]
+    SingleClickCopy,
+    DoubleClickPrimary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     // General
     pub theme: Theme,
@@ -66,6 +75,8 @@ pub struct AppSettings {
     pub default_paste_format: PasteFormat,
     #[serde(default = "default_true")]
     pub paste_on_enter: bool,
+    #[serde(default = "default_item_activation_mode")]
+    pub item_activation_mode: ItemActivationMode,
     #[serde(default = "default_true")]
     pub hide_on_blur: bool,
     #[serde(default = "default_false")]
@@ -87,6 +98,10 @@ pub struct AppSettings {
 
 fn default_semantic_model() -> String {
     "all-MiniLM-L6-v2".to_string()
+}
+
+fn default_item_activation_mode() -> ItemActivationMode {
+    ItemActivationMode::SingleClickCopy
 }
 
 fn default_max_clips() -> u32 {
@@ -117,6 +132,7 @@ impl Default for AppSettings {
             auto_start: false,
             default_paste_format: PasteFormat::default(),
             paste_on_enter: true,
+            item_activation_mode: default_item_activation_mode(),
             hide_on_blur: true,
             always_on_top: false,
             show_copy_toast: true,

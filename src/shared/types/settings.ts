@@ -3,6 +3,7 @@ import { getDefaultGlobalShortcut } from '../keyboard/shortcuts'
 export type Theme = 'light' | 'dark' | 'auto'
 export type ViewMode = 'list' | 'grid'
 export type PasteFormat = 'auto' | 'plain'
+export type ItemActivationMode = 'single_click_copy' | 'double_click_primary'
 
 export interface AppSettings {
   // General
@@ -33,6 +34,7 @@ export interface AppSettings {
   // Paste behavior
   default_paste_format: PasteFormat
   paste_on_enter: boolean
+  item_activation_mode: ItemActivationMode
   hide_on_blur: boolean
   always_on_top: boolean
 
@@ -65,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auto_start: false,
   default_paste_format: 'auto',
   paste_on_enter: true,
+  item_activation_mode: 'single_click_copy',
   hide_on_blur: true,
   always_on_top: false,
   show_copy_toast: true,
