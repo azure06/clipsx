@@ -85,6 +85,8 @@ const FILTER_TYPE_MAP: Record<string, string> = {
   office: 'office',
 }
 
+const SCOPE_COMMANDS = new Set(['all', 'favorites', 'pinned'])
+
 // Helper to parse slash commands from query
 // Example: "apple /image" -> { query: "apple", filterTypes: ["image"] }
 const parseSearchQuery = (input: string): { query: string; filterTypes: string[] | null } => {
@@ -97,6 +99,7 @@ const parseSearchQuery = (input: string): { query: string; filterTypes: string[]
 
   const filterTypes = matches
     .map(match => match[1]?.toLowerCase() ?? '')
+    .filter(type => !SCOPE_COMMANDS.has(type))
     .map(type => FILTER_TYPE_MAP[type] ?? type)
     .filter(Boolean)
 
@@ -269,7 +272,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
 
   setActiveTab: async (tab: 'all' | 'favorites' | 'pinned') => {
-    const { activeTab } = useClipboardStore.getState()
+    const { activeTab, mode, searchQuery } = useClipboardStore.getState()
     if (activeTab === tab) return
 
     set({
@@ -279,7 +282,11 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       hasMore: true,
     })
 
-    // Automatically load first page of the new tab
+    if (mode === 'search' && searchQuery.trim() !== '') {
+      await useClipboardStore.getState().enterSearchMode(searchQuery)
+      return
+    }
+
     await useClipboardStore.getState().loadMoreClips(50)
   },
 
