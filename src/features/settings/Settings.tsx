@@ -8,8 +8,13 @@ import { useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { Theme, PasteFormat, AppSettings } from '../../shared/types'
-import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 import { Button, Switch, Select, Card } from '../../shared/components/ui'
+import {
+  getShortcutChips,
+  getShortcutFromKeyboardEvent,
+  parseAccelerator,
+  toAccelerator,
+} from '../../shared/keyboard/shortcuts'
 import {
   Palette,
   Clipboard,
@@ -120,42 +125,31 @@ const KeyChip = ({ label }: { label: string }) => (
 
 const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false)
-  const [pendingKeys, setPendingKeys] = useState<string[]>([])
+  const [pendingShortcut, setPendingShortcut] = useState<ReturnType<typeof parseAccelerator>>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const chips =
-    isRecording && pendingKeys.length > 0 ? pendingKeys : value.split('+').filter(Boolean)
+  const chips = getShortcutChips(
+    isRecording && pendingShortcut ? pendingShortcut : parseAccelerator(value)
+  )
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     e.preventDefault()
-    const keys: string[] = []
-    if (e.metaKey) keys.push('Cmd')
-    if (e.ctrlKey) keys.push('Ctrl')
-    if (e.altKey) keys.push('Alt')
-    if (e.shiftKey) keys.push('Shift')
+    const shortcut = getShortcutFromKeyboardEvent(e.nativeEvent)
 
-    const isStandaloneModifier = ['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)
-    if (!isStandaloneModifier) {
-      keys.push(e.key === ' ' ? 'Space' : e.key.toUpperCase())
-      onChange(keys.join('+'))
+    if (shortcut.key) {
+      onChange(toAccelerator(shortcut))
       setIsRecording(false)
-      setPendingKeys([])
+      setPendingShortcut(null)
       containerRef.current?.blur()
     } else {
-      // Show live preview of modifiers being pressed
-      setPendingKeys(keys)
+      setPendingShortcut(shortcut)
     }
   }
 
   const handleKeyUp = (e: React.KeyboardEvent) => {
-    // Reset live preview if user releases all modifiers without finishing
-    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key) && isRecording) {
-      const keys: string[] = []
-      if (e.metaKey) keys.push('Cmd')
-      if (e.ctrlKey) keys.push('Ctrl')
-      if (e.altKey) keys.push('Alt')
-      if (e.shiftKey) keys.push('Shift')
-      setPendingKeys(keys)
+    if (isRecording) {
+      const shortcut = getShortcutFromKeyboardEvent(e.nativeEvent)
+      setPendingShortcut(shortcut.modifiers.length > 0 ? shortcut : null)
     }
   }
 
@@ -168,11 +162,11 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
         aria-label="Shortcut recorder. Click then press your key combination."
         onFocus={() => {
           setIsRecording(true)
-          setPendingKeys([])
+          setPendingShortcut(null)
         }}
         onBlur={() => {
           setIsRecording(false)
-          setPendingKeys([])
+          setPendingShortcut(null)
         }}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
@@ -214,7 +208,8 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
 // --- Main Settings component ---
 
 export const Settings = () => {
-  const { settings, isLoading, error, loadSettings, updateSettings } = useSettingsStore()
+  const { settings, isLoading, error, loadSettings, updateSettings, resetSettings } =
+    useSettingsStore()
   const clearAllClips = useClipboardStore(state => state.clearAllClips)
   const { setThemeMode } = useTheme()
   const [activeTab, setActiveTab] = useState<Tab>('general')
@@ -279,7 +274,7 @@ export const Settings = () => {
 
   const handleReset = async () => {
     if (confirm('Are you sure you want to reset all settings to defaults?')) {
-      await updateSettings(DEFAULT_SETTINGS)
+      await resetSettings()
     }
   }
 
@@ -309,10 +304,7 @@ export const Settings = () => {
             onClick={() => {
               void (async () => {
                 try {
-                  await invoke('update_settings', {
-                    settings: DEFAULT_SETTINGS,
-                  })
-                  await loadSettings()
+                  await resetSettings()
                 } catch (err) {
                   console.error('Failed to reset settings:', err)
                   alert('Failed to reset settings: ' + String(err))

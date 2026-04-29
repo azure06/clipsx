@@ -1,6 +1,12 @@
 import { SquareArrowOutUpRight } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { SmartAction } from '../../types'
+import type { ShortcutDef } from '../../../../shared/keyboard/shortcuts'
+
+const OPEN_IN_EDITOR_SHORTCUT: ShortcutDef = {
+  modifiers: ['primary', 'shift'],
+  key: 'O',
+}
 
 const LANGUAGE_TO_EXTENSION: Record<string, string> = {
   javascript: 'js',
@@ -36,7 +42,7 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
   icon: <SquareArrowOutUpRight size={16} />,
   category: 'utility',
   placement: 'global_bar' as const,
-  shortcut: '⌘Shift+O',
+  shortcut: OPEN_IN_EDITOR_SHORTCUT,
   check: content =>
     content.type === 'text' ||
     content.type === 'code' ||

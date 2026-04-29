@@ -215,6 +215,7 @@ fn main() {
             commands::register_global_shortcut,
             commands::get_settings,
             commands::update_settings,
+            commands::reset_settings,
             commands::get_settings_path,
             mac_rounded_corners::enable_rounded_corners,
             mac_rounded_corners::enable_modern_window_style,

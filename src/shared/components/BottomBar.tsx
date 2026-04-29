@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Lightbulb } from 'lucide-react'
 import { useUIStore } from '../../stores'
-import { getDeleteShortcutHint } from '../../features/clipboard/utils/deleteShortcut'
+import { getDeleteShortcut, getShortcutChips } from '../keyboard/shortcuts'
 
 const Kbd = ({ children }: { children: ReactNode }) => (
   <span className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-slate-100/80 dark:bg-slate-100/10 border border-gray-300/70 dark:border-gray-100/10 text-[10px] font-mono font-semibold text-gray-700 dark:text-gray-200 leading-none">
@@ -13,7 +13,7 @@ export const BottomBar = () => {
   const { activeView } = useUIStore()
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
   const [isFading, setIsFading] = useState(false)
-  const deleteShortcutHint = getDeleteShortcutHint()
+  const deleteShortcutHint = getShortcutChips(getDeleteShortcut())
   const tips: ReactNode[] = [
     <>
       Press <Kbd>Enter</Kbd> to paste the selected clip.

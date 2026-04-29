@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ClipItem } from '../../shared/types'
+import type { ShortcutDef } from '../../shared/keyboard/shortcuts'
 
 // Content type detection from backend
 export type ContentType =
@@ -82,7 +83,7 @@ export type SmartAction = {
   readonly icon: ReactNode
   readonly category: ActionCategory
   readonly placement: ActionPlacement
-  readonly shortcut?: string
+  readonly shortcut?: ShortcutDef
   readonly check: (content: Content) => boolean
   readonly execute: (content: Content) => Promise<void> | void
   readonly isActive?: (content: Content) => boolean

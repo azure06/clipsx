@@ -10,6 +10,7 @@ interface SettingsState {
   // Actions
   loadSettings: () => Promise<void>
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>
+  resetSettings: () => Promise<void>
   getSettingsPath: () => Promise<string>
 }
 
@@ -54,6 +55,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('Failed to update settings:', error)
       // Rollback to previous settings on error
       set({ settings: currentSettings, error: String(error) })
+      throw error
+    }
+  },
+
+  resetSettings: async () => {
+    set({ isLoading: true, error: null })
+    try {
+      const settings = await invoke<AppSettings>('reset_settings')
+      set({ settings, isLoading: false })
+    } catch (error) {
+      console.error('Failed to reset settings:', error)
+      set({ error: String(error), isLoading: false })
       throw error
     }
   },
