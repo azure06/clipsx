@@ -124,12 +124,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Backspace',
-        metaKey: true,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Backspace',
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('macos'),
         'macos'
       )
@@ -137,12 +137,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Backspace',
-        metaKey: false,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Backspace',
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('macos'),
         'macos'
       )
@@ -150,12 +150,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Delete',
-        metaKey: false,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Delete',
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('macos'),
         'macos'
       )
@@ -166,12 +166,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Delete',
-        metaKey: false,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Delete',
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('windows'),
         'windows'
       )
@@ -179,12 +179,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Backspace',
-        metaKey: false,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Backspace',
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('windows'),
         'windows'
       )
@@ -192,12 +192,12 @@ describe('platform delete shortcuts', () => {
     expect(
       matchShortcut(
         {
-        key: 'Delete',
-        metaKey: true,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      },
+          key: 'Delete',
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
         getDeleteShortcut('linux'),
         'linux'
       )

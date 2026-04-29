@@ -3,7 +3,8 @@ import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { getDeleteShortcut, matchShortcut } from '../../shared/keyboard/shortcuts'
+import { clipToContent, useActionRegistry } from '../content'
+import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
 
 // Re-export for backwards compatibility
 // Re-export for backwards compatibility
@@ -39,6 +40,17 @@ export const ClipboardHistory = ({
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
   const settings = useSettingsStore(state => state.settings)
   const { toast } = useToast()
+  const { getActionsForContent } = useActionRegistry({
+    onDelete: id => {
+      void deleteClip(id)
+    },
+    onToggleFavorite: id => {
+      void toggleFavorite(id)
+    },
+    onTogglePin: id => {
+      void togglePin(id)
+    },
+  })
 
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -248,6 +260,7 @@ export const ClipboardHistory = ({
       // Skip if focus is inside any text input EXCEPT for the main search input
       const active = document.activeElement
       const isInput = active instanceof HTMLInputElement
+      const platform = getPlatform()
 
       if (active instanceof HTMLTextAreaElement || (active as HTMLElement)?.isContentEditable) {
         return
@@ -271,6 +284,9 @@ export const ClipboardHistory = ({
         }
       }
 
+      const selectedClip = clips[selectedIndex]
+      const selectedContent = selectedClip ? clipToContent(selectedClip) : null
+
       // Handle primary+1 to primary+9
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
         e.preventDefault()
@@ -280,6 +296,20 @@ export const ClipboardHistory = ({
           void handleAction(clip.contentText ?? '', clip.id)
         }
         return
+      }
+
+      if (selectedContent) {
+        const shortcutAction = getActionsForContent(selectedContent).find(action => {
+          if (!action.shortcut || action.id === 'delete') return false
+          if (action.shortcut.modifiers.length === 0) return false
+          return matchShortcut(e, action.shortcut, platform)
+        })
+
+        if (shortcutAction) {
+          e.preventDefault()
+          void shortcutAction.execute(selectedContent)
+          return
+        }
       }
 
       const maxIndex = clips.length - 1
@@ -316,8 +346,10 @@ export const ClipboardHistory = ({
         }
         case 'Delete':
         case 'Backspace': {
-          if (isInput) break
-          if (!matchShortcut(e, getDeleteShortcut())) {
+          const isMacInputDelete = isInput && platform === 'macos'
+
+          if (isInput && !isMacInputDelete) break
+          if (!matchShortcut(e, getDeleteShortcut(platform), platform)) {
             break
           }
           e.preventDefault()
@@ -327,16 +359,6 @@ export const ClipboardHistory = ({
             // Adjust index if we deleted the last item
             setSelectedIndex(prev => Math.min(prev, maxIndex - 1))
           }
-          break
-        }
-        case 'f': {
-          const clip = clips[selectedIndex]
-          if (clip) void toggleFavorite(clip.id)
-          break
-        }
-        case 'p': {
-          const clip = clips[selectedIndex]
-          if (clip) void togglePin(clip.id)
           break
         }
         case '/': {
@@ -356,8 +378,7 @@ export const ClipboardHistory = ({
     scrollSelectedIntoView,
     handleAction,
     handleDelete,
-    toggleFavorite,
-    togglePin,
+    getActionsForContent,
   ])
 
   // ADDED: Notify parent of selection change for preview
