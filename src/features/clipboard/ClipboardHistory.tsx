@@ -321,8 +321,7 @@ export const ClipboardHistory = ({
       if (maxIndex < 0) return
 
       switch (e.key) {
-        case 'ArrowUp':
-        case 'k': {
+        case 'ArrowUp': {
           e.preventDefault()
           setSelectedIndex(prev => {
             const next = Math.max(0, prev - 1)
@@ -331,8 +330,7 @@ export const ClipboardHistory = ({
           })
           break
         }
-        case 'ArrowDown':
-        case 'j': {
+        case 'ArrowDown': {
           e.preventDefault()
           setSelectedIndex(prev => {
             const next = Math.min(maxIndex, prev + 1)
