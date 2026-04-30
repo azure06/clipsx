@@ -30,9 +30,7 @@ export const useCsvToJsonAction = (): SmartAction => ({
       )
     })
 
-    await useClipboardStore
-      .getState()
-      .copyDerivedText(JSON.stringify(json, null, 2), content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(JSON.stringify(json, null, 2))
   },
 })
 
@@ -65,6 +63,6 @@ export const useCsvToMarkdownAction = (): SmartAction => ({
       .join('\n')
 
     const markdown = `${headers.join('|')}\n${separator}\n${body}`
-    await useClipboardStore.getState().copyDerivedText(markdown, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(markdown)
   },
 })

@@ -31,7 +31,7 @@ export const useCopyEmailAction = (): SmartAction => ({
   check: content => content.type === 'email',
   execute: async content => {
     const email = content.metadata.email || content.text
-    await useClipboardStore.getState().copyDerivedText(email, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(email)
   },
 })
 
@@ -43,8 +43,6 @@ export const useCopyDomainFromEmailAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'email' && Boolean(content.metadata.domain),
   execute: async content => {
-    await useClipboardStore
-      .getState()
-      .copyDerivedText(content.metadata.domain || '', content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(content.metadata.domain || '')
   },
 })

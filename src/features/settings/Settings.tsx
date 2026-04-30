@@ -350,7 +350,7 @@ export const Settings = () => {
   ]
 
   const itemActivationOptions = [
-    { value: 'single_click_copy' as ItemActivationMode, label: 'Single click copies' },
+    { value: 'single_click_copy' as ItemActivationMode, label: 'Single click activates' },
     { value: 'double_click_primary' as ItemActivationMode, label: 'Double click activates' },
   ]
 

@@ -90,8 +90,6 @@ describe('ClipboardHistory activation modes', () => {
       toggleFavorite: vi.fn(),
       togglePin: vi.fn(),
       clearAllClips: vi.fn(),
-      copyToClipboard: vi.fn(),
-      pasteClip: vi.fn(),
       copyDerivedText: vi.fn(),
       performPrimaryAction: performPrimaryActionMock,
       performCopy: performCopyMock,
@@ -105,7 +103,7 @@ describe('ClipboardHistory activation modes', () => {
     vi.unstubAllGlobals()
   })
 
-  it('copies on first click when activation mode is single_click_copy', async () => {
+  it('activates on first click when activation mode is single_click_copy', async () => {
     useSettingsStore.setState({
       settings: {
         ...DEFAULT_SETTINGS,
@@ -125,8 +123,8 @@ describe('ClipboardHistory activation modes', () => {
     fireEvent.click(screen.getByText('hello world'))
 
     await waitFor(() => {
-      expect(performCopyMock).toHaveBeenCalledWith('hello world', 'clip-1')
-      expect(performPrimaryActionMock).not.toHaveBeenCalled()
+      expect(performPrimaryActionMock).toHaveBeenCalledWith('hello world', 'clip-1')
+      expect(performCopyMock).not.toHaveBeenCalled()
     })
   })
 

@@ -11,15 +11,15 @@ type ColorPreviewProps = {
 type ColorFormatRowProps = {
   readonly label: string
   readonly value: string
-  readonly sourceClipId: string
+  readonly sourceClipId?: string
 }
 
-const ColorFormatRow = ({ label, value, sourceClipId }: ColorFormatRowProps) => {
+const ColorFormatRow = ({ label, value }: ColorFormatRowProps) => {
   const [copied, setCopied] = useState(false)
   const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
 
   const handleCopy = async () => {
-    await copyDerivedText(value, sourceClipId)
+    await copyDerivedText(value)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

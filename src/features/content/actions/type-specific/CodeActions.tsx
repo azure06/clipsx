@@ -22,7 +22,7 @@ export const useFormatCodeAction = (): SmartAction => ({
       textToCopy = content.text
     }
 
-    await useClipboardStore.getState().copyDerivedText(textToCopy, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(textToCopy)
   },
 })
 
@@ -34,7 +34,7 @@ export const useCopyCodeAction = (): SmartAction => ({
   placement: 'hidden',
   check: content => content.type === 'code',
   execute: async content => {
-    await useClipboardStore.getState().copyDerivedText(content.text, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(content.text)
   },
 })
 

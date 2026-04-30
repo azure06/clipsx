@@ -46,8 +46,6 @@ export const useCopyDomainAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: async content => {
-    await useClipboardStore
-      .getState()
-      .copyDerivedText(content.metadata.domain || '', content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(content.metadata.domain || '')
   },
 })

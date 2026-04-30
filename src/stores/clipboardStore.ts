@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from './settingsStore'
 import { useUIStore } from './uiStore'
-import type { ClipItem, Result, Tag } from '../shared/types'
+import type { ClipItem, Tag } from '../shared/types'
 import {
   addTagToClip,
   createTag,
@@ -48,14 +48,12 @@ type ClipboardActions = {
   toggleFavorite: (id: string) => Promise<void>
   togglePin: (id: string) => Promise<void>
   clearAllClips: () => Promise<void>
-  copyToClipboard: (text: string, id?: string) => Promise<Result<void>>
-  pasteClip: (text: string, id?: string) => Promise<Result<void>>
-  /** Centralized preview/derived copy: plain-text only, no hide_on_copy side effects */
-  copyDerivedText: (text: string, sourceClipId: string) => Promise<void>
-  /** Centralized primary action: paste-to-app or copy-to-clipboard based on settings */
-  performPrimaryAction: (text: string, id: string) => Promise<void>
-  /** Centralized explicit copy: always copies, respects paste format and hide_on_copy */
-  performCopy: (text: string, id: string) => Promise<void>
+  /** Derived/transformed copy: plain text only, no usage tracking, no hide side effect */
+  copyDerivedText: (text: string) => Promise<void>
+  /** Paste-to-app or copy-to-clipboard based on settings; counts as explicit usage */
+  performPrimaryAction: (text: string, clipId: string) => Promise<void>
+  /** Explicit copy; counts as explicit usage, respects paste format and hide_on_copy */
+  performCopy: (text: string, clipId: string) => Promise<void>
   resetPagination: () => void
   generateEmbedding: (id: string) => Promise<void>
 }
@@ -451,56 +449,31 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     }
   },
 
-  copyToClipboard: async (text: string, id?: string): Promise<Result<void>> => {
-    try {
-      await invoke('copy_to_clipboard', { text, id })
-      return { ok: true, value: undefined }
-    } catch (error) {
-      console.error('Failed to copy:', error)
-      return { ok: false, error: String(error) }
-    }
-  },
-
-  pasteClip: async (text: string, id?: string): Promise<Result<void>> => {
-    try {
-      await invoke('paste_clip', { text, id })
-      return { ok: true, value: undefined }
-    } catch (error) {
-      console.error('Failed to paste:', error)
-      return { ok: false, error: String(error) }
-    }
-  },
-
   // ── Centralized Action Handlers ──────────────────────────────────────
 
-  copyDerivedText: async (text: string, sourceClipId: string) => {
-    await invoke('copy_to_clipboard', { text, id: sourceClipId, plain: true })
+  copyDerivedText: async (text: string) => {
+    await invoke('copy_to_clipboard', { text, plain: true, trackUsage: false })
   },
 
-  performPrimaryAction: async (text: string, id: string) => {
+  performPrimaryAction: async (text: string, clipId: string) => {
     const settings = useSettingsStore.getState().settings
     const plain = settings?.default_paste_format === 'plain' ? true : undefined
 
     if (settings?.paste_on_enter) {
-      // Paste to App: copy → hide → Ctrl+V (Rust handles hide + keystroke)
-      await invoke('paste_clip', { text, id, plain })
+      await invoke('paste_clip', { text, clipId, plain, trackUsage: true })
     } else {
-      // Copy to Clipboard only
-      await invoke('copy_to_clipboard', { text, id, plain })
+      await invoke('copy_to_clipboard', { text, clipId, plain, trackUsage: true })
       if (settings?.hide_on_copy) {
         void getCurrentWindow().hide()
       }
     }
   },
 
-  performCopy: async (text: string, id: string) => {
+  performCopy: async (text: string, clipId: string) => {
     const settings = useSettingsStore.getState().settings
     const plain = settings?.default_paste_format === 'plain' ? true : undefined
 
-    await invoke('copy_to_clipboard', { text, id, plain })
-    if (settings?.hide_on_copy) {
-      void getCurrentWindow().hide()
-    }
+    await invoke('copy_to_clipboard', { text, clipId, plain, trackUsage: true })
   },
 
   setTagFilter: async (tagId: number | null) => {

@@ -54,8 +54,8 @@ describe('content copy routing', () => {
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
         text: 'example.com',
-        id: 'clip-1',
         plain: true,
+        trackUsage: false,
       })
     })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
@@ -79,8 +79,8 @@ describe('content copy routing', () => {
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
         text: '4',
-        id: 'clip-1',
         plain: true,
+        trackUsage: false,
       })
     })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
@@ -102,8 +102,8 @@ describe('content copy routing', () => {
 
     expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
       text: 'example.com',
-      id: 'clip-1',
       plain: true,
+      trackUsage: false,
     })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })

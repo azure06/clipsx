@@ -18,7 +18,7 @@ export const useCopyIsoDateAction = (): SmartAction => ({
       )
       iso = date.toISOString()
     }
-    await useClipboardStore.getState().copyDerivedText(iso, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(iso)
   },
 })
 
@@ -34,7 +34,7 @@ export const useCopyTimestampAction = (): SmartAction => ({
     if (!isNaN(date.getTime())) {
       await useClipboardStore
         .getState()
-        .copyDerivedText(Math.floor(date.getTime() / 1000).toString(), content.clip.id)
+        .copyDerivedText(Math.floor(date.getTime() / 1000).toString())
     }
   },
 })

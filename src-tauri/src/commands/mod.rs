@@ -690,80 +690,91 @@ async fn reconstruct_clipboard_content(
     Ok(content)
 }
 
+/// Shared write pipeline for all OS clipboard writes.
+///
+/// - `track_usage=true` + `clip_id` present → calls `touch()` to update recency
+/// - `clip_id` present + `plain=false` → reconstructs full rich clipboard object
+/// - all other cases → plain-text write only
+/// - monitor is notified exactly once per call to prevent self-recapture
+async fn execute_clipboard_write(
+    text: String,
+    clip_id: Option<&str>,
+    plain: Option<bool>,
+    track_usage: bool,
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    if track_usage {
+        if let Some(id) = clip_id {
+            state
+                .repository
+                .touch(id)
+                .await
+                .map_err(|e: anyhow::Error| e.to_string())?;
+        }
+    }
+
+    let should_reconstruct = clip_id.is_some() && plain != Some(true);
+
+    if should_reconstruct {
+        let id = clip_id.unwrap();
+        eprintln!("[RECONSTRUCT] Starting clipboard write for clip_id: {}", id);
+
+        let clip = state
+            .repository
+            .get_by_id(id)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?
+            .ok_or_else(|| "Clip not found".to_string())?;
+
+        eprintln!(
+            "[RECONSTRUCT] content_type={}, attachment_path={:?}, svg_path={:?}, pdf_path={:?}, image_path={:?}",
+            clip.content_type,
+            clip.attachment_path.as_ref().map(|_| "set"),
+            clip.svg_path.as_ref().map(|_| "set"),
+            clip.pdf_path.as_ref().map(|_| "set"),
+            clip.image_path.as_ref().map(|_| "set")
+        );
+
+        let content = reconstruct_clipboard_content(&clip, text).await?;
+
+        crate::services::clipboard_platform::write_clipboard(&content)
+            .map_err(|e| format!("Failed to write clipboard: {}", e))?;
+
+        {
+            let monitor = state.clipboard_service.get_monitor();
+            let mut monitor = monitor.lock().await;
+            monitor.notify_wrote(&content);
+        }
+
+        eprintln!("[RECONSTRUCT] ✓ Clipboard write complete");
+    } else {
+        // Plain-text write (set_text already calls notify_wrote internally)
+        state
+            .clipboard_service
+            .set_text(&text)
+            .await
+            .map_err(|e: anyhow::Error| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn copy_to_clipboard(
     text: String,
-    id: Option<String>,
+    clip_id: Option<String>,
     plain: Option<bool>,
+    track_usage: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // If no ID, just copy plain text (for non-clip text)
-    if id.is_none() {
-        state
-            .clipboard_service
-            .set_text(&text)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-        return Ok(());
-    }
-
-    let clip_id = id.unwrap();
-
-    eprintln!("[COPY] Starting copy_to_clipboard for clip_id: {}", clip_id);
-
-    // 1. Update timestamp (bump to top)
-    state
-        .repository
-        .touch(&clip_id)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?;
-
-    // 2. If plain-text format requested, skip rich reconstruction
-    if plain == Some(true) {
-        state
-            .clipboard_service
-            .set_text(&text)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-        eprintln!("[COPY] copy_to_clipboard complete (plain text)");
-        return Ok(());
-    }
-
-    // 3. Fetch full ClipItem from database
-    let clip = state
-        .repository
-        .get_by_id(&clip_id)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or_else(|| "Clip not found".to_string())?;
-
-    eprintln!("[COPY] Fetched clip: content_type={}, attachment_path={:?}, svg_path={:?}, pdf_path={:?}, image_path={:?}",
-              clip.content_type,
-              clip.attachment_path.as_ref().map(|_| "set"),
-              clip.svg_path.as_ref().map(|_| "set"),
-              clip.pdf_path.as_ref().map(|_| "set"),
-              clip.image_path.as_ref().map(|_| "set"));
-
-    // 4. Reconstruct ClipboardContent based on content_type
-    let content = reconstruct_clipboard_content(&clip, text).await?;
-
-    // 5. Write all formats to clipboard
-    eprintln!("[COPY] Writing content to clipboard...");
-    crate::services::clipboard_platform::write_clipboard(&content)
-        .map_err(|e| format!("Failed to write clipboard: {}", e))?;
-    eprintln!("[COPY] ✓ Clipboard write complete");
-
-    // 6. Pre-seed monitor hash to prevent re-capturing our own paste
-    eprintln!("[COPY] Pre-seeding monitor hash...");
-    {
-        let monitor = state.clipboard_service.get_monitor();
-        let mut monitor = monitor.lock().await;
-        monitor.notify_wrote(&content);
-    }
-    eprintln!("[COPY] ✓ Monitor notified");
-
-    eprintln!("[COPY] copy_to_clipboard complete");
-    Ok(())
+    execute_clipboard_write(
+        text,
+        clip_id.as_deref(),
+        plain,
+        track_usage.unwrap_or(false),
+        &state,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -778,55 +789,23 @@ pub fn get_clipboard_text(state: State<'_, AppState>) -> Result<String, String> 
 #[tauri::command]
 pub async fn paste_clip(
     text: String,
-    id: Option<String>,
+    clip_id: Option<String>,
     plain: Option<bool>,
+    track_usage: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     use tauri::Manager;
 
-    // 1. Write clip content to clipboard
-    if let Some(ref clip_id) = id {
-        state
-            .repository
-            .touch(clip_id)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-
-        if plain == Some(true) {
-            // Plain-text format requested — skip rich reconstruction
-            state
-                .clipboard_service
-                .set_text(&text)
-                .await
-                .map_err(|e: anyhow::Error| e.to_string())?;
-        } else {
-            let clip = state
-                .repository
-                .get_by_id(clip_id)
-                .await
-                .map_err(|e: anyhow::Error| e.to_string())?
-                .ok_or_else(|| "Clip not found".to_string())?;
-
-            let content = reconstruct_clipboard_content(&clip, text).await?;
-
-            crate::services::clipboard_platform::write_clipboard(&content)
-                .map_err(|e| format!("Failed to write clipboard: {}", e))?;
-
-            {
-                let monitor = state.clipboard_service.get_monitor();
-                let mut monitor = monitor.lock().await;
-                monitor.notify_wrote(&content);
-            }
-        }
-    } else {
-        // No clip ID — plain text only (called without a stored clip)
-        state
-            .clipboard_service
-            .set_text(&text)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-    }
+    // 1. Write clip content to clipboard via shared pipeline
+    execute_clipboard_write(
+        text,
+        clip_id.as_deref(),
+        plain,
+        track_usage.unwrap_or(false),
+        &state,
+    )
+    .await?;
 
     // 2. Hide the overlay window
     if let Some(window) = app.get_webview_window("main") {

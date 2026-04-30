@@ -13,7 +13,7 @@ export const useCopyResultAction = (): SmartAction => ({
   execute: async content => {
     const result = safeEval(content.text)
     if (result !== null) {
-      await useClipboardStore.getState().copyDerivedText(result.toString(), content.clip.id)
+      await useClipboardStore.getState().copyDerivedText(result.toString())
     }
   },
 })
@@ -26,6 +26,6 @@ export const useCopyEquationAction = (): SmartAction => ({
   placement: 'hidden',
   check: content => content.type === 'math',
   execute: async content => {
-    await useClipboardStore.getState().copyDerivedText(content.text, content.clip.id)
+    await useClipboardStore.getState().copyDerivedText(content.text)
   },
 })

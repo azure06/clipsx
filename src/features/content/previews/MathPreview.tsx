@@ -17,7 +17,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
 
   const handleCopyResult = async () => {
     if (hasResult) {
-      await copyDerivedText(result.toString(), content.clip.id)
+      await copyDerivedText(result.toString())
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }

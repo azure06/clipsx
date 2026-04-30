@@ -206,10 +206,10 @@ export const ClipboardHistory = ({
       }
 
       if (itemActivationMode === 'single_click_copy') {
-        void handleExplicitCopy(text, clipId)
+        void handleAction(text, clipId)
       }
     },
-    [clips, handleExplicitCopy, itemActivationMode]
+    [clips, handleAction, itemActivationMode]
   )
 
   const onDoubleClickHandler = useCallback(

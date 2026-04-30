@@ -33,12 +33,12 @@ describe('useClipboardStore.copyDerivedText', () => {
   })
 
   it('routes derived copies through the backend plain-text copy command without hiding the window', async () => {
-    await useClipboardStore.getState().copyDerivedText('example.com', 'clip-1')
+    await useClipboardStore.getState().copyDerivedText('example.com')
 
     expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
       text: 'example.com',
-      id: 'clip-1',
       plain: true,
+      trackUsage: false,
     })
     expect(mockHide).not.toHaveBeenCalled()
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()

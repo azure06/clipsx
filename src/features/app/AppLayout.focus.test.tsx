@@ -127,8 +127,6 @@ describe('AppLayout search focus ownership', () => {
       toggleFavorite: vi.fn(),
       togglePin: vi.fn(),
       clearAllClips: vi.fn(),
-      copyToClipboard: vi.fn(),
-      pasteClip: vi.fn(),
       copyDerivedText: vi.fn(),
       performPrimaryAction: vi.fn(),
       performCopy: vi.fn(),

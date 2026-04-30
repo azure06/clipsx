@@ -11,16 +11,16 @@ import { useClipboardStore } from '../../../stores/clipboardStore'
 type CopyableRowProps = {
   readonly label: string
   readonly value: string
-  readonly sourceClipId: string
+  readonly sourceClipId?: string
   readonly className?: string
 }
 
-export const CopyableRow = ({ label, value, sourceClipId, className = '' }: CopyableRowProps) => {
+export const CopyableRow = ({ label, value, className = '' }: CopyableRowProps) => {
   const [copied, setCopied] = useState(false)
   const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
 
   const handleCopy = async () => {
-    await copyDerivedText(value, sourceClipId)
+    await copyDerivedText(value)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
