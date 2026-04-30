@@ -317,7 +317,7 @@ pub async fn search_clips_paginated(
     let threshold = similarity_threshold.unwrap_or(0.3); // Default threshold
 
     if use_semantic_search && state.semantic_service.is_ready() && !query.trim().is_empty() {
-        // Run semantic search
+        // --- Semantic ranking ---
         let query_vector = state
             .semantic_service
             .embed(query.clone())
@@ -330,7 +330,6 @@ pub async fn search_clips_paginated(
             .await
             .map_err(|e| e.to_string())?;
 
-        // Score all embeddings against query and filter by threshold
         let mut scored_clips: Vec<(String, f32)> = all_embeddings
             .into_iter()
             .filter_map(|emb| {
@@ -340,7 +339,6 @@ pub async fn search_clips_paginated(
                     &query_vector,
                     &vec_float,
                 );
-
                 if score >= threshold {
                     Some((emb.clip_id, score))
                 } else {
@@ -349,30 +347,56 @@ pub async fn search_clips_paginated(
             })
             .collect();
 
-        // Sort by score DESC
         scored_clips.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Paginate in memory
-        let start = offset_val as usize;
-        let end = (start + limit_val as usize).min(scored_clips.len());
+        // Collect IDs that semantic already covers (for dedup)
+        let semantic_ids: std::collections::HashSet<String> =
+            scored_clips.iter().map(|(id, _)| id.clone()).collect();
 
-        if start >= scored_clips.len() {
-            return Ok(Vec::new());
-        }
+        // --- FTS backfill: run on same scoped candidate set, large enough limit to cover gaps ---
+        let fts_backfill_limit = (limit_val + offset_val) * 4;
+        let fts_results = state
+            .repository
+            .search_paginated(
+                &query,
+                filter_types.clone(),
+                fts_backfill_limit,
+                0,
+                fav_val,
+                pin_val,
+                tag_filter,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-        let page_ids: Vec<String> = scored_clips[start..end]
+        // Merge: semantic first, then FTS-only hits
+        let mut merged_ids: Vec<(String, Option<f32>)> = scored_clips
             .iter()
-            .map(|(id, _)| id.clone())
+            .map(|(id, score)| (id.clone(), Some(*score)))
             .collect();
 
-        // Fetch actual clips
+        for fts_clip in &fts_results {
+            if !semantic_ids.contains(&fts_clip.id) {
+                merged_ids.push((fts_clip.id.clone(), None));
+            }
+        }
+
+        // Paginate the merged ordered list
+        let start = offset_val as usize;
+        if start >= merged_ids.len() {
+            return Ok(Vec::new());
+        }
+        let end = (start + limit_val as usize).min(merged_ids.len());
+        let page_slice = &merged_ids[start..end];
+
+        let page_ids: Vec<String> = page_slice.iter().map(|(id, _)| id.clone()).collect();
+
         let mut clips = state
             .repository
             .get_clips_by_ids(&page_ids)
             .await
             .map_err(|e: anyhow::Error| e.to_string())?;
 
-        // Sort clips to match the scored order and assign scores
         clips.sort_by_key(|c| {
             page_ids
                 .iter()
@@ -381,7 +405,7 @@ pub async fn search_clips_paginated(
         });
 
         for clip in &mut clips {
-            if let Some((_, score)) = scored_clips.iter().find(|(id, _)| id == &clip.id) {
+            if let Some((_, Some(score))) = page_slice.iter().find(|(id, _)| id == &clip.id) {
                 clip.similarity_score = Some(*score);
             }
         }

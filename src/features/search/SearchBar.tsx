@@ -9,6 +9,8 @@ import {
   Code,
   FileText,
   Briefcase,
+  Star,
+  Pin,
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import type { SemanticStatus } from '../../shared/types'
@@ -23,28 +25,36 @@ const FILTER_OPTIONS = [
 ] as const
 
 const SCOPE_OPTIONS = [
-  { prefix: '/all', label: 'All Clips', description: 'Browse full history', scope: 'all' },
   {
     prefix: '/favorites',
     label: 'Favorites',
-    description: 'Browse favorited clips',
-    scope: 'favorites',
+    description: 'Browse favorited clips. Backspace on empty clears it.',
+    scope: 'favorites' as const,
+    icon: Star,
   },
-  { prefix: '/pinned', label: 'Pinned', description: 'Browse pinned clips', scope: 'pinned' },
-] as const
+  {
+    prefix: '/pinned',
+    label: 'Pinned',
+    description: 'Browse pinned clips. Backspace on empty clears it.',
+    scope: 'pinned' as const,
+    icon: Pin,
+  },
+]
 
 const COMMAND_OPTIONS = [
-  ...SCOPE_OPTIONS.map(option => ({ ...option, kind: 'scope' as const, icon: Search })),
+  ...SCOPE_OPTIONS.map(option => ({ ...option, kind: 'scope' as const })),
   ...FILTER_OPTIONS.map(option => ({ ...option, kind: 'filter' as const })),
 ]
 
-type ScopeCommand = (typeof SCOPE_OPTIONS)[number]['scope']
+type ScopeCommand = 'all' | 'favorites' | 'pinned'
 
 interface SearchBarProps {
   value: string
   onChange: (value: string) => void
   onClear: () => void
   onScopeChange?: (scope: ScopeCommand) => void
+  /** The active tab scope from the sidebar — renders as a removable pill */
+  activeScope?: ScopeCommand
   placeholder?: string
   autoFocus?: boolean
   semanticStatus?: SemanticStatus | null
@@ -62,6 +72,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     onChange,
     onClear,
     onScopeChange,
+    activeScope,
     placeholder = 'Type to search or paste...',
     autoFocus = true,
     semanticStatus = null,
@@ -109,7 +120,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
   const showFilterMenu = currentSlash !== null && filteredOptions.length > 0
 
-  // Calculate Active Pill Information
+  // Calculate Active Pill Information from typed value (filter commands only)
   const trimmedValue = value.trimStart()
   const firstWordMatch = trimmedValue.match(/^(\/\S+)/)
   const firstWord = firstWordMatch?.[1] ? firstWordMatch[1].toLowerCase() : null
@@ -122,6 +133,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     ? value.slice(value.indexOf(activeCommand.prefix) + activeCommand.prefix.length).trimStart()
     : value
 
+  // Scope commands from typed input: strip and call onScopeChange
   useEffect(() => {
     if (!activeCommand || activeCommand.kind !== 'scope') {
       lastAppliedScopeValueRef.current = null
@@ -136,6 +148,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     onScopeChange?.(activeCommand.scope)
     onChange(displayValue)
   }, [activeCommand, displayValue, onChange, onScopeChange, value])
+
+  // Scope pill derived from activeScope prop (the current tab state)
+  const hasScopePill = activeScope && activeScope !== 'all'
+  const scopePillConfig = hasScopePill
+    ? SCOPE_OPTIONS.find(opt => opt.scope === activeScope)
+    : null
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (showFilterMenu) {
@@ -168,8 +186,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
     if (e.key === 'Backspace' && displayValue === '' && activeCommand) {
       e.preventDefault()
-      // Remove pill, leave just the prefix minus last char so they can keep editing or deleting
+      // Remove filter pill, leave just the prefix minus last char so they can keep editing
       onChange(activeCommand.prefix.slice(0, -1))
+    } else if (e.key === 'Backspace' && value === '' && hasScopePill) {
+      // Clear active scope pill when input is empty
+      e.preventDefault()
+      onScopeChange?.('all')
     } else if (e.key === 'Escape') {
       onClear()
     }
@@ -194,7 +216,22 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           <Search className="w-5 h-5" />
         </div>
 
-        {/* Active Pill */}
+        {/* Scope Pill (from active tab) */}
+        {scopePillConfig && (
+          <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-md border border-blue-200 dark:border-blue-500/30 whitespace-nowrap shadow-sm">
+            <scopePillConfig.icon className="w-4 h-4" />
+            <span className="text-sm font-medium">{scopePillConfig.label}</span>
+            <button
+              onClick={() => onScopeChange?.('all')}
+              className="ml-0.5 rounded hover:bg-blue-200/60 dark:hover:bg-blue-400/20 p-0.5 transition-colors"
+              aria-label="Clear scope filter"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Active Filter Pill (from typed /command) */}
         {activeCommand && (
           <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-md border border-blue-200 dark:border-blue-500/30 whitespace-nowrap shadow-sm">
             <activeCommand.icon className="w-4 h-4" />
@@ -219,8 +256,14 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
             }
           }}
           onKeyDown={handleKeyDown}
-          placeholder={activeCommand ? `Search in ${activeCommand.label}...` : placeholder}
-          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand ? 'px-3' : 'px-4'}`}
+          placeholder={
+            activeCommand
+              ? `Search in ${activeCommand.label}...`
+              : scopePillConfig
+                ? `Search in ${scopePillConfig.label}...`
+                : placeholder
+          }
+          className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand || scopePillConfig ? 'px-3' : 'px-4'}`}
         />
 
         {/* Right Actions */}

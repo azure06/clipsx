@@ -1,111 +1,110 @@
 # Search Behavior Matrix
 
-This doc describes the current search behavior in ClipsX as of April 30, 2026.
+This doc describes the search behavior in ClipsX as of May 2026.
 
-## At a Glance
+## Scope Model
 
-| Area | Browse | FTS search | Semantic search |
+Candidate set is built in this evaluation order:
+
+1. Start from all clips.
+2. Apply tab scope: `All` (no extra filter), `Favorites` (`is_favorite = true`), or `Pinned` (`is_pinned = true`).
+3. Apply selected tag filter if present (strict AND).
+4. Apply type filters if present (`/image`, `/code`, `/office`, etc.).
+5. If parsed text query is empty: return filtered results ordered by `updated_at DESC` (browse / filter-only mode).
+6. If parsed text query is non-empty: run FTS or hybrid semantic inside the filtered candidate set.
+
+### Scope Result Matrix
+
+| Tab | Tag selected | Query text | Returned set |
 | --- | --- | --- | --- |
-| Trigger | Empty query | Non-empty query with semantic toggle off, or semantic unavailable | Non-empty query with semantic toggle on and model ready |
-| Primary match source | No text matching; newest clips first | SQLite FTS5 over `content_text` and `note` | Embedding similarity over clip `content_text` only |
-| Result order | `updated_at DESC` | FTS rank, then `updated_at DESC` | Similarity score DESC |
-| Type filters like `/image` | No | Yes | Yes |
-| Favorites tab scope | Yes | Yes | Yes |
-| Pinned tab scope | Yes | Yes | Yes |
-| Active tag filter | Yes | Yes | Yes |
-| Notes searchable | N/A | Yes | No |
-| Tag names searchable as text | No | No | No |
+| `All` | No | Empty | All clips, newest first |
+| `All` | Yes | Empty | Tagged clips only, newest first |
+| `Favorites` | No | Empty | Favorite clips only, newest first |
+| `Pinned` | No | Empty | Pinned clips only, newest first |
+| Any | Any | `/image` only | Scoped clips of type image, newest first |
+| Any | Any | Text query | Scoped clips matching active search mode |
+| Any | Any | Text + type filter | Scoped clips matching type filter and active search mode |
 
-## What Each Mode Actually Does
+## Scope UX
+
+- The active tab (`All` / `Favorites` / `Pinned`) is reflected as a removable scope pill in the search bar when a non-`All` scope is active.
+- `/favorites` and `/pinned` are available as keyboard slash commands to apply scope; the command is stripped from the input after application.
+- `/all` is not offered as a slash command; returning to `All` is done by clicking X on the scope pill or pressing `Backspace` on an empty input when a scope pill is active.
+- `Escape` clears search text / current search state.
+
+## Search Modes
 
 ### Browse
 
-- Browse mode is active when the search box is empty.
-- Results come from `get_recent_clips_paginated`.
-- The list is chronological, newest first.
-- Active tab filters still apply:
-  - `All` shows all clips.
-  - `Favorites` only shows favorited clips.
-  - `Pinned` only shows pinned clips.
-- Active tag filter still applies in every browse tab.
+- Active when the search box is empty.
+- Results from `get_recent_clips_paginated`, ordered by `updated_at DESC`.
+- Tab scope and tag filter still apply.
 
 ### FTS Search
 
-- FTS mode runs when the query is non-empty and semantic search is off, unavailable, or not ready.
-- Backend uses SQLite FTS5 on:
-  - `content_text`
-  - `note`
-- Type slash filters such as `/image`, `/url`, `/text`, `/office`, `/file`, `/files`, and `/code` are parsed before the query is sent.
-- Scope slash commands `/all`, `/favorites`, and `/pinned` switch tabs and are not treated as search text.
-- Favorites, pinned, and active tag filters are still applied after the text match.
+- Active when the search box is non-empty and semantic search is off or unavailable.
+- Backend uses SQLite FTS5 on `content_text` and `note`.
+- Type slash filters are parsed before the query is sent.
+- Tab scope, tag filter, and type filters are applied before text matching.
+- If parsing removes all free-text terms, returns a filter-only result set ordered by `updated_at DESC`.
 
-### Semantic Search
+### Hybrid Semantic Search
 
-- Semantic mode runs only when:
-  - the query is non-empty,
-  - semantic toggle is on,
-  - and the semantic runtime is ready.
-- Backend embeds the typed query and compares it against stored clip embeddings.
-- Embeddings are generated from clip `content_text` only.
-- Notes are not part of the semantic index.
-- Tag names are not part of the semantic index.
-- Type filters, favorites/pinned scope, and the active tag filter all constrain the candidate set before similarity ranking.
-- If semantic mode is requested but the runtime is not ready, the backend falls back to FTS behavior.
+- Active when the search box is non-empty, semantic toggle is on, and the runtime has a loaded model.
+- Execution:
+  1. Build scoped candidate set (tab + tag + type filters).
+  2. Run semantic ranking (cosine similarity) on candidates with embeddings.
+  3. Run FTS on the same scoped candidate set using the same parsed text query.
+  4. Merge: semantic-ranked hits first (similarity DESC), then FTS-only hits not already returned (FTS order).
+  5. Pagination applies to the merged ordered list.
+- Note-only matches that would be missed by semantic alone appear as FTS backfill.
+- If the runtime is not ready, falls back to FTS.
 
 ## Notes, Tags, and Filters
 
-| Input | Browse | FTS | Semantic |
+| Input | Browse | FTS | Hybrid Semantic |
 | --- | --- | --- | --- |
-| Clip body text | Not searched | Searched | Searched semantically |
-| Clip note | Not searched | Searched | Not searched |
-| Tag name | Filter only | Filter only, not text-searched | Filter only, not meaning-searched |
-| Type slash filter | Not applicable | Narrows result set | Narrows result set |
+| Clip body text | Not searched | Searched | Searched (semantic block) |
+| Clip note | Not searched | Searched | FTS backfill block only |
+| Tag name | Filter only | Filter only, not text-searched | Filter only |
+| Type slash filter | Not applicable | Narrows candidate set | Narrows candidate set |
+
+## Tag Behavior
+
+- Tags are structured filters only. Typing `urgent` does not match a clip only because it has the `urgent` tag.
+- Selecting the `urgent` tag chip restricts the candidate set to clips carrying that tag.
+- Tag filtering combines with tab scope and text search using strict AND.
 
 ## Examples
 
-### Note search
+### Note search with semantic on
 
-- Clip A:
-  - `content_text = "deploy checklist"`
-  - `note = "talk to finance before Friday"`
-- Query `finance`
-  - FTS: matches Clip A because notes are indexed.
-  - Semantic: does not match based on the note alone.
+- Clip A: `content_text = "deploy checklist"`, `note = "talk to finance before Friday"`
+- Query `finance` with semantic on:
+  - Semantic block: may not match (note not embedded).
+  - FTS backfill: matches Clip A because notes are FTS-indexed.
+  - Result: Clip A appears in backfill block.
 
 ### Tag behavior
 
 - Clip B has tag `urgent`.
-- Query `urgent`
-  - FTS: does not match only because of the tag name.
-  - Semantic: does not match only because of the tag name.
-- If the `urgent` tag is selected in the UI, both FTS and semantic search are restricted to clips carrying that tag.
+- Query `urgent` → does not match because of the tag name alone (FTS indexes content and note, not tags).
+- Selecting the `urgent` tag chip → restricts results to clips with that tag.
 
-### Semantic on/off
+### Filter-only slash query
 
-- Clip C:
-  - `content_text = "quarterly revenue spreadsheet"`
-  - `note = "numbers approved by legal"`
-- Query `legal`
-  - FTS with semantic off: can match Clip C via the note.
-  - Semantic with semantic on: usually will not match via the note because only clip text is embedded.
-- Query `spreadsheet`
-  - FTS: matches by text.
-  - Semantic: also participates because the clip text is embedded.
+- Query `/image`:
+  - Parser removes `/image` from the text query, passes `filterTypes = ["image"]`.
+  - Backend does not run semantic (parsed text is empty).
+  - Result: image clips only, ordered by `updated_at DESC`.
 
-### Favorites, pinned, and tag scope
+### Combined scope + tag + query
 
-- In `Favorites`, search only returns favorited clips.
-- In `Pinned`, search only returns pinned clips.
-- With an active tag filter, both browse and search only return clips that carry that tag.
-- These scopes combine. Example:
-  - active tab = `Favorites`
-  - active tag = `work`
-  - query = `invoice`
-  - result set = only favorited clips tagged `work` that also match `invoice` in the active search mode.
+- Active tab `Favorites`, active tag `work`, query `invoice`:
+  - Returns only favorite clips tagged `work` that match `invoice` in the active search mode.
 
-## Non-Goals In Current Behavior
+## Non-Goals
 
-- Semantic search does not index notes.
-- Semantic search does not index tag names.
-- Tag names are not searched as free text in FTS.
-- Slash scope commands are navigation shortcuts, not text filters.
+- Semantic search does not index notes (notes participate via FTS backfill only).
+- Tag names are not searched as free text.
+- `/all` is not a slash command; scope is cleared with the pill X button or `Backspace`.

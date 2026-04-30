@@ -29,6 +29,7 @@ export const AppLayout = () => {
   } = useUIStore()
   const { settings, loadSettings } = useSettingsStore()
   const clips = useClipboardStore(state => state.clips)
+  const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
   const addNewClip = useClipboardStore(state => state.addNewClip)
   const mergeClipUpdate = useClipboardStore(state => state.mergeClipUpdate)
@@ -200,6 +201,7 @@ export const AppLayout = () => {
                     onScopeChange={scope => {
                       void setClipboardTab(scope)
                     }}
+                    activeScope={activeTab}
                     autoFocus={false}
                     semanticStatus={semanticStatus}
                     isSemanticActive={isSemanticActive}
