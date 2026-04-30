@@ -626,9 +626,7 @@ export const Settings = () => {
                   >
                     <Select
                       value={settings.item_activation_mode}
-                      onChange={value =>
-                        void updateSettings({ item_activation_mode: value as ItemActivationMode })
-                      }
+                      onChange={value => void updateSettings({ item_activation_mode: value })}
                       options={itemActivationOptions}
                       className="w-56"
                     />
