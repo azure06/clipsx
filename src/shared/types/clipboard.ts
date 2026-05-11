@@ -9,6 +9,16 @@ export type ClipContent =
   | { type: 'image'; path: string }
   | { type: 'files'; paths: string[] }
 
+export type PrimaryTextSource =
+  | 'clipboard'
+  | 'office'
+  | 'pdf_extract'
+  | 'svg_extract'
+  | 'ocr'
+  | 'note'
+  | 'none'
+export type OcrStatus = 'not_needed' | 'pending' | 'running' | 'done' | 'failed'
+
 export type ClipItem = {
   readonly id: string
   readonly contentType: ClipContentType
@@ -22,8 +32,12 @@ export type ClipItem = {
   readonly attachmentPath: string | null // OLE/binary attachments
   readonly attachmentType: string | null // UTI type for OLE write-back, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
   readonly filePaths: string | null // JSON array
+  readonly ocrText: string | null // Raw OCR output (provenance/debugging)
+  readonly indexText: string // Retrieval text used by FTS and semantic search
+  readonly primaryTextSource: PrimaryTextSource // Source that produced contentText
+  readonly ocrStatus: OcrStatus // OCR pipeline state
   readonly metadata: string | null // JSON object
-  readonly note: string | null // User annotation, searchable
+  readonly note: string | null // User annotation, folded into indexText
   readonly createdAt: number // Unix timestamp
   readonly updatedAt: number // Last access timestamp
   readonly appName: string | null

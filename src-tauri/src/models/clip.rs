@@ -14,7 +14,11 @@ pub struct ClipItem {
     pub attachment_path: Option<String>, // Office native format: clipboard_data/office/{id}.bin
     pub attachment_type: Option<String>, // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
     pub file_paths: Option<String>,      // JSON array
-    pub detected_type: String,           // New: 'url', 'code', 'text', etc.
+    pub ocr_text: Option<String>,        // Raw OCR output (provenance/debugging)
+    pub index_text: String,              // Retrieval text for FTS and semantic (content_text + note)
+    pub primary_text_source: String,     // 'clipboard', 'office', 'pdf_extract', 'svg_extract', 'ocr', 'note', 'none'
+    pub ocr_status: String,              // 'not_needed', 'pending', 'running', 'done', 'failed'
+    pub detected_type: String,           // 'url', 'code', 'text', etc.
     pub metadata: Option<String>,        // JSON object
     pub created_at: i64,                 // Unix timestamp
     pub updated_at: i64,                 // Last access timestamp
@@ -101,13 +105,24 @@ pub enum ClipContent {
     },
 }
 
+/// Compute the retrieval index from canonical content and user note.
+/// Both FTS and semantic embeddings read from this value.
+pub fn compute_index_text(content_text: Option<&str>, note: Option<&str>) -> String {
+    match (content_text.filter(|s| !s.is_empty()), note.filter(|s| !s.is_empty())) {
+        (Some(c), Some(n)) => format!("{}\n\n{}", c, n),
+        (Some(c), None) => c.to_string(),
+        (None, Some(n)) => n.to_string(),
+        (None, None) => String::new(),
+    }
+}
+
 impl ClipItem {
     pub fn from_text(content: String, detected_type: String, metadata: Option<String>) -> Self {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
 
-        // Compute hash for duplicate detection
         let content_hash = Self::compute_hash(&content);
+        let index_text = compute_index_text(Some(&content), None);
 
         Self {
             id,
@@ -121,6 +136,10 @@ impl ClipItem {
             attachment_path: None,
             attachment_type: None,
             file_paths: None,
+            ocr_text: None,
+            index_text,
+            primary_text_source: "clipboard".to_string(),
+            ocr_status: "not_needed".to_string(),
             detected_type,
             metadata,
             note: None,

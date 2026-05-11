@@ -1,5 +1,5 @@
 use crate::events::emit_clip_updated;
-use crate::models::ClipItem;
+use crate::models::{compute_index_text, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
@@ -25,6 +25,18 @@ struct CreateOfficeClipParams {
     rtf_data: Option<String>,
     extracted_text: String,
     source_app: String,
+}
+
+fn determine_office_text_state(extracted_text: &str, has_ocr_candidate: bool) -> (String, String) {
+    if extracted_text.is_empty() {
+        if has_ocr_candidate {
+            ("none".to_string(), "pending".to_string())
+        } else {
+            ("none".to_string(), "not_needed".to_string())
+        }
+    } else {
+        ("office".to_string(), "not_needed".to_string())
+    }
 }
 
 /// Main clipboard service - coordinates monitoring, storage, and notifications
@@ -408,17 +420,18 @@ impl ClipboardService {
                 // reads this value to decide when to clear the OS clipboard.
                 *self.last_copy_at.lock().await = Some(Instant::now());
 
-                // Trigger background embedding generation if a model is loaded
-                if let Some(text) = &clip.content_text {
+                // Trigger background embedding generation using index_text.
+                // Clips with primary_text_source='none' have no real text yet and are skipped.
+                let index_text = clip.index_text.clone();
+                if !index_text.is_empty() && clip.primary_text_source != "none" {
                     if let Some((model_name, dimensions)) = self.semantic_service.get_model_info() {
-                        let text_clone = text.clone();
                         let clip_id = clip.id.clone();
                         let repo = self.repository.clone();
                         let semantic = self.semantic_service.clone();
                         let app_handle = self.app_handle.clone();
 
                         tokio::spawn(async move {
-                            match semantic.embed(text_clone).await {
+                            match semantic.embed(index_text).await {
                                 Ok(vector) => {
                                     if let Err(e) = repo
                                         .create_embedding(
@@ -470,6 +483,7 @@ impl ClipboardService {
     ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
+        let index_text = compute_index_text(Some(&plain), None);
 
         ClipItem {
             id,
@@ -483,6 +497,10 @@ impl ClipboardService {
             attachment_path: None,
             attachment_type: None,
             file_paths: None,
+            ocr_text: None,
+            index_text,
+            primary_text_source: "clipboard".to_string(),
+            ocr_status: "not_needed".to_string(),
             detected_type: detection.detected_type_str().to_string(),
             metadata: detection.metadata_json(),
             note: None,
@@ -507,6 +525,7 @@ impl ClipboardService {
     ) -> ClipItem {
         let id = format!("{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
         let now = chrono::Utc::now().timestamp();
+        let index_text = compute_index_text(Some(&plain), None);
 
         ClipItem {
             id,
@@ -520,6 +539,10 @@ impl ClipboardService {
             attachment_path: None,
             attachment_type: None,
             file_paths: None,
+            ocr_text: None,
+            index_text,
+            primary_text_source: "clipboard".to_string(),
+            ocr_status: "not_needed".to_string(),
             detected_type: detection.detected_type_str().to_string(),
             metadata: detection.metadata_json(),
             note: None,
@@ -561,10 +584,17 @@ impl ClipboardService {
             None
         };
 
+        // Images start with no text source; OCR may later promote primary_text_source to 'ocr'.
+        // The placeholder is stored in content_text for UI display but is NOT in index_text
+        // so it cannot be embedded or matched by FTS.
+        // TODO: Wire a background OCR worker that consumes clips with ocr_status='pending'
+        // and calls set_ocr_status/update_after_ocr after processing the saved image.
+        let placeholder = format!("[Image: {}]", filename);
+
         Ok(ClipItem {
             id,
             content_type: "image".to_string(),
-            content_text: Some(format!("[Image: {}]", filename)),
+            content_text: Some(placeholder),
             content_html: None,
             content_rtf: None,
             svg_path: None,
@@ -573,6 +603,10 @@ impl ClipboardService {
             attachment_path: None,
             attachment_type: None,
             file_paths: None,
+            ocr_text: None,
+            index_text: String::new(), // populated by OCR when available
+            primary_text_source: "none".to_string(),
+            ocr_status: "pending".to_string(), // queue OCR
             detected_type: "image".to_string(),
             metadata: Some(format!(r#"{{"format":"{}"}}"#, format.mime_type())),
             note: None,
@@ -642,6 +676,8 @@ impl ClipboardService {
             "files": files_meta
         });
 
+        let index_text = compute_index_text(Some(&preview), None);
+
         ClipItem {
             id,
             content_type: "files".to_string(),
@@ -654,6 +690,10 @@ impl ClipboardService {
             attachment_path: None,
             attachment_type: None,
             file_paths: Some(serde_json::to_string(&paths).unwrap_or_default()),
+            ocr_text: None,
+            index_text,
+            primary_text_source: "clipboard".to_string(),
+            ocr_status: "not_needed".to_string(),
             detected_type: "files".to_string(),
             metadata: Some(metadata_json.to_string()),
             note: None,
@@ -780,6 +820,18 @@ impl ClipboardService {
             }
         }
 
+        // extracted_text comes from direct clipboard/SVG/PDF extraction and stays preferred
+        // over OCR when available. If extraction fails but we still have a preview asset,
+        // keep OCR pending so a future worker can promote real text into index_text.
+        let has_ocr_candidate = image_path.is_some() || pdf_path.is_some() || svg_path.is_some();
+        let (primary_text_source, ocr_status) =
+            determine_office_text_state(&extracted_text, has_ocr_candidate);
+
+        let index_text = compute_index_text(
+            if extracted_text.is_empty() { None } else { Some(extracted_text.as_str()) },
+            None,
+        );
+
         Ok(ClipItem {
             id,
             content_type: "office".to_string(),
@@ -792,6 +844,10 @@ impl ClipboardService {
             attachment_path,           // Office native format: clipboard_data/office/{id}.bin
             attachment_type: ole_type, // UTI type for restoring OLE to pasteboard
             file_paths: None,
+            ocr_text: None,
+            index_text,
+            primary_text_source,
+            ocr_status,
             detected_type: "office".to_string(),
             metadata: Some(Value::Object(metadata).to_string()),
             note: None,
@@ -870,5 +926,35 @@ impl ClipboardService {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::determine_office_text_state;
+
+    #[test]
+    fn office_with_extracted_text_is_not_ocr_pending() {
+        let (primary_text_source, ocr_status) =
+            determine_office_text_state("Quarterly summary", true);
+
+        assert_eq!(primary_text_source, "office");
+        assert_eq!(ocr_status, "not_needed");
+    }
+
+    #[test]
+    fn office_without_text_but_with_preview_stays_pending_for_ocr() {
+        let (primary_text_source, ocr_status) = determine_office_text_state("", true);
+
+        assert_eq!(primary_text_source, "none");
+        assert_eq!(ocr_status, "pending");
+    }
+
+    #[test]
+    fn office_without_text_or_preview_does_not_queue_ocr() {
+        let (primary_text_source, ocr_status) = determine_office_text_state("", false);
+
+        assert_eq!(primary_text_source, "none");
+        assert_eq!(ocr_status, "not_needed");
     }
 }

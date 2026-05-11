@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::models::{ClipItem, Embedding, Tag};
+use crate::models::{compute_index_text, ClipItem, Embedding, Tag};
 use anyhow::Result;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -11,8 +11,7 @@ use tokio::sync::Mutex;
 const CLIPS_FTS_TABLE_SQL: &str = r#"
     CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
         id UNINDEXED,
-        content_text,
-        note,
+        index_text,
         content = clips,
         content_rowid = rowid
     )
@@ -21,33 +20,33 @@ const CLIPS_FTS_TABLE_SQL: &str = r#"
 const CLIPS_FTS_INSERT_TRIGGER_SQL: &str = r#"
     CREATE TRIGGER IF NOT EXISTS clips_fts_insert
     AFTER INSERT ON clips BEGIN
-        INSERT INTO clips_fts(rowid, id, content_text, note)
-        VALUES (new.rowid, new.id, new.content_text, new.note);
+        INSERT INTO clips_fts(rowid, id, index_text)
+        VALUES (new.rowid, new.id, new.index_text);
     END
 "#;
 
 const CLIPS_FTS_DELETE_TRIGGER_SQL: &str = r#"
     CREATE TRIGGER IF NOT EXISTS clips_fts_delete
     AFTER DELETE ON clips BEGIN
-        INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
-        VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
+        INSERT INTO clips_fts(clips_fts, rowid, id, index_text)
+        VALUES ('delete', old.rowid, old.id, old.index_text);
     END
 "#;
 
 const CLIPS_FTS_UPDATE_TRIGGER_SQL: &str = r#"
     CREATE TRIGGER IF NOT EXISTS clips_fts_update
     AFTER UPDATE ON clips BEGIN
-        INSERT INTO clips_fts(clips_fts, rowid, id, content_text, note)
-        VALUES ('delete', old.rowid, old.id, old.content_text, old.note);
-        INSERT INTO clips_fts(rowid, id, content_text, note)
-        VALUES (new.rowid, new.id, new.content_text, new.note);
+        INSERT INTO clips_fts(clips_fts, rowid, id, index_text)
+        VALUES ('delete', old.rowid, old.id, old.index_text);
+        INSERT INTO clips_fts(rowid, id, index_text)
+        VALUES (new.rowid, new.id, new.index_text);
     END
 "#;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EmbeddingCandidate {
     pub id: String,
-    pub content_text: String,
+    pub index_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -176,10 +175,11 @@ impl ClipRepository {
             INSERT INTO clips (
                 id, content_type, content_text, content_html, content_rtf,
                 svg_path, pdf_path, image_path, attachment_path, attachment_type,
-                file_paths, detected_type, metadata, note, created_at, updated_at, app_name,
+                file_paths, ocr_text, index_text, primary_text_source, ocr_status,
+                detected_type, metadata, note, created_at, updated_at, app_name,
                 is_pinned, is_favorite, access_count, content_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&clip.id)
@@ -193,6 +193,10 @@ impl ClipRepository {
         .bind(&clip.attachment_path)
         .bind(&clip.attachment_type)
         .bind(&clip.file_paths)
+        .bind(&clip.ocr_text)
+        .bind(&clip.index_text)
+        .bind(&clip.primary_text_source)
+        .bind(&clip.ocr_status)
         .bind(&clip.detected_type)
         .bind(&clip.metadata)
         .bind(&clip.note)
@@ -447,8 +451,6 @@ impl ClipRepository {
     }
 
     /// Search clips with FTS and pagination
-    /// NOTE: For future semantic search, replace FTS query with embedding similarity
-    /// TODO: Add semantic_search_paginated() method that uses embeddings table
     #[allow(clippy::too_many_arguments)]
     pub async fn search_paginated(
         &self,
@@ -742,7 +744,9 @@ impl ClipRepository {
         Ok(result)
     }
 
-    /// Update the note on a clip and return the saved row
+    /// Update the note on a clip, recompute index_text, and return the saved row.
+    /// Deletes the existing embedding when index_text changes so the next reindex
+    /// picks up the fresh vector rather than keeping a stale one.
     pub async fn update_clip_note(&self, clip_id: &str, note: Option<String>) -> Result<ClipItem> {
         let now = chrono::Utc::now().timestamp();
         let _write_guard = self.write_lock.lock().await;
@@ -750,12 +754,57 @@ impl ClipRepository {
             "[NOTE_DEBUG][repository] executing note update | clip_id={} | note={:?} | expected=rows_affected should be 1 and get_by_id should return the saved note",
             clip_id, note
         );
-        let update_result = sqlx::query("UPDATE clips SET note = ?, updated_at = ? WHERE id = ?")
-            .bind(&note)
-            .bind(now)
-            .bind(clip_id)
-            .execute(&self.pool)
-            .await;
+
+        // Fetch what we need to recompute index_text and primary_text_source correctly.
+        let row = sqlx::query_as::<_, (Option<String>, String, String)>(
+            "SELECT content_text, index_text, primary_text_source FROM clips WHERE id = ?",
+        )
+        .bind(clip_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some((content_text, old_index_text, primary_text_source)) = row else {
+            anyhow::bail!("Clip not found for note update: {}", clip_id);
+        };
+
+        // Determine the new primary_text_source and what feeds into index_text.
+        //
+        // Real sources (clipboard, office, pdf_extract, svg_extract, ocr) own content_text
+        // and always keep their status regardless of note changes.
+        //
+        // 'none' → a clip whose only possible text contribution is a user note:
+        //   - non-empty note: promote to 'note', index_text = note only
+        //   - empty note:     stay 'none', index_text = ""
+        //
+        // 'note' → currently note-only:
+        //   - non-empty note: stay 'note', index_text = note only
+        //   - empty/cleared note: revert to 'none', index_text = ""
+        let real_sources = ["clipboard", "office", "pdf_extract", "svg_extract", "ocr"];
+        let is_real_source = real_sources.contains(&primary_text_source.as_str());
+
+        let (new_primary_text_source, index_content) = if is_real_source {
+            // Real source: fold note into index_text, source unchanged
+            (primary_text_source.clone(), content_text.as_deref())
+        } else {
+            // 'none' or 'note': note is the only candidate
+            match note.as_deref().filter(|s| !s.is_empty()) {
+                Some(_) => ("note".to_string(), None),
+                None => ("none".to_string(), None),
+            }
+        };
+
+        let new_index_text = compute_index_text(index_content, note.as_deref());
+
+        let update_result = sqlx::query(
+            "UPDATE clips SET note = ?, index_text = ?, primary_text_source = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&note)
+        .bind(&new_index_text)
+        .bind(&new_primary_text_source)
+        .bind(now)
+        .bind(clip_id)
+        .execute(&self.pool)
+        .await;
 
         let result = match update_result {
             Ok(result) => result,
@@ -767,12 +816,16 @@ impl ClipRepository {
                         clip_id, error
                     );
                     self.rebuild_clips_fts_unlocked().await?;
-                    sqlx::query("UPDATE clips SET note = ?, updated_at = ? WHERE id = ?")
-                        .bind(&note)
-                        .bind(now)
-                        .bind(clip_id)
-                        .execute(&self.pool)
-                        .await?
+                    sqlx::query(
+                        "UPDATE clips SET note = ?, index_text = ?, primary_text_source = ?, updated_at = ? WHERE id = ?",
+                    )
+                    .bind(&note)
+                    .bind(&new_index_text)
+                    .bind(&new_primary_text_source)
+                    .bind(now)
+                    .bind(clip_id)
+                    .execute(&self.pool)
+                    .await?
                 } else {
                     return Err(error);
                 }
@@ -789,6 +842,14 @@ impl ClipRepository {
             anyhow::bail!("Clip not found for note update: {}", clip_id);
         }
 
+        // Invalidate the stale embedding so the next reindex generates a fresh vector.
+        if new_index_text != old_index_text {
+            sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+                .bind(clip_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
         let clip = self
             .get_by_id(clip_id)
             .await?
@@ -800,6 +861,82 @@ impl ClipRepository {
         );
 
         Ok(clip)
+    }
+
+    /// Update index_text and optionally ocr_text/content_text/primary_text_source after OCR completes.
+    /// Deletes the existing embedding when index_text changes so the next reindex
+    /// generates a fresh vector instead of keeping a stale one.
+    pub async fn update_after_ocr(
+        &self,
+        clip_id: &str,
+        ocr_text: &str,
+        update_content: bool,
+    ) -> Result<ClipItem> {
+        let now = chrono::Utc::now().timestamp();
+        let _write_guard = self.write_lock.lock().await;
+
+        if update_content {
+            // OCR is now the best text source; update content_text, index_text, and primary_text_source
+            let Some((note, old_index_text)) = sqlx::query_as::<_, (Option<String>, String)>(
+                "SELECT note, index_text FROM clips WHERE id = ?",
+            )
+            .bind(clip_id)
+            .fetch_optional(&self.pool)
+            .await?
+            else {
+                anyhow::bail!("Clip not found for OCR update: {}", clip_id);
+            };
+
+            let new_index_text = compute_index_text(Some(ocr_text), note.as_deref());
+
+            sqlx::query(
+                "UPDATE clips SET ocr_text = ?, content_text = ?, index_text = ?, \
+                 primary_text_source = 'ocr', ocr_status = 'done', updated_at = ? WHERE id = ?",
+            )
+            .bind(ocr_text)
+            .bind(ocr_text)
+            .bind(&new_index_text)
+            .bind(now)
+            .bind(clip_id)
+            .execute(&self.pool)
+            .await?;
+
+            if new_index_text != old_index_text {
+                sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+                    .bind(clip_id)
+                    .execute(&self.pool)
+                    .await?;
+            }
+        } else {
+            // A stronger source already owns content_text; just store OCR as provenance.
+            // index_text is unchanged so the existing embedding remains valid.
+            sqlx::query(
+                "UPDATE clips SET ocr_text = ?, ocr_status = 'done', updated_at = ? WHERE id = ?",
+            )
+            .bind(ocr_text)
+            .bind(now)
+            .bind(clip_id)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        let clip = self
+            .get_by_id(clip_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Clip disappeared after OCR update: {}", clip_id))?;
+
+        Ok(clip)
+    }
+
+    /// Mark a clip's OCR status without changing any text fields.
+    pub async fn set_ocr_status(&self, clip_id: &str, status: &str) -> Result<()> {
+        let _write_guard = self.write_lock.lock().await;
+        sqlx::query("UPDATE clips SET ocr_status = ? WHERE id = ?")
+            .bind(status)
+            .bind(clip_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     // ===== EMBEDDING OPERATIONS (for semantic search) =====
@@ -906,17 +1043,21 @@ impl ClipRepository {
         Ok(embeddings)
     }
 
+    /// Return clips whose index_text is non-empty and lack an up-to-date embedding,
+    /// or whose embedding has been invalidated (deleted) after an index_text change.
+    /// Clips with primary_text_source='none' have no real text yet and are excluded.
     pub async fn get_embedding_candidates_for_model(
         &self,
         model: &str,
     ) -> Result<Vec<EmbeddingCandidate>> {
         let clips = sqlx::query_as::<_, EmbeddingCandidate>(
             r#"
-            SELECT c.id, c.content_text
+            SELECT c.id, c.index_text
             FROM clips c
             LEFT JOIN embeddings e ON e.clip_id = c.id
-            WHERE c.content_text IS NOT NULL
-              AND TRIM(c.content_text) != ''
+            WHERE c.index_text IS NOT NULL
+              AND TRIM(c.index_text) != ''
+              AND c.primary_text_source != 'none'
               AND (e.clip_id IS NULL OR e.model != ?)
             ORDER BY c.updated_at DESC
             "#,
@@ -933,8 +1074,9 @@ impl ClipRepository {
             r#"
             SELECT COUNT(*)
             FROM clips
-            WHERE content_text IS NOT NULL
-              AND TRIM(content_text) != ''
+            WHERE index_text IS NOT NULL
+              AND TRIM(index_text) != ''
+              AND primary_text_source != 'none'
             "#,
         )
         .fetch_one(&self.pool)
@@ -1338,6 +1480,7 @@ mod tests {
 
         assert_eq!(updated.note.as_deref(), Some("fresh note"));
 
+        // Note is folded into index_text, so FTS should find it
         let results = repo
             .search_paginated("fresh", None, 20, 0, false, false, None)
             .await?;
@@ -1346,6 +1489,21 @@ mod tests {
             results.iter().any(|result| result.id == clip.id),
             "clip should still be searchable by its updated note"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_clip_note_index_text_composition() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("body text".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+
+        let updated = repo
+            .update_clip_note(&clip.id, Some("user note".to_string()))
+            .await?;
+
+        assert_eq!(updated.index_text, "body text\n\nuser note");
 
         Ok(())
     }
@@ -1466,6 +1624,207 @@ mod tests {
         assert!(office_ids.contains(&legacy_html_table.id));
         assert!(office_ids.contains(&office_document.id));
         assert!(!office_ids.contains(&csv_clip.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_embedding_candidates_exclude_source_none() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        // Raw image: no text source — must be excluded
+        let mut image_no_text =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_no_text.index_text = String::new();
+        image_no_text.primary_text_source = "none".to_string();
+        image_no_text.ocr_status = "pending".to_string();
+        repo.insert(&image_no_text).await?;
+
+        // Regular text clip — must be included
+        let text_clip = ClipItem::from_text("hello world".to_string(), "text".to_string(), None);
+        repo.insert(&text_clip).await?;
+
+        let candidates = repo
+            .get_embedding_candidates_for_model("test-model")
+            .await?;
+
+        assert!(
+            candidates.iter().all(|c| c.id != image_no_text.id),
+            "image with no text source must not be a candidate"
+        );
+        assert!(
+            candidates.iter().any(|c| c.id == text_clip.id),
+            "text clip must be a candidate"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_note_on_image_clip_promotes_source_to_note() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_clip.index_text = String::new();
+        image_clip.primary_text_source = "none".to_string();
+        image_clip.ocr_status = "pending".to_string();
+        repo.insert(&image_clip).await?;
+
+        let updated = repo
+            .update_clip_note(&image_clip.id, Some("my caption".to_string()))
+            .await?;
+
+        assert_eq!(updated.primary_text_source, "note");
+        assert_eq!(updated.index_text, "my caption");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_clearing_note_on_note_only_clip_reverts_to_none() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_clip.index_text = String::new();
+        image_clip.primary_text_source = "none".to_string();
+        image_clip.ocr_status = "pending".to_string();
+        repo.insert(&image_clip).await?;
+
+        repo.update_clip_note(&image_clip.id, Some("temporary".to_string()))
+            .await?;
+        let cleared = repo.update_clip_note(&image_clip.id, None).await?;
+
+        assert_eq!(cleared.primary_text_source, "none");
+        assert_eq!(cleared.index_text, "");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_note_only_clip_appears_in_embedding_candidates() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_clip.index_text = String::new();
+        image_clip.primary_text_source = "none".to_string();
+        image_clip.ocr_status = "pending".to_string();
+        repo.insert(&image_clip).await?;
+
+        repo.update_clip_note(&image_clip.id, Some("searchable caption".to_string()))
+            .await?;
+
+        let candidates = repo
+            .get_embedding_candidates_for_model("test-model")
+            .await?;
+        assert!(
+            candidates.iter().any(|c| c.id == image_clip.id),
+            "note-only image clip must be an embedding candidate"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_note_only_clip_counted_by_embedding_stats() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_clip.index_text = String::new();
+        image_clip.primary_text_source = "none".to_string();
+        image_clip.ocr_status = "pending".to_string();
+        repo.insert(&image_clip).await?;
+
+        let stats_before = repo.get_embedding_stats("test-model").await?;
+
+        repo.update_clip_note(&image_clip.id, Some("a note".to_string()))
+            .await?;
+
+        let stats_after = repo.get_embedding_stats("test-model").await?;
+        assert_eq!(
+            stats_after.total_text_clips,
+            stats_before.total_text_clips + 1,
+            "note-only clip must be counted by embedding stats"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ocr_promotion_from_note_only_preserves_note_in_index_text() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip =
+            ClipItem::from_text("[Image: abc.png]".to_string(), "image".to_string(), None);
+        image_clip.index_text = String::new();
+        image_clip.primary_text_source = "none".to_string();
+        image_clip.ocr_status = "pending".to_string();
+        repo.insert(&image_clip).await?;
+
+        // Add a note — promotes to 'note' source
+        repo.update_clip_note(&image_clip.id, Some("user caption".to_string()))
+            .await?;
+
+        // OCR completes — promotes to 'ocr' source, note must stay in index_text
+        let promoted = repo
+            .update_after_ocr(&image_clip.id, "extracted text", true)
+            .await?;
+
+        assert_eq!(promoted.primary_text_source, "ocr");
+        assert_eq!(promoted.index_text, "extracted text\n\nuser caption");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_note_edit_invalidates_embedding() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("body".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+
+        // Give it an embedding
+        repo.create_embedding(&clip.id, vec![1, 2, 3, 4], "test-model", 1)
+            .await?;
+        assert!(repo.get_embedding(&clip.id).await?.is_some());
+
+        // Edit the note — index_text changes, embedding must be deleted
+        repo.update_clip_note(&clip.id, Some("new note".to_string()))
+            .await?;
+        assert!(
+            repo.get_embedding(&clip.id).await?.is_none(),
+            "embedding must be invalidated after note changes index_text"
+        );
+
+        // The clip now appears as a reindex candidate
+        let candidates = repo
+            .get_embedding_candidates_for_model("test-model")
+            .await?;
+        assert!(
+            candidates.iter().any(|c| c.id == clip.id),
+            "clip must be a candidate after embedding invalidation"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_note_edit_no_change_preserves_embedding() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("body".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+
+        repo.create_embedding(&clip.id, vec![1, 2, 3, 4], "test-model", 1)
+            .await?;
+
+        // Clear note — index_text stays "body", embedding must survive
+        repo.update_clip_note(&clip.id, None).await?;
+        assert!(
+            repo.get_embedding(&clip.id).await?.is_some(),
+            "embedding must survive when index_text does not change"
+        );
 
         Ok(())
     }

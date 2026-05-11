@@ -1272,7 +1272,7 @@ pub async fn reindex_semantic_embeddings(
     let _ = app_handle.emit("semantic-status-changed", ());
 
     for (index, clip) in candidates.into_iter().enumerate() {
-        let vector = match state.semantic_service.embed(clip.content_text).await {
+        let vector = match state.semantic_service.embed(clip.index_text).await {
             Ok(vector) => vector,
             Err(err) => {
                 let message = err.to_string();
@@ -1345,33 +1345,34 @@ pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Resul
         .map_err(|e: anyhow::Error| e.to_string())?
         .ok_or_else(|| "Clip not found".to_string())?;
 
-    if let Some(text) = clip.content_text {
-        let vector = state
-            .semantic_service
-            .embed(text)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-
-        let vector_bytes = crate::services::semantic::SemanticService::vector_to_bytes(&vector);
-
-        state
-            .repository
-            .create_embedding(&id, vector_bytes, &model_name, dimensions)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-
-        emit_clip_updated(
-            state.clipboard_service.app_handle(),
-            state.repository.as_ref(),
-            &id,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-        Ok(())
-    } else {
-        Err("Clip does not have text content to embed".to_string())
+    let index_text = clip.index_text.clone();
+    if index_text.is_empty() || clip.primary_text_source == "none" {
+        return Err("Clip has no indexable text to embed".to_string());
     }
+
+    let vector = state
+        .semantic_service
+        .embed(index_text)
+        .await
+        .map_err(|e: anyhow::Error| e.to_string())?;
+
+    let vector_bytes = crate::services::semantic::SemanticService::vector_to_bytes(&vector);
+
+    state
+        .repository
+        .create_embedding(&id, vector_bytes, &model_name, dimensions)
+        .await
+        .map_err(|e: anyhow::Error| e.to_string())?;
+
+    emit_clip_updated(
+        state.clipboard_service.app_handle(),
+        state.repository.as_ref(),
+        &id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 // ============================================================================
