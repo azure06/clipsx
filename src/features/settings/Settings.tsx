@@ -762,7 +762,7 @@ export const Settings = () => {
 
                 <SettingRow
                   label="Max Item Size (Combined)"
-                  description="Maximum allowed size for images/files before skipping"
+                  description="Maximum combined size of text, HTML, and RTF content before skipping. Set to 0 to disable."
                 >
                   <ButtonGroup
                     value={settings.max_item_size_mb}
