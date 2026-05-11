@@ -151,9 +151,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
   // Scope pill derived from activeScope prop (the current tab state)
   const hasScopePill = activeScope && activeScope !== 'all'
-  const scopePillConfig = hasScopePill
-    ? SCOPE_OPTIONS.find(opt => opt.scope === activeScope)
-    : null
+  const scopePillConfig = hasScopePill ? SCOPE_OPTIONS.find(opt => opt.scope === activeScope) : null
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (showFilterMenu) {
@@ -186,8 +184,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
     if (e.key === 'Backspace' && displayValue === '' && activeCommand) {
       e.preventDefault()
-      // Remove filter pill, leave just the prefix minus last char so they can keep editing
-      onChange(activeCommand.prefix.slice(0, -1))
+      onChange('')
     } else if (e.key === 'Backspace' && value === '' && hasScopePill) {
       // Clear active scope pill when input is empty
       e.preventDefault()

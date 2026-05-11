@@ -118,7 +118,9 @@ describe('SearchBar scope slash commands', () => {
 
   it('does not clear scope when Backspace is pressed but input has text', async () => {
     const onScopeChange = vi.fn()
-    render(<ScopeHarness initialScope="favorites" initialValue="hello" onScopeChange={onScopeChange} />)
+    render(
+      <ScopeHarness initialScope="favorites" initialValue="hello" onScopeChange={onScopeChange} />
+    )
 
     const input = screen.getByRole('textbox')
     fireEvent.keyDown(input, { key: 'Backspace' })
@@ -126,6 +128,20 @@ describe('SearchBar scope slash commands', () => {
     // onScopeChange should not be called since input is not empty
     await waitFor(() => {
       expect(onScopeChange).not.toHaveBeenCalled()
+    })
+  })
+
+  it('clears a type filter pill entirely when Backspace is pressed on empty input', async () => {
+    const onChange = vi.fn()
+    render(<SearchBar value="/image" onChange={onChange} onClear={vi.fn()} />)
+
+    const input = screen.getByRole('textbox')
+    // input shows empty (displayValue strips the /image prefix)
+    expect(input).toHaveValue('')
+    fireEvent.keyDown(input, { key: 'Backspace' })
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith('')
     })
   })
 })
