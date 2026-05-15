@@ -16,6 +16,7 @@ mod models;
 mod plugins;
 mod repositories;
 mod services;
+mod window_behavior;
 
 use plugins::mac_rounded_corners;
 
@@ -148,10 +149,8 @@ fn main() {
                 }
 
                 // Apply initial window behavior settings
-                if settings.always_on_top {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.set_always_on_top(true);
-                    }
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    window_behavior::reconcile_main_window(&app_handle, &window);
                 }
 
                 // Robust Startup Check for Semantic Models

@@ -15,13 +15,13 @@ pub struct ClipItem {
     pub attachment_type: Option<String>, // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
     pub file_paths: Option<String>,      // JSON array
     pub ocr_text: Option<String>,        // Raw OCR output (provenance/debugging)
-    pub index_text: String,              // Retrieval text for FTS and semantic (content_text + note)
-    pub primary_text_source: String,     // 'clipboard', 'office', 'pdf_extract', 'svg_extract', 'ocr', 'note', 'none'
-    pub ocr_status: String,              // 'not_needed', 'pending', 'running', 'done', 'failed'
-    pub detected_type: String,           // 'url', 'code', 'text', etc.
-    pub metadata: Option<String>,        // JSON object
-    pub created_at: i64,                 // Unix timestamp
-    pub updated_at: i64,                 // Last access timestamp
+    pub index_text: String, // Retrieval text for FTS and semantic (content_text + note)
+    pub primary_text_source: String, // 'clipboard', 'office', 'pdf_extract', 'svg_extract', 'ocr', 'note', 'none'
+    pub ocr_status: String,          // 'not_needed', 'pending', 'running', 'done', 'failed'
+    pub detected_type: String,       // 'url', 'code', 'text', etc.
+    pub metadata: Option<String>,    // JSON object
+    pub created_at: i64,             // Unix timestamp
+    pub updated_at: i64,             // Last access timestamp
     pub note: Option<String>,
     pub app_name: Option<String>,
     pub is_pinned: i32,   // SQLite uses INTEGER for boolean
@@ -108,7 +108,10 @@ pub enum ClipContent {
 /// Compute the retrieval index from canonical content and user note.
 /// Both FTS and semantic embeddings read from this value.
 pub fn compute_index_text(content_text: Option<&str>, note: Option<&str>) -> String {
-    match (content_text.filter(|s| !s.is_empty()), note.filter(|s| !s.is_empty())) {
+    match (
+        content_text.filter(|s| !s.is_empty()),
+        note.filter(|s| !s.is_empty()),
+    ) {
         (Some(c), Some(n)) => format!("{}\n\n{}", c, n),
         (Some(c), None) => c.to_string(),
         (None, Some(n)) => n.to_string(),

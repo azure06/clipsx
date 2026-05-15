@@ -828,7 +828,11 @@ impl ClipboardService {
             determine_office_text_state(&extracted_text, has_ocr_candidate);
 
         let index_text = compute_index_text(
-            if extracted_text.is_empty() { None } else { Some(extracted_text.as_str()) },
+            if extracted_text.is_empty() {
+                None
+            } else {
+                Some(extracted_text.as_str())
+            },
             None,
         );
 

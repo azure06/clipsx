@@ -9,7 +9,7 @@ pub struct SettingsRepository {
 }
 
 impl SettingsRepository {
-    pub fn new(app_handle: &tauri::AppHandle) -> Result<Self> {
+    pub fn new<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<Self> {
         let config_dir = app_handle
             .path()
             .app_config_dir()

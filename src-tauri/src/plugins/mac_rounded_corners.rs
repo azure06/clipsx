@@ -55,14 +55,14 @@ unsafe fn configure_overlay_window(ns_window: id) {
         | NSWindowCollectionBehavior::NSWindowCollectionBehaviorTransient
         | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary;
     ns_window.setCollectionBehavior_(behavior);
-    ns_window.setHidesOnDeactivate_(cocoa::base::YES);
+    // Native deactivate behavior is reconciled separately from persisted settings.
 }
 
 /// Enables rounded corners for the window (macOS only)
 /// Uses only public APIs - App Store compatible
 #[tauri::command]
 pub fn enable_rounded_corners<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     window: WebviewWindow<R>,
     offset_x: Option<f64>,
     offset_y: Option<f64>,
@@ -89,20 +89,19 @@ pub fn enable_rounded_corners<R: Runtime>(
                 }
             })
             .map_err(|e| e.to_string())?;
-
-        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
-    {
-        Ok(())
-    }
+    {}
+
+    crate::window_behavior::reconcile_main_window(&app, &window);
+    Ok(())
 }
 
 /// Enables modern window style with rounded corners and shadow
 #[tauri::command]
 pub fn enable_modern_window_style<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     window: WebviewWindow<R>,
     corner_radius: Option<f64>,
     offset_x: Option<f64>,
@@ -140,14 +139,33 @@ pub fn enable_modern_window_style<R: Runtime>(
                 }
             })
             .map_err(|e| e.to_string())?;
-
-        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
+    {}
+
+    crate::window_behavior::reconcile_main_window(&app, &window);
+    Ok(())
+}
+
+pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
+    #[cfg(target_os = "macos")]
     {
-        Ok(())
+        let _ = window.with_webview(move |webview| {
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let ns_window = webview.ns_window() as id;
+                let value = if hides {
+                    cocoa::base::YES
+                } else {
+                    cocoa::base::NO
+                };
+                ns_window.setHidesOnDeactivate_(value);
+            }
+        });
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, hides);
 }
 
 /// Repositions Traffic Lights only (useful after fullscreen toggle)

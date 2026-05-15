@@ -474,6 +474,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     const plain = settings?.default_paste_format === 'plain' ? true : undefined
 
     await invoke('copy_to_clipboard', { text, clipId, plain, trackUsage: true })
+    if (settings?.hide_on_copy) {
+      void getCurrentWindow().hide()
+    }
   },
 
   setTagFilter: async (tagId: number | null) => {

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from './clipboardStore'
+import { useSettingsStore } from './settingsStore'
 import type { ClipItem, Tag } from '../shared/types'
+import { DEFAULT_SETTINGS } from '../shared/types'
 
 const { mockInvoke, mockHide } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -42,6 +44,45 @@ describe('useClipboardStore.copyDerivedText', () => {
     })
     expect(mockHide).not.toHaveBeenCalled()
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('useClipboardStore.performCopy', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, hide_on_copy: false },
+      isLoading: false,
+      error: null,
+    })
+  })
+
+  it('hides the window after explicit copy when hide_on_copy is enabled', async () => {
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, hide_on_copy: true },
+    })
+
+    await useClipboardStore.getState().performCopy('copied text', 'clip-1')
+
+    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
+      text: 'copied text',
+      clipId: 'clip-1',
+      plain: undefined,
+      trackUsage: true,
+    })
+    expect(mockHide).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not hide the window after explicit copy when hide_on_copy is disabled', async () => {
+    await useClipboardStore.getState().performCopy('copied text', 'clip-1')
+
+    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
+      text: 'copied text',
+      clipId: 'clip-1',
+      plain: undefined,
+      trackUsage: true,
+    })
+    expect(mockHide).not.toHaveBeenCalled()
   })
 })
 

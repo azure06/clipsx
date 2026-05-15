@@ -962,6 +962,7 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let _ = window.show();
     let _ = window.set_focus();
+    crate::window_behavior::reconcile_main_window(app, &window);
 
     Ok(())
 }
@@ -979,21 +980,33 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 pub fn update_settings(
     settings: AppSettings,
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<AppSettings, String> {
+    use tauri::Manager;
     state
         .settings_repository
         .save(&settings)
         .map_err(|e| e.to_string())?;
+    if let Some(window) = app.get_webview_window("main") {
+        crate::window_behavior::reconcile_main_window(&app, &window);
+    }
     Ok(settings)
 }
 
 #[tauri::command]
-pub fn reset_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
+pub fn reset_settings(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<AppSettings, String> {
+    use tauri::Manager;
     let settings = AppSettings::default();
     state
         .settings_repository
         .save(&settings)
         .map_err(|e| e.to_string())?;
+    if let Some(window) = app.get_webview_window("main") {
+        crate::window_behavior::reconcile_main_window(&app, &window);
+    }
     Ok(settings)
 }
 

@@ -44,7 +44,8 @@ export const useWindowBehavior = () => {
     const setupBlurListener = async () => {
       const win = getCurrentWindow()
       const unlisten = await win.onFocusChanged(({ payload: focused }) => {
-        if (!focused && settings?.hide_on_blur && !mouseInWindow) {
+        // always_on_top takes precedence: don't hide while it's active.
+        if (!focused && settings?.hide_on_blur && !settings?.always_on_top && !mouseInWindow) {
           void win.hide()
         }
       })
@@ -58,15 +59,5 @@ export const useWindowBehavior = () => {
       document.removeEventListener('mouseleave', onLeave)
       void unlistenPromise.then(unlisten => unlisten())
     }
-  }, [settings?.hide_on_blur])
-
-  useEffect(() => {
-    if (settings?.always_on_top !== undefined) {
-      getCurrentWindow()
-        .setAlwaysOnTop(settings.always_on_top)
-        .catch(err => {
-          console.error('Failed to set always on top:', err)
-        })
-    }
-  }, [settings?.always_on_top])
+  }, [settings?.hide_on_blur, settings?.always_on_top])
 }

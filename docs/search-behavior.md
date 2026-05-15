@@ -43,7 +43,8 @@ Candidate set is built in this evaluation order:
 ### FTS Search
 
 - Active when the search box is non-empty and semantic search is off or unavailable.
-- Backend uses SQLite FTS5 on `content_text` and `note`.
+- Backend uses SQLite FTS5 on derived `index_text`.
+- `index_text` is the retrieval source of truth: best available clip text plus note when present.
 - Type slash filters are parsed before the query is sent.
 - Tab scope, tag filter, and type filters are applied before text matching.
 - If parsing removes all free-text terms, returns a filter-only result set ordered by `updated_at DESC`.
@@ -53,11 +54,11 @@ Candidate set is built in this evaluation order:
 - Active when the search box is non-empty, semantic toggle is on, and the runtime has a loaded model.
 - Execution:
   1. Build scoped candidate set (tab + tag + type filters).
-  2. Run semantic ranking (cosine similarity) on candidates with embeddings.
+  2. Run semantic ranking (cosine similarity) on candidates with embeddings derived from `index_text`.
   3. Run FTS on the same scoped candidate set using the same parsed text query.
   4. Merge: semantic-ranked hits first (similarity DESC), then FTS-only hits not already returned (FTS order).
   5. Pagination applies to the merged ordered list.
-- Note-only matches that would be missed by semantic alone appear as FTS backfill.
+- If a clip's retrieval text changed and its embedding was invalidated, it can still appear through FTS until reindex/manual embedding regenerates the vector.
 - If the runtime is not ready, falls back to FTS.
 
 ## Notes, Tags, and Filters
@@ -65,9 +66,16 @@ Candidate set is built in this evaluation order:
 | Input | Browse | FTS | Hybrid Semantic |
 | --- | --- | --- | --- |
 | Clip body text | Not searched | Searched | Searched (semantic block) |
-| Clip note | Not searched | Searched | FTS backfill block only |
+| Clip note | Not searched | Searched | Searched after embedding exists for the latest `index_text`; otherwise may appear via FTS backfill |
 | Tag name | Filter only | Filter only, not text-searched | Filter only |
 | Type slash filter | Not applicable | Narrows candidate set | Narrows candidate set |
+
+## Retrieval Source Of Truth
+
+- `index_text` is the single retrieval field used by both FTS and semantic embeddings.
+- `index_text` is recomputed from canonical clip text plus note.
+- Editing a note or promoting OCR updates `index_text` and invalidates the old embedding when the retrieval text changed.
+- Reindex/manual embedding regenerates the fresh vector; note edits do not auto-reembed immediately today.
 
 ## Tag Behavior
 
@@ -81,9 +89,9 @@ Candidate set is built in this evaluation order:
 
 - Clip A: `content_text = "deploy checklist"`, `note = "talk to finance before Friday"`
 - Query `finance` with semantic on:
-  - Semantic block: may not match (note not embedded).
-  - FTS backfill: matches Clip A because notes are FTS-indexed.
-  - Result: Clip A appears in backfill block.
+  - If Clip A has an embedding for the latest `index_text`, semantic can match because the note is part of retrieval text.
+  - If the note was edited and the clip has not been re-embedded yet, FTS still matches because `index_text` is updated immediately.
+  - Result: Clip A can appear in semantic results or FTS backfill depending on embedding freshness.
 
 ### Tag behavior
 
@@ -105,6 +113,5 @@ Candidate set is built in this evaluation order:
 
 ## Non-Goals
 
-- Semantic search does not index notes (notes participate via FTS backfill only).
 - Tag names are not searched as free text.
 - `/all` is not a slash command; scope is cleared with the pill X button or `Backspace`.
