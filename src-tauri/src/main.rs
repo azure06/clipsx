@@ -103,8 +103,11 @@ fn main() {
                 })
                 .build(app)?;
 
-            // Spawn async initialization
-            tauri::async_runtime::spawn(async move {
+            // Run async initialization synchronously inside setup so that
+            // AppState is managed before the window becomes interactive.
+            // Using block_on here is intentional — Tauri's setup closure is
+            // synchronous, but we need async for DB migrations and service init.
+            tauri::async_runtime::block_on(async move {
                 let repository = Arc::new(
                     ClipRepository::new(&database_url)
                         .await
