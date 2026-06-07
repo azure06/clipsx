@@ -327,3 +327,117 @@ describe('useClipboardStore filtered view stability', () => {
     })
   })
 })
+
+describe('useClipboardStore OCR clip-updated handling', () => {
+  const makeImageClip = (overrides: Partial<ClipItem> = {}): ClipItem => ({
+    id: 'img-1',
+    contentType: 'image',
+    detectedType: 'image',
+    contentText: '[Image: img-1.png]',
+    contentHtml: null,
+    contentRtf: null,
+    svgPath: null,
+    pdfPath: null,
+    imagePath: '/data/images/img-1.png',
+    attachmentPath: null,
+    attachmentType: null,
+    filePaths: null,
+    ocrText: null,
+    indexText: '',
+    primaryTextSource: 'none',
+    ocrStatus: 'pending',
+    metadata: null,
+    note: null,
+    createdAt: 1000,
+    updatedAt: 1000,
+    appName: null,
+    isPinned: false,
+    isFavorite: false,
+    accessCount: 0,
+    contentHash: 'abc',
+    hasEmbedding: false,
+    tags: [],
+    ...overrides,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useClipboardStore.setState({
+      clips: [makeImageClip()],
+      availableTags: [],
+      loading: false,
+      error: null,
+      hasMore: false,
+      currentOffset: 1,
+      mode: 'browse',
+      searchQuery: '',
+      activeTab: 'all',
+      tagFilter: null,
+    })
+  })
+
+  it('merges OCR completion update: ocrStatus done and new text', () => {
+    useClipboardStore.getState().mergeClipUpdate(
+      makeImageClip({
+        ocrStatus: 'done',
+        ocrText: 'extracted text',
+        indexText: 'extracted text',
+        primaryTextSource: 'ocr',
+        contentText: 'extracted text',
+        updatedAt: 2000,
+      })
+    )
+
+    const clip = useClipboardStore.getState().clips[0]!
+    expect(clip.ocrStatus).toBe('done')
+    expect(clip.primaryTextSource).toBe('ocr')
+    expect(clip.indexText).toBe('extracted text')
+  })
+
+  it('merges OCR running status without changing text', () => {
+    useClipboardStore
+      .getState()
+      .mergeClipUpdate(makeImageClip({ ocrStatus: 'running', updatedAt: 1500 }))
+
+    const clip = useClipboardStore.getState().clips[0]!
+    expect(clip.ocrStatus).toBe('running')
+    expect(clip.indexText).toBe('')
+    expect(clip.primaryTextSource).toBe('none')
+  })
+
+  it('merges OCR failed status', () => {
+    useClipboardStore
+      .getState()
+      .mergeClipUpdate(makeImageClip({ ocrStatus: 'failed', updatedAt: 1500 }))
+
+    const clip = useClipboardStore.getState().clips[0]!
+    expect(clip.ocrStatus).toBe('failed')
+  })
+
+  it('preserves local tags when OCR update arrives without tags', () => {
+    const tag = { id: 3, name: 'screenshot', color: null, createdAt: 1 }
+    useClipboardStore.setState({
+      clips: [makeImageClip({ tags: [tag] })],
+    })
+
+    // Simulate a backend clip-updated payload that omits the tags field
+    // (backend does not populate tags on clip-updated events).
+    const { tags: _omit, ...clipWithoutTags } = makeImageClip({
+      ocrStatus: 'done',
+      ocrText: 'hi',
+      indexText: 'hi',
+    })
+    useClipboardStore.getState().mergeClipUpdate(clipWithoutTags as ClipItem)
+
+    expect(useClipboardStore.getState().clips[0]!.tags).toEqual([tag])
+  })
+
+  it('ignores clip-updated events for clips not in the current list', () => {
+    useClipboardStore
+      .getState()
+      .mergeClipUpdate(makeImageClip({ id: 'unknown-clip', ocrStatus: 'done' }))
+
+    expect(useClipboardStore.getState().clips).toHaveLength(1)
+    expect(useClipboardStore.getState().clips[0]!.id).toBe('img-1')
+  })
+})

@@ -1,7 +1,16 @@
 import { memo } from 'react'
 import type { ClipItem, Tag } from '../../../shared/types'
 import { formatClipPreview } from '../../../shared/types'
-import { Star, Sparkles, Pin, Hash, MessageSquare, Command, CornerDownLeft } from 'lucide-react'
+import {
+  Star,
+  Sparkles,
+  Pin,
+  Hash,
+  MessageSquare,
+  Command,
+  CornerDownLeft,
+  ScanText,
+} from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 
 type ClipboardListItemProps = {
@@ -26,8 +35,14 @@ const ClipboardListItemComponent = ({
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
+  const ocrPending = clip.ocrStatus === 'pending' || clip.ocrStatus === 'running'
   const hasAttributes =
-    isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || Boolean(clip.hasEmbedding)
+    isPinned ||
+    isFavorite ||
+    tags.length > 0 ||
+    Boolean(clip.note) ||
+    Boolean(clip.hasEmbedding) ||
+    ocrPending
 
   const handleClick = () => {
     if (onSelect) {
@@ -98,6 +113,11 @@ const ClipboardListItemComponent = ({
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
               {clip.note && (
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
+              )}
+              {ocrPending && (
+                <span title={clip.ocrStatus === 'running' ? 'OCR running…' : 'OCR queued'}>
+                  <ScanText className="h-3 w-3 text-sky-400 animate-pulse" strokeWidth={2.5} />
+                </span>
               )}
               {clip.hasEmbedding && (
                 <span title="Semantic Search Indexed">

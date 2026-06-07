@@ -105,13 +105,24 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           <span>{content.text.length} chars</span>
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
           {content.metadata.language && <span>{content.metadata.language}</span>}
+          {(clip.ocrStatus === 'pending' || clip.ocrStatus === 'running') && (
+            <span className="text-sky-500 dark:text-sky-400 animate-pulse">
+              {clip.ocrStatus === 'running' ? 'OCR running…' : 'OCR queued'}
+            </span>
+          )}
+          {clip.ocrStatus === 'failed' && clip.contentType === 'image' && (
+            <span className="text-amber-600 dark:text-amber-400">OCR unavailable</span>
+          )}
           {!content.clip.hasEmbedding && !canGenerateEmbedding && content.type === 'text' && (
             <span className="text-amber-600 dark:text-amber-400">
               {semanticStatus?.message ?? 'Load a semantic model to generate embeddings'}
             </span>
           )}
         </div>
-        <div>
+        <div className="flex items-center gap-3">
+          {clip.primaryTextSource === 'ocr' && (
+            <span className="text-sky-500 dark:text-sky-400 opacity-80">OCR</span>
+          )}
           {sourceLabel && (
             <span className="text-gray-600 dark:text-gray-400">
               <span className="opacity-60 mr-1">Source:</span>

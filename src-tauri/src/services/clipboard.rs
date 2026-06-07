@@ -3,6 +3,7 @@ use crate::models::{compute_index_text, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
+use crate::services::ocr::OcrService;
 use crate::services::office::classify_office_payload;
 use crate::services::semantic::SemanticService;
 use anyhow::Result;
@@ -60,6 +61,7 @@ pub struct ClipboardService {
     repository: Arc<ClipRepository>,
     settings_repository: Arc<SettingsRepository>,
     semantic_service: Arc<SemanticService>,
+    ocr_service: Arc<OcrService>,
     // NOTE: Arc<Mutex<T>> is like a thread-safe shared wrapper.
     // Arc  = Atomic Reference Counter. Like a shared pointer that keeps a count of how
     //        many places are using the value. When count reaches 0, the value is dropped.
@@ -102,6 +104,7 @@ impl ClipboardService {
             repository,
             settings_repository,
             semantic_service,
+            ocr_service: Arc::new(OcrService::new()),
             monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(
                 app_handle.clone(),
             ))),
@@ -235,6 +238,178 @@ impl ClipboardService {
                         }
                         // Reset — don't fire again until the next copy event
                         *svc3.last_copy_at.lock().await = None;
+                    }
+                }
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // TASK 4: Background OCR worker
+        // ═══════════════════════════════════════════════════════════════════════
+        // Polls for clips whose ocr_status='pending' and runs Vision OCR on
+        // the saved image file.  Runs every 2 seconds; each poll processes all
+        // pending clips one by one so that a burst of pasted images drains
+        // quickly without spawning an unbounded number of concurrent jobs.
+        //
+        // After OCR succeeds:
+        //   - update_after_ocr() promotes OCR text to content_text / index_text
+        //     when no stronger source already owns them.
+        //   - A fresh embedding is triggered if index_text changed.
+        //   - A clip-updated event notifies the frontend.
+        //
+        // If OCR is not supported on this platform, the worker sets all pending
+        // clips to 'failed' on first run so they are never retried.
+        let svc4 = self.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(2)).await;
+
+                let pending = match svc4.repository.get_pending_ocr_clips().await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("[OCR] Failed to query pending clips: {}", e);
+                        continue;
+                    }
+                };
+
+                for clip in pending {
+                    let image_path = match clip.image_path.as_deref() {
+                        Some(p) => p.to_string(),
+                        None => {
+                            // No image file (e.g. office clip with only SVG/PDF): mark failed.
+                            if let Err(e) =
+                                svc4.repository.set_ocr_status(&clip.id, "failed").await
+                            {
+                                eprintln!("[OCR] set_ocr_status failed: {}", e);
+                            }
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) =
+                        svc4.repository.set_ocr_status(&clip.id, "running").await
+                    {
+                        eprintln!("[OCR] set_ocr_status(running) failed: {}", e);
+                        continue;
+                    }
+
+                    let ocr_result = match svc4.ocr_service.run_ocr(&image_path).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("[OCR] Unexpected error for {}: {}", clip.id, e);
+                            let _ =
+                                svc4.repository.set_ocr_status(&clip.id, "failed").await;
+                            continue;
+                        }
+                    };
+
+                    if !ocr_result.supported {
+                        // Platform has no OCR engine: mark all pending as failed once.
+                        let _ =
+                            svc4.repository.set_ocr_status(&clip.id, "failed").await;
+                        continue;
+                    }
+
+                    // Decide whether OCR should own content_text.
+                    // It should only promote when no real source already has text.
+                    let real_sources =
+                        ["clipboard", "office", "pdf_extract", "svg_extract", "ocr"];
+                    let update_content =
+                        !real_sources.contains(&clip.primary_text_source.as_str());
+
+                    let updated_clip = match svc4
+                        .repository
+                        .update_after_ocr(&clip.id, &ocr_result.text, update_content)
+                        .await
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("[OCR] update_after_ocr failed for {}: {}", clip.id, e);
+                            continue;
+                        }
+                    };
+
+                    // Trigger embedding generation when index_text is now non-empty.
+                    if !updated_clip.index_text.is_empty()
+                        && updated_clip.primary_text_source != "none"
+                    {
+                        if let Some((model_name, dimensions)) =
+                            svc4.semantic_service.get_model_info()
+                        {
+                            let clip_id = updated_clip.id.clone();
+                            let index_text = updated_clip.index_text.clone();
+                            let repo = svc4.repository.clone();
+                            let semantic = svc4.semantic_service.clone();
+                            let app_handle = svc4.app_handle.clone();
+
+                            tokio::spawn(async move {
+                                match semantic.embed(index_text).await {
+                                    Ok(vector) => {
+                                        if let Err(e) = repo
+                                            .create_embedding(
+                                                &clip_id,
+                                                SemanticService::vector_to_bytes(&vector),
+                                                &model_name,
+                                                dimensions,
+                                            )
+                                            .await
+                                        {
+                                            eprintln!("[OCR] Failed to save embedding: {}", e);
+                                        }
+                                        if let Err(e) = emit_clip_updated(
+                                            &app_handle,
+                                            repo.as_ref(),
+                                            &clip_id,
+                                        )
+                                        .await
+                                        {
+                                            eprintln!(
+                                                "[OCR] clip-updated emit failed: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[OCR] Embedding generation failed: {}", e);
+                                        // Still notify frontend of OCR status change.
+                                        if let Err(e) = emit_clip_updated(
+                                            &app_handle,
+                                            repo.as_ref(),
+                                            &clip_id,
+                                        )
+                                        .await
+                                        {
+                                            eprintln!(
+                                                "[OCR] clip-updated emit failed: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            });
+                        } else {
+                            // No semantic model loaded; just notify the frontend.
+                            if let Err(e) = emit_clip_updated(
+                                &svc4.app_handle,
+                                svc4.repository.as_ref(),
+                                &updated_clip.id,
+                            )
+                            .await
+                            {
+                                eprintln!("[OCR] clip-updated emit failed: {}", e);
+                            }
+                        }
+                    } else {
+                        // No text (or source unchanged): still update the frontend.
+                        if let Err(e) = emit_clip_updated(
+                            &svc4.app_handle,
+                            svc4.repository.as_ref(),
+                            &updated_clip.id,
+                        )
+                        .await
+                        {
+                            eprintln!("[OCR] clip-updated emit failed: {}", e);
+                        }
                     }
                 }
             }

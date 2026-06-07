@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(RUST_BACKTRACE=full cargo run:*)",
+      "Bash(npm run tauri:*)",
+      "Bash(cargo clean:*)",
+      "Bash(RUST_BACKTRACE=1 timeout 15 cargo run:*)",
+      "Bash(RUST_BACKTRACE=full cargo test:*)",
+      "Bash(timeout 10 cargo run:*)",
+      "Bash(find:*)",
+      "Bash(claude plugin list)",
+      "Bash(pbpaste)",
+      "Bash(xxd)",
+      "Bash(osascript -e 'clipboard info')",
+      "Bash(osascript -e 'tell application \"\"System Events\"\" to get name of processes whose frontmost is true')",
+      "Bash(swift -:*)",
+      "Bash(git -C /Users/gabriele.sato/Repos/clipsx log --format=\"%an <%ae>\")",
+      "Bash(git -C /Users/gabriele.sato/Repos/clipsx config --local user.name)",
+      "Bash(git -C /Users/gabriele.sato/Repos/clipsx config --local user.email)",
+      "Bash(git -C /Users/gabriele.sato/Repos/clipsx config --local user.email \"gabri06e@gmail.com\")",
+      "Bash(cargo test --lib -- tests)",
+      "Bash(npm run type-check)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}

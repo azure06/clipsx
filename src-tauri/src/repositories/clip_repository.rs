@@ -939,6 +939,18 @@ impl ClipRepository {
         Ok(())
     }
 
+    /// Return all clips with ocr_status = 'pending', ordered oldest-first.
+    /// Used by the OCR background worker to drain the queue.
+    pub async fn get_pending_ocr_clips(&self) -> Result<Vec<ClipItem>> {
+        let clips = sqlx::query_as::<_, ClipItem>(
+            "SELECT *, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding \
+             FROM clips WHERE ocr_status = 'pending' ORDER BY created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(clips)
+    }
+
     // ===== EMBEDDING OPERATIONS (for semantic search) =====
 
     /// Store embedding vector for a clip
@@ -1825,6 +1837,159 @@ mod tests {
             repo.get_embedding(&clip.id).await?.is_some(),
             "embedding must survive when index_text does not change"
         );
+
+        Ok(())
+    }
+
+    // ── OCR state transition tests ────────────────────────────────────────────
+
+    fn make_pending_image_clip() -> ClipItem {
+        let mut clip =
+            ClipItem::from_text("[Image: test.png]".to_string(), "image".to_string(), None);
+        clip.index_text = String::new();
+        clip.primary_text_source = "none".to_string();
+        clip.ocr_status = "pending".to_string();
+        clip
+    }
+
+    #[tokio::test]
+    async fn test_get_pending_ocr_clips_returns_pending_only() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let pending = make_pending_image_clip();
+        repo.insert(&pending).await?;
+
+        let text_clip = ClipItem::from_text("hello".to_string(), "text".to_string(), None);
+        repo.insert(&text_clip).await?;
+
+        let results = repo.get_pending_ocr_clips().await?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, pending.id);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ocr_success_promotes_text_and_marks_done() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        let updated = repo
+            .update_after_ocr(&clip.id, "extracted content", true)
+            .await?;
+
+        assert_eq!(updated.ocr_status, "done");
+        assert_eq!(updated.primary_text_source, "ocr");
+        assert_eq!(updated.ocr_text.as_deref(), Some("extracted content"));
+        assert!(updated.index_text.contains("extracted content"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ocr_empty_result_marks_done_with_empty_text() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        let updated = repo.update_after_ocr(&clip.id, "", true).await?;
+
+        assert_eq!(updated.ocr_status, "done");
+        // update_content=true with empty text: primary_text_source becomes 'ocr' but index_text stays empty.
+        assert_eq!(updated.primary_text_source, "ocr");
+        assert_eq!(updated.ocr_text.as_deref(), Some(""));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ocr_does_not_override_existing_real_source() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        // Simulate an office clip that already has extracted text.
+        let mut clip =
+            ClipItem::from_text("office text".to_string(), "office".to_string(), None);
+        clip.primary_text_source = "office".to_string();
+        clip.ocr_status = "pending".to_string();
+        clip.index_text = "office text".to_string();
+        repo.insert(&clip).await?;
+
+        // update_content=false because 'office' is a real source.
+        let updated = repo
+            .update_after_ocr(&clip.id, "ocr overlay text", false)
+            .await?;
+
+        assert_eq!(updated.ocr_status, "done");
+        assert_eq!(updated.primary_text_source, "office"); // must not be overwritten
+        assert_eq!(updated.ocr_text.as_deref(), Some("ocr overlay text"));
+        // index_text must be unchanged since update_content=false.
+        assert_eq!(updated.index_text, "office text");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_ocr_status_transitions_to_running_and_failed() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        repo.set_ocr_status(&clip.id, "running").await?;
+        let running = repo.get_by_id(&clip.id).await?.unwrap();
+        assert_eq!(running.ocr_status, "running");
+
+        repo.set_ocr_status(&clip.id, "failed").await?;
+        let failed = repo.get_by_id(&clip.id).await?.unwrap();
+        assert_eq!(failed.ocr_status, "failed");
+
+        // Failed clips must NOT appear in the pending queue.
+        let pending = repo.get_pending_ocr_clips().await?;
+        assert!(pending.iter().all(|c| c.id != clip.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ocr_success_invalidates_stale_embedding() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        // Give the clip a stale embedding (e.g. from a note that was added first).
+        repo.create_embedding(&clip.id, vec![1, 2, 3], "m", 1).await?;
+        assert!(repo.get_embedding(&clip.id).await?.is_some());
+
+        // OCR completes with new text — index_text changes, embedding must be invalidated.
+        let updated = repo
+            .update_after_ocr(&clip.id, "new ocr text", true)
+            .await?;
+        assert_eq!(updated.ocr_status, "done");
+        assert!(
+            repo.get_embedding(&clip.id).await?.is_none(),
+            "stale embedding must be deleted when index_text changes after OCR"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pending_clips_appear_in_get_pending_queue() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let c1 = make_pending_image_clip();
+        let mut c2 = make_pending_image_clip();
+        c2.id = format!("{}_2", c2.id);
+        repo.insert(&c1).await?;
+        repo.insert(&c2).await?;
+
+        let pending = repo.get_pending_ocr_clips().await?;
+        assert_eq!(pending.len(), 2);
+
+        // After OCR completes on c1 it must no longer appear.
+        repo.update_after_ocr(&c1.id, "text", true).await?;
+        let pending2 = repo.get_pending_ocr_clips().await?;
+        assert_eq!(pending2.len(), 1);
+        assert_eq!(pending2[0].id, c2.id);
 
         Ok(())
     }

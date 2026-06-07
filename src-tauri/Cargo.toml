@@ -79,6 +79,12 @@ windows = { version = "0.61", features = [
     "Win32_System_ProcessStatus",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_WindowsAndMessaging",
+    # WinRT OCR (Windows.Media.Ocr) — built-in since Windows 10, no extra install required
+    "Media_Ocr",
+    "Media",
+    "Graphics_Imaging",
+    "Storage",
+    "Storage_Streams",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
