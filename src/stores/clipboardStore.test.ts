@@ -422,7 +422,7 @@ describe('useClipboardStore OCR clip-updated handling', () => {
 
     // Simulate a backend clip-updated payload that omits the tags field
     // (backend does not populate tags on clip-updated events).
-    const { tags: _omit, ...clipWithoutTags } = makeImageClip({
+    const { tags: _omitted, ...clipWithoutTags } = makeImageClip({
       ocrStatus: 'done',
       ocrText: 'hi',
       indexText: 'hi',
