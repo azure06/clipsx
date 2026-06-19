@@ -171,9 +171,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Uncomment if you enable the Tauri updater:
-          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ needs.check-version.outputs.version }}
           releaseName: "ClipsX ${{ needs.check-version.outputs.version }}"
@@ -187,6 +187,11 @@ jobs:
             | **macOS (Intel)** | `.dmg` (x64) |
             | **Windows** | `.msi` or `-setup.exe` |
             | **Linux** | `.deb` or `.AppImage` |
+
+            ### Release Notes
+            - Draft release: run smoke tests before publishing.
+            - Windows artifacts should be code-signed on the release laptop before public distribution.
+            - macOS artifacts are ad-hoc signed for v0.1.0 and may require manual allow-listing in Privacy & Security on first launch.
           releaseDraft: true
           prerelease: false
           updaterJsonPreferNsis: true
@@ -196,6 +201,10 @@ jobs:
       - name: Build only (no release)
         if: needs.check-version.outputs.should_release != 'true'
         uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.settings.args }}
 

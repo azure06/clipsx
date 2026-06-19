@@ -1907,8 +1907,7 @@ mod tests {
     async fn test_ocr_does_not_override_existing_real_source() -> Result<()> {
         let repo = ClipRepository::new("sqlite::memory:").await?;
         // Simulate an office clip that already has extracted text.
-        let mut clip =
-            ClipItem::from_text("office text".to_string(), "office".to_string(), None);
+        let mut clip = ClipItem::from_text("office text".to_string(), "office".to_string(), None);
         clip.primary_text_source = "office".to_string();
         clip.ocr_status = "pending".to_string();
         clip.index_text = "office text".to_string();
@@ -1956,7 +1955,8 @@ mod tests {
         repo.insert(&clip).await?;
 
         // Give the clip a stale embedding (e.g. from a note that was added first).
-        repo.create_embedding(&clip.id, vec![1, 2, 3], "m", 1).await?;
+        repo.create_embedding(&clip.id, vec![1, 2, 3], "m", 1)
+            .await?;
         assert!(repo.get_embedding(&clip.id).await?.is_some());
 
         // OCR completes with new text — index_text changes, embedding must be invalidated.

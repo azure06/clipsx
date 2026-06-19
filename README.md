@@ -46,15 +46,18 @@ A clipboard manager that **understands**, **enhances**, and **organizes** everyt
 | **Build** | Vite 5 | Fast HMR, simple config |
 | **Testing** | Vitest + Playwright | Fast, modern, Vite-native |
 
-### AI Strategy (Hybrid Approach)
+### Release Scope
 
-| Mode | Backend | Provider | User Setup |
-|------|---------|----------|------------|
-| **Easy Mode** (Default) | Our Cloudflare Workers | OpenRouter | None - just works |
-| **Privacy Mode** (Advanced) | Direct from app | OpenAI or Claude | User provides own API key |
+ClipsX v0.1.0 ships as a local-first desktop app:
 
-**Easy Mode:** Free tier with limits, Premium unlimited (via OpenRouter backend)  
-**Privacy Mode:** Always unlimited (user provides own API key, pays provider directly)
+- clipboard capture and history
+- text and semantic search
+- content-aware previews and actions
+- tags and notes
+- automatic OCR for image and office clips
+- in-app updates for release builds
+
+Future hosted or direct-provider AI integrations are intentionally out of scope until the backend exists end to end.
 
 ---
 
@@ -97,15 +100,10 @@ A clipboard manager that **understands**, **enhances**, and **organizes** everyt
      │                │
      ▼                ▼
 ┌─────────┐    ┌──────────────┐
-│ Privacy │    │  Easy Mode   │
-│  Mode   │    │              │
-│ Direct→ │    │ Cloudflare   │
-│ OpenAI/ │    │  Workers     │
-│ Claude  │    │      ↓       │
-└─────────┘    │ OpenRouter   │
-               │      ↓       │
-               │  AI Models   │
-               └──────────────┘
+│  OCR &  │    │  Embeddings  │
+│Preview  │    │ + Search     │
+│Workers  │    │ Pipelines    │
+└─────────┘    └──────────────┘
 ```
 
 ### Data Flow Example
@@ -120,9 +118,7 @@ A clipboard manager that **understands**, **enhances**, and **organizes** everyt
    - Extract metadata (URLs, emails)
    - OCR if image
 
-When user requests AI feature:
-6a. Easy Mode → Our Cloudflare Workers → OpenRouter
-6b. Privacy Mode → Direct to OpenAI/Claude (user's key)
+6. Background workers update OCR text, embeddings, and preview metadata
 ```
 
 ---
@@ -131,13 +127,12 @@ When user requests AI feature:
 
 | Status | Focus | Scope | Outcome |
 |-------|-------|-------|---------|
-| **Done** | Semantic search foundation | Persistence, tests, filter alignment, reindexing, status UX | Stable search baseline |
-| **Next** | Manual organization | Tags, collections, and filtering | Better control over large histories |
-| **Later** | OCR workflows | Extract text from screenshots and image clips | Make images searchable and reusable |
-| **Later** | Keyboard productivity | Faster navigation and action execution | Lower-friction daily usage |
+| **Done** | Search foundation | Persistence, tests, filter alignment, reindexing, status UX | Stable search baseline |
+| **Done** | OCR baseline | Automatic OCR for image and office clips | Searchable image workflows |
+| **Next** | Keyboard productivity | Faster navigation and action execution | Lower-friction daily usage |
 | **Later** | Ecosystem | User scripts, plugins, and deeper app integrations | Extend ClipsX without bloating core |
 
-**Current direction:** Focus on semantic search quality, organization, OCR, keyboard workflows, and extensibility. Bigger differentiators can be revisited later.
+**Current direction:** Focus on reliable local workflows, OCR, keyboard speed, and release hardening.
 
 ---
 
@@ -158,16 +153,9 @@ clipsx/
 │   ├── commands/                 # Tauri IPC handlers
 │   ├── services/                 # Business logic
 │   │   ├── clipboard.rs          # Monitor & read
-│   │   ├── ai.rs                 # AI integrations (Privacy Mode)
 │   │   └── ocr.rs                # Image processing
 │   ├── repositories/             # Data access
 │   └── models/                   # Types & schemas
-│
-├── cloudflare-workers/           # Backend API (Easy Mode)
-│   └── src/
-│       ├── ai.ts                 # AI proxy via OpenRouter
-│       ├── auth.ts               # User auth & rate limits
-│       └── sync.ts               # Cloud sync (Premium tier)
 │
 └── tests/                        # Test suites
     ├── unit/                     # 60% coverage target
@@ -197,64 +185,16 @@ clipsx/
 
 | Principle | Implementation |
 |-----------|---------------|
-| **Local-first** | All data on device, cloud sync optional |
-| **User-owned AI** | You provide API keys, we never see them |
-| **Encrypted** | AES-256 for sensitive data |
+| **Local-first** | Clipboard history, search index, tags, notes, and OCR results stay on device |
+| **Transparent** | Release docs describe what is shipped today instead of future backend plans |
 | **Sandboxed** | Tauri security prevents system access |
-| **Transparent** | Clear what goes where |
+| **Predictable** | OCR, updater, and search state are surfaced directly in the UI |
 
 **What we NEVER do:**
 - ❌ Send clipboard content to our servers
 - ❌ Track what you copy
 - ❌ Sell your data
-- ❌ Proxy your AI requests
-
----
-
-## 🎁 Free vs Premium Features
-
-### What Should Always Be Free?
-| Feature | Why Free | Impact |
-|---------|----------|--------|
-| **Local clipboard history** | Core utility, no server costs | Everyone benefits |
-| **Full-text search (FTS5)** | Local SQLite, zero cost | Fast search for all |
-| **Privacy Mode** | User pays providers directly | Appeals to privacy-focused users |
-| **All content types** | Storage is local | Rich experience for everyone |
-| **Basic organization** | Pins, favorites, tags | Core UX |
-
-### What Should Be Premium?
-| Feature | Why Premium | Value Justification |
-|---------|-------------|--------------------|
-| **Unlimited AI (Easy Mode)** | Backend server costs | Convenience premium (no API key setup) |
-| **Cloud sync** | Server storage + bandwidth costs | Multi-device professionals |
-| **Semantic search** | Embedding generation costs | Power users with large histories |
-| **Smart collections** | Advanced organization | Productivity boost |
-| **Team features** | Complex infrastructure | Business use case |
-| **OCR workflows** | Image processing costs and UX depth | Professional workflows |
-
-### Free Tier Limits (To Consider)
-| What to Limit | Option A | Option B | Option C |
-|---------------|----------|----------|----------|
-| **AI requests** | 50/month | 100/month | 200/month |
-| **Semantic search** | Disabled | 10 queries/day | Enabled but slower |
-| **Cloud sync** | Not available | 7 days history | Read-only |
-| **History size** | Unlimited | Last 1000 items | Last 30 days |
-
-**Philosophy:** Free tier should be genuinely useful (not a trial), Premium adds convenience + scale
-
----
-
-## ❓ Critical Decisions Needed
-
-| Decision | Options | ✅ Final Choice |
-|----------|---------|----------------|
-| **Platform** | macOS first vs all platforms | macOS → then Windows/Linux |
-| **V1.0 Scope** | Week 7 vs Week 12 | Week 7 (core + AI features) |
-| **AI Backend** | Direct vs OpenRouter vs Hybrid | **Hybrid** (OpenRouter + Direct) |
-| **Cloud Sync** | V1.0 vs V2.0 | V2.0 (local-first approach) |
-| **Monetization** | Freemium vs One-time vs Open Source | **Freemium** (decide pricing later) |
-| **Hosting** | Vercel vs Cloudflare vs Self-hosted | **Cloudflare Workers** (free tier) |
-| **Free Tier Limits** | Options A/B/C above | **TBD** (test with users first) |
+- ❌ Ship stubbed backend features as if they are production-ready
 
 ---
 
@@ -269,26 +209,10 @@ cd src-tauri && cargo add tokio sqlx arboard
 npm run tauri dev
 ```
 
-### Backend API (Optional - for Easy Mode)
-```bash
-npm create cloudflare@latest cloudflare-workers
-cd cloudflare-workers
-npm install
-npm run dev  # Local development
-npm run deploy  # Deploy to Cloudflare (free tier)
-```
-
 See [PLANNING.md](./docs/PLANNING.md) for the current product direction.
+See [RELEASE.md](./docs/RELEASE.md) for the cross-platform release checklist.
 
----
-
-**Ready to build? Let's make clipboard management magical! ✨**
-
-*Status: 🚧 Active Development • ✅ Semantic Search Foundation Complete*
-
----
-
-## 📊 Current Status (February 14, 2026)
+## 📊 Current Status (June 19, 2026)
 
 ### ✅ What's Working
 - **Clipboard Monitoring** - Multi-format capture (text, HTML, RTF, images, files)
@@ -300,16 +224,13 @@ See [PLANNING.md](./docs/PLANNING.md) for the current product direction.
 - **Semantic Search Foundation** - Persistent enablement, startup recovery, richer readiness states
 - **Semantic Reindexing** - Existing history can be indexed after a model is enabled
 - **Search Correctness** - Canonical filter alignment across UI and backend
+- **OCR Baseline** - Automatic OCR queueing and searchable OCR text for image/office clips
+- **Updater Wiring** - In-app update check, install flow, and restart prompt for release builds
 - **React UI** - List/grid views, infinite scroll, theme toggle, sidebar navigation
 - **Global Shortcut** - System-wide hotkey to toggle app (customizable)
 - **Real-time Updates** - Frontend syncs automatically on clipboard changes
 
-### 🚧 In Progress
-- **Manual organization** - Tags and collections are the next planned product milestone
-- **Image workflows** - OCR and richer image handling are still pending
-
 ### 🎯 Next Up
-- Ship tags and collections end-to-end
-- Add OCR extraction for image clips
 - Improve keyboard-first navigation and quick actions
+- Harden release smoke tests across macOS, Windows, and Linux
 - Explore scripting/plugin hooks after the core workflow is stable

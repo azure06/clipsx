@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
+import { UpdateBanner } from './UpdateBanner'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import { Sidebar } from '../../shared/components/Sidebar'
 import { TitleBar } from '../../shared/components/TitleBar'
@@ -246,6 +247,8 @@ export const AppLayout = () => {
             {activeView === 'settings' && <Settings />}
 
             {activeView === 'plugins' && <Plugins />}
+
+            <UpdateBanner />
           </div>
         </div>
       </div>

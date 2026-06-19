@@ -45,6 +45,7 @@ fn select_effective_settings(
     state_settings.or(repository_settings).unwrap_or_default()
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn hides_on_deactivate(hide_on_blur: bool, always_on_top: bool) -> bool {
     hide_on_blur && !always_on_top
 }

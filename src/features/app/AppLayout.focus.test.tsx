@@ -61,6 +61,10 @@ vi.mock('../settings/Plugins', () => ({
   Plugins: () => <div data-testid="plugins-view" />,
 }))
 
+vi.mock('./UpdateBanner', () => ({
+  UpdateBanner: () => null,
+}))
+
 describe('AppLayout search focus ownership', () => {
   beforeEach(() => {
     vi.clearAllMocks()

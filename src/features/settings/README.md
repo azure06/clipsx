@@ -2,20 +2,18 @@
 
 ## Responsibilities
 - User preferences
-- API key management (Privacy Mode)
 - Theme settings
 - Keyboard shortcuts configuration
-- Rate limit status display
+- updater status and manual update checks
 
 ## Components
-- `SettingsPanel.tsx` - Main settings UI
-- `ApiKeyInput.tsx` - Secure API key input
-- `ShortcutEditor.tsx` - Keyboard shortcut customization
+- `Settings.tsx` - Main settings UI
+- `ShortcutRecorder` - Keyboard shortcut customization
 
 ## Hooks
-- `useSettings.ts` - Settings state and persistence
-- `useApiKeys.ts` - API key management
+- `useSettingsStore` - Settings state and persistence
+- `useUpdaterStore` - Release/update status and install actions
 
 ## Types
-- `UserSettings` - Settings interface
-- `ApiConfig` - API configuration
+- `AppSettings` - Settings interface
+- `ReleaseInfo` - Update configuration status

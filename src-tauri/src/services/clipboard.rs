@@ -277,8 +277,7 @@ impl ClipboardService {
                         Some(p) => p.to_string(),
                         None => {
                             // No image file (e.g. office clip with only SVG/PDF): mark failed.
-                            if let Err(e) =
-                                svc4.repository.set_ocr_status(&clip.id, "failed").await
+                            if let Err(e) = svc4.repository.set_ocr_status(&clip.id, "failed").await
                             {
                                 eprintln!("[OCR] set_ocr_status failed: {}", e);
                             }
@@ -286,9 +285,7 @@ impl ClipboardService {
                         }
                     };
 
-                    if let Err(e) =
-                        svc4.repository.set_ocr_status(&clip.id, "running").await
-                    {
+                    if let Err(e) = svc4.repository.set_ocr_status(&clip.id, "running").await {
                         eprintln!("[OCR] set_ocr_status(running) failed: {}", e);
                         continue;
                     }
@@ -297,25 +294,21 @@ impl ClipboardService {
                         Ok(r) => r,
                         Err(e) => {
                             eprintln!("[OCR] Unexpected error for {}: {}", clip.id, e);
-                            let _ =
-                                svc4.repository.set_ocr_status(&clip.id, "failed").await;
+                            let _ = svc4.repository.set_ocr_status(&clip.id, "failed").await;
                             continue;
                         }
                     };
 
                     if !ocr_result.supported {
                         // Platform has no OCR engine: mark all pending as failed once.
-                        let _ =
-                            svc4.repository.set_ocr_status(&clip.id, "failed").await;
+                        let _ = svc4.repository.set_ocr_status(&clip.id, "failed").await;
                         continue;
                     }
 
                     // Decide whether OCR should own content_text.
                     // It should only promote when no real source already has text.
-                    let real_sources =
-                        ["clipboard", "office", "pdf_extract", "svg_extract", "ocr"];
-                    let update_content =
-                        !real_sources.contains(&clip.primary_text_source.as_str());
+                    let real_sources = ["clipboard", "office", "pdf_extract", "svg_extract", "ocr"];
+                    let update_content = !real_sources.contains(&clip.primary_text_source.as_str());
 
                     let updated_clip = match svc4
                         .repository
@@ -356,33 +349,21 @@ impl ClipboardService {
                                         {
                                             eprintln!("[OCR] Failed to save embedding: {}", e);
                                         }
-                                        if let Err(e) = emit_clip_updated(
-                                            &app_handle,
-                                            repo.as_ref(),
-                                            &clip_id,
-                                        )
-                                        .await
+                                        if let Err(e) =
+                                            emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
+                                                .await
                                         {
-                                            eprintln!(
-                                                "[OCR] clip-updated emit failed: {}",
-                                                e
-                                            );
+                                            eprintln!("[OCR] clip-updated emit failed: {}", e);
                                         }
                                     }
                                     Err(e) => {
                                         eprintln!("[OCR] Embedding generation failed: {}", e);
                                         // Still notify frontend of OCR status change.
-                                        if let Err(e) = emit_clip_updated(
-                                            &app_handle,
-                                            repo.as_ref(),
-                                            &clip_id,
-                                        )
-                                        .await
+                                        if let Err(e) =
+                                            emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
+                                                .await
                                         {
-                                            eprintln!(
-                                                "[OCR] clip-updated emit failed: {}",
-                                                e
-                                            );
+                                            eprintln!("[OCR] clip-updated emit failed: {}", e);
                                         }
                                     }
                                 }
@@ -759,11 +740,10 @@ impl ClipboardService {
             None
         };
 
-        // Images start with no text source; OCR may later promote primary_text_source to 'ocr'.
+        // Images start with no text source; the OCR worker later promotes the best text
+        // into content_text / index_text once extraction completes.
         // The placeholder is stored in content_text for UI display but is NOT in index_text
-        // so it cannot be embedded or matched by FTS.
-        // TODO: Wire a background OCR worker that consumes clips with ocr_status='pending'
-        // and calls set_ocr_status/update_after_ocr after processing the saved image.
+        // so it cannot be embedded or matched by FTS before OCR finishes.
         let placeholder = format!("[Image: {}]", filename);
 
         Ok(ClipItem {

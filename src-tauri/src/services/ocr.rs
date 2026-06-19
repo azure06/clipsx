@@ -134,8 +134,7 @@ mod macos {
             // ── 2. Create a VNImageRequestHandler ───────────────────────────
             let handler: Id = msg_send![class!(VNImageRequestHandler), alloc];
             let empty_dict: Id = msg_send![class!(NSDictionary), dictionary];
-            let handler: Id =
-                msg_send![handler, initWithCIImage: ci_image options: empty_dict];
+            let handler: Id = msg_send![handler, initWithCIImage: ci_image options: empty_dict];
             if handler == NIL {
                 return Ok(OcrResult::failed());
             }
@@ -154,8 +153,7 @@ mod macos {
 
             // ── 4. Perform the request ───────────────────────────────────────
             // Build an NSArray containing the one request
-            let requests: Id =
-                msg_send![class!(NSArray), arrayWithObject: request];
+            let requests: Id = msg_send![class!(NSArray), arrayWithObject: request];
 
             let mut error: Id = NIL;
             let ok: bool = msg_send![handler, performRequests: requests error: &mut error];
@@ -229,10 +227,10 @@ mod macos {
 mod windows_ocr {
     use super::OcrResult;
     use anyhow::Result;
+    use windows::core::HSTRING;
     use windows::Graphics::Imaging::BitmapDecoder;
     use windows::Media::Ocr::OcrEngine;
     use windows::Storage::{FileAccessMode, StorageFile};
-    use windows::core::HSTRING;
 
     /// Run Windows.Media.Ocr on the image at `image_path`.
     ///
@@ -264,9 +262,7 @@ mod windows_ocr {
             .GetSoftwareBitmapAsync()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] GetSoftwareBitmapAsync failed: {}", e))?
             .get()
-            .map_err(|e| {
-                anyhow::anyhow!("[OCR/Win] GetSoftwareBitmapAsync wait failed: {}", e)
-            })?;
+            .map_err(|e| anyhow::anyhow!("[OCR/Win] GetSoftwareBitmapAsync wait failed: {}", e))?;
 
         // ── 3. Try to get an OcrEngine for the user's preferred language ───
         // TryCreateFromUserProfileLanguages() returns null when no supported
@@ -390,7 +386,9 @@ mod tests {
         // Non-existent file: must not panic.
         // - macOS/Linux: returns Ok(failed) or Ok(not_supported)
         // - Windows: returns Err (GetFileFromPathAsync fails) — caller handles that
-        let _result = svc.run_ocr("/tmp/clipsx_ocr_test_nonexistent_file.png").await;
+        let _result = svc
+            .run_ocr("/tmp/clipsx_ocr_test_nonexistent_file.png")
+            .await;
         // No assertion: the only contract is "no panic"
     }
 
@@ -405,11 +403,12 @@ mod tests {
             // must return not_supported() rather than an Err or a panic.
             // We can't force NotFound portably so we run the real code and only
             // assert the result shape — either not_supported or failed, never Err.
-            let result = linux_ocr::run_tesseract(
-                "/tmp/clipsx_linux_ocr_test_nonexistent_file.png",
-            )
-            .await;
-            assert!(result.is_ok(), "linux OCR must never return Err for missing binary or file");
+            let result =
+                linux_ocr::run_tesseract("/tmp/clipsx_linux_ocr_test_nonexistent_file.png").await;
+            assert!(
+                result.is_ok(),
+                "linux OCR must never return Err for missing binary or file"
+            );
         }
 
         #[tokio::test]

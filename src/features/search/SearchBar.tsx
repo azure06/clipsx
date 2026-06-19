@@ -13,6 +13,7 @@ import {
   Pin,
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
+import { getPlatform } from '../../shared/keyboard/shortcuts'
 import type { SemanticStatus } from '../../shared/types'
 
 const FILTER_OPTIONS = [
@@ -303,7 +304,11 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
             </button>
           ) : (
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/5 border border-gray-200/60 dark:border-gray-100/5">
-              <Command className="w-3 h-3 text-gray-500" />
+              {getPlatform() === 'macos' ? (
+                <Command className="w-3 h-3 text-gray-500" />
+              ) : (
+                <span className="text-xs text-gray-500 font-medium">Ctrl</span>
+              )}
               <span className="text-xs text-gray-500 font-medium">K</span>
             </div>
           )}

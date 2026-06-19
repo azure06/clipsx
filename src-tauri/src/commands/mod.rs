@@ -17,6 +17,7 @@ pub struct AppState {
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
     pub semantic_service: Arc<SemanticService>,
+    pub updater_configured: bool,
     #[cfg(target_os = "macos")]
     pub previous_app_pid: Mutex<Option<i32>>,
 }
@@ -117,6 +118,12 @@ pub struct SemanticStatusPayload {
     pub loaded_model: Option<String>,
     pub message: String,
     pub progress: Option<SemanticProgressPayload>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInfoPayload {
+    pub updater_configured: bool,
 }
 
 fn build_semantic_status(
@@ -1194,6 +1201,18 @@ pub fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatusP
         state.semantic_service.get_runtime_status(),
         loaded_model,
     ))
+}
+
+#[tauri::command]
+pub fn get_release_info(state: State<'_, AppState>) -> ReleaseInfoPayload {
+    ReleaseInfoPayload {
+        updater_configured: state.updater_configured,
+    }
+}
+
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.request_restart();
 }
 
 #[tauri::command]

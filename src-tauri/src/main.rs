@@ -20,6 +20,14 @@ mod window_behavior;
 
 use plugins::mac_rounded_corners;
 
+fn updater_public_key() -> Option<String> {
+    option_env!("TAURI_UPDATER_PUBLIC_KEY")
+        .map(str::to_string)
+        .or_else(|| std::env::var("TAURI_UPDATER_PUBLIC_KEY").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default().plugin(tauri_plugin_autostart::Builder::new().build());
 
@@ -46,6 +54,23 @@ fn main() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            let updater_configured = updater_public_key().is_some();
+
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let mut updater_builder = tauri_plugin_updater::Builder::new();
+
+                if let Some(pubkey) = updater_public_key() {
+                    updater_builder = updater_builder.pubkey(pubkey);
+                } else {
+                    eprintln!(
+                        "[UPDATER] TAURI_UPDATER_PUBLIC_KEY is not set. Auto-update will stay unavailable for this build."
+                    );
+                }
+
+                app.handle().plugin(updater_builder.build())?;
+            }
+
             #[cfg(target_os = "macos")]
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
@@ -139,6 +164,7 @@ fn main() {
                     clipboard_service,
                     settings_repository: settings_repository.clone(),
                     semantic_service: semantic_service.clone(),
+                    updater_configured,
                     #[cfg(target_os = "macos")]
                     previous_app_pid: std::sync::Mutex::new(None),
                 };
@@ -242,6 +268,8 @@ fn main() {
             commands::get_tags_for_clip,
             commands::get_tags_for_clips,
             commands::update_clip_note,
+            commands::get_release_info,
+            commands::restart_app,
         ])
         .on_window_event(|window, event| {
             // Intercept the window close button (X).

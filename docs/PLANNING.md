@@ -1,6 +1,6 @@
 # ClipsX Product Direction
 
-*Last Updated: May 11, 2026*
+*Last Updated: June 19, 2026*
 
 ---
 
@@ -37,6 +37,8 @@ The current branch already includes:
 - detector-driven content previews and actions
 - repaired frontend and Rust test baseline
 - tags and notes per clip with FTS indexing and tag filter
+- automatic OCR for image and office clips with queued/running/done status
+- in-app updater wiring for release builds
 
 Known limitations on this branch: none.
 
@@ -52,11 +54,12 @@ Known limitations on this branch: none.
 - [x] Semantic model status and search UX improvements
 - [x] Tags and notes: per-clip labels with color, inline editor, tag filter, FTS-indexed notes (collections dropped as redundant)
 - [x] Apply `tag_filter` inside semantic search so search results match browse/FTS filtering
+- [x] OCR workflows for image clips
 
 ### Next
-- [ ] OCR workflows for image clips
 - [ ] Keyboard-first navigation and quick actions
 - [ ] User scripts or lightweight extensibility hooks
+- [ ] Release hardening and smoke-test coverage across macOS, Windows, and Linux
 
 ### Later
 - [ ] Plugin system

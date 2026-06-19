@@ -32,7 +32,9 @@ import {
   Timer,
   Clock,
   Calendar,
+  RefreshCw,
 } from 'lucide-react'
+import { useUpdaterStore } from '../../stores'
 
 type Tab = 'general' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
 
@@ -211,12 +213,28 @@ export const Settings = () => {
   const { settings, isLoading, error, loadSettings, updateSettings, resetSettings } =
     useSettingsStore()
   const clearAllClips = useClipboardStore(state => state.clearAllClips)
+  const initializeUpdater = useUpdaterStore(state => state.initialize)
+  const currentVersion = useUpdaterStore(state => state.currentVersion)
+  const updaterConfigured = useUpdaterStore(state => state.updaterConfigured)
+  const updaterStatus = useUpdaterStore(state => state.status)
+  const availableUpdate = useUpdaterStore(state => state.update)
+  const updaterError = useUpdaterStore(state => state.error)
+  const isCheckingForUpdates = useUpdaterStore(state => state.isChecking)
+  const isDownloadingUpdate = useUpdaterStore(state => state.isDownloading)
+  const updateReady = useUpdaterStore(state => state.updateReady)
+  const checkForUpdates = useUpdaterStore(state => state.checkForUpdates)
+  const downloadAndInstallUpdate = useUpdaterStore(state => state.downloadAndInstallUpdate)
+  const restartToApplyUpdate = useUpdaterStore(state => state.restartToApplyUpdate)
   const { setThemeMode } = useTheme()
   const [activeTab, setActiveTab] = useState<Tab>('general')
 
   useEffect(() => {
     void loadSettings()
   }, [loadSettings])
+
+  useEffect(() => {
+    void initializeUpdater()
+  }, [initializeUpdater])
 
   useEffect(() => {
     if (settings?.theme) {
@@ -353,6 +371,25 @@ export const Settings = () => {
     { value: 'single_click_copy' as ItemActivationMode, label: 'Single click activates' },
     { value: 'double_click_primary' as ItemActivationMode, label: 'Double click activates' },
   ]
+
+  const updaterStatusLabel =
+    updaterStatus === 'unavailable'
+      ? 'Not configured for this build'
+      : updaterStatus === 'idle'
+        ? 'Idle'
+        : updaterStatus === 'up-to-date'
+          ? 'Up to date'
+          : updaterStatus === 'available'
+            ? `Update ${availableUpdate?.version ?? ''} available`
+            : updaterStatus === 'downloading'
+              ? 'Installing update…'
+              : updaterStatus === 'downloaded'
+                ? 'Restart required'
+                : updaterStatus === 'checking'
+                  ? 'Checking…'
+                  : updaterStatus === 'error'
+                    ? 'Update failed'
+                    : 'Idle'
 
   // --- Render ---
 
@@ -868,6 +905,73 @@ export const Settings = () => {
                     onChange={value => void updateSettings({ show_copy_toast: value })}
                   />
                 </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection
+                icon={<RefreshCw className="h-4 w-4" />}
+                title="Updates"
+                description="Version status and in-app update controls"
+              >
+                <div className="rounded-xl border border-gray-200/70 dark:border-white/10 bg-slate-100/40 dark:bg-slate-100/5 px-4 py-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        ClipsX {currentVersion ?? '...'}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-500">
+                        {updaterStatusLabel}
+                      </p>
+                      {availableUpdate && (
+                        <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
+                          Latest version: {availableUpdate.version}
+                        </p>
+                      )}
+                      {updaterConfigured === false && (
+                        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                          This build does not have an updater public key configured yet.
+                        </p>
+                      )}
+                      {updaterError && (
+                        <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                          {updaterError}
+                        </p>
+                      )}
+                      {updateReady && (
+                        <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+                          The update was installed successfully. Restart the app to apply it.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        isLoading={isCheckingForUpdates}
+                        leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+                        onClick={() => void checkForUpdates()}
+                      >
+                        Check now
+                      </Button>
+
+                      {availableUpdate && !updateReady && (
+                        <Button
+                          size="sm"
+                          isLoading={isDownloadingUpdate}
+                          onClick={() => void downloadAndInstallUpdate()}
+                        >
+                          Install update
+                        </Button>
+                      )}
+
+                      {updateReady && (
+                        <Button size="sm" onClick={() => void restartToApplyUpdate()}>
+                          Restart now
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </SettingsSection>
 
               <Card className="shadow-sm">

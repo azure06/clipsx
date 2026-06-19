@@ -11,13 +11,24 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": false
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/azure06/clipsx/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnRzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGMTJGQThGREQ4N0Q5OTAKUldTUTJZZmRqL29TWDRsQVV6eFptdk5oL1I1MmNTcS8zUi9tcWx2QWVjYXhqRTg4UnpXK2RJSXEK"
+    }
   },
   "app": {
     "macOSPrivateApi": true,
