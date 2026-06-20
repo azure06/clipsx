@@ -141,20 +141,19 @@ pub fn enable_modern_window_style<R: Runtime>(
     Ok(())
 }
 
+/// Sets `hidesOnDeactivate` on the underlying `NSWindow`.
+/// This is a no-op on non-macOS platforms.
 pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
     #[cfg(target_os = "macos")]
     {
-        let _ = window.with_webview(move |webview| {
-            #[cfg(target_os = "macos")]
-            unsafe {
-                let ns_window = webview.ns_window() as id;
-                let value = if hides {
-                    cocoa::base::YES
-                } else {
-                    cocoa::base::NO
-                };
-                ns_window.setHidesOnDeactivate_(value);
-            }
+        let _ = window.with_webview(move |webview| unsafe {
+            let ns_window = webview.ns_window() as id;
+            let value = if hides {
+                cocoa::base::YES
+            } else {
+                cocoa::base::NO
+            };
+            ns_window.setHidesOnDeactivate_(value);
         });
     }
 }
