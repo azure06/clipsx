@@ -97,7 +97,7 @@ pub struct AppSettings {
 }
 
 fn default_semantic_model() -> String {
-    "all-MiniLM-L6-v2".to_string()
+    "paraphrase-multilingual-MiniLM-L12-v2".to_string()
 }
 
 fn default_item_activation_mode() -> ItemActivationMode {
@@ -138,7 +138,7 @@ impl Default for AppSettings {
             show_copy_toast: true,
             has_seen_welcome: false,
             semantic_search_enabled: false,
-            semantic_model: default_semantic_model(),
+            semantic_model: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
         }
     }
 }

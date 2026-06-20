@@ -55,11 +55,10 @@ unsafe fn configure_overlay_window(ns_window: id) {
         | NSWindowCollectionBehavior::NSWindowCollectionBehaviorTransient
         | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary;
     ns_window.setCollectionBehavior_(behavior);
-    // Native deactivate behavior is reconciled separately from persisted settings.
 }
 
-/// Enables rounded corners for the window (macOS only)
-/// Uses only public APIs - App Store compatible
+/// Enables rounded corners for the window (macOS only).
+/// Uses only public APIs - App Store compatible.
 #[tauri::command]
 pub fn enable_rounded_corners<R: Runtime>(
     app: AppHandle<R>,
@@ -91,14 +90,11 @@ pub fn enable_rounded_corners<R: Runtime>(
             .map_err(|e| e.to_string())?;
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {}
-
     crate::window_behavior::reconcile_main_window(&app, &window);
     Ok(())
 }
 
-/// Enables modern window style with rounded corners and shadow
+/// Enables modern window style with rounded corners and shadow.
 #[tauri::command]
 pub fn enable_modern_window_style<R: Runtime>(
     app: AppHandle<R>,
@@ -141,9 +137,6 @@ pub fn enable_modern_window_style<R: Runtime>(
             .map_err(|e| e.to_string())?;
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {}
-
     crate::window_behavior::reconcile_main_window(&app, &window);
     Ok(())
 }
@@ -161,7 +154,7 @@ pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hid
     });
 }
 
-/// Repositions Traffic Lights only (useful after fullscreen toggle)
+/// Repositions Traffic Lights only (useful after fullscreen toggle).
 #[tauri::command]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,

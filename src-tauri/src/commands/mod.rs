@@ -6,6 +6,8 @@ use crate::services::clipboard::ClipboardService;
 use crate::services::paste;
 use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use std::sync::Arc;
+
+const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.5;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
 #[cfg(target_os = "macos")]
@@ -321,9 +323,28 @@ pub async fn search_clips_paginated(
     let offset_val = offset.unwrap_or(0);
     let fav_val = favorites_only.unwrap_or(false);
     let pin_val = pinned_only.unwrap_or(false);
-    let threshold = similarity_threshold.unwrap_or(0.3); // Default threshold
+    let threshold = similarity_threshold.unwrap_or(DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD);
 
     if use_semantic_search && state.semantic_service.is_ready() && !query.trim().is_empty() {
+        let (model_name, _) = match state.semantic_service.get_model_info() {
+            Some(info) => info,
+            None => {
+                return state
+                    .repository
+                    .search_paginated(
+                        &query,
+                        filter_types,
+                        limit_val,
+                        offset_val,
+                        fav_val,
+                        pin_val,
+                        tag_filter,
+                    )
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+        };
+
         // --- Semantic ranking ---
         let query_vector = state
             .semantic_service
@@ -333,7 +354,13 @@ pub async fn search_clips_paginated(
 
         let all_embeddings = state
             .repository
-            .get_embeddings_with_filters(filter_types.clone(), fav_val, pin_val, tag_filter)
+            .get_embeddings_with_filters(
+                filter_types.clone(),
+                fav_val,
+                pin_val,
+                tag_filter,
+                Some(&model_name),
+            )
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1162,9 +1189,6 @@ pub async fn change_semantic_model(
         .load()
         .map_err(|e| e.to_string())?;
 
-    // Unload the existing model first to free memory
-    state.semantic_service.unload_model();
-
     // Load the new model
     state
         .semantic_service
@@ -1291,6 +1315,14 @@ pub async fn reindex_semantic_embeddings(
         .semantic_service
         .get_model_info()
         .ok_or_else(|| "Semantic model is not loaded yet.".to_string())?;
+
+    // Full refresh: clear existing vectors for the active model so all clips
+    // are regenerated with the current embedding pipeline.
+    state
+        .repository
+        .delete_embeddings_for_model(&model_name)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let candidates = state
         .repository

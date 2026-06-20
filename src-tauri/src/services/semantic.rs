@@ -1,8 +1,16 @@
-use anyhow::{anyhow, Result};
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use anyhow::{anyhow, Context, Result};
+use fastembed::{
+    InitOptionsUserDefined, Pooling, QuantizationMode, TextEmbedding, TokenizerFiles,
+    UserDefinedEmbeddingModel,
+};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use tokio::task;
+
+pub const MULTILINGUAL_MODEL: &str = "paraphrase-multilingual-MiniLM-L12-v2";
+const ONNX_URL: &str = "https://github.com/azure06/clipsx/releases/download/models-v1/paraphrase-multilingual-MiniLM-L12-v2-model.onnx";
+const TOKENIZER_URL: &str = "https://github.com/azure06/clipsx/releases/download/models-v1/paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json";
+const EXPECTED_DOWNLOAD_BYTES: u64 = 252_000_000;
 
 #[derive(Debug, Clone)]
 pub enum SemanticRuntimeStatus {
@@ -24,12 +32,12 @@ pub enum SemanticRuntimeStatus {
     },
 }
 
-/// Handes Local Semantic Search functionality using fastembed.
+/// Handles Local Semantic Search functionality using fastembed (ONNX Runtime)
+/// Model assets are sourced from GitHub Releases (models-v1 tag).
 pub struct SemanticService {
     /// Note: We use std::sync::RwLock because fastembed operations are blocking
     /// and should be run inside task::spawn_blocking anyway.
     model: Arc<StdRwLock<Option<TextEmbedding>>>,
-    // Track the name of the currently loaded model
     loaded_model_name: Arc<StdRwLock<Option<String>>>,
     runtime_status: Arc<StdRwLock<SemanticRuntimeStatus>>,
     app_data_dir: std::path::PathBuf,
@@ -52,6 +60,47 @@ impl SemanticService {
         }
     }
 
+    fn model_cache_dir(&self) -> std::path::PathBuf {
+        self.app_data_dir.join(".fastembed_cache")
+    }
+
+    fn model_subdir(&self, model_name: &str) -> std::path::PathBuf {
+        self.model_cache_dir().join(model_name)
+    }
+
+    fn onnx_path(&self, model_name: &str) -> std::path::PathBuf {
+        self.model_subdir(model_name).join("model.onnx")
+    }
+
+    fn tokenizer_path(&self, model_name: &str) -> std::path::PathBuf {
+        self.model_subdir(model_name).join("tokenizer.json")
+    }
+
+    fn tokenizer_files(tokenizer_file: Vec<u8>) -> TokenizerFiles {
+        TokenizerFiles {
+            tokenizer_file,
+            config_file: br#"{"pad_token_id":0}"#.to_vec(),
+            special_tokens_map_file: br#"{"cls_token":"[CLS]","mask_token":"[MASK]","pad_token":"[PAD]","sep_token":"[SEP]","unk_token":"[UNK]"}"#.to_vec(),
+            tokenizer_config_file: br#"{"model_max_length":256,"pad_token":"[PAD]"}"#.to_vec(),
+        }
+    }
+
+    fn load_user_defined_model(model_dir: &std::path::Path) -> Result<TextEmbedding> {
+        let onnx_file = std::fs::read(model_dir.join("model.onnx"))
+            .with_context(|| format!("Failed to read model.onnx from {}", model_dir.display()))?;
+        let tokenizer_file = std::fs::read(model_dir.join("tokenizer.json"))
+            .with_context(|| format!("Failed to read tokenizer.json from {}", model_dir.display()))?;
+
+        // Multilingual model is a static-quantized ONNX with mean pooling.
+        let model = UserDefinedEmbeddingModel::new(onnx_file, Self::tokenizer_files(tokenizer_file))
+            .with_pooling(Pooling::Mean)
+            .with_quantization(QuantizationMode::Static);
+
+        let options = InitOptionsUserDefined::new().with_max_length(256);
+        TextEmbedding::try_new_from_user_defined(model, options)
+            .map_err(|e| anyhow!("Failed to load embedding model: {}", e))
+    }
+
     /// Downloads (if necessary) and loads the ONNX model into memory.
     /// This is a blocking operation so it must be spawned on a blocking thread.
     pub async fn init_model(
@@ -59,10 +108,23 @@ impl SemanticService {
         model_name: String,
         app_handle: Option<tauri::AppHandle>,
     ) -> Result<()> {
+        // Only the multilingual model is supported; normalize legacy values.
+        let model_name = if model_name != MULTILINGUAL_MODEL {
+            eprintln!(
+                "[semantic] Unknown model '{}', falling back to {}",
+                model_name, MULTILINGUAL_MODEL
+            );
+            MULTILINGUAL_MODEL.to_string()
+        } else {
+            model_name
+        };
+
         let model_arc = self.model.clone();
         let name_arc = self.loaded_model_name.clone();
         let status_arc = self.runtime_status.clone();
-        let cache_dir = self.app_data_dir.join(".fastembed_cache");
+        let model_dir = self.model_subdir(&model_name);
+        let onnx_path = self.onnx_path(&model_name);
+        let tokenizer_path = self.tokenizer_path(&model_name);
 
         {
             let mut status = self.runtime_status.write().unwrap();
@@ -72,22 +134,18 @@ impl SemanticService {
         }
         Self::emit_status_changed(app_handle.as_ref());
 
-        // We know the approximate sizes of the repositories for progress bars
-        let expected_total_bytes: u64 = match model_name.as_str() {
-            "all-MiniLM-L6-v2" => 85_000_000,
-            "paraphrase-multilingual-MiniLM-L12-v2" => 450_000_000,
-            _ => 100_000_000,
-        };
-
-        // If we need to send progress events, spawn a poller
         let is_downloaded = self.get_downloaded_models().contains(&model_name);
         let progress_cancel = Arc::new(StdRwLock::new(false));
 
         if !is_downloaded {
+            std::fs::create_dir_all(&model_dir)
+                .with_context(|| format!("Failed to create model cache directory {}", model_dir.display()))?;
+
             if let Some(app) = app_handle.clone() {
-                let cache_clone = cache_dir.clone();
+                let model_dir_clone = model_dir.clone();
                 let cancel_clone = progress_cancel.clone();
-                let m_name = model_name.clone();
+                let model_name_clone = model_name.clone();
+                let expected_total = EXPECTED_DOWNLOAD_BYTES;
 
                 tokio::spawn(async move {
                     use tauri::Emitter;
@@ -97,9 +155,8 @@ impl SemanticService {
                             break;
                         }
 
-                        // Calculate dir size
                         let mut size = 0;
-                        if let Ok(entries) = walkdir::WalkDir::new(&cache_clone)
+                        if let Ok(entries) = walkdir::WalkDir::new(&model_dir_clone)
                             .into_iter()
                             .collect::<Result<Vec<_>, _>>()
                         {
@@ -112,7 +169,6 @@ impl SemanticService {
                             }
                         }
 
-                        // Send event
                         #[derive(serde::Serialize, Clone)]
                         struct ProgressPayload {
                             model: String,
@@ -123,29 +179,23 @@ impl SemanticService {
                         let _ = app.emit(
                             "download-progress",
                             ProgressPayload {
-                                model: m_name.clone(),
+                                model: model_name_clone.clone(),
                                 downloaded: size,
-                                total: expected_total_bytes,
+                                total: expected_total,
                             },
                         );
                     }
                 });
             }
+
+            let client = reqwest::Client::new();
+            download_file(&client, ONNX_URL, &onnx_path).await?;
+            download_file(&client, TOKENIZER_URL, &tokenizer_path).await?;
         }
 
         let model_name_for_load = model_name.clone();
         let join_result = task::spawn_blocking(move || -> Result<()> {
-            let model_enum = match model_name_for_load.as_str() {
-                "all-MiniLM-L6-v2" => EmbeddingModel::AllMiniLML6V2,
-                "paraphrase-multilingual-MiniLM-L12-v2" => EmbeddingModel::ParaphraseMLMiniLML12V2,
-                _ => EmbeddingModel::AllMiniLML6V2, // Default fallback
-            };
-
-            let mut options = InitOptions::new(model_enum);
-            options.cache_dir = cache_dir;
-
-            let model = TextEmbedding::try_new(options)
-                .map_err(|e| anyhow!("Failed to load embedding model: {}", e))?;
+            let model = Self::load_user_defined_model(&model_dir)?;
 
             let mut lock = model_arc.write().unwrap();
             *lock = Some(model);
@@ -157,7 +207,6 @@ impl SemanticService {
         })
         .await;
 
-        // Stop poller
         *progress_cancel.write().unwrap() = true;
 
         match join_result {
@@ -174,24 +223,20 @@ impl SemanticService {
                 Ok(())
             }
             Ok(Err(err)) => {
-                {
-                    let mut status = status_arc.write().unwrap();
-                    *status = SemanticRuntimeStatus::Error {
-                        model_name: Some(model_name.clone()),
-                        message: err.to_string(),
-                    };
-                }
+                let mut status = status_arc.write().unwrap();
+                *status = SemanticRuntimeStatus::Error {
+                    model_name: Some(model_name.clone()),
+                    message: err.to_string(),
+                };
                 Self::emit_status_changed(app_handle.as_ref());
                 Err(err)
             }
             Err(err) => {
-                {
-                    let mut status = status_arc.write().unwrap();
-                    *status = SemanticRuntimeStatus::Error {
-                        model_name: Some(model_name.clone()),
-                        message: err.to_string(),
-                    };
-                }
+                let mut status = status_arc.write().unwrap();
+                *status = SemanticRuntimeStatus::Error {
+                    model_name: Some(model_name.clone()),
+                    message: err.to_string(),
+                };
                 Self::emit_status_changed(app_handle.as_ref());
                 Err(err.into())
             }
@@ -217,19 +262,10 @@ impl SemanticService {
         *status = SemanticRuntimeStatus::Idle;
     }
 
-    /// Returns the currently loaded model name and its dimension size.
+    /// Returns the currently loaded model name and its dimension size (always 384).
     pub fn get_model_info(&self) -> Option<(String, i32)> {
         let lock = self.loaded_model_name.read().unwrap();
-        if let Some(name) = lock.as_ref() {
-            let dim = match name.as_str() {
-                "paraphrase-multilingual-MiniLM-L12-v2" => 384,
-                "all-MiniLM-L6-v2" => 384,
-                _ => 384, // Default fallback dimension
-            };
-            Some((name.clone(), dim))
-        } else {
-            None
-        }
+        lock.as_ref().map(|name| (name.clone(), 384))
     }
 
     pub fn set_indexing_status(&self, done: u64, total: u64) {
@@ -262,72 +298,31 @@ impl SemanticService {
         };
     }
 
-    /// Returns a list of model IDs (e.g., "all-MiniLM-L6-v2") that have been downloaded
-    /// by checking the .fastembed_cache directory for corresponding folders.
     pub fn get_downloaded_models(&self) -> Vec<String> {
-        let cache_dir = self.app_data_dir.join(".fastembed_cache");
-        let mut downloaded = Vec::new();
-
-        if let Ok(entries) = std::fs::read_dir(cache_dir) {
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        let dir_name = entry.file_name().to_string_lossy().to_string();
-                        // fastembed usually creates folders like "fast-all-MiniLM-L6-v2"
-                        if dir_name.contains("all-MiniLM-L6-v2") {
-                            downloaded.push("all-MiniLM-L6-v2".to_string());
-                        } else if dir_name.contains("paraphrase-multilingual-MiniLM-L12-v2") {
-                            downloaded.push("paraphrase-multilingual-MiniLM-L12-v2".to_string());
-                        }
-                    }
-                }
-            }
+        let model_dir = self.model_subdir(MULTILINGUAL_MODEL);
+        if model_dir.join("model.onnx").exists() && model_dir.join("tokenizer.json").exists() {
+            vec![MULTILINGUAL_MODEL.to_string()]
+        } else {
+            vec![]
         }
-
-        // Deduplicate in case multiple folders match
-        downloaded.sort();
-        downloaded.dedup();
-        downloaded
     }
 
-    /// Deletes the cached model files for a given model ID to free up disk space.
     pub fn delete_model(&self, model_name: &str) -> Result<()> {
-        // If the model to delete is currently loaded, unload it first
-        {
-            let lock = self.model.read().unwrap();
-            if lock.is_some() {
-                // We're just checking if any model is loaded.
-                // A more robust check would verify if the loaded model IS the one being deleted,
-                // but since fastembed doesn't expose the loaded model name easily, we can just
-                // unload whatever is in memory if we are doing a delete operation, leaving it safe.
-            }
-        }
         self.unload_model();
 
-        let cache_dir = self.app_data_dir.join(".fastembed_cache");
-        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        let dir_name = entry.file_name().to_string_lossy().to_string();
-                        if dir_name.contains(model_name) {
-                            let path = entry.path();
-                            std::fs::remove_dir_all(&path).map_err(|e| {
-                                anyhow!(
-                                    "Failed to delete model directory {}: {}",
-                                    path.display(),
-                                    e
-                                )
-                            })?;
-                        }
-                    }
-                }
-            }
+        let model_dir = self.model_subdir(model_name);
+        if model_dir.exists() {
+            std::fs::remove_dir_all(&model_dir).map_err(|e| {
+                anyhow!(
+                    "Failed to delete model directory {}: {}",
+                    model_dir.display(),
+                    e
+                )
+            })?;
         }
         Ok(())
     }
 
-    /// Generates an embedding vector for the given text.
     pub async fn embed(&self, text: String) -> Result<Vec<f32>> {
         let model_arc = self.model.clone();
 
@@ -335,7 +330,6 @@ impl SemanticService {
             let mut lock = model_arc.write().unwrap();
 
             if let Some(model) = lock.as_mut() {
-                // fastembed expects an array of strings
                 let embeddings = model
                     .embed(vec![text], None)
                     .map_err(|e| anyhow!("Failed to generate embedding: {}", e))?;
@@ -354,7 +348,6 @@ impl SemanticService {
         .await?
     }
 
-    /// Calculate the cosine similarity between two vectors.
     pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         if a.len() != b.len() || a.is_empty() {
             return 0.0;
@@ -377,7 +370,6 @@ impl SemanticService {
         dot_product / (norm_a.sqrt() * norm_b.sqrt())
     }
 
-    /// Serialize f32 vector to bytes for SQLite storage
     pub fn vector_to_bytes(vec: &[f32]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(vec.len() * 4);
         for &f in vec {
@@ -386,7 +378,6 @@ impl SemanticService {
         bytes
     }
 
-    /// Deserialize bytes from SQLite to f32 vector
     pub fn bytes_to_vector(bytes: &[u8]) -> Vec<f32> {
         let mut vec = Vec::with_capacity(bytes.len() / 4);
         for chunk in bytes.chunks_exact(4) {
@@ -396,24 +387,60 @@ impl SemanticService {
     }
 }
 
+async fn download_file(client: &reqwest::Client, url: &str, dest: &std::path::Path) -> Result<()> {
+    let response = client
+        .get(url)
+        .header(
+            reqwest::header::USER_AGENT,
+            "clipsx/semantic-service (https://github.com/azure06/clipsx)",
+        )
+        .send()
+        .await
+        .context("Download request failed")?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(anyhow!("Download returned HTTP {}", status));
+    }
+    let bytes = response.bytes().await.context("Failed to read response body")?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(dest, &bytes)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_cosine_similarity() {
-        let vec1 = vec![1.0, 0.0, 0.0];
-        let vec2 = vec![1.0, 0.0, 0.0];
+        let vec1 = vec![1.0f32, 0.0, 0.0];
+        let vec2 = vec![1.0f32, 0.0, 0.0];
         assert_eq!(SemanticService::cosine_similarity(&vec1, &vec2), 1.0);
 
-        let vec3 = vec![0.0, 1.0, 0.0];
+        let vec3 = vec![0.0f32, 1.0, 0.0];
         assert_eq!(SemanticService::cosine_similarity(&vec1, &vec3), 0.0);
 
-        let vec4 = vec![1.0, 1.0, 0.0];
-        // Dot product = 1.0
-        // Norm A = 1.0, Norm B = sqrt(2) ~ 1.414
-        // Sim = 1 / 1.414 ~ 0.707
+        let vec4 = vec![1.0f32, 1.0, 0.0];
         let sim = SemanticService::cosine_similarity(&vec1, &vec4);
         assert!((sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_vector_bytes_round_trip() {
+        let original = vec![0.25f32, -1.5, 2.0, 9.125];
+        let bytes = SemanticService::vector_to_bytes(&original);
+        let restored = SemanticService::bytes_to_vector(&bytes);
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn test_tokenizer_files_include_required_metadata() {
+        let files = SemanticService::tokenizer_files(vec![1, 2, 3]);
+        assert_eq!(files.tokenizer_file, vec![1, 2, 3]);
+        assert!(!files.config_file.is_empty());
+        assert!(!files.special_tokens_map_file.is_empty());
+        assert!(!files.tokenizer_config_file.is_empty());
     }
 }
