@@ -108,12 +108,6 @@ jobs:
             args: "--target aarch64-apple-darwin"
             rust_targets: "aarch64-apple-darwin"
 
-          # macOS — Intel
-          - name: macOS-x64
-            os: macos-latest
-            args: "--target x86_64-apple-darwin"
-            rust_targets: "x86_64-apple-darwin"
-
           # Windows x64
           - name: Windows-x64
             os: windows-latest
