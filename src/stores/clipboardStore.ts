@@ -84,6 +84,7 @@ const FILTER_TYPE_MAP: Record<string, string> = {
 }
 
 const SCOPE_COMMANDS = new Set(['all', 'favorites', 'pinned'])
+const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD = 0.5
 
 // Helper to parse slash commands from query
 // Example: "apple /image" -> { query: "apple", filterTypes: ["image"] }
@@ -318,7 +319,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         pinnedOnly,
         tagFilter,
         useSemanticSearch: isSemanticActive,
-        similarityThreshold: 0.3,
+        similarityThreshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
       })
       const hydratedClips = await hydrateClipsWithTags(clips)
       set({
@@ -364,7 +365,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         pinnedOnly,
         tagFilter,
         useSemanticSearch: isSemanticActive,
-        similarityThreshold: 0.3, // Provide a default or read from settings if you add it later
+        similarityThreshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
       })
       const hydratedClips = await hydrateClipsWithTags(clips)
       set({ clips: hydratedClips, loading: false })
