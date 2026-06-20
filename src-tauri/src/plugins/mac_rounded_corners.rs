@@ -141,17 +141,22 @@ pub fn enable_modern_window_style<R: Runtime>(
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
-    let _ = window.with_webview(move |webview| unsafe {
-        let ns_window = webview.ns_window() as id;
-        let value = if hides {
-            cocoa::base::YES
-        } else {
-            cocoa::base::NO
-        };
-        ns_window.setHidesOnDeactivate_(value);
-    });
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(move |webview| {
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let ns_window = webview.ns_window() as id;
+                let value = if hides {
+                    cocoa::base::YES
+                } else {
+                    cocoa::base::NO
+                };
+                ns_window.setHidesOnDeactivate_(value);
+            }
+        });
+    }
 }
 
 /// Repositions Traffic Lights only (useful after fullscreen toggle).
