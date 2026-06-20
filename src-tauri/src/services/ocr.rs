@@ -241,19 +241,19 @@ mod windows_ocr {
         let path_hs = HSTRING::from(image_path);
         let file = StorageFile::GetFileFromPathAsync(&path_hs)
             .map_err(|e| anyhow::anyhow!("[OCR/Win] GetFileFromPathAsync failed: {}", e))?
-            .get()
+            .join()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] GetFileFromPath wait failed: {}", e))?;
 
         // ── 2. Decode to SoftwareBitmap ────────────────────────────────────
         let stream = file
             .OpenAsync(FileAccessMode::Read)
             .map_err(|e| anyhow::anyhow!("[OCR/Win] OpenAsync failed: {}", e))?
-            .get()
+            .join()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] OpenAsync wait failed: {}", e))?;
 
         let decoder = BitmapDecoder::CreateAsync(&stream)
             .map_err(|e| anyhow::anyhow!("[OCR/Win] BitmapDecoder::CreateAsync failed: {}", e))?
-            .get()
+            .join()
             .map_err(|e| {
                 anyhow::anyhow!("[OCR/Win] BitmapDecoder::CreateAsync wait failed: {}", e)
             })?;
@@ -261,7 +261,7 @@ mod windows_ocr {
         let bitmap = decoder
             .GetSoftwareBitmapAsync()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] GetSoftwareBitmapAsync failed: {}", e))?
-            .get()
+            .join()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] GetSoftwareBitmapAsync wait failed: {}", e))?;
 
         // ── 3. Try to get an OcrEngine for the user's preferred language ───
@@ -279,7 +279,7 @@ mod windows_ocr {
         let result = engine
             .RecognizeAsync(&bitmap)
             .map_err(|e| anyhow::anyhow!("[OCR/Win] RecognizeAsync failed: {}", e))?
-            .get()
+            .join()
             .map_err(|e| anyhow::anyhow!("[OCR/Win] RecognizeAsync wait failed: {}", e))?;
 
         // ── 5. Collect lines ───────────────────────────────────────────────
