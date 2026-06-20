@@ -315,6 +315,14 @@ impl SemanticService {
     }
 
     pub fn delete_model(&self, model_name: &str) -> Result<()> {
+        if model_name != MULTILINGUAL_MODEL {
+            return Err(anyhow!(
+                "Unsupported model '{}'; only '{}' is allowed",
+                model_name,
+                MULTILINGUAL_MODEL
+            ));
+        }
+
         self.unload_model();
 
         let model_dir = self.model_subdir(model_name);
