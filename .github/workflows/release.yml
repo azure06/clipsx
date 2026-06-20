@@ -108,12 +108,6 @@ jobs:
             args: "--target aarch64-apple-darwin"
             rust_targets: "aarch64-apple-darwin"
 
-          # macOS — Intel
-          - name: macOS-x64
-            os: macos-latest
-            args: "--target x86_64-apple-darwin"
-            rust_targets: "x86_64-apple-darwin"
-
           # Windows x64
           - name: Windows-x64
             os: windows-latest
@@ -184,7 +178,6 @@ jobs:
             | Platform | File |
             |----------|------|
             | **macOS (Apple Silicon)** | `.dmg` (arm64) |
-            | **macOS (Intel)** | `.dmg` (x64) |
             | **Windows** | `.msi` or `-setup.exe` |
             | **Linux** | `.deb` or `.AppImage` |
 
