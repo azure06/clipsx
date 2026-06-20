@@ -88,13 +88,16 @@ impl SemanticService {
     fn load_user_defined_model(model_dir: &std::path::Path) -> Result<TextEmbedding> {
         let onnx_file = std::fs::read(model_dir.join("model.onnx"))
             .with_context(|| format!("Failed to read model.onnx from {}", model_dir.display()))?;
-        let tokenizer_file = std::fs::read(model_dir.join("tokenizer.json"))
-            .with_context(|| format!("Failed to read tokenizer.json from {}", model_dir.display()))?;
+        let tokenizer_file =
+            std::fs::read(model_dir.join("tokenizer.json")).with_context(|| {
+                format!("Failed to read tokenizer.json from {}", model_dir.display())
+            })?;
 
         // Multilingual model is a static-quantized ONNX with mean pooling.
-        let model = UserDefinedEmbeddingModel::new(onnx_file, Self::tokenizer_files(tokenizer_file))
-            .with_pooling(Pooling::Mean)
-            .with_quantization(QuantizationMode::Static);
+        let model =
+            UserDefinedEmbeddingModel::new(onnx_file, Self::tokenizer_files(tokenizer_file))
+                .with_pooling(Pooling::Mean)
+                .with_quantization(QuantizationMode::Static);
 
         let options = InitOptionsUserDefined::new().with_max_length(256);
         TextEmbedding::try_new_from_user_defined(model, options)
@@ -138,8 +141,12 @@ impl SemanticService {
         let progress_cancel = Arc::new(StdRwLock::new(false));
 
         if !is_downloaded {
-            std::fs::create_dir_all(&model_dir)
-                .with_context(|| format!("Failed to create model cache directory {}", model_dir.display()))?;
+            std::fs::create_dir_all(&model_dir).with_context(|| {
+                format!(
+                    "Failed to create model cache directory {}",
+                    model_dir.display()
+                )
+            })?;
 
             if let Some(app) = app_handle.clone() {
                 let model_dir_clone = model_dir.clone();
@@ -401,7 +408,10 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &std::path::Pa
     if !status.is_success() {
         return Err(anyhow!("Download returned HTTP {}", status));
     }
-    let bytes = response.bytes().await.context("Failed to read response body")?;
+    let bytes = response
+        .bytes()
+        .await
+        .context("Failed to read response body")?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }

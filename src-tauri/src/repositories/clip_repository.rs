@@ -3,7 +3,7 @@ use crate::models::{compute_index_text, ClipItem, Embedding, Tag};
 use anyhow::Result;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
+    AssertSqlSafe, SqlitePool,
 };
 use std::{str::FromStr, time::Duration};
 use tokio::sync::Mutex;
@@ -248,7 +248,7 @@ impl ClipRepository {
 
         sql.push_str(" ORDER BY updated_at DESC LIMIT ? OFFSET ?");
 
-        let mut q = sqlx::query_as::<_, ClipItem>(&sql);
+        let mut q = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
         if let Some(tag_id) = tag_filter {
             q = q.bind(tag_id);
         }
@@ -300,7 +300,7 @@ impl ClipRepository {
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let sql = format!("SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE id IN ({})", placeholders);
 
-        let mut query = sqlx::query_as::<_, ClipItem>(&sql);
+        let mut query = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
         for id in ids {
             query = query.bind(id);
         }
@@ -427,7 +427,7 @@ impl ClipRepository {
         }
 
         // Bind parameters
-        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql);
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
 
         if has_text_query {
             query_builder = query_builder.bind(escaped_query);
@@ -501,7 +501,7 @@ impl ClipRepository {
             sql.push_str(" ORDER BY clips.updated_at DESC LIMIT ? OFFSET ?");
         }
 
-        let mut query_builder = sqlx::query_as::<_, ClipItem>(&sql);
+        let mut query_builder = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
 
         if has_text_query {
             query_builder = query_builder.bind(escaped_query);
@@ -723,7 +723,7 @@ impl ClipRepository {
              WHERE ct.clip_id IN ({})",
             placeholders
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(AssertSqlSafe(sql));
         for id in clip_ids {
             q = q.bind(id);
         }
@@ -1038,7 +1038,7 @@ impl ClipRepository {
             sql.push_str(" AND c.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
         }
 
-        let mut query_builder = sqlx::query_as::<_, Embedding>(&sql);
+        let mut query_builder = sqlx::query_as::<_, Embedding>(AssertSqlSafe(sql));
 
         if let Some(model_name) = model {
             query_builder = query_builder.bind(model_name);
@@ -1593,8 +1593,10 @@ mod tests {
     async fn test_get_embeddings_with_filters_respects_model_filter() -> Result<()> {
         let repo = ClipRepository::new("sqlite::memory:").await?;
 
-        let current_clip = ClipItem::from_text("current model body".to_string(), "text".to_string(), None);
-        let stale_clip = ClipItem::from_text("stale model body".to_string(), "text".to_string(), None);
+        let current_clip =
+            ClipItem::from_text("current model body".to_string(), "text".to_string(), None);
+        let stale_clip =
+            ClipItem::from_text("stale model body".to_string(), "text".to_string(), None);
 
         repo.insert(&current_clip).await?;
         repo.insert(&stale_clip).await?;

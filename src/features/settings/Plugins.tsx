@@ -212,11 +212,9 @@ export const Plugins = () => {
             ? 'bg-red-500'
             : 'bg-gray-400 dark:bg-gray-600'
 
-  const isActive =
-    semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
+  const isActive = semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
   const isLoadingModel = semanticStatus?.state === 'loading'
-  const isDegraded =
-    semanticStatus?.state === 'error' || semanticStatus?.state === 'missing_model'
+  const isDegraded = semanticStatus?.state === 'error' || semanticStatus?.state === 'missing_model'
   const isSemanticUsable = isActive
 
   const progressPct =
@@ -225,10 +223,8 @@ export const Plugins = () => {
       : 0
 
   const cardRing = (() => {
-    if (isActive)
-      return 'border-emerald-500 dark:border-emerald-500/50 ring-1 ring-emerald-500/20'
-    if (isLoadingModel)
-      return 'border-amber-400 dark:border-amber-500/50 ring-1 ring-amber-500/20'
+    if (isActive) return 'border-emerald-500 dark:border-emerald-500/50 ring-1 ring-emerald-500/20'
+    if (isLoadingModel) return 'border-amber-400 dark:border-amber-500/50 ring-1 ring-amber-500/20'
     if (isDegraded) return 'border-red-400 dark:border-red-500/50 ring-1 ring-red-500/20'
     return 'border-gray-200 dark:border-white/10'
   })()
@@ -240,8 +236,8 @@ export const Plugins = () => {
           <div>
             <h1 className="text-2xl font-bold mb-1">AI Search Engine</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Multilingual semantic search powered by a local AI model. Toggle AI mode directly
-              from the search bar.
+              Multilingual semantic search powered by a local AI model. Toggle AI mode directly from
+              the search bar.
             </p>
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 px-4 py-3">
@@ -393,8 +389,8 @@ export const Plugins = () => {
           </div>
 
           <div className="mt-3 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Supports 50+ languages including Japanese, Spanish, German, and more. Runs fully
-            offline on your device.
+            Supports 50+ languages including Japanese, Spanish, German, and more. Runs fully offline
+            on your device.
           </div>
 
           <div className="mt-4 pt-3 border-t border-gray-100 dark:border-white/5 flex flex-col gap-2">
