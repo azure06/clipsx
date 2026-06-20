@@ -395,7 +395,9 @@ impl SemanticService {
 }
 
 async fn download_file(client: &reqwest::Client, url: &str, dest: &std::path::Path) -> Result<()> {
-    let response = client
+    use tokio::io::AsyncWriteExt as _;
+
+    let mut response = client
         .get(url)
         .header(
             reqwest::header::USER_AGENT,
@@ -408,14 +410,21 @@ async fn download_file(client: &reqwest::Client, url: &str, dest: &std::path::Pa
     if !status.is_success() {
         return Err(anyhow!("Download returned HTTP {}", status));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .context("Failed to read response body")?;
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
     }
-    std::fs::write(dest, &bytes)?;
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .context("Failed to create destination file")?;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .context("Failed to read response chunk")?
+    {
+        file.write_all(&chunk)
+            .await
+            .context("Failed to write chunk to file")?;
+    }
     Ok(())
 }
 
