@@ -122,7 +122,7 @@ jobs:
 
           # Linux x64
           - name: Linux-x64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             args: ""
             rust_targets: ""
 
@@ -133,7 +133,7 @@ jobs:
 
       # --- System deps (Linux only) ---
       - name: Install system dependencies (Linux)
-        if: matrix.settings.os == 'ubuntu-22.04'
+        if: startsWith(matrix.settings.os, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
