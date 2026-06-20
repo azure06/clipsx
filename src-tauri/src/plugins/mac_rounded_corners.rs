@@ -143,6 +143,7 @@ pub fn enable_modern_window_style<R: Runtime>(
 
 /// Sets `hidesOnDeactivate` on the underlying `NSWindow`.
 /// This is a no-op on non-macOS platforms.
+#[allow(dead_code)]
 pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
     #[cfg(target_os = "macos")]
     {
