@@ -138,7 +138,7 @@ impl Default for AppSettings {
             show_copy_toast: true,
             has_seen_welcome: false,
             semantic_search_enabled: false,
-            semantic_model: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
+            semantic_model: default_semantic_model(),
         }
     }
 }
