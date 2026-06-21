@@ -5,10 +5,10 @@ use tauri::{Manager, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
-use cocoa::appkit::NSWindow;
-#[cfg(target_os = "macos")]
-#[allow(deprecated)]
-use cocoa::base::{id, NO, YES};
+use cocoa::{
+    appkit::NSWindow,
+    base::{id, NO, YES},
+};
 
 pub(crate) fn reconcile_main_window<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -45,6 +45,8 @@ fn apply_settings<R: Runtime>(window: &WebviewWindow<R>, settings: &AppSettings)
     );
 }
 
+/// Sets the `hidesOnDeactivate` property on the underlying `NSWindow`.
+/// When `hides` is `true`, the window hides itself when the application loses focus.
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
