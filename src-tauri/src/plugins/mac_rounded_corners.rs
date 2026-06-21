@@ -1,12 +1,12 @@
 // Unterdrücke Warnings von veralteten Cocoa APIs
-#[allow(deprecated)]
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
+
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
 use cocoa::{
-    appkit::{
-        NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility,
-    },
+    appkit::{NSView, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility},
     base::id,
     foundation::NSPoint,
 };
@@ -15,7 +15,6 @@ use cocoa::{
 use objc::{msg_send, sel, sel_impl};
 
 /// Configuration for Traffic Lights positioning
-#[allow(dead_code)]
 pub struct TrafficLightsConfig {
     /// Offset in pixels from default position (positive = right, negative = left)
     pub offset_x: f64,
@@ -32,34 +31,11 @@ impl Default for TrafficLightsConfig {
     }
 }
 
-#[cfg(target_os = "macos")]
-const NS_NONACTIVATING_PANEL_MASK: u64 = 1 << 7;
-
-#[cfg(target_os = "macos")]
-unsafe fn configure_overlay_window(ns_window: id) {
-    let mut style_mask = ns_window.styleMask();
-    style_mask |= NSWindowStyleMask::from_bits_truncate(NS_NONACTIVATING_PANEL_MASK);
-    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
-    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
-    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
-    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
-    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
-    ns_window.setStyleMask_(style_mask);
-
-    // `MoveToActiveSpace` conflicts with `CanJoinAllSpaces` on AppKit and will
-    // crash at runtime if both are set on the same window.
-    let behavior = NSWindowCollectionBehavior::NSWindowCollectionBehaviorMoveToActiveSpace
-        | NSWindowCollectionBehavior::NSWindowCollectionBehaviorTransient
-        | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary;
-    ns_window.setCollectionBehavior_(behavior);
-}
-
-/// Enables rounded corners for the window (macOS only).
-/// Uses only public APIs - App Store compatible.
+/// Enables rounded corners for the window (macOS only)
+/// Uses only public APIs - App Store compatible
 #[tauri::command]
-#[allow(unused_variables)]
 pub fn enable_rounded_corners<R: Runtime>(
-    app: AppHandle<R>,
+    _app: AppHandle<R>,
     window: WebviewWindow<R>,
     offset_x: Option<f64>,
     offset_y: Option<f64>,
@@ -76,7 +52,17 @@ pub fn enable_rounded_corners<R: Runtime>(
                 #[cfg(target_os = "macos")]
                 unsafe {
                     let ns_window = webview.ns_window() as id;
-                    configure_overlay_window(ns_window);
+
+                    let mut style_mask = ns_window.styleMask();
+
+                    // Add necessary styles for rounded corners
+                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
+                    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
+                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
+                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+
+                    ns_window.setStyleMask_(style_mask);
                     ns_window.setTitlebarAppearsTransparent_(cocoa::base::YES);
 
                     let content_view = ns_window.contentView();
@@ -86,17 +72,20 @@ pub fn enable_rounded_corners<R: Runtime>(
                 }
             })
             .map_err(|e| e.to_string())?;
+
+        Ok(())
     }
 
-    crate::window_behavior::reconcile_main_window(&app, &window);
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
 }
 
-/// Enables modern window style with rounded corners and shadow.
+/// Enables modern window style with rounded corners and shadow
 #[tauri::command]
-#[allow(unused_variables)]
 pub fn enable_modern_window_style<R: Runtime>(
-    app: AppHandle<R>,
+    _app: AppHandle<R>,
     window: WebviewWindow<R>,
     corner_radius: Option<f64>,
     offset_x: Option<f64>,
@@ -115,7 +104,16 @@ pub fn enable_modern_window_style<R: Runtime>(
                 #[cfg(target_os = "macos")]
                 unsafe {
                     let ns_window = webview.ns_window() as id;
-                    configure_overlay_window(ns_window);
+
+                    let mut style_mask = ns_window.styleMask();
+
+                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                    style_mask |= NSWindowStyleMask::NSTitledWindowMask;
+                    style_mask |= NSWindowStyleMask::NSClosableWindowMask;
+                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
+                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+
+                    ns_window.setStyleMask_(style_mask);
                     ns_window.setTitlebarAppearsTransparent_(cocoa::base::YES);
                     ns_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
                     ns_window.setHasShadow_(cocoa::base::YES);
@@ -134,34 +132,18 @@ pub fn enable_modern_window_style<R: Runtime>(
                 }
             })
             .map_err(|e| e.to_string())?;
+
+        Ok(())
     }
 
-    crate::window_behavior::reconcile_main_window(&app, &window);
-    Ok(())
-}
-
-/// Sets `hidesOnDeactivate` on the underlying `NSWindow`.
-/// This is a no-op on non-macOS platforms.
-#[allow(dead_code)]
-#[allow(unused_variables)]
-pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "macos"))]
     {
-        let _ = window.with_webview(move |webview| unsafe {
-            let ns_window = webview.ns_window() as id;
-            let value = if hides {
-                cocoa::base::YES
-            } else {
-                cocoa::base::NO
-            };
-            ns_window.setHidesOnDeactivate_(value);
-        });
+        Ok(())
     }
 }
 
-/// Repositions Traffic Lights only (useful after fullscreen toggle).
+/// Repositions Traffic Lights only (useful after fullscreen toggle)
 #[tauri::command]
-#[allow(unused_variables)]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,
     window: WebviewWindow<R>,
