@@ -1,8 +1,5 @@
 // Unterdrücke Warnings von veralteten Cocoa APIs
-#![allow(unexpected_cfgs)]
-#![allow(deprecated)]
-#![allow(unused_variables)]
-
+#[allow(deprecated)]
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
@@ -60,6 +57,7 @@ unsafe fn configure_overlay_window(ns_window: id) {
 /// Enables rounded corners for the window (macOS only).
 /// Uses only public APIs - App Store compatible.
 #[tauri::command]
+#[allow(unused_variables)]
 pub fn enable_rounded_corners<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
@@ -96,6 +94,7 @@ pub fn enable_rounded_corners<R: Runtime>(
 
 /// Enables modern window style with rounded corners and shadow.
 #[tauri::command]
+#[allow(unused_variables)]
 pub fn enable_modern_window_style<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,
@@ -144,6 +143,7 @@ pub fn enable_modern_window_style<R: Runtime>(
 /// Sets `hidesOnDeactivate` on the underlying `NSWindow`.
 /// This is a no-op on non-macOS platforms.
 #[allow(dead_code)]
+#[allow(unused_variables)]
 pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
     #[cfg(target_os = "macos")]
     {
@@ -161,6 +161,7 @@ pub(crate) fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hid
 
 /// Repositions Traffic Lights only (useful after fullscreen toggle).
 #[tauri::command]
+#[allow(unused_variables)]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,
     window: WebviewWindow<R>,
