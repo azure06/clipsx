@@ -206,20 +206,3 @@ unsafe fn position_traffic_lights(ns_window: id, offset_x: f64, offset_y: f64) {
         let _: () = msg_send![zoom_button, setFrame: new_frame];
     }
 }
-
-/// Sets whether the window hides on deactivate (macOS only)
-#[allow(dead_code)]
-pub fn set_hides_on_deactivate<R: Runtime>(_window: &WebviewWindow<R>, _hides: bool) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = _window.with_webview(move |webview| unsafe {
-            let ns_window = webview.ns_window() as id;
-            let hides_val = if _hides {
-                cocoa::base::YES
-            } else {
-                cocoa::base::NO
-            };
-            let _: () = msg_send![ns_window, setHidesOnDeactivate: hides_val];
-        });
-    }
-}

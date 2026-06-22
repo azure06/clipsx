@@ -3,6 +3,11 @@ use crate::models::AppSettings;
 use crate::repositories::SettingsRepository;
 use tauri::{Manager, Runtime, WebviewWindow};
 
+#[cfg(target_os = "macos")]
+use cocoa::base::id;
+#[cfg(target_os = "macos")]
+use objc::{msg_send, sel, sel_impl};
+
 pub(crate) fn reconcile_main_window<R: Runtime>(
     app: &tauri::AppHandle<R>,
     window: &WebviewWindow<R>,
@@ -32,7 +37,7 @@ fn apply_settings<R: Runtime>(window: &WebviewWindow<R>, settings: &AppSettings)
     let _ = window.set_always_on_top(settings.always_on_top);
 
     #[cfg(target_os = "macos")]
-    crate::plugins::mac_rounded_corners::set_hides_on_deactivate(
+    set_hides_on_deactivate(
         window,
         hides_on_deactivate(settings.hide_on_blur, settings.always_on_top),
     );
@@ -48,6 +53,22 @@ fn select_effective_settings(
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn hides_on_deactivate(hide_on_blur: bool, always_on_top: bool) -> bool {
     hide_on_blur && !always_on_top
+}
+
+#[allow(dead_code)]
+fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(move |webview| unsafe {
+            let ns_window = webview.ns_window() as id;
+            let value = if hides {
+                cocoa::base::YES
+            } else {
+                cocoa::base::NO
+            };
+            let _: () = msg_send![ns_window, setHidesOnDeactivate: value];
+        });
+    }
 }
 
 #[cfg(test)]
