@@ -55,18 +55,18 @@ fn hides_on_deactivate(hide_on_blur: bool, always_on_top: bool) -> bool {
     hide_on_blur && !always_on_top
 }
 
-#[allow(dead_code)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn set_hides_on_deactivate<R: Runtime>(window: &WebviewWindow<R>, hides: bool) {
     #[cfg(target_os = "macos")]
     {
         let _ = window.with_webview(move |webview| unsafe {
             let ns_window = webview.ns_window() as id;
-            let value = if hides {
+            let hides_val = if hides {
                 cocoa::base::YES
             } else {
                 cocoa::base::NO
             };
-            let _: () = msg_send![ns_window, setHidesOnDeactivate: value];
+            let _: () = msg_send![ns_window, setHidesOnDeactivate: hides_val];
         });
     }
 }
