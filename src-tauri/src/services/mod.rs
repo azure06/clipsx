@@ -9,4 +9,5 @@ pub mod intelligence;
 pub mod ocr;
 pub mod office;
 pub mod paste;
+pub mod qr_decoder;
 pub mod semantic;

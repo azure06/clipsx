@@ -532,6 +532,32 @@ pub async fn clear_all_clips(state: State<'_, AppState>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn decode_qr_code(clip_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    // Get the clip from the database
+    let clip = state
+        .repository
+        .get_by_id(&clip_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Clip {} not found", clip_id))?;
+
+    // Only image clips can have QR codes
+    if clip.content_type != "image" {
+        return Err("Clip is not an image".to_string());
+    }
+
+    // Check if image path exists
+    let image_path = clip.image_path.ok_or("Image clip has no image_path")?;
+
+    // Attempt QR decode from image file
+    let qr_content = crate::services::qr_decoder::decode_qr_from_path(&image_path)
+        .map_err(|e| e.to_string())?
+        .ok_or("No QR code found in image")?;
+
+    Ok(qr_content)
+}
+
 // ============================================================================
 // Clipboard Commands
 // ============================================================================
@@ -1641,8 +1667,8 @@ mod tests {
     #[tokio::test]
     async fn clear_all_clips_deletes_all_clips_and_files() -> Result<(), String> {
         // Setup: Create a test repository with clips
-        use crate::repositories::ClipRepository;
         use crate::models::ClipItem;
+        use crate::repositories::ClipRepository;
 
         let repo = ClipRepository::new("sqlite::memory:")
             .await
@@ -1651,12 +1677,8 @@ mod tests {
         // Insert test clips
         let clip1 = ClipItem::from_text("text1".to_string(), "test".to_string(), None);
         let clip2 = ClipItem::from_text("text2".to_string(), "test".to_string(), None);
-        repo.insert(&clip1)
-            .await
-            .map_err(|e| e.to_string())?;
-        repo.insert(&clip2)
-            .await
-            .map_err(|e| e.to_string())?;
+        repo.insert(&clip1).await.map_err(|e| e.to_string())?;
+        repo.insert(&clip2).await.map_err(|e| e.to_string())?;
 
         // Verify clips exist
         let before = repo.get_recent(100).await.map_err(|e| e.to_string())?;

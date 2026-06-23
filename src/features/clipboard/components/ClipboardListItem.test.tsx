@@ -87,7 +87,7 @@ describe('ClipboardListItem', () => {
 
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
-    }) as HTMLImageElement
+    })
     expect(thumbnail).toBeInTheDocument()
     expect(thumbnail.src).toBe('file:///tmp/image.png')
     expect(thumbnail.className).toContain('rounded')
@@ -121,7 +121,7 @@ describe('ClipboardListItem', () => {
 
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
-    }) as HTMLImageElement
+    })
     expect(thumbnail.className).toContain('h-8')
     expect(thumbnail.className).toContain('w-8')
   })
