@@ -12,6 +12,7 @@ import {
   ScanText,
 } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
+import { getPlatform } from '../../../shared/keyboard/shortcuts'
 
 type ClipboardListItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[] }
@@ -30,6 +31,8 @@ const ClipboardListItemComponent = ({
   isSelected = false,
   index,
 }: ClipboardListItemProps) => {
+  const platform = getPlatform()
+  const isMac = platform === 'macos'
   const preview = formatClipPreview(clip, 100)
 
   const isPinned = Boolean(clip.isPinned)
@@ -154,8 +157,18 @@ const ClipboardListItemComponent = ({
                 />
               ) : (
                 <>
-                  <Command className="w-2.5 h-2.5 mr-0.5 opacity-70" />
-                  <span className="opacity-70">{index! + 1}</span>
+                  {isMac ? (
+                    <>
+                      <Command className="w-2.5 h-2.5 mr-0.5 opacity-70" />
+                      <span className="opacity-70">{index! + 1}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="opacity-70">Ctrl</span>
+                      <span className="opacity-50">+</span>
+                      <span className="opacity-70">{index! + 1}</span>
+                    </>
+                  )}
                 </>
               )}
             </div>
