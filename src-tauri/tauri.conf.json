@@ -22,6 +22,16 @@
     "macOS": {
       "signingIdentity": "-",
       "hardenedRuntime": false
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "languages": ["English", "Japanese", "Italian", "Spanish", "SimpChinese"]
+      },
+      "wix": {
+        "language": ["en-US", "ja-JP", "it-IT", "es-ES", "zh-CN"]
+      }
     }
   },
   "plugins": {
