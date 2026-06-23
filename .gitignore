@@ -44,8 +44,4 @@ Thumbs.db
 /src-tauri/WixTools
 /src-tauri/gen
 
-clip_inspect/
-test.css
-
-# Claude Code
-CLAUDE.md
+docs/deploy.txt
