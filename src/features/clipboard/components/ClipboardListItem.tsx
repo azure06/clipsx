@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import type { ClipItem, Tag } from '../../../shared/types'
 import { formatClipPreview } from '../../../shared/types'
 import {
@@ -74,9 +75,23 @@ const ClipboardListItemComponent = ({
           <div className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-violet-400/50 dark:bg-violet-400/50"></div>
         )}
 
-        {/* Type icon */}
-        <div className="shrink-0 text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
-          <ContentIcon content={clipToContent(clip)} size="sm" />
+        {/* Type icon or thumbnail */}
+        <div className="shrink-0">
+          {clip.contentType === 'image' && clip.imagePath ? (
+            <img
+              src={convertFileSrc(clip.imagePath)}
+              alt="Thumbnail"
+              className="h-8 w-8 rounded object-cover border border-gray-200/50 dark:border-gray-700/50 shadow-sm"
+              onError={e => {
+                // Fallback to icon if image fails to load
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          ) : (
+            <div className="text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
+              <ContentIcon content={clipToContent(clip)} size="sm" />
+            </div>
+          )}
         </div>
 
         {/* Main content area - Horizontal Flow */}
