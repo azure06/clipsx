@@ -81,7 +81,7 @@ const ClipboardListItemComponent = ({
             <img
               src={convertFileSrc(clip.imagePath)}
               alt="Thumbnail"
-              className="h-8 w-8 rounded object-cover border border-gray-200/50 dark:border-gray-700/50 shadow-sm"
+              className="h-8 w-8 rounded-full object-cover border border-gray-200/50 dark:border-gray-700/50 shadow-sm"
               onError={e => {
                 // Fallback to icon if image fails to load
                 e.currentTarget.style.display = 'none'

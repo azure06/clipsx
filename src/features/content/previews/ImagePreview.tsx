@@ -34,7 +34,7 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
         <img
           src={src}
           alt="Clip Preview"
-          className="max-w-full max-h-full object-contain rounded-lg shadow-sm bg-black/20"
+          className="max-w-full max-h-full object-contain rounded shadow-sm bg-black/20"
           onError={e => {
             console.error('Failed to load image:', src)
             e.currentTarget.style.display = 'none'

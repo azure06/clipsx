@@ -90,7 +90,7 @@ describe('ClipboardListItem', () => {
     }) as HTMLImageElement
     expect(thumbnail).toBeInTheDocument()
     expect(thumbnail.src).toBe('file:///tmp/image.png')
-    expect(thumbnail.className).toContain('rounded')
+    expect(thumbnail.className).toContain('rounded-full')
     expect(thumbnail.className).toContain('object-cover')
   })
 
