@@ -876,36 +876,61 @@ impl ClipRepository {
         let _write_guard = self.write_lock.lock().await;
 
         if update_content {
-            // OCR is now the best text source; update content_text, index_text, and primary_text_source
-            let Some((note, old_index_text)) = sqlx::query_as::<_, (Option<String>, String)>(
-                "SELECT note, index_text FROM clips WHERE id = ?",
-            )
-            .bind(clip_id)
-            .fetch_optional(&self.pool)
-            .await?
+            // Fetch current clip state to decide how to handle empty OCR results
+            let Some((note, old_index_text, _old_content_text)) =
+                sqlx::query_as::<_, (Option<String>, String, Option<String>)>(
+                    "SELECT note, index_text, content_text FROM clips WHERE id = ?",
+                )
+                .bind(clip_id)
+                .fetch_optional(&self.pool)
+                .await?
             else {
                 anyhow::bail!("Clip not found for OCR update: {}", clip_id);
             };
 
-            let new_index_text = compute_index_text(Some(ocr_text), note.as_deref());
+            // If OCR returns empty text, preserve the original placeholder so the clip remains identifiable
+            if ocr_text.is_empty() {
+                // Empty OCR: keep original content_text (placeholder), don't mark as primary_text_source='ocr'
+                let new_index_text = compute_index_text(None, note.as_deref());
 
-            sqlx::query(
-                "UPDATE clips SET ocr_text = ?, content_text = ?, index_text = ?, \
-                 primary_text_source = 'ocr', ocr_status = 'done', updated_at = ? WHERE id = ?",
-            )
-            .bind(ocr_text)
-            .bind(ocr_text)
-            .bind(&new_index_text)
-            .bind(now)
-            .bind(clip_id)
-            .execute(&self.pool)
-            .await?;
+                sqlx::query(
+                    "UPDATE clips SET ocr_text = ?, index_text = ?, ocr_status = 'done', updated_at = ? WHERE id = ?",
+                )
+                .bind(ocr_text)
+                .bind(&new_index_text)
+                .bind(now)
+                .bind(clip_id)
+                .execute(&self.pool)
+                .await?;
 
-            if new_index_text != old_index_text {
-                sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
-                    .bind(clip_id)
-                    .execute(&self.pool)
-                    .await?;
+                if new_index_text != old_index_text {
+                    sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+                        .bind(clip_id)
+                        .execute(&self.pool)
+                        .await?;
+                }
+            } else {
+                // Non-empty OCR: OCR is now the best text source; update content_text and mark primary_text_source
+                let new_index_text = compute_index_text(Some(ocr_text), note.as_deref());
+
+                sqlx::query(
+                    "UPDATE clips SET ocr_text = ?, content_text = ?, index_text = ?, \
+                     primary_text_source = 'ocr', ocr_status = 'done', updated_at = ? WHERE id = ?",
+                )
+                .bind(ocr_text)
+                .bind(ocr_text)
+                .bind(&new_index_text)
+                .bind(now)
+                .bind(clip_id)
+                .execute(&self.pool)
+                .await?;
+
+                if new_index_text != old_index_text {
+                    sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+                        .bind(clip_id)
+                        .execute(&self.pool)
+                        .await?;
+                }
             }
         } else {
             // A stronger source already owns content_text; just store OCR as provenance.
@@ -1935,16 +1960,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ocr_empty_result_marks_done_with_empty_text() -> Result<()> {
+    async fn test_ocr_empty_result_preserves_placeholder() -> Result<()> {
         let repo = ClipRepository::new("sqlite::memory:").await?;
         let clip = make_pending_image_clip();
+        let original_placeholder = clip.content_text.clone();
         repo.insert(&clip).await?;
 
         let updated = repo.update_after_ocr(&clip.id, "", true).await?;
 
         assert_eq!(updated.ocr_status, "done");
-        // update_content=true with empty text: primary_text_source becomes 'ocr' but index_text stays empty.
-        assert_eq!(updated.primary_text_source, "ocr");
+        // When OCR returns empty, preserve the original placeholder so clip remains identifiable
+        assert_eq!(updated.content_text, original_placeholder);
+        // primary_text_source stays "none" because OCR failed to extract meaningful text
+        assert_eq!(updated.primary_text_source, "none");
+        // index_text stays empty so there's nothing searchable for this clip
+        assert!(updated.index_text.is_empty());
+        // ocr_text is recorded as empty for audit trail
         assert_eq!(updated.ocr_text.as_deref(), Some(""));
 
         Ok(())
