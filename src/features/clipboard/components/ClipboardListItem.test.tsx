@@ -22,9 +22,7 @@ vi.mock('lucide-react', () => ({
 
 // Mock ContentIcon
 vi.mock('../../content', () => ({
-  ContentIcon: ({ content }: any) => (
-    <div data-testid="content-icon">{content.type}</div>
-  ),
+  ContentIcon: ({ content }: any) => <div data-testid="content-icon">{content.type}</div>,
   clipToContent: (clip: any) => ({ type: clip.contentType }),
 }))
 
@@ -77,13 +75,7 @@ const createImageClip = (overrides?: Partial<ClipItem>): ClipItem =>
 describe('ClipboardListItem', () => {
   it('should render content icon for text clips', () => {
     const clip = createTextClip()
-    render(
-      <ClipboardListItem
-        clip={clip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     expect(screen.getByTestId('content-icon')).toBeInTheDocument()
     expect(screen.getByTestId('content-icon')).toHaveTextContent('text')
@@ -91,13 +83,7 @@ describe('ClipboardListItem', () => {
 
   it('should render image thumbnail for image clips', () => {
     const clip = createImageClip()
-    render(
-      <ClipboardListItem
-        clip={clip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
@@ -110,13 +96,7 @@ describe('ClipboardListItem', () => {
 
   it('should fallback to content icon when image path is missing', () => {
     const clip = createImageClip({ imagePath: null })
-    render(
-      <ClipboardListItem
-        clip={clip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     expect(screen.getByTestId('content-icon')).toBeInTheDocument()
   })
@@ -124,36 +104,20 @@ describe('ClipboardListItem', () => {
   it('should display preview text for both image and text clips', () => {
     const textClip = createTextClip()
     const { rerender } = render(
-      <ClipboardListItem
-        clip={textClip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
+      <ClipboardListItem clip={textClip} onCopy={vi.fn()} onSelect={vi.fn()} />
     )
 
     expect(screen.getByText(/Hello world/)).toBeInTheDocument()
 
     const imageClip = createImageClip()
-    rerender(
-      <ClipboardListItem
-        clip={imageClip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    rerender(<ClipboardListItem clip={imageClip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     expect(screen.getByText(/Image:/)).toBeInTheDocument()
   })
 
   it('should render properly sized thumbnail (8x8 with h-8 w-8 classes)', () => {
     const clip = createImageClip()
-    render(
-      <ClipboardListItem
-        clip={clip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
@@ -164,13 +128,7 @@ describe('ClipboardListItem', () => {
 
   it('should maintain list item layout with thumbnail', () => {
     const clip = createImageClip()
-    render(
-      <ClipboardListItem
-        clip={clip}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    )
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     const listItem = screen.getByText(/Image:/).closest('div')
     expect(listItem).toHaveClass('gap-3') // spacing is maintained

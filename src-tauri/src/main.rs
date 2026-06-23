@@ -280,17 +280,36 @@ fn main() {
                 if let Some(state) = app.try_state::<commands::AppState>() {
                     let settings = state.settings_repository.load().unwrap_or_default();
                     if settings.clear_on_exit {
-                        // Block the current thread briefly to run the async clear.
-                        // We use block_in_place because we're inside a Tokio runtime context.
-                        // JS equivalent: await clearAllClips() just before window.close()
                         eprintln!("[EXIT] clear_on_exit=true — wiping clipboard history...");
+
+                        // Spawn async cleanup task on tokio runtime
+                        // This runs concurrently with app shutdown
                         let repo = state.repository.clone();
-                        let _ = tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async move {
-                                repo.clear_all().await
-                            })
+                        let clipboard_service = state.clipboard_service.clone();
+
+                        tauri::async_runtime::spawn(async move {
+                            // 1. Get all clips to delete their associated files
+                            match repo.get_recent(i32::MAX).await {
+                                Ok(clips) => {
+                                    // 2. Delete all clip files
+                                    for clip in clips {
+                                        if let Err(e) = clipboard_service.cleanup_clip_files(&clip).await {
+                                            eprintln!("[EXIT] Failed to clean up files for {}: {}", clip.id, e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[EXIT] Failed to fetch clips for cleanup: {}", e);
+                                }
+                            }
+
+                            // 3. Clear database
+                            if let Err(e) = repo.clear_all().await {
+                                eprintln!("[EXIT] Failed to clear database: {}", e);
+                            } else {
+                                eprintln!("[EXIT] Clipboard history cleared successfully.");
+                            }
                         });
-                        eprintln!("[EXIT] Clipboard history cleared.");
                     }
                 }
             }

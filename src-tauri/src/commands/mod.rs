@@ -1637,4 +1637,38 @@ mod tests {
             );
         }
     }
+
+    #[tokio::test]
+    async fn clear_all_clips_deletes_all_clips_and_files() -> Result<(), String> {
+        // Setup: Create a test repository with clips
+        use crate::repositories::ClipRepository;
+        use crate::models::ClipItem;
+
+        let repo = ClipRepository::new("sqlite::memory:")
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Insert test clips
+        let clip1 = ClipItem::from_text("text1".to_string(), "test".to_string(), None);
+        let clip2 = ClipItem::from_text("text2".to_string(), "test".to_string(), None);
+        repo.insert(&clip1)
+            .await
+            .map_err(|e| e.to_string())?;
+        repo.insert(&clip2)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Verify clips exist
+        let before = repo.get_recent(100).await.map_err(|e| e.to_string())?;
+        assert_eq!(before.len(), 2, "Expected 2 clips before clear");
+
+        // Clear all clips from database
+        repo.clear_all().await.map_err(|e| e.to_string())?;
+
+        // Verify all clips are deleted
+        let after = repo.get_recent(100).await.map_err(|e| e.to_string())?;
+        assert_eq!(after.len(), 0, "Expected 0 clips after clear");
+
+        Ok(())
+    }
 }
