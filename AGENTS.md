@@ -1,43 +1,65 @@
-# AGENT.md
+# AGENTS.md
 
 ## Purpose
 
-This repository uses AI coding agents (Codex, ChatGPT, Claude Code, etc.) to assist with development.
+This repository uses AI coding agents to assist with development.
 
-Agents should prioritize:
+Priorities:
 
 1. Correctness
 2. Maintainability
 3. Consistency with the existing codebase
 4. Minimal, focused changes
-5. Clear explanations of tradeoffs
 
----
+## Instruction Priority
 
-## General Rules
+If instructions conflict, use this order:
 
-### Understand Before Changing
+1. Direct user request
+2. Repository-specific instruction files (e.g. CLAUDE.md, CODEX.md)
+3. This file
 
-Before making modifications:
+## Project Overview
 
-* Read relevant files and surrounding code.
-* Understand existing architecture and conventions.
-* Prefer extending existing patterns over introducing new ones.
+ClipsX is a Tauri desktop application for clipboard history management on macOS, Windows, and Linux.
 
-### Keep Changes Small
+### Tech Stack
 
+* Frontend: React, TypeScript, Tailwind CSS, Vite
+* Backend: Rust, Tauri, SQLite, sqlx, tokio
+
+### Project Structure
+
+```text
+src/                    React frontend
+src/features/           Feature-oriented UI modules
+src/shared/             Shared frontend types and utilities
+src-tauri/src/          Rust backend
+src-tauri/src/commands/ Tauri IPC commands
+src-tauri/src/models/   Domain models
+src-tauri/src/repositories/ SQLite persistence
+src-tauri/src/services/ Clipboard and platform logic
+docs/                   Supporting documentation
+```
+
+## Before Changing Code
+
+* Read affected files and surrounding code.
+* Follow existing architecture and conventions.
+* Extend existing patterns before introducing new ones.
 * Avoid unnecessary refactors.
-* Do not rewrite working code unless explicitly requested.
-* Limit changes to the scope of the task.
+* Limit changes to the requested scope.
 
-### Ask When Uncertain
+## When Requirements Are Unclear
 
-If requirements are ambiguous:
+* State assumptions explicitly.
+* Prefer asking for clarification over guessing.
 
-* State assumptions clearly.
-* Prefer asking for clarification rather than guessing.
+## Domain-Specific Rules
 
----
+* Do not guess UTI or OLE clipboard types. If a required type is unavailable, skip writing that content.
+* Treat the documented DB-field → clipboard mapping in `src-tauri/src/commands/mod.rs` as the source of truth for clipboard reconstruction.
+* In shared reconstruction helpers, prefer the `[RECONSTRUCT]` log prefix and avoid `[COPY]`.
 
 ## Code Quality
 
@@ -48,60 +70,46 @@ If requirements are ambiguous:
 * Avoid unnecessary cloning and allocations.
 * Keep functions focused and reasonably small.
 
-### TypeScript / JavaScript
+### TypeScript
 
 * Prefer strict typing.
 * Avoid `any` unless unavoidable.
 * Follow existing project patterns.
 * Favor readability over cleverness.
 
----
+## Validation
 
-## Formatting
+Run the smallest relevant checks for the change.
 
-Before creating a commit, ALWAYS run:
+Common commands:
 
 ```bash
-cargo fmt --all                # Rust code under src-tauri
-npm run format                 # JavaScript/TypeScript formatting via Prettier
+npm run type-check
+npm run lint
+npm run format
+
+cargo fmt --all
+cargo clippy --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
-
-Formatting is mandatory even if the change appears small.
-
----
 
 ## Testing
 
-When applicable:
+When behavior changes:
 
-* Run affected tests.
-* Add tests for new functionality.
-* Update existing tests when behavior changes.
-
-Preferred order:
-
-```bash
-cargo test
-npm test
-```
-
-Run only relevant test suites when full test execution would be excessive.
-
----
+* Run relevant tests.
+* Add or update tests when appropriate.
+* Prefer targeted validation before full test suites.
 
 ## Dependencies
 
 * Do not introduce new dependencies unless necessary.
-* Prefer existing libraries already used in the repository.
+* Prefer existing libraries already used by the project.
 * Explain why a new dependency is required.
-
----
 
 ## Commits
 
-Create concise commit messages.
-
-Format:
+Use conventional commit messages:
 
 ```text
 <type>: <short description>
@@ -115,40 +123,22 @@ feat: add semantic search cache
 refactor: simplify embedding pipeline
 ```
 
----
-
-## Pull Requests
-
-Include:
-
-* Summary of changes
-* Reason for change
-* Testing performed
-* Known limitations
-
----
+Do not add AI co-author trailers or agent signatures.
 
 ## Security
 
 Never:
 
-* Commit secrets
-* Hardcode credentials
-* Log sensitive information
-* Disable security checks without justification
+* Commit secrets.
+* Hardcode credentials.
+* Log sensitive information.
+* Disable security checks without justification.
 
----
+## Agent Workflow
 
-## Agent Behavior
-
-When making changes:
-
-1. Inspect relevant files first.
-2. Explain the planned approach.
+1. Inspect relevant files.
+2. Explain the intended approach.
 3. Make the smallest reasonable change.
-4. Run required formatting commands.
-5. Run relevant tests.
-6. Summarize exactly what changed.
-7. Report any remaining concerns or assumptions.
-
-If a requested change appears unsafe, incorrect, or likely to introduce regressions, explain the risk before proceeding.
+4. Run relevant formatting and validation commands.
+5. Summarize exactly what changed.
+6. Report assumptions, limitations, or remaining concerns.
