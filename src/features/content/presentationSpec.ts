@@ -82,7 +82,7 @@ const SPECS: readonly ContentPresentationSpec[] = [
   {
     type: 'image',
     interactionMode: 'read_only',
-    globalBarActions: [...GLOBAL_BAR_BASE],
+    globalBarActions: [...GLOBAL_BAR_BASE, OPEN_IN_EDITOR],
     previewMenuActions: [],
     previewInlineActions: [],
     hiddenActions: [],

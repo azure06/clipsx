@@ -43,12 +43,19 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
   category: 'utility',
   placement: 'global_bar' as const,
   shortcut: OPEN_IN_EDITOR_SHORTCUT,
-  check: content =>
-    content.type === 'text' ||
-    content.type === 'code' ||
-    content.type === 'json' ||
-    content.type === 'csv' ||
-    content.type === 'office',
+  check: content => {
+    if (content.type === 'image') {
+      return Boolean(content.clip.imagePath)
+    }
+
+    return (
+      content.type === 'text' ||
+      content.type === 'code' ||
+      content.type === 'json' ||
+      content.type === 'csv' ||
+      content.type === 'office'
+    )
+  },
   execute: async content => {
     try {
       // If it's an image, we should have a local path already saved
