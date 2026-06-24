@@ -83,6 +83,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   ref
 ) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
   const lastAppliedScopeValueRef = useRef<string | null>(null)
   const isSemanticAvailable =
@@ -119,7 +120,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     ? COMMAND_OPTIONS.filter(opt => opt.prefix.toLowerCase().startsWith(currentSlash.toLowerCase()))
     : COMMAND_OPTIONS
 
-  const showFilterMenu = currentSlash !== null && filteredOptions.length > 0
+  const showFilterMenu = isInputFocused && currentSlash !== null && filteredOptions.length > 0
 
   // Calculate Active Pill Information from typed value (filter commands only)
   const trimmedValue = value.trimStart()
@@ -191,7 +192,8 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
       e.preventDefault()
       onScopeChange?.('all')
     } else if (e.key === 'Escape') {
-      onClear()
+      e.preventDefault()
+      inputRef.current?.blur()
     }
   }
 
@@ -254,6 +256,8 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
             }
           }}
           onKeyDown={handleKeyDown}
+          onFocus={() => setIsInputFocused(true)}
+          onBlur={() => setIsInputFocused(false)}
           placeholder={
             activeCommand
               ? `Search in ${activeCommand.label}...`

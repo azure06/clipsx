@@ -144,4 +144,26 @@ describe('SearchBar scope slash commands', () => {
       expect(onChange).toHaveBeenCalledWith('')
     })
   })
+
+  it('blurs the search input when Escape is pressed', () => {
+    render(<SearchBar value="hello" onChange={vi.fn()} onClear={vi.fn()} />)
+
+    const input = screen.getByRole('textbox')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(document.activeElement).not.toBe(input)
+  })
+
+  it('does not clear query when Escape is pressed', () => {
+    const onClear = vi.fn()
+    render(<SearchBar value="hello" onChange={vi.fn()} onClear={onClear} />)
+
+    const input = screen.getByRole('textbox')
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onClear).not.toHaveBeenCalled()
+  })
 })
