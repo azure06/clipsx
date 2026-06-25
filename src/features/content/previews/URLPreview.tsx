@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { CopyableRow, MetaChip, PreviewLocalMenu } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type URLPreviewProps = {
   readonly content: Content
@@ -51,7 +52,9 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
   const isVideo = raw.match(/\.(mp4|webm|ogg)$/i)
 
   if (!parsed) {
-    return <div className="p-4 text-sm text-gray-400 font-mono break-all">{raw}</div>
+    return (
+      <div className="p-4 text-sm text-gray-600 dark:text-gray-400 font-mono break-all">{raw}</div>
+    )
   }
 
   return (
@@ -71,9 +74,15 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
               <MetaChip className="bg-blue-500/10 text-blue-400 border-blue-500/20">
                 {parsed.protocol}
               </MetaChip>
-              <span className="text-xs text-blue-300 font-semibold">{parsed.hostname}</span>
+              <span className="text-xs text-blue-700 dark:text-blue-300 font-semibold">
+                {parsed.hostname}
+              </span>
             </div>
-            <p className="text-sm font-medium text-white/80 break-all leading-relaxed">{raw}</p>
+            <p
+              className={`text-sm font-medium break-all leading-relaxed ${previewTheme.textPrimary}`}
+            >
+              {raw}
+            </p>
           </div>
           <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 shrink-0">
             <ExternalLink size={16} className="text-blue-400" />
@@ -83,7 +92,9 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
 
       {/* Embedded media */}
       {(isImage || isVideo) && (
-        <div className="rounded-lg overflow-hidden bg-black/20 flex items-center justify-center border border-gray-100/5">
+        <div
+          className={`rounded-lg overflow-hidden flex items-center justify-center ${previewTheme.surfaceInset}`}
+        >
           {isImage ? (
             <img
               src={raw}

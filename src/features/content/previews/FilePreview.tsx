@@ -13,6 +13,7 @@ import {
   FileArchive,
   Database,
 } from 'lucide-react'
+import { previewTheme } from './previewTheme'
 
 type FilePreviewProps = {
   readonly content: Content
@@ -34,7 +35,10 @@ const formatDate = (timestamp: number) => {
 
 const getFileIcon = (path: string) => {
   const ext = path.split('.').pop()?.toLowerCase() || ''
-  const props = { className: 'w-8 h-8 text-white/60 group-hover:text-white/80 transition-colors' }
+  const props = {
+    className:
+      'w-8 h-8 text-gray-500 group-hover:text-gray-700 transition-colors dark:text-white/60 dark:group-hover:text-white/80',
+  }
 
   switch (ext) {
     case 'png':
@@ -108,18 +112,23 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
   const isVideo = ['mp4', 'mov', 'avi', 'webm', 'ogg'].includes(ext)
 
   return (
-    <div className="flex flex-col p-3 bg-slate-100/5 rounded-lg hover:bg-slate-100/10 transition-colors group">
+    <div
+      className={`flex flex-col p-3 rounded-lg transition-colors group ${previewTheme.surfaceMuted} hover:bg-slate-100 dark:hover:bg-slate-100/10`}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="shrink-0">{getFileIcon(file.path)}</div>
           <div className="flex flex-col min-w-0">
-            <div className="font-medium text-white/90 truncate" title={file.name}>
+            <div className={`font-medium truncate ${previewTheme.textPrimary}`} title={file.name}>
               {file.name}
             </div>
-            <div className="text-xs text-white/50 truncate font-mono" title={file.path}>
+            <div
+              className={`text-xs truncate font-mono ${previewTheme.textMuted}`}
+              title={file.path}
+            >
               {file.path}
             </div>
-            <div className="flex gap-3 text-xs text-white/40 mt-1">
+            <div className={`flex gap-3 text-xs mt-1 ${previewTheme.textSubtle}`}>
               <span>{formatBytes(file.size)}</span>
               <span>•</span>
               <span>{formatDate(file.modified)}</span>
@@ -129,7 +138,7 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
 
         <button
           onClick={() => void handleOpen()}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-slate-100/10 rounded text-xs text-white/60 hover:text-white shrink-0"
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-slate-200/60 dark:hover:bg-slate-100/10 rounded text-xs text-gray-500 hover:text-gray-900 dark:text-white/60 dark:hover:text-white shrink-0"
           title="Open File"
         >
           Open
@@ -137,7 +146,9 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
       </div>
 
       {(isImage || isVideo) && (
-        <div className="mt-3 rounded-lg overflow-hidden bg-black/20 flex items-center justify-center max-h-64 border border-white/5">
+        <div
+          className={`mt-3 rounded-lg overflow-hidden flex items-center justify-center max-h-64 ${previewTheme.surfaceInset}`}
+        >
           {isImage ? (
             <img
               src={convertFileSrc(file.path)}
@@ -170,7 +181,9 @@ const FilePreviewComponent = ({ content }: FilePreviewProps) => {
 
   if (files.length === 0) {
     return (
-      <div className="w-full h-full p-4 flex flex-col items-center justify-center text-white/40">
+      <div
+        className={`w-full h-full p-4 flex flex-col items-center justify-center ${previewTheme.textSubtle}`}
+      >
         <FileArchive className="w-16 h-16 mb-4 opacity-50" />
         <div className="text-sm">No file metadata available</div>
         <div className="text-xs mt-2 opacity-50 font-mono">{content.text}</div>

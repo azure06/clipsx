@@ -3,6 +3,7 @@ import { FolderOpen } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type PathPreviewProps = {
   readonly content: Content
@@ -41,7 +42,9 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
         <div className="p-3 rounded-full bg-orange-500/20 text-orange-400 ring-1 ring-orange-500/30 group-hover:scale-110 transition-transform duration-200">
           <FolderOpen size={22} strokeWidth={2} />
         </div>
-        <span className="text-lg font-semibold text-white/90 font-mono text-center break-all">
+        <span
+          className={`text-lg font-semibold font-mono text-center break-all ${previewTheme.textPrimary}`}
+        >
           {filename || raw}
         </span>
         <div className="flex items-center gap-1.5 flex-wrap justify-center">

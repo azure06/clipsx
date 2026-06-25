@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react'
 import { Clock } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type TimestampPreviewProps = {
   readonly content: Content
@@ -41,12 +42,14 @@ const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
         <div className="p-3 rounded-full bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/30">
           <Clock size={22} strokeWidth={2} />
         </div>
-        <span className="text-3xl font-bold font-mono text-white/90">{tsValue}</span>
+        <span className={`text-3xl font-bold font-mono ${previewTheme.textPrimary}`}>
+          {tsValue}
+        </span>
         <MetaChip className="bg-purple-500/10 text-purple-400 border-purple-500/20">
           {unit}
         </MetaChip>
         {humanReadable && (
-          <span className="text-sm text-gray-400 text-center">{humanReadable}</span>
+          <span className={`text-sm text-center ${previewTheme.textMuted}`}>{humanReadable}</span>
         )}
       </div>
 

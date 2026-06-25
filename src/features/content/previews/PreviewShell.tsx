@@ -3,6 +3,8 @@ import { Copy, Check, MoreHorizontal } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { SmartAction, Content } from '../types'
 import { useClipboardStore } from '../../../stores/clipboardStore'
+import { cn } from '../../../shared/utils/cn'
+import { previewTheme } from './previewTheme'
 
 // ────────────────────────────────────────────────
 // CopyableRow — a clickable row that copies a value
@@ -28,17 +30,26 @@ export const CopyableRow = ({ label, value, className = '' }: CopyableRowProps) 
   return (
     <div
       onClick={() => void handleCopy()}
-      className={`flex items-center justify-between px-3 py-2 rounded-lg bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/10 cursor-pointer transition-all duration-150 group ${className}`}
+      className={cn(
+        'flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 group',
+        previewTheme.surfaceMuted,
+        'hover:bg-slate-100 dark:hover:bg-slate-100/10',
+        className
+      )}
     >
       <div className="flex flex-col min-w-0">
-        <span className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">{label}</span>
-        <span className="text-sm font-mono font-medium text-white/90 break-all">{value}</span>
+        <span className={cn('text-[10px] uppercase tracking-wider mb-0.5', previewTheme.textMuted)}>
+          {label}
+        </span>
+        <span className={cn('text-sm font-mono font-medium break-all', previewTheme.textPrimary)}>
+          {value}
+        </span>
       </div>
       <div className="shrink-0 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
         {copied ? (
           <Check size={14} className="text-green-400" />
         ) : (
-          <Copy size={14} className="text-gray-400" />
+          <Copy size={14} className={previewTheme.textMuted} />
         )}
       </div>
     </div>
@@ -56,7 +67,12 @@ type MetaChipProps = {
 
 export const MetaChip = ({ children, className = '' }: MetaChipProps) => (
   <span
-    className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-slate-100/5 text-gray-400 border border-gray-100/10 ${className}`}
+    className={cn(
+      'inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider',
+      previewTheme.surfaceMuted,
+      previewTheme.textMuted,
+      className
+    )}
   >
     {children}
   </span>
@@ -79,9 +95,18 @@ export const PreviewHeader = ({ icon, title, meta, menuActions, content }: Previ
 
   return (
     <div className="flex items-center gap-2 mb-3">
-      <div className="p-1.5 rounded-lg ring-1 ring-white/10">{icon}</div>
+      <div
+        className={cn(
+          'p-1.5 rounded-lg ring-1',
+          'ring-slate-200/80 dark:ring-white/10 bg-white/50 dark:bg-transparent'
+        )}
+      >
+        {icon}
+      </div>
       <div className="flex flex-col flex-1 min-w-0">
-        <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+        <span
+          className={cn('text-xs font-semibold uppercase tracking-wider', previewTheme.textPrimary)}
+        >
           {title}
         </span>
         {meta && <div className="flex items-center gap-1.5 flex-wrap mt-0.5">{meta}</div>}
@@ -107,7 +132,10 @@ export const PreviewLocalMenu = ({ actions, content }: PreviewLocalMenuProps) =>
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
-          className="p-1.5 rounded-md text-gray-500 hover:text-white hover:bg-slate-100/10 transition-colors focus:outline-none"
+          className={cn(
+            'p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/40',
+            previewTheme.iconButton
+          )}
           aria-label="More actions"
         >
           <MoreHorizontal size={15} />
@@ -115,7 +143,10 @@ export const PreviewLocalMenu = ({ actions, content }: PreviewLocalMenuProps) =>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          className="z-50 min-w-[160px] py-1 bg-slate-900 border border-white/10 rounded-lg shadow-xl animate-in fade-in-0 zoom-in-95"
+          className={cn(
+            'z-50 min-w-[160px] py-1 rounded-lg animate-in fade-in-0 zoom-in-95',
+            previewTheme.surfaceElevated
+          )}
           sideOffset={6}
           align="end"
         >
@@ -123,9 +154,14 @@ export const PreviewLocalMenu = ({ actions, content }: PreviewLocalMenuProps) =>
             <DropdownMenu.Item
               key={action.id}
               onSelect={() => void action.execute(content)}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-slate-100/10 cursor-pointer outline-none transition-colors"
+              className={cn(
+                'flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer outline-none transition-colors',
+                previewTheme.menuItem
+              )}
             >
-              <span className="w-4 h-4 flex items-center justify-center text-gray-400">
+              <span
+                className={cn('w-4 h-4 flex items-center justify-center', previewTheme.textMuted)}
+              >
                 {action.icon}
               </span>
               {action.label}
@@ -156,10 +192,10 @@ export const InlineCTAButton = ({
 }: InlineCTAButtonProps) => {
   const variantClass =
     variant === 'primary'
-      ? 'bg-blue-500/15 text-blue-300 border-blue-500/30 hover:bg-blue-500/25 hover:text-blue-200'
+      ? 'bg-blue-500/15 text-blue-700 border-blue-500/30 hover:bg-blue-500/20 dark:text-blue-300 dark:hover:bg-blue-500/25 dark:hover:text-blue-200'
       : variant === 'danger'
-        ? 'bg-red-500/15 text-red-300 border-red-500/30 hover:bg-red-500/25'
-        : 'bg-slate-100/5 text-gray-300 border-gray-100/10 hover:bg-slate-100/10 hover:text-white'
+        ? 'bg-red-500/15 text-red-700 border-red-500/30 hover:bg-red-500/20 dark:text-red-300 dark:hover:bg-red-500/25'
+        : 'bg-white/60 text-gray-700 border-slate-200/80 hover:bg-slate-100 dark:bg-slate-100/5 dark:text-gray-300 dark:border-gray-100/10 dark:hover:bg-slate-100/10 dark:hover:text-white'
 
   return (
     <button

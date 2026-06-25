@@ -66,7 +66,7 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   )
 
   return (
-    <div className="flex flex-col h-full rounded-2xl overflow-hidden my-0.5 mr-2 bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl">
+    <div className="flex flex-col h-full rounded-2xl overflow-hidden my-0.5 mr-2 bg-slate-100/25 dark:bg-slate-100/5 backdrop-blur-xl border border-slate-200/70 dark:border-white/5">
       {/* Header: L2 — slightly more opaque */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100/10 dark:border-slate-100/5 shrink-0 bg-slate-100/40 dark:bg-slate-100/5">
         <div className="flex items-center gap-3">
@@ -94,13 +94,13 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
       </div>
 
       {/* Tags & Note Bar */}
-      <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/20 dark:bg-black/10 border-t border-slate-100/10 dark:border-slate-100/5">
+      <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/45 dark:bg-black/10 border-t border-slate-200/70 dark:border-slate-100/5">
         <TagChips clipId={clip.id} tags={clip.tags ?? []} />
         <NoteField clipId={clip.id} />
       </div>
 
       {/* Status Bar: L2 */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-100/40 dark:bg-black/20 border-t border-slate-100/10 dark:border-slate-100/5 text-[10px] text-gray-600 dark:text-gray-500 font-mono">
+      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-100/60 dark:bg-black/20 border-t border-slate-200/70 dark:border-slate-100/5 text-[10px] text-gray-600 dark:text-gray-500 font-mono">
         <div className="flex items-center gap-4">
           <span>{content.text.length} chars</span>
           {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}

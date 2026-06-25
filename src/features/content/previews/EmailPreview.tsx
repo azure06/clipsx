@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Mail, AtSign, Send } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type EmailPreviewProps = {
   readonly content: Content
@@ -44,9 +45,11 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
               </span>
             </div>
             <div className="flex items-baseline gap-1 flex-wrap">
-              <span className="text-base font-semibold text-white/90">{user}</span>
+              <span className={`text-base font-semibold ${previewTheme.textPrimary}`}>{user}</span>
               <AtSign size={14} className="text-amber-400/60" />
-              <span className="text-sm font-medium text-amber-300/80">{domain}</span>
+              <span className="text-sm font-medium text-amber-700 dark:text-amber-300/80">
+                {domain}
+              </span>
             </div>
           </div>
           <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 shrink-0">
@@ -56,7 +59,7 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
       </div>
 
       {/* Hint */}
-      <div className="text-center text-[10px] text-gray-500 font-medium">
+      <div className={`text-center text-[10px] font-medium ${previewTheme.textMuted}`}>
         Click to compose email
       </div>
 

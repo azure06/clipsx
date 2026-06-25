@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Phone, MessageSquare } from 'lucide-react'
 import type { Content } from '../types'
 import { InlineCTAButton } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type PhonePreviewProps = {
   readonly content: Content
@@ -24,7 +25,9 @@ const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
         <div className="p-3 rounded-full bg-green-500/20 text-green-400 ring-1 ring-green-500/30">
           <Phone size={24} strokeWidth={2} />
         </div>
-        <span className="text-2xl font-semibold font-mono text-white/90 tracking-wide">
+        <span
+          className={`text-2xl font-semibold font-mono tracking-wide ${previewTheme.textPrimary}`}
+        >
           {number}
         </span>
       </div>

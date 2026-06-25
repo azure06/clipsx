@@ -1,6 +1,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { memo, useMemo } from 'react'
 import type { Content } from '../types'
+import { previewTheme } from './previewTheme'
 
 export const ImagePreview = memo(({ content }: { content: Content }) => {
   const clip = content.clip
@@ -34,7 +35,7 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
         <img
           src={src}
           alt="Clip Preview"
-          className="max-w-full max-h-full object-contain rounded shadow-sm bg-black/20"
+          className="max-w-full max-h-full object-contain rounded shadow-sm bg-white/50 dark:bg-black/20"
           onError={e => {
             console.error('Failed to load image:', src)
             e.currentTarget.style.display = 'none'
@@ -73,7 +74,9 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
                   No text found in image
                 </p>
               ) : (
-                <p className="text-sm leading-relaxed text-white/90 whitespace-pre-wrap break-words font-light font-mono select-text">
+                <p
+                  className={`text-sm leading-relaxed whitespace-pre-wrap break-words font-light font-mono select-text ${previewTheme.textPrimary}`}
+                >
                   {ocrText}
                 </p>
               )}

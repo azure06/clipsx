@@ -3,6 +3,7 @@ import { Code2 } from 'lucide-react'
 import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewLocalMenu } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type CodePreviewProps = {
   readonly content: Content
@@ -18,7 +19,9 @@ const CodePreviewComponent = ({ content }: CodePreviewProps) => {
   return (
     <div className="flex flex-col h-full">
       {/* Compact header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5 bg-black/20 shrink-0">
+      <div
+        className={`flex items-center gap-2 px-4 py-2 border-b shrink-0 ${previewTheme.surfaceMuted}`}
+      >
         <Code2 size={14} className="text-violet-400 shrink-0" />
         <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
           {language && (
@@ -35,18 +38,21 @@ const CodePreviewComponent = ({ content }: CodePreviewProps) => {
       </div>
 
       {/* Code content */}
-      <div className="flex flex-1 relative bg-black/40">
+      <div className="flex flex-1 relative bg-white/60 dark:bg-black/40">
         {/* Line numbers */}
-        <div className="shrink-0 w-10 bg-black/30 border-r border-white/5 py-4 text-right select-none">
+        <div className="shrink-0 w-10 bg-slate-100/80 dark:bg-black/30 border-r border-slate-200/80 dark:border-white/5 py-4 text-right select-none">
           {Array.from({ length: Math.min(lineCount, 500) }, (_, i) => (
-            <div key={i} className="text-[10px] text-gray-700 leading-relaxed px-2 font-mono">
+            <div
+              key={i}
+              className="text-[10px] text-gray-500 dark:text-gray-700 leading-relaxed px-2 font-mono"
+            >
               {i + 1}
             </div>
           ))}
         </div>
         <div className="flex-1 overflow-x-auto custom-scrollbar">
           <pre className="p-4 text-sm leading-relaxed">
-            <code className="font-mono text-gray-300">{content.text}</code>
+            <code className="font-mono text-gray-800 dark:text-gray-300">{content.text}</code>
           </pre>
         </div>
       </div>

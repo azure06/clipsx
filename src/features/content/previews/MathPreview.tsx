@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { Content } from '../types'
 import { safeEval } from '../utils/math'
 import { useClipboardStore } from '../../../stores/clipboardStore'
+import { previewTheme } from './previewTheme'
 
 type MathPreviewProps = {
   readonly content: Content
@@ -30,16 +31,20 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
         <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 ring-1 ring-indigo-500/30">
           <Calculator size={16} strokeWidth={2.5} />
         </div>
-        <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+        <span
+          className={`text-xs font-semibold uppercase tracking-wider ${previewTheme.textPrimary}`}
+        >
           Math Expression
         </span>
       </div>
 
       <div className="flex flex-col gap-4">
         {/* Expression Display */}
-        <div className="p-3 rounded-xl bg-slate-100/5 border border-gray-100/10">
-          <div className="text-sm text-gray-400 font-mono mb-1">Equation</div>
-          <div className="text-lg font-medium text-white/90 font-mono break-all leading-relaxed">
+        <div className={`p-3 rounded-xl ${previewTheme.surfaceMuted}`}>
+          <div className={`text-sm font-mono mb-1 ${previewTheme.textMuted}`}>Equation</div>
+          <div
+            className={`text-lg font-medium font-mono break-all leading-relaxed ${previewTheme.textPrimary}`}
+          >
             {content.text}
           </div>
         </div>
@@ -69,7 +74,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
               <div className="h-6 flex items-center justify-center">
                 <button
                   onClick={() => void handleCopyResult()}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100/5 hover:bg-slate-100/10 border border-gray-100/5 hover:border-gray-100/10 transition-colors text-xs font-medium text-gray-400 hover:text-white"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/65 hover:bg-slate-100 border border-slate-200/80 hover:border-slate-300/80 transition-colors text-xs font-medium text-gray-600 hover:text-gray-900 dark:bg-slate-100/5 dark:hover:bg-slate-100/10 dark:border-gray-100/5 dark:hover:border-gray-100/10 dark:text-gray-400 dark:hover:text-white"
                 >
                   {copied ? (
                     <>

@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react'
 import { CalendarDays } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type DatePreviewProps = {
   readonly content: Content
@@ -45,7 +46,9 @@ const DatePreviewComponent = ({ content }: DatePreviewProps) => {
         <div className="p-3 rounded-full bg-sky-500/20 text-sky-400 ring-1 ring-sky-500/30">
           <CalendarDays size={22} strokeWidth={2} />
         </div>
-        <span className="text-xl font-semibold text-white/90 text-center">{original}</span>
+        <span className={`text-xl font-semibold text-center ${previewTheme.textPrimary}`}>
+          {original}
+        </span>
         {format && (
           <MetaChip className="bg-sky-500/10 text-sky-400 border-sky-500/20">{format}</MetaChip>
         )}

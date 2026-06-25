@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react'
 import { KeyRound } from 'lucide-react'
 import type { Content } from '../types'
 import { MetaChip } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type JWTPreviewProps = {
   readonly content: Content
@@ -10,8 +11,10 @@ type JWTPreviewProps = {
 const SegmentBlock = ({ label, value, color }: { label: string; value: string; color: string }) => (
   <div className="flex flex-col gap-1">
     <span className={`text-[10px] font-semibold uppercase tracking-wider ${color}`}>{label}</span>
-    <div className="p-2 rounded-lg bg-black/30 border border-white/5">
-      <p className="text-xs font-mono text-gray-400 break-all leading-relaxed line-clamp-3">
+    <div className={`p-2 rounded-lg ${previewTheme.surfaceInset}`}>
+      <p
+        className={`text-xs font-mono break-all leading-relaxed line-clamp-3 ${previewTheme.textSecondary}`}
+      >
         {value}
       </p>
     </div>
@@ -41,7 +44,11 @@ const JWTPreviewComponent = ({ content }: JWTPreviewProps) => {
   }, [content.text])
 
   if (!isValid) {
-    return <div className="p-4 text-sm text-gray-400 font-mono break-all">{content.text}</div>
+    return (
+      <div className={`p-4 text-sm font-mono break-all ${previewTheme.textMuted}`}>
+        {content.text}
+      </div>
+    )
   }
 
   const alg = headerDecoded?.['alg'] as string | undefined
@@ -55,7 +62,11 @@ const JWTPreviewComponent = ({ content }: JWTPreviewProps) => {
           <KeyRound size={16} strokeWidth={2.5} />
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">JWT</span>
+          <span
+            className={`text-xs font-semibold uppercase tracking-wider ${previewTheme.textPrimary}`}
+          >
+            JWT
+          </span>
           {alg && (
             <MetaChip className="bg-yellow-500/10 text-yellow-400 border-yellow-500/20">
               {alg}

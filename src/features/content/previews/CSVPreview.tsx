@@ -3,6 +3,7 @@ import { FileSpreadsheet } from 'lucide-react'
 import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewLocalMenu } from './PreviewShell'
+import { previewTheme } from './previewTheme'
 
 type CSVPreviewProps = {
   readonly content: Content
@@ -58,25 +59,33 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
       </div>
 
       {/* Scrollable Table */}
-      <div className="flex-1 overflow-auto rounded-xl border border-white/10 bg-black/20 shadow-inner custom-scrollbar">
+      <div
+        className={`flex-1 overflow-auto rounded-xl shadow-inner custom-scrollbar bg-white/65 dark:bg-black/20 border border-slate-200/80 dark:border-white/10`}
+      >
         <table className="w-full text-left text-sm border-collapse whitespace-nowrap">
-          <thead className="sticky top-0 z-10 bg-[#1e1e1e] shadow-sm">
+          <thead className="sticky top-0 z-10 bg-slate-100/95 dark:bg-[#1e1e1e] shadow-sm">
             <tr>
               {headers.map((header, i) => (
                 <th
                   key={i}
-                  className="px-3 py-2 font-semibold text-xs text-gray-400 uppercase tracking-wider border-b border-white/10 bg-[#1e1e1e]"
+                  className="px-3 py-2 font-semibold text-xs text-gray-600 dark:text-gray-400 uppercase tracking-wider border-b border-slate-200/80 dark:border-white/10 bg-slate-100/95 dark:bg-[#1e1e1e]"
                 >
                   {header}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-slate-200/80 dark:divide-white/5">
             {rows.map((row, i) => (
-              <tr key={i} className="hover:bg-slate-100/5 transition-colors group">
+              <tr
+                key={i}
+                className="hover:bg-slate-100/70 dark:hover:bg-slate-100/5 transition-colors group"
+              >
                 {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-2 text-white/80 group-hover:text-white">
+                  <td
+                    key={j}
+                    className={`px-3 py-2 group-hover:text-gray-900 dark:group-hover:text-white ${previewTheme.textSecondary}`}
+                  >
                     {cell}
                   </td>
                 ))}

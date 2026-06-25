@@ -95,7 +95,7 @@ describe('ClipboardListItem', () => {
       name: /thumbnail/i,
     })
     expect(thumbnail).toBeInTheDocument()
-    expect(thumbnail.src).toBe('file:///tmp/image.png')
+    expect(thumbnail).toHaveAttribute('src', 'file:///tmp/image.png')
     expect(thumbnail.className).toContain('rounded-full')
     expect(thumbnail.className).toContain('object-cover')
   })

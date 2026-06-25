@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Braces } from 'lucide-react'
 import type { Content } from '../types'
+import { previewTheme } from './previewTheme'
 
 type JSONPreviewProps = {
   readonly content: Content
@@ -30,10 +31,14 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
             <Braces size={16} strokeWidth={2.5} />
           </div>
           <div className="flex flex-col">
-            <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+            <span
+              className={`text-xs font-semibold uppercase tracking-wider ${previewTheme.textPrimary}`}
+            >
               JSON
             </span>
-            {keyCount > 0 && <span className="text-[10px] text-gray-500">{keyCount} keys</span>}
+            {keyCount > 0 && (
+              <span className={`text-[10px] ${previewTheme.textMuted}`}>{keyCount} keys</span>
+            )}
           </div>
         </div>
       </div>
@@ -42,10 +47,12 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
       <div className="relative group">
         <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-teal-500/5 to-emerald-500/5 rounded-xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-        <div className="relative rounded-xl bg-black/40 border border-emerald-500/20 shadow-xl overflow-hidden">
+        <div
+          className={`relative rounded-xl border border-emerald-500/20 shadow-xl overflow-hidden bg-white/70 dark:bg-black/40`}
+        >
           <div className="overflow-x-auto custom-scrollbar max-h-96 overflow-y-auto">
             <pre className="p-3 text-sm leading-relaxed">
-              <code className="font-mono text-emerald-300">{formatted}</code>
+              <code className="font-mono text-emerald-700 dark:text-emerald-300">{formatted}</code>
             </pre>
           </div>
         </div>
