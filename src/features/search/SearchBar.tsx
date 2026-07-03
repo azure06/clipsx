@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
-import type { SemanticStatus } from '../../shared/types'
+import type { TextSearchStatus } from '../../shared/types'
 
 const FILTER_OPTIONS = [
   { prefix: '/image', label: 'Images', description: 'Screenshots, photos', icon: Image },
@@ -58,7 +58,7 @@ interface SearchBarProps {
   activeScope?: ScopeCommand
   placeholder?: string
   autoFocus?: boolean
-  semanticStatus?: SemanticStatus | null
+  semanticStatus?: TextSearchStatus | null
   isSemanticActive?: boolean
   onToggleSemantic?: () => void
 }

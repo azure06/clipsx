@@ -3,9 +3,9 @@ use crate::models::{compute_index_text, ClipItem};
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::clipboard_monitor::{self, ClipboardCheckResult, ClipboardMonitor};
 use crate::services::clipboard_platform::{self, ClipboardContent};
+use crate::services::indexing::IndexingService;
 use crate::services::ocr::OcrService;
 use crate::services::office::classify_office_payload;
-use crate::services::semantic::SemanticService;
 use anyhow::Result;
 use arboard::Clipboard;
 use serde_json::{Map, Value};
@@ -60,7 +60,7 @@ fn determine_office_text_state(extracted_text: &str, has_ocr_candidate: bool) ->
 pub struct ClipboardService {
     repository: Arc<ClipRepository>,
     settings_repository: Arc<SettingsRepository>,
-    semantic_service: Arc<SemanticService>,
+    indexing_service: Arc<IndexingService>,
     ocr_service: Arc<OcrService>,
     // NOTE: Arc<Mutex<T>> is like a thread-safe shared wrapper.
     // Arc  = Atomic Reference Counter. Like a shared pointer that keeps a count of how
@@ -84,15 +84,16 @@ impl ClipboardService {
     pub fn new(
         repository: Arc<ClipRepository>,
         settings_repository: Arc<SettingsRepository>,
-        semantic_service: Arc<SemanticService>,
+        indexing_service: Arc<IndexingService>,
         app_handle: AppHandle,
     ) -> Self {
-        // Base directory for all clipboard data
-        let storage_dir = app_handle
+        let app_data_dir = app_handle
             .path()
             .app_data_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("clipboard_data");
+            .unwrap_or_else(|_| PathBuf::from("."));
+
+        // Base directory for all clipboard data
+        let storage_dir = app_data_dir.join("clipboard_data");
 
         // Create per-type subdirectories (professional organization)
         std::fs::create_dir_all(storage_dir.join("images")).ok();
@@ -103,7 +104,7 @@ impl ClipboardService {
         Self {
             repository,
             settings_repository,
-            semantic_service,
+            indexing_service,
             ocr_service: Arc::new(OcrService::new()),
             monitor: Arc::new(Mutex::new(clipboard_monitor::create_monitor(
                 app_handle.clone(),
@@ -323,65 +324,16 @@ impl ClipboardService {
                     };
 
                     // Trigger embedding generation when index_text is now non-empty.
-                    if !updated_clip.index_text.is_empty()
-                        && updated_clip.primary_text_source != "none"
-                    {
-                        if let Some((model_name, dimensions)) =
-                            svc4.semantic_service.get_model_info()
-                        {
-                            let clip_id = updated_clip.id.clone();
-                            let index_text = updated_clip.index_text.clone();
-                            let repo = svc4.repository.clone();
-                            let semantic = svc4.semantic_service.clone();
-                            let app_handle = svc4.app_handle.clone();
+                    // IndexingService will spawn the embed task and emit clip-updated
+                    // (success or failure). If it declines (empty text, no model loaded,
+                    // or non-real source), emit clip-updated synchronously so the
+                    // frontend still sees the OCR status change.
+                    let spawned = svc4
+                        .indexing_service
+                        .enqueue_clip_indexing(&updated_clip, true)
+                        .await;
 
-                            tokio::spawn(async move {
-                                match semantic.embed(index_text).await {
-                                    Ok(vector) => {
-                                        if let Err(e) = repo
-                                            .create_embedding(
-                                                &clip_id,
-                                                SemanticService::vector_to_bytes(&vector),
-                                                &model_name,
-                                                dimensions,
-                                            )
-                                            .await
-                                        {
-                                            eprintln!("[OCR] Failed to save embedding: {}", e);
-                                        }
-                                        if let Err(e) =
-                                            emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
-                                                .await
-                                        {
-                                            eprintln!("[OCR] clip-updated emit failed: {}", e);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[OCR] Embedding generation failed: {}", e);
-                                        // Still notify frontend of OCR status change.
-                                        if let Err(e) =
-                                            emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
-                                                .await
-                                        {
-                                            eprintln!("[OCR] clip-updated emit failed: {}", e);
-                                        }
-                                    }
-                                }
-                            });
-                        } else {
-                            // No semantic model loaded; just notify the frontend.
-                            if let Err(e) = emit_clip_updated(
-                                &svc4.app_handle,
-                                svc4.repository.as_ref(),
-                                &updated_clip.id,
-                            )
-                            .await
-                            {
-                                eprintln!("[OCR] clip-updated emit failed: {}", e);
-                            }
-                        }
-                    } else {
-                        // No text (or source unchanged): still update the frontend.
+                    if !spawned {
                         if let Err(e) = emit_clip_updated(
                             &svc4.app_handle,
                             svc4.repository.as_ref(),
@@ -576,44 +528,11 @@ impl ClipboardService {
                 // reads this value to decide when to clear the OS clipboard.
                 *self.last_copy_at.lock().await = Some(Instant::now());
 
-                // Trigger background embedding generation using index_text.
-                // Clips with primary_text_source='none' have no real text yet and are skipped.
-                let index_text = clip.index_text.clone();
-                if !index_text.is_empty() && clip.primary_text_source != "none" {
-                    if let Some((model_name, dimensions)) = self.semantic_service.get_model_info() {
-                        let clip_id = clip.id.clone();
-                        let repo = self.repository.clone();
-                        let semantic = self.semantic_service.clone();
-                        let app_handle = self.app_handle.clone();
-
-                        tokio::spawn(async move {
-                            match semantic.embed(index_text).await {
-                                Ok(vector) => {
-                                    if let Err(e) = repo
-                                        .create_embedding(
-                                            &clip_id,
-                                            SemanticService::vector_to_bytes(&vector),
-                                            &model_name,
-                                            dimensions,
-                                        )
-                                        .await
-                                    {
-                                        eprintln!("[ERROR] Failed to save embedding: {}", e);
-                                    } else if let Err(e) =
-                                        emit_clip_updated(&app_handle, repo.as_ref(), &clip_id)
-                                            .await
-                                    {
-                                        eprintln!(
-                                            "[ERROR] Failed to emit clip-updated after embedding save: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                Err(e) => eprintln!("[ERROR] Failed to generate embedding: {}", e),
-                            }
-                        });
-                    }
-                }
+                // Sync the new search tables immediately, then spawn
+                // embedding generation only when the clip has indexable text.
+                self.indexing_service
+                    .enqueue_clip_indexing(&clip, false)
+                    .await;
             }
         }
 
@@ -1045,10 +964,6 @@ impl ClipboardService {
     /// Get access to the monitor (for notify_wrote)
     pub fn get_monitor(&self) -> Arc<Mutex<Box<dyn clipboard_monitor::ClipboardMonitor>>> {
         Arc::clone(&self.monitor)
-    }
-
-    pub fn app_handle(&self) -> &AppHandle {
-        &self.app_handle
     }
 
     /// Delete all files associated with a clip (images, attachments)

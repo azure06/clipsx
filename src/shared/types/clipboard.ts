@@ -33,7 +33,7 @@ export type ClipItem = {
   readonly attachmentType: string | null // UTI type for OLE write-back, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
   readonly filePaths: string | null // JSON array
   readonly ocrText: string | null // Raw OCR output (provenance/debugging)
-  readonly indexText: string // Retrieval text used by FTS and semantic search
+  readonly indexText: string // Canonical text used to build search documents and text embeddings
   readonly primaryTextSource: PrimaryTextSource // Source that produced contentText
   readonly ocrStatus: OcrStatus // OCR pipeline state
   readonly metadata: string | null // JSON object

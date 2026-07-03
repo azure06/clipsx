@@ -7,6 +7,7 @@ use anyhow::Result;
 
 /// Decode QR code from raw image bytes
 /// Returns the QR content as a string if found, or None if no QR code detected
+#[allow(dead_code)]
 pub fn decode_qr_from_bytes(_image_bytes: &[u8]) -> Result<Option<String>> {
     // TODO: Implement QR detection from image bytes
     // Use rqrr or similar library to detect and decode QR codes

@@ -35,7 +35,6 @@ impl SettingsRepository {
 
         let settings: AppSettings =
             serde_json::from_str(&contents).context("Failed to parse settings JSON")?;
-
         Ok(settings)
     }
 
@@ -90,7 +89,7 @@ mod tests {
         let settings = repo.load().unwrap();
         assert!(settings.enable_images);
         assert!(settings.paste_on_enter);
-        assert!(!settings.semantic_search_enabled);
+        assert!(!settings.text_search_enabled);
     }
 
     #[test]
@@ -131,22 +130,17 @@ mod tests {
     }
 
     #[test]
-    fn test_save_and_load_semantic_search_settings() {
+    fn test_save_and_load_text_search_setting() {
         let (repo, _temp) = create_test_repo();
 
         let settings = AppSettings {
-            semantic_search_enabled: true,
-            semantic_model: "paraphrase-multilingual-MiniLM-L12-v2".to_string(),
+            text_search_enabled: true,
             ..AppSettings::default()
         };
 
         repo.save(&settings).unwrap();
 
         let loaded = repo.load().unwrap();
-        assert!(loaded.semantic_search_enabled);
-        assert_eq!(
-            loaded.semantic_model,
-            "paraphrase-multilingual-MiniLM-L12-v2"
-        );
+        assert!(loaded.text_search_enabled);
     }
 }

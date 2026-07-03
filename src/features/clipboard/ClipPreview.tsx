@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { useMemo } from 'react'
 import type { ClipItem } from '../../shared/types'
 import {
   ContentPreview,
@@ -14,15 +12,13 @@ import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
 import { useClipboardStore } from '../../stores/clipboardStore'
-import type { SemanticStatus } from '../../shared/types'
 
 interface ClipPreviewProps {
   clip: ClipItem
 }
 
 export const ClipPreview = ({ clip }: ClipPreviewProps) => {
-  const { deleteClip, togglePin, toggleFavorite, generateEmbedding } = useClipboardStore()
-  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
+  const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
 
   // Convert ClipItem to unified Content
   const content = useMemo(() => clipToContent(clip), [clip])
@@ -30,39 +26,13 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   const typeAccent = getContentDisplayAccentType(content)
   const sourceLabel = getContentSourceLabel(content)
 
-  useEffect(() => {
-    const loadSemanticStatus = async () => {
-      try {
-        const status = await invoke<SemanticStatus>('get_semantic_status')
-        setSemanticStatus(status)
-      } catch {
-        setSemanticStatus(null)
-      }
-    }
-
-    void loadSemanticStatus()
-
-    const unlisten = listen('semantic-status-changed', () => {
-      void loadSemanticStatus()
-    })
-
-    return () => {
-      void unlisten.then(fn => fn())
-    }
-  }, [])
-
-  const canGenerateEmbedding =
-    semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
-
   const actionContext = useMemo(
     () => ({
       onDelete: (id: string) => deleteClip(id),
       onTogglePin: (id: string) => togglePin(id),
       onToggleFavorite: (id: string) => toggleFavorite(id),
-      canGenerateEmbedding,
-      onGenerateEmbedding: (id: string) => void generateEmbedding(id),
     }),
-    [deleteClip, togglePin, toggleFavorite, canGenerateEmbedding, generateEmbedding]
+    [deleteClip, togglePin, toggleFavorite]
   )
 
   return (
@@ -112,11 +82,6 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           )}
           {clip.ocrStatus === 'failed' && clip.contentType === 'image' && (
             <span className="text-amber-600 dark:text-amber-400">OCR unavailable</span>
-          )}
-          {!content.clip.hasEmbedding && !canGenerateEmbedding && content.type === 'text' && (
-            <span className="text-amber-600 dark:text-amber-400">
-              {semanticStatus?.message ?? 'Load a semantic model to generate embeddings'}
-            </span>
           )}
         </div>
         <div className="flex items-center gap-3">

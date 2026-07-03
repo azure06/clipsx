@@ -15,7 +15,7 @@ pub struct ClipItem {
     pub attachment_type: Option<String>, // UTI type for OLE, e.g. "com.microsoft.PowerPoint-14.0-Slides-Package"
     pub file_paths: Option<String>,      // JSON array
     pub ocr_text: Option<String>,        // Raw OCR output (provenance/debugging)
-    pub index_text: String, // Retrieval text for FTS and semantic (content_text + note)
+    pub index_text: String, // Canonical text used for search-document construction and text embeddings
     pub primary_text_source: String, // 'clipboard', 'office', 'pdf_extract', 'svg_extract', 'ocr', 'note', 'none'
     pub ocr_status: String,          // 'not_needed', 'pending', 'running', 'done', 'failed'
     pub detected_type: String,       // 'url', 'code', 'text', etc.
@@ -43,18 +43,6 @@ pub struct Tag {
     pub id: i64,
     pub name: String,
     pub color: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct Embedding {
-    pub id: i64,
-    pub clip_id: String,
-    pub vector: Vec<u8>, // Serialized float array (BLOB in DB)
-    pub model: String,   // E.g., "text-embedding-3-small"
-    pub dimensions: i32, // Vector size (768, 1536, etc.)
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -105,8 +93,9 @@ pub enum ClipContent {
     },
 }
 
-/// Compute the retrieval index from canonical content and user note.
-/// Both FTS and semantic embeddings read from this value.
+/// Compute the canonical text payload from content and user note.
+/// `search_documents.search_text` is the active FTS source; `index_text`
+/// stays populated as the canonical text input for indexing.
 pub fn compute_index_text(content_text: Option<&str>, note: Option<&str>) -> String {
     match (
         content_text.filter(|s| !s.is_empty()),

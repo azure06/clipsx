@@ -11,7 +11,7 @@ export type ContentPresentationSpec = {
   readonly hiddenActions: readonly string[]
 }
 
-const GLOBAL_BAR_BASE = ['copy', 'favorite', 'pin', 'core.embeddings.generate', 'delete'] as const
+const GLOBAL_BAR_BASE = ['copy', 'favorite', 'pin', 'delete'] as const
 const OPEN_IN_EDITOR = 'open-default-editor'
 
 const SPECS: readonly ContentPresentationSpec[] = [

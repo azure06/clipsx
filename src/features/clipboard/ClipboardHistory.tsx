@@ -7,7 +7,6 @@ import { clipToContent, useActionRegistry } from '../content'
 import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
 
 // Re-export for backwards compatibility
-// Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
 
 interface ClipboardHistoryProps {
@@ -71,8 +70,6 @@ export const ClipboardHistory = ({
   // true for the entire user-visible IME session (all underlines gone).
   const isComposingRef = useRef(false)
   const compositionEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // const searchInputRef = useRef<HTMLInputElement>(null) // Input is now external
-
   // Track IME composition state (see isComposingRef above)
   useEffect(() => {
     const onCompositionStart = () => {
@@ -109,8 +106,6 @@ export const ClipboardHistory = ({
   }, [loadMoreClips])
 
   // Handle search with debounce
-  // NOTE: When semantic search is added, detect queries like "semantic:find code examples"
-  // and route to semantic search endpoint instead of FTS
   useEffect(() => {
     // Clear existing timeout
     if (searchTimeoutRef.current) {
@@ -226,11 +221,6 @@ export const ClipboardHistory = ({
     },
     [handleExplicitCopy]
   )
-
-  // Filter clips - only by activeFilter now, search is handled by backend FTS
-  // NOTE: Clips array already contains search results if in search mode
-  // Filter clips - only by activeFilter now, search is handled by backend FTS
-  // NOTE: Clips array already contains search results if in search mode
 
   // Reset selection when clips change
   useEffect(() => {

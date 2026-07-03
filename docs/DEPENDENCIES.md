@@ -89,6 +89,9 @@ Source of truth for exact versions: `package.json`
 
 - The pre-commit hook currently runs `npm run format` and `npm run type-check`.
 - `npm run format` only formats `src/**/*.{ts,tsx,css}`. Markdown docs are not auto-formatted by the hook.
+- The search refactor did not add any new frontend npm dependencies; the
+  hybrid search work lives in the Rust/Tauri backend behind existing app
+  surfaces.
 - Use `package.json` as the source of truth if this document drifts.
 
 ---

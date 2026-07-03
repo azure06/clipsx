@@ -314,7 +314,7 @@ describe('useClipboardStore filtered view stability', () => {
 
     await useClipboardStore.getState().setActiveTab('favorites')
 
-    expect(mockInvoke).toHaveBeenCalledWith('search_clips_paginated', {
+    expect(mockInvoke).toHaveBeenCalledWith('search_objects_paginated', {
       query: 'hello',
       filterTypes: [],
       limit: 50,

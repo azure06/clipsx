@@ -39,7 +39,9 @@ serde_json = "1.0.150"
 tokio = { version = "1.52.3", features = ["full"] }
 sqlx = { version = "0.9.0", features =  ["sqlite", "runtime-tokio", "migrate"] }
 arboard = "3.3"
-reqwest = { version = "0.13.4", features = ["json"] }
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
+sha2 = "0.10"
+futures-util = "0.3"
 anyhow = "1.0.102"
 thiserror = "2.0.18"
 chrono = "0.4.45"
@@ -52,6 +54,9 @@ url = "2.5.8"
 tempfile = "3.27.0"
 open = "5.3.5"
 fastembed = "5.17.2"
+ort = { version = "2.0.0-rc.12", features = ["ndarray"] }
+ndarray = "0.17"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 walkdir = "2.5.0"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -79,10 +84,8 @@ windows = { version = "0.62.2", features = [
     "Win32_System_ProcessStatus",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_WindowsAndMessaging",
-    # WinRT OCR (Windows.Media.Ocr) — built-in since Windows 10, no extra install required
-    "Media_Ocr",
-    "Media",
     "Graphics_Imaging",
+    "Media_Ocr",
     "Storage",
     "Storage_Streams",
 ] }

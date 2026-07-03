@@ -15,6 +15,7 @@ use cocoa::{
 use objc::{msg_send, sel, sel_impl};
 
 /// Configuration for Traffic Lights positioning
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct TrafficLightsConfig {
     /// Offset in pixels from default position (positive = right, negative = left)
     pub offset_x: f64,
@@ -34,6 +35,7 @@ impl Default for TrafficLightsConfig {
 /// Enables rounded corners for the window (macOS only)
 /// Uses only public APIs - App Store compatible
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn enable_rounded_corners<R: Runtime>(
     _app: AppHandle<R>,
     window: WebviewWindow<R>,
@@ -84,6 +86,7 @@ pub fn enable_rounded_corners<R: Runtime>(
 
 /// Enables modern window style with rounded corners and shadow
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn enable_modern_window_style<R: Runtime>(
     _app: AppHandle<R>,
     window: WebviewWindow<R>,
@@ -144,6 +147,7 @@ pub fn enable_modern_window_style<R: Runtime>(
 
 /// Repositions Traffic Lights only (useful after fullscreen toggle)
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn reposition_traffic_lights<R: Runtime>(
     _app: AppHandle<R>,
     window: WebviewWindow<R>,

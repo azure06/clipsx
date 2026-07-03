@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s \"https://docs.rs/paddle-ocr-rs/0.6.1/paddle_ocr_rs/ocr_result/struct.OcrResult.html\" > /tmp/ocr_result.html 2>&1 && wc -l /tmp/ocr_result.html)",
+      "Bash(curl -s \"https://docs.rs/paddle-ocr-rs/0.6.1/paddle_ocr_rs/ocr_result/struct.TextBlock.html\")",
+      "Bash(cargo clippy *)",
+      "Bash(cargo tree *)",
+      "Bash(grep -B2 \"unused import: \\\\`AiStackComponentKind\\\\`\")",
+      "Bash(grep -A 5 \"cannot find \\\\`AiStackComponentKind\\\\`\")",
+      "Bash(grep -E '\\\\.\\(rs|ts|tsx|json|toml|yaml|yml\\)$')",
+      "Bash(cargo fmt *)",
+      "Bash(npm test *)",
+      "Bash(cargo doc *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c ' *)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

@@ -45,8 +45,7 @@ export interface AppSettings {
   has_seen_welcome: boolean
 
   // Plugins
-  semantic_search_enabled: boolean
-  semantic_model: string
+  text_search_enabled: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,6 +71,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   always_on_top: false,
   show_copy_toast: true,
   has_seen_welcome: false,
-  semantic_search_enabled: false,
-  semantic_model: 'all-MiniLM-L6-v2',
+  text_search_enabled: false,
 }

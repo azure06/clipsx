@@ -90,14 +90,15 @@ pub struct AppSettings {
     pub has_seen_welcome: bool,
 
     // Plugins
-    #[serde(default = "default_false")]
-    pub semantic_search_enabled: bool,
-    #[serde(default = "default_semantic_model")]
-    pub semantic_model: String,
-}
-
-fn default_semantic_model() -> String {
-    "paraphrase-multilingual-MiniLM-L12-v2".to_string()
+    /// Whether the text search capability is enabled (semantic search toggle).
+    /// Accepts legacy keys from previous versions.
+    #[serde(
+        default = "default_false",
+        alias = "ai_search_enabled",
+        alias = "semantic_search_enabled",
+        alias = "semanticSearchEnabled"
+    )]
+    pub text_search_enabled: bool,
 }
 
 fn default_item_activation_mode() -> ItemActivationMode {
@@ -137,8 +138,7 @@ impl Default for AppSettings {
             always_on_top: false,
             show_copy_toast: true,
             has_seen_welcome: false,
-            semantic_search_enabled: false,
-            semantic_model: default_semantic_model(),
+            text_search_enabled: false,
         }
     }
 }

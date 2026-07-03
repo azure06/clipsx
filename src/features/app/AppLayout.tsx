@@ -14,7 +14,7 @@ import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { ClipItem, SemanticStatus } from '../../shared/types'
+import type { TextSearchStatus, ClipItem } from '../../shared/types'
 
 export const AppLayout = () => {
   const {
@@ -35,7 +35,7 @@ export const AppLayout = () => {
   const addNewClip = useClipboardStore(state => state.addNewClip)
   const mergeClipUpdate = useClipboardStore(state => state.mergeClipUpdate)
   const { setThemeMode } = useTheme()
-  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
+  const [textSearchStatus, setTextSearchStatus] = useState<TextSearchStatus | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
 
@@ -58,14 +58,6 @@ export const AppLayout = () => {
     })
   }
 
-  useEffect(() => {
-    console.log('[NOTE_DEBUG][AppLayout] preview clip resolved from clipboardStore', {
-      previewClipId,
-      previewClipNote: previewClip?.note ?? null,
-      expected: 'preview should always show the same clip data that lives in clipboardStore',
-    })
-  }, [previewClipId, previewClip])
-
   // Load settings on app start
   useEffect(() => {
     void loadSettings()
@@ -79,23 +71,28 @@ export const AppLayout = () => {
   }, [settings?.theme, setThemeMode])
 
   useEffect(() => {
-    const loadSemanticStatus = async () => {
+    const loadTextSearchStatus = async () => {
       try {
-        const status = await invoke<SemanticStatus>('get_semantic_status')
-        setSemanticStatus(status)
+        const status = await invoke<TextSearchStatus>('get_text_search_status')
+        setTextSearchStatus(status)
       } catch {
-        setSemanticStatus(null)
+        setTextSearchStatus(null)
       }
     }
 
-    void loadSemanticStatus()
+    void loadTextSearchStatus()
 
-    const unlisten = listen('semantic-status-changed', () => {
-      void loadSemanticStatus()
+    const unlistenCapabilities = listen('ai-capabilities-changed', () => {
+      void loadTextSearchStatus()
+    })
+
+    const unlistenStackStatus = listen('ai-stack-status-changed', () => {
+      void loadTextSearchStatus()
     })
 
     return () => {
-      void unlisten.then(fn => fn())
+      void unlistenCapabilities.then(fn => fn())
+      void unlistenStackStatus.then(fn => fn())
     }
   }, [])
 
@@ -204,7 +201,7 @@ export const AppLayout = () => {
                     }}
                     activeScope={activeTab}
                     autoFocus={false}
-                    semanticStatus={semanticStatus}
+                    semanticStatus={textSearchStatus}
                     isSemanticActive={isSemanticActive}
                     onToggleSemantic={toggleSemantic}
                   />

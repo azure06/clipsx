@@ -138,7 +138,7 @@ const ClipboardListItemComponent = ({
                 </span>
               )}
               {clip.hasEmbedding && (
-                <span title="Semantic Search Indexed">
+                <span title="AI Search Indexed">
                   <svg width="0" height="0" className="absolute">
                     <linearGradient
                       id={`sparkle-grad-${clip.id}`}

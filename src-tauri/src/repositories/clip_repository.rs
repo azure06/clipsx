@@ -1,6 +1,9 @@
 #![allow(dead_code)]
-use crate::models::{compute_index_text, ClipItem, Embedding, Tag};
+use crate::models::{
+    compute_index_text, ClipItem, SearchDocument, SearchEmbedding, SearchJob, Tag,
+};
 use anyhow::Result;
+use serde_json::Value;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     AssertSqlSafe, SqlitePool,
@@ -8,51 +11,35 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 use tokio::sync::Mutex;
 
-const CLIPS_FTS_TABLE_SQL: &str = r#"
-    CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
-        id UNINDEXED,
-        index_text,
-        content = clips,
-        content_rowid = rowid
-    )
-"#;
-
-const CLIPS_FTS_INSERT_TRIGGER_SQL: &str = r#"
-    CREATE TRIGGER IF NOT EXISTS clips_fts_insert
-    AFTER INSERT ON clips BEGIN
-        INSERT INTO clips_fts(rowid, id, index_text)
-        VALUES (new.rowid, new.id, new.index_text);
-    END
-"#;
-
-const CLIPS_FTS_DELETE_TRIGGER_SQL: &str = r#"
-    CREATE TRIGGER IF NOT EXISTS clips_fts_delete
-    AFTER DELETE ON clips BEGIN
-        INSERT INTO clips_fts(clips_fts, rowid, id, index_text)
-        VALUES ('delete', old.rowid, old.id, old.index_text);
-    END
-"#;
-
-const CLIPS_FTS_UPDATE_TRIGGER_SQL: &str = r#"
-    CREATE TRIGGER IF NOT EXISTS clips_fts_update
-    AFTER UPDATE ON clips BEGIN
-        INSERT INTO clips_fts(clips_fts, rowid, id, index_text)
-        VALUES ('delete', old.rowid, old.id, old.index_text);
-        INSERT INTO clips_fts(rowid, id, index_text)
-        VALUES (new.rowid, new.id, new.index_text);
-    END
-"#;
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EmbeddingCandidate {
     pub id: String,
     pub index_text: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct VisualEmbeddingCandidate {
+    pub id: String,
+    pub image_path: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct EmbeddingStats {
     pub total_text_clips: i64,
     pub indexed_clips: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ClipIndexStateRow {
+    pub clip_id: String,
+    pub requires_text: bool,
+    pub requires_image: bool,
+    pub has_text: bool,
+    pub has_image: bool,
+    pub job_status: Option<String>,
+    pub last_error: Option<String>,
+    pub job_search_version: Option<i32>,
+    pub document_search_version: Option<i32>,
 }
 
 pub struct ClipRepository {
@@ -64,6 +51,10 @@ struct TypeFilterClause {
     sql: String,
     binds: Vec<String>,
 }
+
+pub const SEARCH_DOCUMENT_VERSION: i32 = 1;
+const HAS_EMBEDDING_SQL: &str =
+    "EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id)";
 
 impl ClipRepository {
     pub async fn new(database_url: &str) -> Result<Self> {
@@ -81,91 +72,10 @@ impl ClipRepository {
         // Run migrations
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        let repository = Self {
+        Ok(Self {
             pool,
             write_lock: Mutex::new(()),
-        };
-        repository.ensure_clips_fts_healthy().await?;
-
-        Ok(repository)
-    }
-
-    fn is_malformed_error(error: &anyhow::Error) -> bool {
-        let message = error.to_string().to_lowercase();
-        message.contains("database disk image is malformed")
-            || message.contains("malformed")
-            || message.contains("sql logic error")
-    }
-
-    async fn create_clips_fts_schema(&self) -> Result<()> {
-        sqlx::query(CLIPS_FTS_TABLE_SQL).execute(&self.pool).await?;
-        sqlx::query(CLIPS_FTS_INSERT_TRIGGER_SQL)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query(CLIPS_FTS_DELETE_TRIGGER_SQL)
-            .execute(&self.pool)
-            .await?;
-        sqlx::query(CLIPS_FTS_UPDATE_TRIGGER_SQL)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn rebuild_clips_fts_unlocked(&self) -> Result<()> {
-        eprintln!(
-            "[NOTE_DEBUG][repository] rebuilding clips_fts | expected=search index should be recreated from clips without losing clip data"
-        );
-
-        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_insert")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_delete")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DROP TRIGGER IF EXISTS clips_fts_update")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("DROP TABLE IF EXISTS clips_fts")
-            .execute(&self.pool)
-            .await?;
-
-        self.create_clips_fts_schema().await?;
-
-        sqlx::query("INSERT INTO clips_fts(clips_fts) VALUES('rebuild')")
-            .execute(&self.pool)
-            .await?;
-
-        eprintln!(
-            "[NOTE_DEBUG][repository] rebuilt clips_fts successfully | expected=note and search writes should work again"
-        );
-
-        Ok(())
-    }
-
-    async fn ensure_clips_fts_healthy_unlocked(&self) -> Result<()> {
-        match sqlx::query("INSERT INTO clips_fts(clips_fts) VALUES('integrity-check')")
-            .execute(&self.pool)
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                let error = anyhow::Error::from(error);
-                if Self::is_malformed_error(&error) {
-                    eprintln!(
-                        "[NOTE_DEBUG][repository] clips_fts integrity check failed; attempting rebuild | error={} | expected=rebuild should restore FTS writes",
-                        error
-                    );
-                    self.rebuild_clips_fts_unlocked().await
-                } else {
-                    Err(error)
-                }
-            }
-        }
-    }
-
-    async fn ensure_clips_fts_healthy(&self) -> Result<()> {
-        let _write_guard = self.write_lock.lock().await;
-        self.ensure_clips_fts_healthy_unlocked().await
+        })
     }
 
     pub async fn insert(&self, clip: &ClipItem) -> Result<()> {
@@ -215,7 +125,7 @@ impl ClipRepository {
 
     pub async fn get_recent(&self, limit: i32) -> Result<Vec<ClipItem>> {
         let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips ORDER BY updated_at DESC LIMIT ?"
+            "SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips ORDER BY updated_at DESC LIMIT ?"
         )
         .bind(limit)
                 .fetch_all(&self.pool)
@@ -233,7 +143,7 @@ impl ClipRepository {
         tag_filter: Option<i64>,
     ) -> Result<Vec<ClipItem>> {
         let mut sql = String::from(
-            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1"
+            "SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1"
         );
 
         if favorites_only {
@@ -259,7 +169,7 @@ impl ClipRepository {
 
     pub async fn get_after_timestamp(&self, timestamp: i64) -> Result<Vec<ClipItem>> {
         let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE updated_at > ? ORDER BY updated_at DESC",
+            "SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips WHERE updated_at > ? ORDER BY updated_at DESC",
         )
         .bind(timestamp)
         .fetch_all(&self.pool)
@@ -282,7 +192,7 @@ impl ClipRepository {
 
     pub async fn get_by_id(&self, id: &str) -> Result<Option<ClipItem>> {
         let clip = sqlx::query_as::<_, ClipItem>(
-            "SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE id = ?"
+            "SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips WHERE id = ?"
         )
             .bind(id)
             .fetch_optional(&self.pool)
@@ -298,7 +208,10 @@ impl ClipRepository {
         }
 
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-        let sql = format!("SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE id IN ({})", placeholders);
+        let sql = format!(
+            "SELECT clips.*, {} as has_embedding FROM clips WHERE id IN ({})",
+            HAS_EMBEDDING_SQL, placeholders
+        );
 
         let mut query = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
         for id in ids {
@@ -389,65 +302,116 @@ impl ClipRepository {
         })
     }
 
-    pub async fn search(
-        &self,
-        query: &str,
-        filter_types: Option<Vec<String>>,
-        limit: i32,
-    ) -> Result<Vec<ClipItem>> {
-        let escaped_query = Self::escape_fts5_query(query);
+    fn summarize_for_title(primary: Option<&str>, fallback: Option<&str>) -> Option<String> {
+        primary
+            .filter(|text| !text.trim().is_empty())
+            .or_else(|| fallback.filter(|text| !text.trim().is_empty()))
+            .map(|text| {
+                text.lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or(text)
+                    .chars()
+                    .take(160)
+                    .collect()
+            })
+    }
 
-        // Build base query
-        let mut sql = String::new();
-        let has_text_query = escaped_query != "\"\"";
+    fn derive_thumbnail_path(clip: &ClipItem) -> Option<String> {
+        clip.image_path
+            .clone()
+            .or_else(|| clip.svg_path.clone())
+            .or_else(|| clip.pdf_path.clone())
+    }
 
-        if has_text_query {
-            sql.push_str(
-                r#"
-                SELECT clips.* FROM clips
-                INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
-                WHERE clips_fts MATCH ?
-            "#,
-            );
-        } else {
-            sql.push_str("SELECT clips.* FROM clips WHERE 1=1");
-        }
+    fn meaningful_text(text: Option<&str>) -> Option<String> {
+        text.map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned)
+    }
 
-        // Add filter types if present
-        if let Some(types) = &filter_types {
-            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
-                sql.push_str(&clause.sql);
+    fn canonical_search_text(clip: &ClipItem) -> Option<String> {
+        match clip.primary_text_source.as_str() {
+            "clipboard" | "office" | "pdf_extract" | "svg_extract" | "ocr" => {
+                Self::meaningful_text(clip.content_text.as_deref())
             }
+            "note" | "none" => None,
+            _ => Self::meaningful_text(clip.content_text.as_deref()),
         }
+    }
 
-        if has_text_query {
-            sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ?");
-        } else {
-            sql.push_str(" ORDER BY clips.updated_at DESC LIMIT ?");
-        }
+    fn clip_metadata_json(clip: &ClipItem) -> Option<Value> {
+        clip.metadata
+            .as_deref()
+            .and_then(|metadata| serde_json::from_str::<Value>(metadata).ok())
+    }
 
-        // Bind parameters
-        let mut query_builder = sqlx::query_as::<_, ClipItem>(AssertSqlSafe(sql));
+    fn metadata_search_terms(clip: &ClipItem) -> Vec<String> {
+        let mut terms = Vec::new();
+        let Some(metadata) = Self::clip_metadata_json(clip) else {
+            return terms;
+        };
 
-        if has_text_query {
-            query_builder = query_builder.bind(escaped_query);
-        }
+        let mut push_str = |value: Option<&str>| {
+            if let Some(value) = Self::meaningful_text(value) {
+                terms.push(value.replace('_', " "));
+            }
+        };
 
-        if let Some(types) = &filter_types {
-            if let Some(clause) = Self::build_type_filter_clause("clips", types) {
-                for t in clause.binds {
-                    query_builder = query_builder.bind(t);
-                }
-            } else {
-                for t in types {
-                    query_builder = query_builder.bind(t);
+        push_str(metadata.get("source_app").and_then(Value::as_str));
+        push_str(metadata.get("office_app").and_then(Value::as_str));
+        push_str(metadata.get("office_kind").and_then(Value::as_str));
+        push_str(metadata.get("table_source").and_then(Value::as_str));
+        push_str(metadata.get("delimiter").and_then(Value::as_str));
+
+        terms
+    }
+
+    fn build_search_document_fields(
+        clip: &ClipItem,
+    ) -> (Option<String>, Option<String>, Option<String>, String) {
+        let canonical_text = Self::canonical_search_text(clip);
+        let note_text = Self::meaningful_text(clip.note.as_deref());
+        let ocr_text = Self::meaningful_text(clip.ocr_text.as_deref());
+        let source_app = Self::meaningful_text(clip.app_name.as_deref());
+        let metadata_terms = Self::metadata_search_terms(clip);
+
+        let visible_text = canonical_text
+            .clone()
+            .or_else(|| note_text.clone())
+            .or_else(|| ocr_text.clone());
+
+        let title = Self::summarize_for_title(
+            visible_text.as_deref(),
+            source_app
+                .as_deref()
+                .or_else(|| metadata_terms.first().map(String::as_str)),
+        );
+
+        let mut search_parts: Vec<String> = Vec::new();
+        let mut push_unique = |value: Option<String>| {
+            if let Some(value) = value {
+                if !search_parts
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&value))
+                {
+                    search_parts.push(value);
                 }
             }
+        };
+
+        push_unique(canonical_text.clone());
+        push_unique(note_text);
+        if ocr_text.as_ref() != canonical_text.as_ref() {
+            push_unique(ocr_text.clone());
+        }
+        push_unique(source_app);
+        for term in metadata_terms {
+            push_unique(Some(term));
         }
 
-        let clips = query_builder.bind(limit).fetch_all(&self.pool).await?;
+        let search_text = search_parts.join("\n\n");
 
-        Ok(clips)
+        (title, visible_text, ocr_text, search_text)
     }
 
     /// Search clips with FTS and pagination
@@ -470,13 +434,14 @@ impl ClipRepository {
         if has_text_query {
             sql.push_str(
                 r#"
-                SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips
-                INNER JOIN clips_fts ON clips.rowid = clips_fts.rowid
-                WHERE clips_fts MATCH ?
+                SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips
+                INNER JOIN search_documents ON search_documents.clip_id = clips.id
+                INNER JOIN search_documents_fts ON search_documents.rowid = search_documents_fts.rowid
+                WHERE search_documents_fts MATCH ?
             "#,
             );
         } else {
-            sql.push_str("SELECT clips.*, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1");
+            sql.push_str("SELECT clips.*, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding FROM clips WHERE 1=1");
         }
 
         if let Some(types) = &filter_types {
@@ -496,7 +461,9 @@ impl ClipRepository {
         }
 
         if has_text_query {
-            sql.push_str(" ORDER BY clips_fts.rank, clips.updated_at DESC LIMIT ? OFFSET ?");
+            sql.push_str(
+                " ORDER BY search_documents_fts.rank, clips.updated_at DESC LIMIT ? OFFSET ?",
+            );
         } else {
             sql.push_str(" ORDER BY clips.updated_at DESC LIMIT ? OFFSET ?");
         }
@@ -531,7 +498,6 @@ impl ClipRepository {
 
         Ok(clips)
     }
-
     pub async fn delete(&self, id: &str) -> Result<()> {
         let _write_guard = self.write_lock.lock().await;
         sqlx::query("DELETE FROM clips WHERE id = ?")
@@ -795,7 +761,7 @@ impl ClipRepository {
 
         let new_index_text = compute_index_text(index_content, note.as_deref());
 
-        let update_result = sqlx::query(
+        let result = sqlx::query(
             "UPDATE clips SET note = ?, index_text = ?, primary_text_source = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&note)
@@ -805,32 +771,7 @@ impl ClipRepository {
         .bind(clip_id)
         .execute(&self.pool)
         .await;
-
-        let result = match update_result {
-            Ok(result) => result,
-            Err(error) => {
-                let error = anyhow::Error::from(error);
-                if Self::is_malformed_error(&error) {
-                    eprintln!(
-                        "[NOTE_DEBUG][repository] note update hit malformed DB error; rebuilding clips_fts and retrying | clip_id={} | error={} | expected=retry should succeed",
-                        clip_id, error
-                    );
-                    self.rebuild_clips_fts_unlocked().await?;
-                    sqlx::query(
-                        "UPDATE clips SET note = ?, index_text = ?, primary_text_source = ?, updated_at = ? WHERE id = ?",
-                    )
-                    .bind(&note)
-                    .bind(&new_index_text)
-                    .bind(&new_primary_text_source)
-                    .bind(now)
-                    .bind(clip_id)
-                    .execute(&self.pool)
-                    .await?
-                } else {
-                    return Err(error);
-                }
-            }
-        };
+        let result = result?;
 
         eprintln!(
             "[NOTE_DEBUG][repository] update executed | clip_id={} | rows_affected={} | expected=1",
@@ -844,7 +785,7 @@ impl ClipRepository {
 
         // Invalidate the stale embedding so the next reindex generates a fresh vector.
         if new_index_text != old_index_text {
-            sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+            sqlx::query("DELETE FROM search_embeddings WHERE clip_id = ? AND modality = 'text'")
                 .bind(clip_id)
                 .execute(&self.pool)
                 .await?;
@@ -904,10 +845,12 @@ impl ClipRepository {
                 .await?;
 
                 if new_index_text != old_index_text {
-                    sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
-                        .bind(clip_id)
-                        .execute(&self.pool)
-                        .await?;
+                    sqlx::query(
+                        "DELETE FROM search_embeddings WHERE clip_id = ? AND modality = 'text'",
+                    )
+                    .bind(clip_id)
+                    .execute(&self.pool)
+                    .await?;
                 }
             } else {
                 // Non-empty OCR: OCR is now the best text source; update content_text and mark primary_text_source
@@ -926,10 +869,12 @@ impl ClipRepository {
                 .await?;
 
                 if new_index_text != old_index_text {
-                    sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
-                        .bind(clip_id)
-                        .execute(&self.pool)
-                        .await?;
+                    sqlx::query(
+                        "DELETE FROM search_embeddings WHERE clip_id = ? AND modality = 'text'",
+                    )
+                    .bind(clip_id)
+                    .execute(&self.pool)
+                    .await?;
                 }
             }
         } else {
@@ -968,7 +913,7 @@ impl ClipRepository {
     /// Used by the OCR background worker to drain the queue.
     pub async fn get_pending_ocr_clips(&self) -> Result<Vec<ClipItem>> {
         let clips = sqlx::query_as::<_, ClipItem>(
-            "SELECT *, EXISTS(SELECT 1 FROM embeddings e WHERE e.clip_id = clips.id) as has_embedding \
+            "SELECT *, EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id = clips.id) as has_embedding \
              FROM clips WHERE ocr_status = 'pending' ORDER BY created_at ASC",
         )
         .fetch_all(&self.pool)
@@ -976,75 +921,317 @@ impl ClipRepository {
         Ok(clips)
     }
 
-    // ===== EMBEDDING OPERATIONS (for semantic search) =====
+    pub async fn upsert_search_document(&self, clip: &ClipItem) -> Result<SearchDocument> {
+        let indexed_at = chrono::Utc::now().timestamp();
+        let (title, visible_text, ocr_text, search_text) = Self::build_search_document_fields(clip);
+        let thumbnail_path = Self::derive_thumbnail_path(clip);
 
-    /// Store embedding vector for a clip
-    pub async fn create_embedding(
-        &self,
-        clip_id: &str,
-        vector: Vec<u8>,
-        model: &str,
-        dimensions: i32,
-    ) -> Result<Embedding> {
+        let document = sqlx::query_as::<_, SearchDocument>(
+            r#"
+            INSERT INTO search_documents (
+                clip_id, title, visible_text, ocr_text, search_text, source_app,
+                thumbnail_path, search_version, indexed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(clip_id) DO UPDATE SET
+                title = excluded.title,
+                visible_text = excluded.visible_text,
+                ocr_text = excluded.ocr_text,
+                search_text = excluded.search_text,
+                source_app = excluded.source_app,
+                thumbnail_path = excluded.thumbnail_path,
+                search_version = excluded.search_version,
+                indexed_at = excluded.indexed_at
+            RETURNING clip_id, title, visible_text, ocr_text, search_text, source_app,
+                      thumbnail_path, search_version, indexed_at
+            "#,
+        )
+        .bind(&clip.id)
+        .bind(title)
+        .bind(visible_text)
+        .bind(ocr_text)
+        .bind(search_text)
+        .bind(&clip.app_name)
+        .bind(thumbnail_path)
+        .bind(SEARCH_DOCUMENT_VERSION)
+        .bind(indexed_at)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(document)
+    }
+
+    pub async fn get_search_document(&self, clip_id: &str) -> Result<Option<SearchDocument>> {
+        let document = sqlx::query_as::<_, SearchDocument>(
+            "SELECT clip_id, title, visible_text, ocr_text, search_text, source_app, thumbnail_path, search_version, indexed_at FROM search_documents WHERE clip_id = ?",
+        )
+        .bind(clip_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(document)
+    }
+
+    pub async fn enqueue_search_job(&self, clip_id: &str) -> Result<SearchJob> {
         let now = chrono::Utc::now().timestamp();
 
-        let id = sqlx::query_scalar::<_, i64>(
+        let job = sqlx::query_as::<_, SearchJob>(
             r#"
-            INSERT INTO embeddings (clip_id, vector, model, dimensions, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO search_jobs (
+                clip_id, status, attempt_count, last_error, requested_at,
+                started_at, completed_at, updated_at, search_version
+            )
+            VALUES (?, 'pending', 0, NULL, ?, NULL, NULL, ?, ?)
             ON CONFLICT(clip_id) DO UPDATE SET
-                vector = excluded.vector,
-                model = excluded.model,
-                dimensions = excluded.dimensions,
-                updated_at = excluded.updated_at
-            RETURNING id
+                status = 'pending',
+                last_error = NULL,
+                requested_at = excluded.requested_at,
+                started_at = NULL,
+                completed_at = NULL,
+                updated_at = excluded.updated_at,
+                search_version = excluded.search_version
+            RETURNING id, clip_id, status, attempt_count, last_error, requested_at,
+                      started_at, completed_at, updated_at, search_version
             "#,
         )
         .bind(clip_id)
-        .bind(&vector)
+        .bind(now)
+        .bind(now)
+        .bind(SEARCH_DOCUMENT_VERSION)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    pub async fn mark_search_job_running(&self, clip_id: &str) -> Result<SearchJob> {
+        let now = chrono::Utc::now().timestamp();
+
+        let job = sqlx::query_as::<_, SearchJob>(
+            r#"
+            UPDATE search_jobs
+            SET status = 'running',
+                attempt_count = attempt_count + 1,
+                last_error = NULL,
+                started_at = ?,
+                completed_at = NULL,
+                updated_at = ?
+            WHERE clip_id = ?
+            RETURNING id, clip_id, status, attempt_count, last_error, requested_at,
+                      started_at, completed_at, updated_at, search_version
+            "#,
+        )
+        .bind(now)
+        .bind(now)
+        .bind(clip_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    pub async fn mark_search_job_completed(&self, clip_id: &str) -> Result<SearchJob> {
+        let now = chrono::Utc::now().timestamp();
+
+        let job = sqlx::query_as::<_, SearchJob>(
+            r#"
+            UPDATE search_jobs
+            SET status = 'completed',
+                last_error = NULL,
+                completed_at = ?,
+                updated_at = ?
+            WHERE clip_id = ?
+            RETURNING id, clip_id, status, attempt_count, last_error, requested_at,
+                      started_at, completed_at, updated_at, search_version
+            "#,
+        )
+        .bind(now)
+        .bind(now)
+        .bind(clip_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    pub async fn mark_search_job_failed(&self, clip_id: &str, message: &str) -> Result<SearchJob> {
+        let now = chrono::Utc::now().timestamp();
+
+        let job = sqlx::query_as::<_, SearchJob>(
+            r#"
+            UPDATE search_jobs
+            SET status = 'failed',
+                last_error = ?,
+                completed_at = NULL,
+                updated_at = ?
+            WHERE clip_id = ?
+            RETURNING id, clip_id, status, attempt_count, last_error, requested_at,
+                      started_at, completed_at, updated_at, search_version
+            "#,
+        )
+        .bind(message)
+        .bind(now)
+        .bind(clip_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    pub async fn get_search_job(&self, clip_id: &str) -> Result<Option<SearchJob>> {
+        let job = sqlx::query_as::<_, SearchJob>(
+            "SELECT id, clip_id, status, attempt_count, last_error, requested_at, started_at, completed_at, updated_at, search_version FROM search_jobs WHERE clip_id = ?",
+        )
+        .bind(clip_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    pub async fn upsert_search_embedding(
+        &self,
+        clip_id: &str,
+        modality: &str,
+        vector: Vec<u8>,
+        model: &str,
+        dimensions: i32,
+    ) -> Result<SearchEmbedding> {
+        let now = chrono::Utc::now().timestamp();
+
+        let embedding = sqlx::query_as::<_, SearchEmbedding>(
+            r#"
+            INSERT INTO search_embeddings (
+                clip_id, modality, model, vector, dimensions, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(clip_id, modality, model) DO UPDATE SET
+                vector = excluded.vector,
+                dimensions = excluded.dimensions,
+                updated_at = excluded.updated_at
+            RETURNING id, clip_id, modality, model, vector, dimensions, created_at, updated_at
+            "#,
+        )
+        .bind(clip_id)
+        .bind(modality)
         .bind(model)
+        .bind(&vector)
         .bind(dimensions)
         .bind(now)
         .bind(now)
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(Embedding {
-            id,
-            clip_id: clip_id.to_string(),
-            vector,
-            model: model.to_string(),
-            dimensions,
-            created_at: now,
-            updated_at: now,
-        })
+        Ok(embedding)
     }
 
-    /// Get embedding for a clip
-    pub async fn get_embedding(&self, clip_id: &str) -> Result<Option<Embedding>> {
-        let embedding =
-            sqlx::query_as::<_, Embedding>("SELECT * FROM embeddings WHERE clip_id = ?")
-                .bind(clip_id)
-                .fetch_optional(&self.pool)
+    pub async fn delete_image_embeddings_for_model(&self, model_name: &str) -> Result<u64> {
+        let result =
+            sqlx::query("DELETE FROM search_embeddings WHERE modality = 'image' AND model = ?")
+                .bind(model_name)
+                .execute(&self.pool)
                 .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn get_search_embedding(
+        &self,
+        clip_id: &str,
+        modality: &str,
+        model: &str,
+    ) -> Result<Option<SearchEmbedding>> {
+        let embedding = sqlx::query_as::<_, SearchEmbedding>(
+            "SELECT id, clip_id, modality, model, vector, dimensions, created_at, updated_at FROM search_embeddings WHERE clip_id = ? AND modality = ? AND model = ?",
+        )
+        .bind(clip_id)
+        .bind(modality)
+        .bind(model)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(embedding)
     }
 
-    pub async fn get_embeddings_with_filters(
+    pub async fn get_search_embeddings_with_filters(
+        &self,
+        filter_types: Option<Vec<String>>,
+        favorites_only: bool,
+        pinned_only: bool,
+        tag_filter: Option<i64>,
+        modality: &str,
+        model: &str,
+    ) -> Result<Vec<SearchEmbedding>> {
+        let mut sql = String::from(
+            "SELECT se.id, se.clip_id, se.modality, se.model, se.vector, se.dimensions, se.created_at, se.updated_at \
+             FROM search_embeddings se \
+             INNER JOIN clips c ON se.clip_id = c.id \
+             WHERE se.modality = ? AND se.model = ?",
+        );
+
+        if let Some(types) = &filter_types {
+            if let Some(clause) = Self::build_type_filter_clause("c", types) {
+                sql.push_str(&clause.sql);
+            }
+        }
+
+        if favorites_only {
+            sql.push_str(" AND c.is_favorite = 1");
+        }
+        if pinned_only {
+            sql.push_str(" AND c.is_pinned = 1");
+        }
+        if tag_filter.is_some() {
+            sql.push_str(" AND c.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
+        }
+
+        let mut query_builder = sqlx::query_as::<_, SearchEmbedding>(AssertSqlSafe(sql))
+            .bind(modality)
+            .bind(model);
+
+        if let Some(types) = &filter_types {
+            if let Some(clause) = Self::build_type_filter_clause("c", types) {
+                for t in clause.binds {
+                    query_builder = query_builder.bind(t);
+                }
+            } else {
+                for t in types {
+                    query_builder = query_builder.bind(t);
+                }
+            }
+        }
+
+        if let Some(tag_id) = tag_filter {
+            query_builder = query_builder.bind(tag_id);
+        }
+
+        let embeddings = query_builder.fetch_all(&self.pool).await?;
+        Ok(embeddings)
+    }
+
+    pub async fn get_text_search_embedding(
+        &self,
+        clip_id: &str,
+        model: &str,
+    ) -> Result<Option<SearchEmbedding>> {
+        self.get_search_embedding(clip_id, "text", model).await
+    }
+
+    pub async fn get_text_search_embeddings_with_filters(
         &self,
         filter_types: Option<Vec<String>>,
         favorites_only: bool,
         pinned_only: bool,
         tag_filter: Option<i64>,
         model: Option<&str>,
-    ) -> Result<Vec<Embedding>> {
+    ) -> Result<Vec<SearchEmbedding>> {
         let mut sql = String::from(
-            "SELECT e.* FROM embeddings e INNER JOIN clips c ON e.clip_id = c.id WHERE 1=1",
+            "SELECT se.id, se.clip_id, se.modality, se.model, se.vector, se.dimensions, se.created_at, se.updated_at \
+             FROM search_embeddings se INNER JOIN clips c ON se.clip_id = c.id \
+             WHERE se.modality = 'text'",
         );
 
         if model.is_some() {
-            sql.push_str(" AND e.model = ?");
+            sql.push_str(" AND se.model = ?");
         }
 
         if let Some(types) = &filter_types {
@@ -1063,7 +1250,7 @@ impl ClipRepository {
             sql.push_str(" AND c.id IN (SELECT clip_id FROM clip_tags WHERE tag_id = ?)");
         }
 
-        let mut query_builder = sqlx::query_as::<_, Embedding>(AssertSqlSafe(sql));
+        let mut query_builder = sqlx::query_as::<_, SearchEmbedding>(AssertSqlSafe(sql));
 
         if let Some(model_name) = model {
             query_builder = query_builder.bind(model_name);
@@ -1089,10 +1276,11 @@ impl ClipRepository {
         Ok(embeddings)
     }
 
-    /// Return clips whose index_text is non-empty and lack an up-to-date embedding,
-    /// or whose embedding has been invalidated (deleted) after an index_text change.
+    /// Return clips whose index_text is non-empty and lack an up-to-date text
+    /// search embedding, or whose embedding has been invalidated after an
+    /// index_text change.
     /// Clips with primary_text_source='none' have no real text yet and are excluded.
-    pub async fn get_embedding_candidates_for_model(
+    pub async fn get_text_embedding_candidates_for_model(
         &self,
         model: &str,
     ) -> Result<Vec<EmbeddingCandidate>> {
@@ -1100,11 +1288,14 @@ impl ClipRepository {
             r#"
             SELECT c.id, c.index_text
             FROM clips c
-            LEFT JOIN embeddings e ON e.clip_id = c.id
+            LEFT JOIN search_embeddings se
+              ON se.clip_id = c.id
+             AND se.modality = 'text'
+             AND se.model = ?
             WHERE c.index_text IS NOT NULL
               AND TRIM(c.index_text) != ''
               AND c.primary_text_source != 'none'
-              AND (e.clip_id IS NULL OR e.model != ?)
+              AND se.clip_id IS NULL
             ORDER BY c.updated_at DESC
             "#,
         )
@@ -1115,7 +1306,33 @@ impl ClipRepository {
         Ok(clips)
     }
 
-    pub async fn get_embedding_stats(&self, model: &str) -> Result<EmbeddingStats> {
+    pub async fn get_visual_embedding_candidates_for_model(
+        &self,
+        model: &str,
+    ) -> Result<Vec<VisualEmbeddingCandidate>> {
+        let clips = sqlx::query_as::<_, VisualEmbeddingCandidate>(
+            r#"
+            SELECT c.id, c.image_path
+            FROM clips c
+            LEFT JOIN search_embeddings se
+              ON se.clip_id = c.id
+             AND se.model = ?
+             AND se.modality = 'image'
+            WHERE c.content_type IN ('image', 'office')
+              AND c.image_path IS NOT NULL
+              AND TRIM(c.image_path) != ''
+              AND se.clip_id IS NULL
+            ORDER BY c.updated_at DESC
+            "#,
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(clips)
+    }
+
+    pub async fn get_text_embedding_stats(&self, model: &str) -> Result<EmbeddingStats> {
         let total_text_clips = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COUNT(*)
@@ -1131,8 +1348,8 @@ impl ClipRepository {
         let indexed_clips = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT COUNT(*)
-            FROM embeddings
-            WHERE model = ?
+            FROM search_embeddings
+            WHERE modality = 'text' AND model = ?
             "#,
         )
         .bind(model)
@@ -1145,9 +1362,71 @@ impl ClipRepository {
         })
     }
 
-    /// Delete embedding for a clip
-    pub async fn delete_embedding(&self, clip_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM embeddings WHERE clip_id = ?")
+    pub async fn get_clip_index_state_rows(
+        &self,
+        text_model: &str,
+        image_model: &str,
+    ) -> Result<Vec<ClipIndexStateRow>> {
+        let rows = sqlx::query_as::<_, ClipIndexStateRow>(
+            r#"
+            SELECT
+                c.id AS clip_id,
+                CASE
+                    WHEN c.index_text IS NOT NULL
+                     AND TRIM(c.index_text) != ''
+                     AND c.primary_text_source != 'none' THEN 1
+                    ELSE 0
+                END AS requires_text,
+                CASE
+                    WHEN c.content_type IN ('image', 'office')
+                     AND c.image_path IS NOT NULL
+                     AND TRIM(c.image_path) != '' THEN 1
+                    ELSE 0
+                END AS requires_image,
+                EXISTS(
+                    SELECT 1
+                    FROM search_embeddings se
+                    WHERE se.clip_id = c.id
+                      AND se.modality = 'text'
+                      AND se.model = ?
+                ) AS has_text,
+                EXISTS(
+                    SELECT 1
+                    FROM search_embeddings se
+                    WHERE se.clip_id = c.id
+                      AND se.modality = 'image'
+                      AND se.model = ?
+                ) AS has_image,
+                sj.status AS job_status,
+                sj.last_error AS last_error,
+                sj.search_version AS job_search_version,
+                sd.search_version AS document_search_version
+            FROM clips c
+            LEFT JOIN search_jobs sj ON sj.clip_id = c.id
+            LEFT JOIN search_documents sd ON sd.clip_id = c.id
+            WHERE (
+                    c.index_text IS NOT NULL
+                AND TRIM(c.index_text) != ''
+                AND c.primary_text_source != 'none'
+            )
+               OR (
+                    c.content_type IN ('image', 'office')
+                AND c.image_path IS NOT NULL
+                AND TRIM(c.image_path) != ''
+            )
+            "#,
+        )
+        .bind(text_model)
+        .bind(image_model)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Delete text search embeddings for a clip.
+    pub async fn delete_text_search_embeddings_for_clip(&self, clip_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM search_embeddings WHERE clip_id = ? AND modality = 'text'")
             .bind(clip_id)
             .execute(&self.pool)
             .await?;
@@ -1155,10 +1434,24 @@ impl ClipRepository {
         Ok(())
     }
 
-    /// Delete all embeddings generated by a specific model.
-    pub async fn delete_embeddings_for_model(&self, model: &str) -> Result<()> {
-        sqlx::query("DELETE FROM embeddings WHERE model = ?")
+    /// Delete all text search embeddings generated by a specific model.
+    pub async fn delete_text_search_embeddings_for_model(&self, model: &str) -> Result<()> {
+        sqlx::query("DELETE FROM search_embeddings WHERE model = ? AND modality = 'text'")
             .bind(model)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn delete_search_embeddings_for_model(
+        &self,
+        model: &str,
+        modality: &str,
+    ) -> Result<()> {
+        sqlx::query("DELETE FROM search_embeddings WHERE model = ? AND modality = ?")
+            .bind(model)
+            .bind(modality)
             .execute(&self.pool)
             .await?;
 
@@ -1533,6 +1826,7 @@ mod tests {
         let updated = repo
             .update_clip_note(&clip.id, Some("fresh note".to_string()))
             .await?;
+        sync_search_projection(&repo, &updated).await?;
 
         assert_eq!(updated.note.as_deref(), Some("fresh note"));
 
@@ -1569,6 +1863,7 @@ mod tests {
         let repo = ClipRepository::new("sqlite::memory:").await?;
         let clip = ClipItem::from_text("boring body".to_string(), "text".to_string(), None);
         repo.insert(&clip).await?;
+        sync_search_projection(&repo, &clip).await?;
 
         let tag = repo.create_tag("urgent", None).await?;
         repo.add_tag_to_clip(&clip.id, tag.id).await?;
@@ -1586,7 +1881,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_embeddings_with_filters_respects_tag_filter() -> Result<()> {
+    async fn test_get_text_search_embeddings_with_filters_respects_tag_filter() -> Result<()> {
         let repo = ClipRepository::new("sqlite::memory:").await?;
 
         let tagged_clip = ClipItem::from_text("tagged body".to_string(), "text".to_string(), None);
@@ -1596,16 +1891,16 @@ mod tests {
         repo.insert(&tagged_clip).await?;
         repo.insert(&untagged_clip).await?;
 
-        repo.create_embedding(&tagged_clip.id, vec![1, 2, 3, 4], "test-model", 1)
+        repo.upsert_search_embedding(&tagged_clip.id, "text", vec![1, 2, 3, 4], "test-model", 1)
             .await?;
-        repo.create_embedding(&untagged_clip.id, vec![5, 6, 7, 8], "test-model", 1)
+        repo.upsert_search_embedding(&untagged_clip.id, "text", vec![5, 6, 7, 8], "test-model", 1)
             .await?;
 
         let tag = repo.create_tag("focus", None).await?;
         repo.add_tag_to_clip(&tagged_clip.id, tag.id).await?;
 
         let filtered = repo
-            .get_embeddings_with_filters(None, false, false, Some(tag.id), None)
+            .get_text_search_embeddings_with_filters(None, false, false, Some(tag.id), None)
             .await?;
 
         assert_eq!(filtered.len(), 1);
@@ -1615,7 +1910,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_embeddings_with_filters_respects_model_filter() -> Result<()> {
+    async fn test_get_text_search_embeddings_with_filters_respects_model_filter() -> Result<()> {
         let repo = ClipRepository::new("sqlite::memory:").await?;
 
         let current_clip =
@@ -1626,13 +1921,25 @@ mod tests {
         repo.insert(&current_clip).await?;
         repo.insert(&stale_clip).await?;
 
-        repo.create_embedding(&current_clip.id, vec![1, 2, 3, 4], "current-model", 1)
-            .await?;
-        repo.create_embedding(&stale_clip.id, vec![5, 6, 7, 8], "stale-model", 1)
+        repo.upsert_search_embedding(
+            &current_clip.id,
+            "text",
+            vec![1, 2, 3, 4],
+            "current-model",
+            1,
+        )
+        .await?;
+        repo.upsert_search_embedding(&stale_clip.id, "text", vec![5, 6, 7, 8], "stale-model", 1)
             .await?;
 
         let filtered = repo
-            .get_embeddings_with_filters(None, false, false, None, Some("current-model"))
+            .get_text_search_embeddings_with_filters(
+                None,
+                false,
+                false,
+                None,
+                Some("current-model"),
+            )
             .await?;
 
         assert_eq!(filtered.len(), 1);
@@ -1652,6 +1959,7 @@ mod tests {
             Some(serde_json::json!({ "delimiter": ",", "rows": 2, "columns": 2 }).to_string()),
         );
         repo.insert(&csv_clip).await?;
+        sync_search_projection(&repo, &csv_clip).await?;
 
         let mut office_spreadsheet = ClipItem::from_text(
             "product\tqty\npens\t12".to_string(),
@@ -1662,6 +1970,7 @@ mod tests {
         office_spreadsheet.metadata =
             Some(serde_json::json!({ "office_kind": "spreadsheet" }).to_string());
         repo.insert(&office_spreadsheet).await?;
+        sync_search_projection(&repo, &office_spreadsheet).await?;
 
         let mut legacy_html_table =
             ClipItem::from_text("legacy table".to_string(), "office".to_string(), None);
@@ -1671,6 +1980,7 @@ mod tests {
         legacy_html_table.metadata =
             Some(serde_json::json!({ "source_app": "Microsoft Excel" }).to_string());
         repo.insert(&legacy_html_table).await?;
+        sync_search_projection(&repo, &legacy_html_table).await?;
 
         let mut office_document =
             ClipItem::from_text("Quarterly memo".to_string(), "office".to_string(), None);
@@ -1678,6 +1988,7 @@ mod tests {
         office_document.metadata =
             Some(serde_json::json!({ "office_kind": "document" }).to_string());
         repo.insert(&office_document).await?;
+        sync_search_projection(&repo, &office_document).await?;
 
         let csv_results = repo
             .search_paginated("", Some(vec!["csv".to_string()]), 20, 0, false, false, None)
@@ -1729,7 +2040,7 @@ mod tests {
         repo.insert(&text_clip).await?;
 
         let candidates = repo
-            .get_embedding_candidates_for_model("test-model")
+            .get_text_embedding_candidates_for_model("test-model")
             .await?;
 
         assert!(
@@ -1801,7 +2112,7 @@ mod tests {
             .await?;
 
         let candidates = repo
-            .get_embedding_candidates_for_model("test-model")
+            .get_text_embedding_candidates_for_model("test-model")
             .await?;
         assert!(
             candidates.iter().any(|c| c.id == image_clip.id),
@@ -1822,12 +2133,12 @@ mod tests {
         image_clip.ocr_status = "pending".to_string();
         repo.insert(&image_clip).await?;
 
-        let stats_before = repo.get_embedding_stats("test-model").await?;
+        let stats_before = repo.get_text_embedding_stats("test-model").await?;
 
         repo.update_clip_note(&image_clip.id, Some("a note".to_string()))
             .await?;
 
-        let stats_after = repo.get_embedding_stats("test-model").await?;
+        let stats_after = repo.get_text_embedding_stats("test-model").await?;
         assert_eq!(
             stats_after.total_text_clips,
             stats_before.total_text_clips + 1,
@@ -1870,21 +2181,26 @@ mod tests {
         repo.insert(&clip).await?;
 
         // Give it an embedding
-        repo.create_embedding(&clip.id, vec![1, 2, 3, 4], "test-model", 1)
+        repo.upsert_search_embedding(&clip.id, "text", vec![1, 2, 3, 4], "test-model", 1)
             .await?;
-        assert!(repo.get_embedding(&clip.id).await?.is_some());
+        assert!(repo
+            .get_text_search_embedding(&clip.id, "test-model")
+            .await?
+            .is_some());
 
         // Edit the note — index_text changes, embedding must be deleted
         repo.update_clip_note(&clip.id, Some("new note".to_string()))
             .await?;
         assert!(
-            repo.get_embedding(&clip.id).await?.is_none(),
+            repo.get_text_search_embedding(&clip.id, "test-model")
+                .await?
+                .is_none(),
             "embedding must be invalidated after note changes index_text"
         );
 
         // The clip now appears as a reindex candidate
         let candidates = repo
-            .get_embedding_candidates_for_model("test-model")
+            .get_text_embedding_candidates_for_model("test-model")
             .await?;
         assert!(
             candidates.iter().any(|c| c.id == clip.id),
@@ -1900,13 +2216,15 @@ mod tests {
         let clip = ClipItem::from_text("body".to_string(), "text".to_string(), None);
         repo.insert(&clip).await?;
 
-        repo.create_embedding(&clip.id, vec![1, 2, 3, 4], "test-model", 1)
+        repo.upsert_search_embedding(&clip.id, "text", vec![1, 2, 3, 4], "test-model", 1)
             .await?;
 
         // Clear note — index_text stays "body", embedding must survive
         repo.update_clip_note(&clip.id, None).await?;
         assert!(
-            repo.get_embedding(&clip.id).await?.is_some(),
+            repo.get_text_search_embedding(&clip.id, "test-model")
+                .await?
+                .is_some(),
             "embedding must survive when index_text does not change"
         );
 
@@ -1922,6 +2240,197 @@ mod tests {
         clip.primary_text_source = "none".to_string();
         clip.ocr_status = "pending".to_string();
         clip
+    }
+
+    async fn sync_search_projection(repo: &ClipRepository, clip: &ClipItem) -> Result<()> {
+        repo.upsert_search_document(clip).await?;
+        repo.enqueue_search_job(&clip.id).await?;
+        repo.mark_search_job_completed(&clip.id).await?;
+        Ok(())
+    }
+
+    async fn assert_search_results(
+        repo: &ClipRepository,
+        query: &str,
+        expected_ids: &[String],
+    ) -> Result<()> {
+        let ids: Vec<String> = repo
+            .search_paginated(query, None, 20, 0, false, false, None)
+            .await?
+            .into_iter()
+            .map(|clip| clip.id)
+            .collect();
+
+        assert_eq!(
+            ids, expected_ids,
+            "query `{query}` should match expected clips"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_dual_write_keeps_insert_search_parity() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let matching =
+            ClipItem::from_text("search me please".to_string(), "text".to_string(), None);
+        let other = ClipItem::from_text("different body".to_string(), "text".to_string(), None);
+
+        repo.insert(&matching).await?;
+        repo.insert(&other).await?;
+
+        sync_search_projection(&repo, &matching).await?;
+        sync_search_projection(&repo, &other).await?;
+
+        let document = repo.get_search_document(&matching.id).await?.unwrap();
+        assert_eq!(document.search_text, matching.index_text);
+
+        let job = repo.get_search_job(&matching.id).await?.unwrap();
+        assert_eq!(job.status, "completed");
+
+        assert_search_results(&repo, "search", std::slice::from_ref(&matching.id)).await
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_dual_write_keeps_note_search_parity() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        let updated = repo
+            .update_clip_note(&clip.id, Some("caption text".to_string()))
+            .await?;
+        sync_search_projection(&repo, &updated).await?;
+
+        let document = repo.get_search_document(&clip.id).await?.unwrap();
+        assert_eq!(document.search_text, "caption text");
+
+        assert_search_results(&repo, "caption", std::slice::from_ref(&clip.id)).await
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_dual_write_keeps_ocr_search_parity() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = make_pending_image_clip();
+        repo.insert(&clip).await?;
+
+        let updated = repo
+            .update_after_ocr(&clip.id, "ocr extracted text", true)
+            .await?;
+        sync_search_projection(&repo, &updated).await?;
+
+        let document = repo.get_search_document(&clip.id).await?.unwrap();
+        assert_eq!(document.ocr_text.as_deref(), Some("ocr extracted text"));
+
+        assert_search_results(&repo, "extracted", std::slice::from_ref(&clip.id)).await
+    }
+
+    #[tokio::test]
+    async fn test_search_documents_include_office_metadata_terms() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut office_clip = ClipItem::from_text(
+            "Q1 revenue".to_string(),
+            "office".to_string(),
+            Some(
+                serde_json::json!({
+                    "source_app": "Microsoft Excel",
+                    "office_app": "excel",
+                    "office_kind": "spreadsheet",
+                    "table_source": "csv_text"
+                })
+                .to_string(),
+            ),
+        );
+        office_clip.content_type = "office".to_string();
+        office_clip.detected_type = "office".to_string();
+        office_clip.primary_text_source = "office".to_string();
+        office_clip.app_name = Some("Microsoft Excel".to_string());
+
+        repo.insert(&office_clip).await?;
+        sync_search_projection(&repo, &office_clip).await?;
+
+        let document = repo.get_search_document(&office_clip.id).await?.unwrap();
+        assert!(
+            document.search_text.contains("spreadsheet"),
+            "search document should include office metadata terms"
+        );
+        assert!(
+            document.search_text.contains("Microsoft Excel"),
+            "search document should include source app for office clips"
+        );
+
+        assert_search_results(&repo, "spreadsheet", &[office_clip.id.clone()]).await?;
+        assert_search_results(&repo, "excel", &[office_clip.id.clone()]).await
+    }
+
+    #[tokio::test]
+    async fn test_visual_embedding_candidates_require_raster_preview() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut image_clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        image_clip.content_type = "image".to_string();
+        image_clip.detected_type = "image".to_string();
+        image_clip.image_path = Some("/tmp/image-preview.png".to_string());
+        image_clip.index_text.clear();
+        image_clip.primary_text_source = "none".to_string();
+
+        let mut office_with_preview =
+            ClipItem::from_text("Quarterly plan".to_string(), "office".to_string(), None);
+        office_with_preview.content_type = "office".to_string();
+        office_with_preview.detected_type = "office".to_string();
+        office_with_preview.image_path = Some("/tmp/office-preview.png".to_string());
+
+        let mut office_pdf_only =
+            ClipItem::from_text("Quarterly plan".to_string(), "office".to_string(), None);
+        office_pdf_only.content_type = "office".to_string();
+        office_pdf_only.detected_type = "office".to_string();
+        office_pdf_only.pdf_path = Some("/tmp/office-preview.pdf".to_string());
+
+        repo.insert(&image_clip).await?;
+        repo.insert(&office_with_preview).await?;
+        repo.insert(&office_pdf_only).await?;
+
+        let candidates = repo
+            .get_visual_embedding_candidates_for_model("clip-vit-b32")
+            .await?;
+        let ids: Vec<String> = candidates
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect();
+
+        assert!(ids.contains(&image_clip.id));
+        assert!(ids.contains(&office_with_preview.id));
+        assert!(!ids.contains(&office_pdf_only.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_visual_embedding_candidates_exclude_existing_model_rows() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+
+        let mut clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        clip.content_type = "image".to_string();
+        clip.detected_type = "image".to_string();
+        clip.image_path = Some("/tmp/already-indexed.png".to_string());
+        clip.index_text.clear();
+        clip.primary_text_source = "none".to_string();
+        repo.insert(&clip).await?;
+
+        repo.upsert_search_embedding(&clip.id, "image", vec![1, 2, 3, 4], "clip-vit-b32", 1)
+            .await?;
+
+        let same_model = repo
+            .get_visual_embedding_candidates_for_model("clip-vit-b32")
+            .await?;
+        assert!(same_model.iter().all(|candidate| candidate.id != clip.id));
+
+        let other_model = repo
+            .get_visual_embedding_candidates_for_model("clip-vit-b16")
+            .await?;
+        assert!(other_model.iter().any(|candidate| candidate.id == clip.id));
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -2033,9 +2542,12 @@ mod tests {
         repo.insert(&clip).await?;
 
         // Give the clip a stale embedding (e.g. from a note that was added first).
-        repo.create_embedding(&clip.id, vec![1, 2, 3], "m", 1)
+        repo.upsert_search_embedding(&clip.id, "text", vec![1, 2, 3], "m", 1)
             .await?;
-        assert!(repo.get_embedding(&clip.id).await?.is_some());
+        assert!(repo
+            .get_text_search_embedding(&clip.id, "m")
+            .await?
+            .is_some());
 
         // OCR completes with new text — index_text changes, embedding must be invalidated.
         let updated = repo
@@ -2043,7 +2555,9 @@ mod tests {
             .await?;
         assert_eq!(updated.ocr_status, "done");
         assert!(
-            repo.get_embedding(&clip.id).await?.is_none(),
+            repo.get_text_search_embedding(&clip.id, "m")
+                .await?
+                .is_none(),
             "stale embedding must be deleted when index_text changes after OCR"
         );
 
@@ -2069,6 +2583,114 @@ mod tests {
         assert_eq!(pending2.len(), 1);
         assert_eq!(pending2[0].id, c2.id);
 
+        Ok(())
+    }
+
+    // ===== has_embedding reflects any modality =====
+
+    #[tokio::test]
+    async fn test_has_embedding_false_with_no_embeddings() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("hello".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+
+        let fetched = repo.get_by_id(&clip.id).await?.unwrap();
+        assert_eq!(fetched.has_embedding, Some(false));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_has_embedding_true_for_text_embedding() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let clip = ClipItem::from_text("hello".to_string(), "text".to_string(), None);
+        repo.insert(&clip).await?;
+        repo.upsert_search_embedding(&clip.id, "text", vec![0u8; 4], "test-model", 1)
+            .await?;
+
+        let fetched = repo.get_by_id(&clip.id).await?.unwrap();
+        assert_eq!(fetched.has_embedding, Some(true));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_has_embedding_true_for_image_only_embedding() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let mut clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        clip.image_path = Some("/tmp/img.png".to_string());
+        repo.insert(&clip).await?;
+
+        // Insert only an image-modality embedding — no text embedding.
+        repo.upsert_search_embedding(&clip.id, "image", vec![0u8; 4], "visual-model", 1)
+            .await?;
+
+        let fetched = repo.get_by_id(&clip.id).await?.unwrap();
+        assert_eq!(
+            fetched.has_embedding,
+            Some(true),
+            "image-only clip with a visual embedding must report has_embedding = true"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_has_embedding_image_only_via_get_recent() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let mut clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        clip.image_path = Some("/tmp/img.png".to_string());
+        repo.insert(&clip).await?;
+        repo.upsert_search_embedding(&clip.id, "image", vec![0u8; 4], "visual-model", 1)
+            .await?;
+
+        let recent = repo.get_recent(10).await?;
+        let found = recent.iter().find(|c| c.id == clip.id).unwrap();
+        assert_eq!(found.has_embedding, Some(true));
+        Ok(())
+    }
+
+    // ===== visual embedding failure → search job marked failed =====
+
+    #[tokio::test]
+    async fn test_visual_embedding_failure_marks_job_failed() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let mut clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        clip.image_path = Some("/tmp/img.png".to_string());
+        repo.insert(&clip).await?;
+
+        repo.upsert_search_document(&clip).await?;
+        repo.enqueue_search_job(&clip.id).await?;
+        repo.mark_search_job_running(&clip.id).await?;
+
+        let err_msg = "visual model failed: connection refused";
+        repo.mark_search_job_failed(&clip.id, err_msg).await?;
+
+        let job = repo.get_search_job(&clip.id).await?.unwrap();
+        assert_eq!(job.status, "failed");
+        assert_eq!(job.last_error.as_deref(), Some(err_msg));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_failed_job_status_not_completed() -> Result<()> {
+        let repo = ClipRepository::new("sqlite::memory:").await?;
+        let mut clip = ClipItem::from_text("[Image]".to_string(), "image".to_string(), None);
+        clip.image_path = Some("/tmp/img.png".to_string());
+        repo.insert(&clip).await?;
+
+        repo.upsert_search_document(&clip).await?;
+        repo.enqueue_search_job(&clip.id).await?;
+        repo.mark_search_job_running(&clip.id).await?;
+        repo.mark_search_job_failed(&clip.id, "visual model unavailable")
+            .await?;
+
+        let job = repo.get_search_job(&clip.id).await?.unwrap();
+        assert_ne!(
+            job.status, "completed",
+            "a failed visual embedding job must not be marked completed"
+        );
+        assert!(
+            job.completed_at.is_none(),
+            "completed_at must be NULL for a failed job"
+        );
         Ok(())
     }
 }

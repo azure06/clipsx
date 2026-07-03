@@ -37,7 +37,7 @@ mod tests {
         let repo = ClipRepository::new("sqlite::memory:").await?;
         let clip = ClipItem::from_text("hello world".to_string(), "text".to_string(), None);
         repo.insert(&clip).await?;
-        repo.create_embedding(&clip.id, vec![1, 2, 3, 4], "test-model", 2)
+        repo.upsert_search_embedding(&clip.id, "text", vec![1, 2, 3, 4], "test-model", 2)
             .await?;
 
         let app = tauri::test::mock_app();

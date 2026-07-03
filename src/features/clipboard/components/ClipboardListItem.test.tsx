@@ -139,4 +139,31 @@ describe('ClipboardListItem', () => {
     const listItem = screen.getByText(/Image:/).closest('div')
     expect(listItem).toHaveClass('gap-3') // spacing is maintained
   })
+
+  it('should show AI Search Indexed badge when hasEmbedding is true for a text clip', () => {
+    const clip = createTextClip({ hasEmbedding: true })
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
+
+    expect(screen.getByTestId('sparkles-icon').closest('span')).toHaveAttribute(
+      'title',
+      'AI Search Indexed'
+    )
+  })
+
+  it('should show AI Search Indexed badge when hasEmbedding is true for an image-only clip', () => {
+    const clip = createImageClip({ hasEmbedding: true })
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
+
+    expect(screen.getByTestId('sparkles-icon').closest('span')).toHaveAttribute(
+      'title',
+      'AI Search Indexed'
+    )
+  })
+
+  it('should not show sparkle badge when hasEmbedding is false', () => {
+    const clip = createTextClip({ hasEmbedding: false })
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
+
+    expect(screen.queryByTestId('sparkles-icon')).not.toBeInTheDocument()
+  })
 })

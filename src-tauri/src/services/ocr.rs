@@ -399,10 +399,6 @@ mod tests {
 
         #[tokio::test]
         async fn tesseract_not_found_returns_not_supported() {
-            // If tesseract is not installed on this CI/test machine the module
-            // must return not_supported() rather than an Err or a panic.
-            // We can't force NotFound portably so we run the real code and only
-            // assert the result shape — either not_supported or failed, never Err.
             let result =
                 linux_ocr::run_tesseract("/tmp/clipsx_linux_ocr_test_nonexistent_file.png").await;
             assert!(
@@ -414,7 +410,6 @@ mod tests {
         #[tokio::test]
         async fn tesseract_on_nonexistent_file_does_not_panic() {
             let result = linux_ocr::run_tesseract("/no/such/file.png").await;
-            // tesseract exits with non-zero on missing file → failed(); if not installed → not_supported()
             assert!(result.is_ok());
         }
     }
@@ -426,11 +421,7 @@ mod tests {
 
         #[test]
         fn windows_ocr_on_nonexistent_file_does_not_panic() {
-            // GetFileFromPathAsync will fail on a missing file; the function must
-            // return Err (I/O failure), not panic.  The caller in clipboard.rs
-            // treats Err as failed and marks the clip accordingly.
             let result = windows_ocr::run_ocr("C:\\does\\not\\exist.png");
-            // We accept either Ok(failed/not_supported) or Err — just no panic.
             let _ = result;
         }
     }

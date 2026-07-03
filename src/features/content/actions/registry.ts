@@ -8,7 +8,6 @@ import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
 import { useOpenInDefaultEditorAction } from './shared/OpenInDefaultEditorAction'
-import { useGenerateEmbeddingAction } from './shared/GenerateEmbeddingAction'
 
 // Type-Specific Actions
 import {
@@ -33,9 +32,6 @@ export const useActionRegistry = (context?: ActionContext) => {
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
   const openDefaultEditor = useOpenInDefaultEditorAction()
-  const generateEmbedding = useGenerateEmbeddingAction(
-    context?.canGenerateEmbedding ? context.onGenerateEmbedding : undefined
-  )
 
   // Type Specific
   const openUrl = useOpenURLAction()
@@ -66,7 +62,6 @@ export const useActionRegistry = (context?: ActionContext) => {
       openDefaultEditor,
       favoriteAction,
       pinAction,
-      generateEmbedding,
       deleteAction,
       openUrl,
       searchUrl,
@@ -88,7 +83,6 @@ export const useActionRegistry = (context?: ActionContext) => {
       openDefaultEditor,
       favoriteAction,
       pinAction,
-      generateEmbedding,
       deleteAction,
       openUrl,
       searchUrl,
@@ -139,7 +133,7 @@ export const useActionRegistry = (context?: ActionContext) => {
   const getActionGroups = (content: Content | null): ActionGroups => {
     const bar = getGlobalBarActions(content)
     const coreIds = new Set(['copy', 'open-default-editor'])
-    const metaIds = new Set(['favorite', 'pin', 'core.embeddings.generate', 'delete'])
+    const metaIds = new Set(['favorite', 'pin', 'delete'])
     return {
       standard: bar.filter(a => coreIds.has(a.id)),
       smart: bar.filter(a => !coreIds.has(a.id) && !metaIds.has(a.id)),

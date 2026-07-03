@@ -30,17 +30,37 @@ Near-term product direction is intentionally narrow:
 
 The current branch already includes:
 - clipboard monitoring for multiple formats
-- SQLite-backed history and full-text search
+- SQLite-backed history and scoped browse/search
+- search/indexing refactor with `SearchService` and `IndexingService`
+- `search_documents`, `search_embeddings`, and `search_jobs`
+- hybrid FTS + text-vector + image-vector retrieval through `VectorStore`
+- bundled AI stack settings (`ai_search_enabled`, `ai_stack_version`)
 - semantic search persistence and startup recovery
-- semantic reindexing for existing clips
-- richer semantic model status in the UI
+- search reindexing for existing clips plus explicit `Index missing/stale`
+  and `Reindex all` actions
+- richer bundled AI stack status in the UI
 - detector-driven content previews and actions
 - repaired frontend and Rust test baseline
 - tags and notes per clip with FTS indexing and tag filter
 - automatic OCR for image and office clips with queued/running/done status
 - in-app updater wiring for release builds
 
-Known limitations on this branch: none.
+Known limitations on this branch:
+- the bundled AI stack migration is structurally complete but not yet runnable end-to-end:
+  - text embeddings: BGE-M3 via fastembed — shipped and working
+  - image embeddings: SigLIP2 code is wired (`visual.rs`), but the ONNX model files
+    have not been hosted yet; `are_models_downloaded()` returns false so the service
+    falls back gracefully
+  - OCR: platform branches removed, PaddleOCR ONNX sessions load correctly, but the
+    detection→recognition inference pipeline (bounding box regression, CRNN decoder,
+    character key lookup) is not yet implemented — returns empty string until both
+    the artifact hosting and the pipeline wiring are done
+  - `sqlite-vec` is still deferred behind the `VectorStore` boundary
+- the two concrete blockers before the migration can be called done:
+
+  1. host the ONNX model artifacts (SigLIP2 vision + text + tokenizer, PaddleOCR det/rec/cls/keys)
+     and fill in the URLs + sha256 checksums in `ai_stack_manifest_v1.json`
+  2. implement the PaddleOCR pre/post-processing pipeline in `ocr.rs::PaddleOcrEngine::run()`
 
 ---
 
@@ -51,12 +71,20 @@ Known limitations on this branch: none.
 - [x] Test baseline repair
 - [x] Search filter and semantic behavior cleanup
 - [x] Semantic reindex for older clips
+- [x] Search/indexing refactor cleanup and legacy removal
 - [x] Semantic model status and search UX improvements
+- [x] Bundled AI stack settings and indexing overview actions
 - [x] Tags and notes: per-clip labels with color, inline editor, tag filter, FTS-indexed notes (collections dropped as redundant)
 - [x] Apply `tag_filter` inside semantic search so search results match browse/FTS filtering
 - [x] OCR workflows for image clips
 
+### In Progress
+
+- [~] AI stack runtime migration: PaddleOCR + SigLIP2 + self-hosted stack manifest with checksum verification
+
 ### Next
+
+- [ ] Decide and land the later `sqlite-vec` backend swap behind the existing `VectorStore` abstraction
 - [ ] Keyboard-first navigation and quick actions
 - [ ] User scripts or lightweight extensibility hooks
 - [ ] Release hardening and smoke-test coverage across macOS, Windows, and Linux
@@ -125,7 +153,7 @@ graph TD
 - [x] **Dependency**: Added `rqrr = "0.8"` to Cargo.toml for QR detection library.
 - [x] **UI Styling**: Circular image thumbnails with `rounded-full` to match icon visual style. (commit ae15d59, 0dd7a14)
 
-### In Progress
+### Pending Implementation
 
 **Phase 2: QR Code Detection - Full Implementation**
 - [ ] **Implement QR Library Integration**: Replace stub functions in `qr_decoder.rs` with rqrr library calls

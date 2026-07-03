@@ -109,7 +109,6 @@ describe('ClipboardHistory keyboard shortcuts', () => {
       loadMoreClips: loadMoreClipsMock,
       addNewClip: vi.fn(),
       mergeClipUpdate: vi.fn(),
-      searchClips: vi.fn(),
       enterSearchMode: vi.fn(),
       exitSearchMode: vi.fn(),
       setActiveTab: vi.fn(),
@@ -128,7 +127,6 @@ describe('ClipboardHistory keyboard shortcuts', () => {
       performPrimaryAction: vi.fn(),
       performCopy: vi.fn(),
       resetPagination: vi.fn(),
-      generateEmbedding: vi.fn(),
       availableTags: [],
     })
 

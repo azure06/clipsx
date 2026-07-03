@@ -1,13 +1,16 @@
 // Tauri commands (IPC handlers)
-use crate::events::emit_clip_updated;
-use crate::models::{AppSettings, ClipItem};
+use crate::models::{
+    AiCapabilityKind, AiCapabilityStatus, AppSettings, ClipItem, IndexingOverview,
+};
 use crate::repositories::{ClipRepository, SettingsRepository};
+use crate::services::capabilities::{ImageSearchCapability, TextSearchCapability};
 use crate::services::clipboard::ClipboardService;
+use crate::services::indexing::{AiStackProgressPayload, IndexingService};
 use crate::services::paste;
+use crate::services::search::{SearchService, DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD};
 use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
+use crate::services::visual::VisualService;
 use std::sync::Arc;
-
-const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.5;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
 #[cfg(target_os = "macos")]
@@ -18,7 +21,12 @@ pub struct AppState {
     pub repository: Arc<ClipRepository>,
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
+    pub text_search: Arc<TextSearchCapability>,
+    pub image_search: Arc<ImageSearchCapability>,
     pub semantic_service: Arc<SemanticService>,
+    pub visual_service: Arc<VisualService>,
+    pub search_service: Arc<SearchService>,
+    pub indexing_service: Arc<IndexingService>,
     pub updater_configured: bool,
     #[cfg(target_os = "macos")]
     pub previous_app_pid: Mutex<Option<i32>>,
@@ -98,81 +106,53 @@ fn activate_app_by_pid(pid: i32) -> bool {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SemanticIndexStats {
-    pub total_text_clips: i64,
-    pub indexed_clips: i64,
-    pub pending_clips: i64,
-}
-
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticProgressPayload {
-    pub done: u64,
-    pub total: u64,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticStatusPayload {
-    pub state: String,
-    pub enabled: bool,
-    pub configured_model: String,
-    pub loaded_model: Option<String>,
-    pub message: String,
-    pub progress: Option<SemanticProgressPayload>,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReleaseInfoPayload {
     pub updater_configured: bool,
 }
 
-fn build_semantic_status(
-    settings: &AppSettings,
-    downloaded_models: &[String],
-    runtime_status: SemanticRuntimeStatus,
-    loaded_model: Option<String>,
-) -> SemanticStatusPayload {
-    let configured_model = settings.semantic_model.clone();
+/// Status payload used by AppLayout / SearchBar to drive the AI toggle in the search bar.
+/// Reflects the text-search capability only (other capabilities don't gate search UX).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSearchStatusPayload {
+    pub state: String,
+    pub enabled: bool,
+    pub message: String,
+    pub progress: Option<AiStackProgressPayload>,
+}
 
-    if !settings.semantic_search_enabled {
-        return SemanticStatusPayload {
+fn build_text_search_status(
+    enabled: bool,
+    installed: bool,
+    runtime_status: SemanticRuntimeStatus,
+) -> TextSearchStatusPayload {
+    if !enabled {
+        return TextSearchStatusPayload {
             state: "disabled".to_string(),
             enabled: false,
-            configured_model,
-            loaded_model,
-            message: "Semantic search is turned off in Plugins.".to_string(),
-            progress: None,
-        };
-    }
-
-    if configured_model.trim().is_empty() || !downloaded_models.contains(&configured_model) {
-        let message = if configured_model.trim().is_empty() {
-            "Choose a semantic model in Plugins before enabling semantic search.".to_string()
-        } else {
-            format!(
-                "{} is enabled in settings, but the model is not installed on disk.",
-                configured_model
-            )
-        };
-
-        return SemanticStatusPayload {
-            state: "missing_model".to_string(),
-            enabled: true,
-            configured_model,
-            loaded_model,
-            message,
+            message: "Text search is turned off in Plugins.".to_string(),
             progress: None,
         };
     }
 
     match runtime_status {
-        SemanticRuntimeStatus::Loading { model_name } => SemanticStatusPayload {
+        SemanticRuntimeStatus::Idle => TextSearchStatusPayload {
+            state: if installed {
+                "idle".to_string()
+            } else {
+                "missing_model".to_string()
+            },
+            enabled: true,
+            message: if installed {
+                "Text search is installed and waiting to load.".to_string()
+            } else {
+                "Text search model is not loaded. Install Text Search in Plugins.".to_string()
+            },
+            progress: None,
+        },
+        SemanticRuntimeStatus::Loading { model_name } => TextSearchStatusPayload {
             state: "loading".to_string(),
             enabled: true,
-            configured_model,
-            loaded_model,
             message: format!("Loading {} into memory.", model_name),
             progress: None,
         },
@@ -180,39 +160,22 @@ fn build_semantic_status(
             model_name,
             done,
             total,
-        } => SemanticStatusPayload {
+        } => TextSearchStatusPayload {
             state: "indexing".to_string(),
             enabled: true,
-            configured_model,
-            loaded_model,
             message: format!("Indexing existing clips with {}.", model_name),
-            progress: Some(SemanticProgressPayload { done, total }),
+            progress: Some(AiStackProgressPayload { done, total }),
         },
-        SemanticRuntimeStatus::Ready { model_name } => SemanticStatusPayload {
+        SemanticRuntimeStatus::Ready { model_name } => TextSearchStatusPayload {
             state: "ready".to_string(),
             enabled: true,
-            configured_model,
-            loaded_model,
-            message: format!("{} is ready for semantic search.", model_name),
+            message: format!("{} is ready.", model_name),
             progress: None,
         },
-        SemanticRuntimeStatus::Error {
-            model_name,
-            message,
-        } => SemanticStatusPayload {
+        SemanticRuntimeStatus::Error { message, .. } => TextSearchStatusPayload {
             state: "error".to_string(),
             enabled: true,
-            configured_model,
-            loaded_model: loaded_model.or(model_name),
             message,
-            progress: None,
-        },
-        SemanticRuntimeStatus::Idle => SemanticStatusPayload {
-            state: "loading".to_string(),
-            enabled: true,
-            configured_model,
-            loaded_model,
-            message: "Waiting for the semantic model to initialize.".to_string(),
             progress: None,
         },
     }
@@ -281,33 +244,8 @@ pub async fn get_clip_by_id(
 }
 
 #[tauri::command]
-pub async fn search_clips(
-    query: String,
-    filter_types: Option<Vec<String>>,
-    limit: Option<i32>,
-    use_semantic_search: bool,
-    similarity_threshold: Option<f32>,
-    state: State<'_, AppState>,
-) -> Result<Vec<ClipItem>, String> {
-    let limit_val = limit.unwrap_or(50);
-    search_clips_paginated(
-        query,
-        filter_types,
-        Some(limit_val),
-        Some(0),
-        Some(false),
-        Some(false),
-        None,
-        use_semantic_search,
-        similarity_threshold,
-        state,
-    )
-    .await
-}
-
-#[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn search_clips_paginated(
+pub async fn search_objects_paginated(
     query: String,
     filter_types: Option<Vec<String>>,
     limit: Option<i32>,
@@ -325,131 +263,8 @@ pub async fn search_clips_paginated(
     let pin_val = pinned_only.unwrap_or(false);
     let threshold = similarity_threshold.unwrap_or(DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD);
 
-    if use_semantic_search && state.semantic_service.is_ready() && !query.trim().is_empty() {
-        let (model_name, _) = match state.semantic_service.get_model_info() {
-            Some(info) => info,
-            None => {
-                return state
-                    .repository
-                    .search_paginated(
-                        &query,
-                        filter_types,
-                        limit_val,
-                        offset_val,
-                        fav_val,
-                        pin_val,
-                        tag_filter,
-                    )
-                    .await
-                    .map_err(|e| e.to_string());
-            }
-        };
-
-        // --- Semantic ranking ---
-        let query_vector = state
-            .semantic_service
-            .embed(query.clone())
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let all_embeddings = state
-            .repository
-            .get_embeddings_with_filters(
-                filter_types.clone(),
-                fav_val,
-                pin_val,
-                tag_filter,
-                Some(&model_name),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let mut scored_clips: Vec<(String, f32)> = all_embeddings
-            .into_iter()
-            .filter_map(|emb| {
-                let vec_float =
-                    crate::services::semantic::SemanticService::bytes_to_vector(&emb.vector);
-                let score = crate::services::semantic::SemanticService::cosine_similarity(
-                    &query_vector,
-                    &vec_float,
-                );
-                if score >= threshold {
-                    Some((emb.clip_id, score))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        scored_clips.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Collect IDs that semantic already covers (for dedup)
-        let semantic_ids: std::collections::HashSet<String> =
-            scored_clips.iter().map(|(id, _)| id.clone()).collect();
-
-        // --- FTS backfill: run on same scoped candidate set, large enough limit to cover gaps ---
-        let fts_backfill_limit = (limit_val + offset_val) * 4;
-        let fts_results = state
-            .repository
-            .search_paginated(
-                &query,
-                filter_types.clone(),
-                fts_backfill_limit,
-                0,
-                fav_val,
-                pin_val,
-                tag_filter,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Merge: semantic first, then FTS-only hits
-        let mut merged_ids: Vec<(String, Option<f32>)> = scored_clips
-            .iter()
-            .map(|(id, score)| (id.clone(), Some(*score)))
-            .collect();
-
-        for fts_clip in &fts_results {
-            if !semantic_ids.contains(&fts_clip.id) {
-                merged_ids.push((fts_clip.id.clone(), None));
-            }
-        }
-
-        // Paginate the merged ordered list
-        let start = offset_val as usize;
-        if start >= merged_ids.len() {
-            return Ok(Vec::new());
-        }
-        let end = (start + limit_val as usize).min(merged_ids.len());
-        let page_slice = &merged_ids[start..end];
-
-        let page_ids: Vec<String> = page_slice.iter().map(|(id, _)| id.clone()).collect();
-
-        let mut clips = state
-            .repository
-            .get_clips_by_ids(&page_ids)
-            .await
-            .map_err(|e: anyhow::Error| e.to_string())?;
-
-        clips.sort_by_key(|c| {
-            page_ids
-                .iter()
-                .position(|id| id == &c.id)
-                .unwrap_or(usize::MAX)
-        });
-
-        for clip in &mut clips {
-            if let Some((_, Some(score))) = page_slice.iter().find(|(id, _)| id == &clip.id) {
-                clip.similarity_score = Some(*score);
-            }
-        }
-
-        return Ok(clips);
-    }
-
-    // Fallback to Full Text Search (FTS)
     state
-        .repository
+        .search_service
         .search_paginated(
             &query,
             filter_types,
@@ -458,6 +273,8 @@ pub async fn search_clips_paginated(
             fav_val,
             pin_val,
             tag_filter,
+            use_semantic_search,
+            threshold,
         )
         .await
         .map_err(|e| e.to_string())
@@ -1132,36 +949,99 @@ pub async fn open_path(path: String) -> Result<(), String> {
 }
 
 // ============================================================================
-// Semantic Search Commands
+// AI Capability Commands
 // ============================================================================
 
+/// Returns the status of all downloadable AI capabilities.
 #[tauri::command]
-pub async fn init_semantic_search(
+pub fn get_ai_capabilities(state: State<'_, AppState>) -> Result<Vec<AiCapabilityStatus>, String> {
+    Ok(vec![
+        state.text_search.status(),
+        state.image_search.status(),
+    ])
+}
+
+/// Install (download / init) a single capability.
+#[tauri::command]
+pub async fn install_ai_capability(
+    kind: AiCapabilityKind,
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let settings = state
-        .settings_repository
-        .load()
-        .map_err(|e| e.to_string())?;
+    match kind {
+        AiCapabilityKind::TextSearch => {
+            state
+                .text_search
+                .install(&app_handle)
+                .await
+                .map_err(|e| e.to_string())?;
 
-    let downloaded_models = state.semantic_service.get_downloaded_models();
-    if !downloaded_models.contains(&settings.semantic_model) {
-        return Err(format!(
-            "Semantic model {} is not installed. Download it from Plugins first.",
-            settings.semantic_model
-        ));
+            // Enable text search once successfully installed.
+            let mut settings = state
+                .settings_repository
+                .load()
+                .map_err(|e| e.to_string())?;
+            settings.text_search_enabled = true;
+            state
+                .settings_repository
+                .save(&settings)
+                .map_err(|e| e.to_string())?;
+        }
+        AiCapabilityKind::ImageSearch => {
+            // Purge any legacy CLIP embeddings so they are regenerated with the current model.
+            let _ = state
+                .repository
+                .delete_image_embeddings_for_model("Qdrant/clip-ViT-B-32-vision")
+                .await;
+
+            state
+                .image_search
+                .install(&app_handle)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
-
-    state
-        .semantic_service
-        .init_model(settings.semantic_model, Some(app_handle))
-        .await
-        .map_err(|e| e.to_string())
+    Ok(())
 }
 
+/// Delete (unload + remove files) a single capability.
 #[tauri::command]
-pub async fn set_semantic_search_enabled(
+pub fn delete_ai_capability(
+    kind: AiCapabilityKind,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    match kind {
+        AiCapabilityKind::TextSearch => {
+            state
+                .text_search
+                .delete(&app_handle)
+                .map_err(|e| e.to_string())?;
+
+            let mut settings = state
+                .settings_repository
+                .load()
+                .map_err(|e| e.to_string())?;
+            settings.text_search_enabled = false;
+            state
+                .settings_repository
+                .save(&settings)
+                .map_err(|e| e.to_string())?;
+        }
+        AiCapabilityKind::ImageSearch => {
+            state
+                .image_search
+                .delete(&app_handle)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Toggle the text-search capability on or off (load/unload the model).
+/// Does not affect Image Search or OCR.
+#[tauri::command]
+pub async fn set_text_search_enabled(
     enabled: bool,
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
@@ -1174,22 +1054,19 @@ pub async fn set_semantic_search_enabled(
         .map_err(|e| e.to_string())?;
 
     if enabled {
-        let downloaded_models = state.semantic_service.get_downloaded_models();
-        if !downloaded_models.contains(&settings.semantic_model) {
-            return Err(format!(
-                "Semantic model {} is not installed. Download it from Plugins first.",
-                settings.semantic_model
-            ));
+        let ts_status = state.text_search.status();
+        if ts_status.install_state != crate::models::AiCapabilityInstallState::Ready {
+            return Err("Text Search is not installed. Install it from Plugins first.".to_string());
         }
         state
             .semantic_service
-            .init_model(settings.semantic_model.clone(), Some(app_handle.clone()))
+            .init_model(Some(app_handle.clone()))
             .await
             .map_err(|e| e.to_string())?;
-        settings.semantic_search_enabled = true;
+        settings.text_search_enabled = true;
     } else {
         state.semantic_service.unload_model();
-        settings.semantic_search_enabled = false;
+        settings.text_search_enabled = false;
     }
 
     state
@@ -1198,58 +1075,27 @@ pub async fn set_semantic_search_enabled(
         .map_err(|e| e.to_string())?;
 
     if !enabled {
-        let _ = app_handle.emit("semantic-status-changed", ());
+        let _ = app_handle.emit("ai-capabilities-changed", ());
     }
 
     Ok(settings)
 }
 
+/// Status payload used by AppLayout / SearchBar — reflects text search only.
 #[tauri::command]
-pub async fn change_semantic_model(
-    model_name: String,
+pub fn get_text_search_status(
     state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<(), String> {
-    let mut settings = state
-        .settings_repository
-        .load()
-        .map_err(|e| e.to_string())?;
-
-    // Load the new model
-    state
-        .semantic_service
-        .init_model(model_name.clone(), Some(app_handle))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    settings.semantic_model = model_name;
-    settings.semantic_search_enabled = true;
-    state
-        .settings_repository
-        .save(&settings)
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatusPayload, String> {
+) -> Result<TextSearchStatusPayload, String> {
     let settings = state
         .settings_repository
         .load()
         .map_err(|e| e.to_string())?;
+    let text_search_status = state.text_search.status();
 
-    let downloaded_models = state.semantic_service.get_downloaded_models();
-    let loaded_model = state
-        .semantic_service
-        .get_model_info()
-        .map(|(name, _)| name);
-
-    Ok(build_semantic_status(
-        &settings,
-        &downloaded_models,
+    Ok(build_text_search_status(
+        settings.text_search_enabled,
+        text_search_status.install_state == crate::models::AiCapabilityInstallState::Ready,
         state.semantic_service.get_runtime_status(),
-        loaded_model,
     ))
 }
 
@@ -1266,203 +1112,40 @@ pub fn restart_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-pub fn get_semantic_search_status(state: State<'_, AppState>) -> Result<bool, String> {
-    let status = get_semantic_status(state)?;
-    Ok(matches!(status.state.as_str(), "ready" | "indexing"))
-}
-
-#[tauri::command]
-pub fn get_downloaded_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    Ok(state.semantic_service.get_downloaded_models())
-}
-
-#[tauri::command]
-pub async fn get_semantic_index_stats(
-    state: State<'_, AppState>,
-) -> Result<SemanticIndexStats, String> {
-    let settings = state
-        .settings_repository
-        .load()
-        .map_err(|e| e.to_string())?;
-
-    let stats = state
-        .repository
-        .get_embedding_stats(&settings.semantic_model)
+pub async fn get_indexing_overview(state: State<'_, AppState>) -> Result<IndexingOverview, String> {
+    state
+        .indexing_service
+        .get_indexing_overview()
         .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(SemanticIndexStats {
-        total_text_clips: stats.total_text_clips,
-        indexed_clips: stats.indexed_clips,
-        pending_clips: (stats.total_text_clips - stats.indexed_clips).max(0),
-    })
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_semantic_model(
-    model_name: String,
+pub async fn index_missing_search_content(
     state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<(), String> {
-    use tauri::Emitter;
+) -> Result<IndexingOverview, String> {
+    state
+        .indexing_service
+        .index_missing()
+        .await
+        .map_err(|e| e.to_string())
+}
 
-    let mut settings = state
-        .settings_repository
-        .load()
+#[tauri::command]
+pub async fn reindex_all_search_content(
+    state: State<'_, AppState>,
+) -> Result<IndexingOverview, String> {
+    state
+        .indexing_service
+        .reindex_all()
+        .await
         .map_err(|e| e.to_string())?;
 
     state
-        .semantic_service
-        .delete_model(&model_name)
-        .map_err(|e| e.to_string())?;
-
-    if settings.semantic_model == model_name {
-        settings.semantic_search_enabled = false;
-        state.semantic_service.unload_model();
-        state
-            .settings_repository
-            .save(&settings)
-            .map_err(|e| e.to_string())?;
-
-        let _ = app_handle.emit("semantic-status-changed", ());
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn reindex_semantic_embeddings(
-    state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> Result<SemanticIndexStats, String> {
-    use tauri::Emitter;
-
-    let (model_name, dimensions) = state
-        .semantic_service
-        .get_model_info()
-        .ok_or_else(|| "Semantic model is not loaded yet.".to_string())?;
-
-    // Full refresh: clear existing vectors for the active model so all clips
-    // are regenerated with the current embedding pipeline.
-    state
-        .repository
-        .delete_embeddings_for_model(&model_name)
+        .indexing_service
+        .get_indexing_overview()
         .await
-        .map_err(|e| e.to_string())?;
-
-    let candidates = state
-        .repository
-        .get_embedding_candidates_for_model(&model_name)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let total = candidates.len() as u64;
-
-    state.semantic_service.set_indexing_status(0, total);
-    let _ = app_handle.emit("semantic-status-changed", ());
-
-    for (index, clip) in candidates.into_iter().enumerate() {
-        let vector = match state.semantic_service.embed(clip.index_text).await {
-            Ok(vector) => vector,
-            Err(err) => {
-                let message = err.to_string();
-                state
-                    .semantic_service
-                    .set_error_status(Some(model_name.clone()), message.clone());
-                let _ = app_handle.emit("semantic-status-changed", ());
-                return Err(message);
-            }
-        };
-
-        state
-            .repository
-            .create_embedding(
-                &clip.id,
-                SemanticService::vector_to_bytes(&vector),
-                &model_name,
-                dimensions,
-            )
-            .await
-            .map_err(|e| {
-                let message = e.to_string();
-                state
-                    .semantic_service
-                    .set_error_status(Some(model_name.clone()), message.clone());
-                let _ = app_handle.emit("semantic-status-changed", ());
-                message
-            })?;
-
-        state
-            .semantic_service
-            .set_indexing_status(index as u64 + 1, total);
-
-        let _ = app_handle.emit(
-            "semantic-index-progress",
-            SemanticProgressPayload {
-                done: index as u64 + 1,
-                total,
-            },
-        );
-    }
-
-    state.semantic_service.set_ready_status();
-    let _ = app_handle.emit("semantic-status-changed", ());
-
-    let stats = state
-        .repository
-        .get_embedding_stats(&model_name)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(SemanticIndexStats {
-        total_text_clips: stats.total_text_clips,
-        indexed_clips: stats.indexed_clips,
-        pending_clips: (stats.total_text_clips - stats.indexed_clips).max(0),
-    })
-}
-
-#[tauri::command]
-pub async fn generate_embedding(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let (model_name, dimensions) = match state.semantic_service.get_model_info() {
-        Some(info) => info,
-        None => return Err("Semantic model is not loaded yet.".to_string()),
-    };
-
-    let clip = state
-        .repository
-        .get_by_id(&id)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or_else(|| "Clip not found".to_string())?;
-
-    let index_text = clip.index_text.clone();
-    if index_text.is_empty() || clip.primary_text_source == "none" {
-        return Err("Clip has no indexable text to embed".to_string());
-    }
-
-    let vector = state
-        .semantic_service
-        .embed(index_text)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?;
-
-    let vector_bytes = crate::services::semantic::SemanticService::vector_to_bytes(&vector);
-
-    state
-        .repository
-        .create_embedding(&id, vector_bytes, &model_name, dimensions)
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?;
-
-    emit_clip_updated(
-        state.clipboard_service.app_handle(),
-        state.repository.as_ref(),
-        &id,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -1565,24 +1248,26 @@ pub async fn update_clip_note(
         clip_id, note
     );
 
-    let result = state
-        .repository
-        .update_clip_note(&clip_id, note)
-        .await
-        .map_err(|e| e.to_string());
+    let result = state.repository.update_clip_note(&clip_id, note).await;
 
     match &result {
-        Ok(clip) => eprintln!(
-            "[NOTE_DEBUG][command] update_clip_note succeeded | clip_id={} | returned_note={:?} | expected=returned_note should equal the saved DB value",
-            clip.id, clip.note
-        ),
+        Ok(clip) => {
+            eprintln!(
+                "[NOTE_DEBUG][command] update_clip_note succeeded | clip_id={} | returned_note={:?} | expected=returned_note should equal the saved DB value",
+                clip.id, clip.note
+            );
+            state
+                .indexing_service
+                .enqueue_clip_indexing(clip, false)
+                .await;
+        }
         Err(error) => eprintln!(
             "[NOTE_DEBUG][command] update_clip_note failed | clip_id={} | error={} | expected=no error",
             clip_id, error
         ),
     }
 
-    result
+    result.map_err(|e| e.to_string())
 }
 
 // ============================================================================

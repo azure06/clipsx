@@ -80,7 +80,7 @@ const ClipboardGridItemComponent = ({
 
             {clip.hasEmbedding && (
               <span
-                title="Semantic Search Indexed"
+                title="AI Search Indexed"
                 className="inline-flex relative items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-100/50 dark:bg-indigo-900/20 text-[9px] font-medium border border-indigo-200/50 dark:border-indigo-500/20"
               >
                 <svg width="0" height="0" className="absolute">

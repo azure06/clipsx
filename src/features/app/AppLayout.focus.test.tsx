@@ -116,7 +116,6 @@ describe('AppLayout search focus ownership', () => {
       tagFilter: null,
       loadMoreClips: vi.fn(),
       addNewClip: vi.fn(),
-      searchClips: vi.fn(),
       enterSearchMode: vi.fn(),
       exitSearchMode: vi.fn(),
       setActiveTab: vi.fn(),
@@ -135,7 +134,6 @@ describe('AppLayout search focus ownership', () => {
       performPrimaryAction: vi.fn(),
       performCopy: vi.fn(),
       resetPagination: vi.fn(),
-      generateEmbedding: vi.fn(),
     })
   })
 
@@ -263,6 +261,45 @@ describe('AppLayout search focus ownership', () => {
         note: 'keep me',
         tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
       })
+    })
+  })
+
+  it('re-fetches text search status when ai-stack-status-changed fires after startup', async () => {
+    invokeMock.mockResolvedValueOnce({
+      state: 'loading',
+      enabled: true,
+      configuredModel: 'model',
+      loadedModel: null,
+      message: 'Loading…',
+      progress: null,
+    })
+
+    render(<AppLayout />)
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('get_text_search_status')
+    })
+
+    const callCountAfterMount = invokeMock.mock.calls.filter(
+      c => c[0] === 'get_text_search_status'
+    ).length
+
+    invokeMock.mockResolvedValueOnce({
+      state: 'ready',
+      enabled: true,
+      configuredModel: 'model',
+      loadedModel: 'model',
+      message: 'Ready',
+      progress: null,
+    })
+
+    act(() => {
+      eventHandlers.get('ai-stack-status-changed')?.[0]?.({ payload: null })
+    })
+
+    await waitFor(() => {
+      const callCount = invokeMock.mock.calls.filter(c => c[0] === 'get_text_search_status').length
+      expect(callCount).toBeGreaterThan(callCountAfterMount)
     })
   })
 })

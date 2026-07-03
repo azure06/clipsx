@@ -3,8 +3,15 @@
 
 use commands::AppState;
 use repositories::{ClipRepository, SettingsRepository};
+use services::capabilities::{
+    repair_stale_downloading_states, ImageSearchCapability, TextSearchCapability,
+};
 use services::clipboard::ClipboardService;
+use services::indexing::IndexingService;
+use services::search::SearchService;
 use services::semantic::SemanticService;
+use services::vector_store::VectorStore;
+use services::visual::VisualService;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "windows")]
@@ -144,12 +151,41 @@ fn main() {
                         .expect("Failed to initialize settings repository"),
                 );
 
+                // Repair any persisted "downloading" states left from a prior crashed session.
+                repair_stale_downloading_states(&app_dir);
+
                 let semantic_service = Arc::new(SemanticService::new(app_dir.clone()));
+                let vector_store = Arc::new(VectorStore::new(repository.clone()));
+                let visual_service = Arc::new(VisualService::new(app_dir.clone()));
+
+                let text_search = Arc::new(TextSearchCapability::new(
+                    app_dir.clone(),
+                    semantic_service.clone(),
+                ));
+                let image_search = Arc::new(ImageSearchCapability::new(
+                    app_dir.clone(),
+                    visual_service.clone(),
+                ));
+
+                let search_service = Arc::new(SearchService::new(
+                    repository.clone(),
+                    semantic_service.clone(),
+                    vector_store.clone(),
+                    visual_service.clone(),
+                ));
+
+                let indexing_service = Arc::new(IndexingService::new(
+                    repository.clone(),
+                    semantic_service.clone(),
+                    vector_store.clone(),
+                    visual_service.clone(),
+                    app_handle.clone(),
+                ));
 
                 let clipboard_service = Arc::new(ClipboardService::new(
                     repository.clone(),
                     settings_repository.clone(),
-                    semantic_service.clone(),
+                    indexing_service.clone(),
                     app_handle.clone(),
                 ));
 
@@ -163,7 +199,12 @@ fn main() {
                     repository,
                     clipboard_service,
                     settings_repository: settings_repository.clone(),
+                    text_search: text_search.clone(),
+                    image_search: image_search.clone(),
                     semantic_service: semantic_service.clone(),
+                    visual_service: visual_service.clone(),
+                    search_service,
+                    indexing_service,
                     updater_configured,
                     #[cfg(target_os = "macos")]
                     previous_app_pid: std::sync::Mutex::new(None),
@@ -182,28 +223,41 @@ fn main() {
                     window_behavior::reconcile_main_window(&app_handle, &window);
                 }
 
-                // Robust Startup Check for Semantic Models
-                if settings.semantic_search_enabled {
-                    let downloaded_models = app_state.semantic_service.get_downloaded_models();
-                    if downloaded_models.contains(&settings.semantic_model) {
-                        // Model is available on disk, load it
+                // Auto-load each capability independently based on persisted install state.
+                // Text Search: only loaded when the user has explicitly enabled it.
+                if settings.text_search_enabled {
+                    let ts_status = app_state.text_search.status();
+                    if ts_status.install_state == crate::models::AiCapabilityInstallState::Ready {
                         let semantic_service = app_state.semantic_service.clone();
-                        let model_name = settings.semantic_model.clone();
                         let app_handle_clone = app_handle.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = semantic_service.init_model(model_name, Some(app_handle_clone)).await {
-                                eprintln!("Failed to initialize semantic model on startup: {}", e);
+                            if let Err(error) =
+                                semantic_service.init_model(Some(app_handle_clone)).await
+                            {
+                                eprintln!(
+                                    "Failed to initialize text search model on startup: {}",
+                                    error
+                                );
                             }
                         });
                     } else {
-                        // Model was deleted or not fully downloaded: Self-heal the state
-                        eprintln!(
-                            "Semantic model {} is enabled but missing from disk. Self-healing state...",
-                            settings.semantic_model
-                        );
-                        settings.semantic_search_enabled = false;
+                        // Model files were removed or download was never completed.
+                        settings.text_search_enabled = false;
                         let _ = app_state.settings_repository.save(&settings);
                     }
+                }
+
+                // Image Search: preload models when files are present (no explicit toggle).
+                if app_state.visual_service.are_models_downloaded() {
+                    let visual_service = app_state.visual_service.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = visual_service.preload_models().await {
+                            eprintln!(
+                                "Failed to preload image search models on startup: {}",
+                                error
+                            );
+                        }
+                    });
                 }
 
                 // Register global shortcut on startup
@@ -231,12 +285,12 @@ fn main() {
             commands::get_recent_clips_paginated,
             commands::get_clips_after_timestamp,
             commands::get_clip_by_id,
-            commands::search_clips,
-            commands::search_clips_paginated,
+            commands::search_objects_paginated,
             commands::delete_clip,
             commands::toggle_favorite,
             commands::toggle_pin,
             commands::clear_all_clips,
+            commands::decode_qr_code,
             commands::copy_to_clipboard,
             commands::paste_clip,
             commands::get_clipboard_text,
@@ -250,16 +304,14 @@ fn main() {
             mac_rounded_corners::reposition_traffic_lights,
             commands::open_text_in_editor,
             commands::open_path,
-            commands::init_semantic_search,
-            commands::set_semantic_search_enabled,
-            commands::get_semantic_status,
-            commands::get_semantic_search_status,
-            commands::change_semantic_model,
-            commands::get_downloaded_models,
-            commands::get_semantic_index_stats,
-            commands::delete_semantic_model,
-            commands::reindex_semantic_embeddings,
-            commands::generate_embedding,
+            commands::get_ai_capabilities,
+            commands::install_ai_capability,
+            commands::delete_ai_capability,
+            commands::set_text_search_enabled,
+            commands::get_text_search_status,
+            commands::get_indexing_overview,
+            commands::index_missing_search_content,
+            commands::reindex_all_search_content,
             commands::get_tags,
             commands::create_tag,
             commands::delete_tag,

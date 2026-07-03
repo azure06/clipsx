@@ -32,7 +32,6 @@ type ClipboardActions = {
   loadMoreClips: (limit?: number) => Promise<void>
   addNewClip: (clip: ClipItem) => void
   mergeClipUpdate: (clip: ClipItem) => void
-  searchClips: (query: string, limit?: number) => Promise<void>
   // NEW: Search with pagination (for infinite scroll)
   enterSearchMode: (query: string) => Promise<void>
   exitSearchMode: () => void
@@ -55,7 +54,6 @@ type ClipboardActions = {
   /** Explicit copy; counts as explicit usage, respects paste format and hide_on_copy */
   performCopy: (text: string, clipId: string) => Promise<void>
   resetPagination: () => void
-  generateEmbedding: (id: string) => Promise<void>
 }
 
 type ClipboardStore = ClipboardState & ClipboardActions
@@ -174,7 +172,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         const { query, filterTypes } = parseSearchQuery(searchQuery)
 
         const isSemanticActive = useUIStore.getState().isSemanticActive
-        newClips = await invoke<ClipItem[]>('search_clips_paginated', {
+        newClips = await invoke<ClipItem[]>('search_objects_paginated', {
           query,
           filterTypes,
           limit,
@@ -310,7 +308,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       const favoritesOnly = activeTab === 'favorites'
       const pinnedOnly = activeTab === 'pinned'
 
-      const clips = await invoke<ClipItem[]>('search_clips_paginated', {
+      const clips = await invoke<ClipItem[]>('search_objects_paginated', {
         query,
         filterTypes,
         limit: 50,
@@ -345,33 +343,6 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     })
     // Automatically load first page of browse results
     void useClipboardStore.getState().loadMoreClips(50)
-  },
-
-  searchClips: async (rawQuery: string, limit = 50) => {
-    set({ loading: true, error: null })
-    try {
-      const { query, filterTypes } = parseSearchQuery(rawQuery)
-      const isSemanticActive = useUIStore.getState().isSemanticActive
-
-      const { activeTab, tagFilter } = useClipboardStore.getState()
-      const favoritesOnly = activeTab === 'favorites'
-      const pinnedOnly = activeTab === 'pinned'
-
-      const clips = await invoke<ClipItem[]>('search_clips', {
-        query,
-        filterTypes,
-        limit,
-        favoritesOnly,
-        pinnedOnly,
-        tagFilter,
-        useSemanticSearch: isSemanticActive,
-        similarityThreshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
-      })
-      const hydratedClips = await hydrateClipsWithTags(clips)
-      set({ clips: hydratedClips, loading: false })
-    } catch (error) {
-      set({ error: String(error), loading: false })
-    }
   },
 
   deleteClip: async (id: string) => {
@@ -663,14 +634,6 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         hasMore: previousState.hasMore,
       })
       console.error('[deleteAvailableTag] failed:', error)
-    }
-  },
-
-  generateEmbedding: async (id: string) => {
-    try {
-      await invoke('generate_embedding', { id })
-    } catch (error) {
-      console.error('Failed to generate embedding:', error)
     }
   },
 }))

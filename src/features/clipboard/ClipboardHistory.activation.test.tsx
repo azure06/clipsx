@@ -79,7 +79,6 @@ describe('ClipboardHistory activation modes', () => {
       loadMoreClips: loadMoreClipsMock,
       addNewClip: vi.fn(),
       mergeClipUpdate: vi.fn(),
-      searchClips: vi.fn(),
       enterSearchMode: vi.fn(),
       exitSearchMode: vi.fn(),
       setActiveTab: vi.fn(),
@@ -98,7 +97,6 @@ describe('ClipboardHistory activation modes', () => {
       performPrimaryAction: performPrimaryActionMock,
       performCopy: performCopyMock,
       resetPagination: vi.fn(),
-      generateEmbedding: vi.fn(),
     })
   })
 

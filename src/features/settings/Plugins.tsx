@@ -1,509 +1,610 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import {
+  Brain,
+  Image,
+  ScanText,
+  Download,
+  Trash2,
+  RefreshCw,
+  Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  ChevronRight,
+} from 'lucide-react'
 import { useSettingsStore } from '../../stores'
-import { Switch } from '../../shared/components/ui'
-import type { SemanticStatus } from '../../shared/types'
+import { Switch, Button } from '../../shared/components/ui'
+import type {
+  AiCapabilityStatus,
+  AiCapabilityKind,
+  AiCapabilityProgressEvent,
+  AiIndexProgressEvent,
+} from '../../shared/types'
 
-const MULTILINGUAL_MODEL = 'paraphrase-multilingual-MiniLM-L12-v2'
-const MODEL_SIZE = '~245 MB'
-
-interface ProgressPayload {
-  model: string
-  downloaded: number
-  total: number
-}
-
-interface IndexStats {
-  totalTextClips: number
+interface IndexingOverview {
+  totalEligibleClips: number
   indexedClips: number
-  pendingClips: number
+  missingCount: number
+  staleCount: number
+  failedCount: number
+  pendingCount: number
+  activeStackVersion: string
+  lastErrorSummary: string | null
 }
 
-interface IndexProgressPayload {
-  done: number
-  total: number
-}
+type CapabilityProgress = Record<
+  string,
+  { label: string; downloaded: number; total: number; phase: string }
+>
 
 export const Plugins = () => {
   const { settings, loadSettings } = useSettingsStore()
-  const [semanticStatus, setSemanticStatus] = useState<SemanticStatus | null>(null)
-  const [isModelDownloaded, setIsModelDownloaded] = useState(false)
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [isTogglingEnabled, setIsTogglingEnabled] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState<{
-    downloaded: number
-    total: number
-  } | null>(null)
-  const [indexStats, setIndexStats] = useState<IndexStats | null>(null)
-  const [indexProgress, setIndexProgress] = useState<IndexProgressPayload | null>(null)
-  const [isReindexing, setIsReindexing] = useState(false)
+  const [capabilities, setCapabilities] = useState<AiCapabilityStatus[]>([])
+  const [overview, setOverview] = useState<IndexingOverview | null>(null)
+  const [progress, setProgress] = useState<CapabilityProgress>({})
+  const [indexProgress, setIndexProgress] = useState<AiIndexProgressEvent | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [busyKind, setBusyKind] = useState<AiCapabilityKind | null>(null)
 
   useEffect(() => {
-    void fetchSemanticStatus()
-    void fetchDownloadedModels()
-    void fetchIndexStats()
+    void fetchCapabilities()
+    void fetchIndexingOverview()
 
-    const unlistenDownload = listen<ProgressPayload>('download-progress', event => {
-      if (event.payload.model === MULTILINGUAL_MODEL) {
-        setIsDownloading(true)
-        setDownloadProgress({
-          downloaded: event.payload.downloaded,
-          total: event.payload.total,
-        })
-      }
+    const unlistenProgress = listen<AiCapabilityProgressEvent>('ai-capability-progress', event => {
+      const p = event.payload
+      setProgress(prev => ({
+        ...prev,
+        [p.capability]: {
+          label: p.label,
+          downloaded: p.downloaded,
+          total: p.total,
+          phase: p.phase,
+        },
+      }))
     })
 
-    const unlistenIndex = listen<IndexProgressPayload>('semantic-index-progress', event => {
-      setIsReindexing(true)
+    const unlistenIndex = listen<AiIndexProgressEvent>('ai-stack-index-progress', event => {
       setIndexProgress(event.payload)
     })
 
-    const unlistenStatus = listen('semantic-status-changed', () => {
-      void fetchSemanticStatus()
-      void fetchIndexStats()
+    const unlistenCaps = listen('ai-capabilities-changed', () => {
+      void fetchCapabilities()
+      void fetchIndexingOverview()
     })
 
     return () => {
-      void unlistenDownload.then(f => f())
+      void unlistenProgress.then(f => f())
       void unlistenIndex.then(f => f())
-      void unlistenStatus.then(f => f())
+      void unlistenCaps.then(f => f())
     }
-  }, [settings?.semantic_model])
+  }, [])
 
-  const fetchSemanticStatus = async () => {
+  const fetchCapabilities = async () => {
     try {
-      const status = await invoke<SemanticStatus>('get_semantic_status')
-      setSemanticStatus(status)
+      const caps = await invoke<AiCapabilityStatus[]>('get_ai_capabilities')
+      setCapabilities(caps)
     } catch (err) {
-      console.error('Failed to check semantic status:', err)
+      console.error('Failed to fetch AI capabilities:', err)
     }
   }
 
-  const fetchDownloadedModels = async () => {
+  const fetchIndexingOverview = async () => {
     try {
-      const models = await invoke<string[]>('get_downloaded_models')
-      setIsModelDownloaded(models.includes(MULTILINGUAL_MODEL))
+      const next = await invoke<IndexingOverview>('get_indexing_overview')
+      setOverview(next)
     } catch (err) {
-      console.error('Failed to fetch downloaded models:', err)
+      console.error('Failed to fetch indexing overview:', err)
     }
   }
 
-  const fetchIndexStats = async () => {
-    try {
-      const stats = await invoke<IndexStats>('get_semantic_index_stats')
-      setIndexStats(stats)
-    } catch (err) {
-      console.error('Failed to fetch semantic index stats:', err)
-    }
-  }
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 MB'
-    const mb = bytes / 1024 / 1024
-    return `${mb.toFixed(1)} MB`
-  }
-
-  const handleDownloadModel = async () => {
+  const handleInstall = async (kind: AiCapabilityKind) => {
     try {
       setError(null)
-      setIsDownloading(true)
-      await invoke('change_semantic_model', { modelName: MULTILINGUAL_MODEL })
+      setBusyKind(kind)
+      await invoke('install_ai_capability', { kind })
       await loadSettings()
-      await fetchSemanticStatus()
-      await fetchDownloadedModels()
-      await fetchIndexStats()
+      await fetchCapabilities()
+      await fetchIndexingOverview()
     } catch (err) {
       setError(String(err))
-      console.error('Failed to download/activate semantic model:', err)
     } finally {
-      setIsDownloading(false)
-      setDownloadProgress(null)
+      setBusyKind(null)
+      setProgress(prev => {
+        const next = { ...prev }
+        delete next[kind]
+        return next
+      })
     }
   }
 
-  const handleSemanticEnabledChange = async (enabled: boolean) => {
+  const handleDelete = async (kind: AiCapabilityKind) => {
     try {
       setError(null)
-      setIsTogglingEnabled(true)
-
-      await invoke('set_semantic_search_enabled', { enabled })
+      setBusyKind(kind)
+      await invoke('delete_ai_capability', { kind })
       await loadSettings()
-      await fetchSemanticStatus()
-      await fetchDownloadedModels()
-      await fetchIndexStats()
+      await fetchCapabilities()
+      await fetchIndexingOverview()
     } catch (err) {
       setError(String(err))
-      console.error('Failed to toggle semantic search:', err)
     } finally {
-      setIsTogglingEnabled(false)
-      setDownloadProgress(null)
+      setBusyKind(null)
     }
   }
 
-  const handleDeleteModel = async () => {
+  const handleToggleTextSearch = async (enabled: boolean) => {
     try {
       setError(null)
-      await invoke('delete_semantic_model', { modelName: MULTILINGUAL_MODEL })
+      await invoke('set_text_search_enabled', { enabled })
       await loadSettings()
-      await fetchDownloadedModels()
-      await fetchSemanticStatus()
-      await fetchIndexStats()
+      await fetchCapabilities()
     } catch (err) {
       setError(String(err))
-      console.error('Failed to delete semantic model:', err)
     }
   }
 
-  const handleReindex = async () => {
+  const handleIndexMissing = async () => {
     try {
       setError(null)
-      setIsReindexing(true)
-      setIndexProgress({ done: 0, total: indexStats?.pendingClips ?? 0 })
-      const stats = await invoke<IndexStats>('reindex_semantic_embeddings')
-      setIndexStats(stats)
+      const next = await invoke<IndexingOverview>('index_missing_search_content')
+      setOverview(next)
     } catch (err) {
       setError(String(err))
-      console.error('Failed to reindex semantic embeddings:', err)
     } finally {
-      setIsReindexing(false)
+      await fetchIndexingOverview()
+    }
+  }
+
+  const handleReindexAll = async () => {
+    try {
+      setError(null)
+      setIndexProgress({ done: 0, total: overview?.totalEligibleClips ?? 0 })
+      const next = await invoke<IndexingOverview>('reindex_all_search_content')
+      setOverview(next)
+    } catch (err) {
+      setError(String(err))
+    } finally {
       setIndexProgress(null)
-      await fetchIndexStats()
+      await fetchIndexingOverview()
     }
   }
 
-  const statusLabel =
-    semanticStatus === null
-      ? 'Checking…'
-      : semanticStatus.state === 'ready'
-        ? 'Ready'
-        : semanticStatus.state === 'indexing'
-          ? 'Indexing…'
-          : semanticStatus.state === 'loading'
-            ? 'Loading…'
-            : semanticStatus.state === 'disabled'
-              ? 'Disabled'
-              : semanticStatus.state === 'missing_model'
-                ? 'No model selected'
-                : semanticStatus.state === 'error'
-                  ? 'Error'
-                  : 'Unknown'
+  const textSearchCap = capabilities.find(c => c.kind === 'text_search') ?? null
+  const imageSearchCap = capabilities.find(c => c.kind === 'image_search') ?? null
+  const isAiUsable =
+    textSearchCap?.installState === 'ready' && settings?.text_search_enabled === true
+  const hasMissingOrStale =
+    (overview?.missingCount ?? 0) + (overview?.staleCount ?? 0) + (overview?.failedCount ?? 0) > 0
 
-  const statusTone =
-    semanticStatus?.state === 'ready'
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : semanticStatus?.state === 'indexing'
-        ? 'text-blue-500 dark:text-blue-400'
-        : semanticStatus?.state === 'loading'
-          ? 'text-amber-600 dark:text-amber-400'
-          : semanticStatus?.state === 'error'
-            ? 'text-red-600 dark:text-red-400'
-            : 'text-gray-400 dark:text-gray-500'
-
-  const statusDot =
-    semanticStatus?.state === 'ready'
-      ? 'bg-emerald-500'
-      : semanticStatus?.state === 'indexing'
-        ? 'bg-blue-500 animate-pulse'
-        : semanticStatus?.state === 'loading'
-          ? 'bg-amber-500 animate-pulse'
-          : semanticStatus?.state === 'error'
-            ? 'bg-red-500'
-            : 'bg-gray-400 dark:bg-gray-600'
-
-  const isActive = semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
-  const isLoadingModel = semanticStatus?.state === 'loading'
-  const isDegraded = semanticStatus?.state === 'error' || semanticStatus?.state === 'missing_model'
-  const isSemanticUsable = isActive
-
-  const progressPct =
-    isDownloading && downloadProgress && downloadProgress.total > 0
-      ? Math.min(100, Math.round((downloadProgress.downloaded / downloadProgress.total) * 100))
-      : 0
-
-  const cardRing = (() => {
-    if (isActive) return 'border-emerald-500 dark:border-emerald-500/50 ring-1 ring-emerald-500/20'
-    if (isLoadingModel) return 'border-amber-400 dark:border-amber-500/50 ring-1 ring-amber-500/20'
-    if (isDegraded) return 'border-red-400 dark:border-red-500/50 ring-1 ring-red-500/20'
-    return 'border-gray-200 dark:border-white/10'
-  })()
+  const eligible = overview?.totalEligibleClips ?? 0
+  const indexed = overview?.indexedClips ?? 0
+  const indexedPct = eligible > 0 ? Math.round((indexed / eligible) * 100) : 0
 
   return (
-    <div className="h-full w-full bg-transparent text-gray-900 dark:text-gray-100 overflow-y-auto custom-scrollbar animate-fade-in relative">
-      <div className="p-8 max-w-6xl mx-auto">
-        <div className="flex justify-between items-end mb-8 border-b border-slate-300 dark:border-slate/10 pb-6">
-          <div>
-            <h1 className="text-2xl font-bold mb-1">AI Search Engine</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Multilingual semantic search powered by a local AI model. Toggle AI mode directly from
-              the search bar.
-            </p>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 px-4 py-3">
-            <div className="text-right">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                Semantic Search
-              </div>
-              <div
-                className={`flex items-center justify-end gap-1.5 mt-0.5 text-xs font-medium ${statusTone}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
-                {statusLabel}
-              </div>
-            </div>
-            <Switch
-              checked={settings?.semantic_search_enabled ?? false}
-              disabled={
-                isTogglingEnabled ||
-                isDownloading ||
-                (!isModelDownloaded && !(settings?.semantic_search_enabled ?? false))
-              }
-              onChange={value => void handleSemanticEnabledChange(value)}
-            />
-          </div>
+    <div className="relative h-full w-full overflow-y-auto bg-transparent text-gray-900 dark:text-gray-100 custom-scrollbar animate-fade-in">
+      <div className="px-6 py-6 space-y-6">
+        {/* ── Header ── */}
+        <div>
+          <h1 className="text-lg font-bold tracking-tight">AI Capabilities</h1>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            Install only what you need. Models run entirely on-device.
+          </p>
         </div>
 
+        {/* ── Global error ── */}
         {error && (
-          <div className="mb-6 p-4 rounded-md bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-sm">
+          <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {error}
           </div>
         )}
 
-        <div className="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-              Text Clips
-            </div>
-            <div className="mt-1.5 text-3xl font-bold tabular-nums text-gray-900 dark:text-gray-100">
-              {indexStats?.totalTextClips ?? 0}
-            </div>
-          </div>
-          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-              Indexed
-            </div>
-            <div className="mt-1.5 text-3xl font-bold tabular-nums text-gray-900 dark:text-gray-100">
-              {indexStats?.indexedClips ?? 0}
-            </div>
-          </div>
-          <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-slate-100/50 dark:bg-slate-800/40 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-                  Pending
-                </div>
-                <div className="mt-1.5 text-3xl font-bold tabular-nums text-gray-900 dark:text-gray-100">
-                  {indexStats?.pendingClips ?? 0}
-                </div>
-              </div>
-              <button
-                onClick={() => void handleReindex()}
-                disabled={
-                  !isSemanticUsable || isReindexing || (indexStats?.pendingClips ?? 0) === 0
+        {/* ── Model cards grid ── */}
+        <section className="space-y-2">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+            Models
+          </h2>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {textSearchCap && (
+              <CapabilityCard
+                cap={textSearchCap}
+                icon={<Brain className="h-5 w-5" />}
+                capProgress={progress['text_search'] ?? null}
+                isBusy={busyKind === 'text_search'}
+                onInstall={() => void handleInstall('text_search')}
+                onDelete={() => void handleDelete('text_search')}
+                description="Semantic search using BGE-M3. Understands meaning, not just keywords."
+                accent="indigo"
+                extra={
+                  textSearchCap.installState === 'ready' ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        Enable search
+                      </span>
+                      <Switch
+                        checked={settings?.text_search_enabled ?? false}
+                        disabled={busyKind !== null}
+                        onChange={value => void handleToggleTextSearch(value)}
+                      />
+                    </div>
+                  ) : null
                 }
-                title={
-                  !isSemanticUsable
-                    ? 'Enable semantic search first to index clips'
-                    : (indexStats?.pendingClips ?? 0) === 0
-                      ? 'All clips are indexed'
-                      : undefined
-                }
-                className="mt-0.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isReindexing ? 'Indexing…' : 'Reindex'}
-              </button>
-            </div>
-            {indexProgress && (
-              <div className="mt-3">
-                <div className="flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500 mb-1">
-                  <span>
-                    {indexProgress.done} / {indexProgress.total} clips
-                  </span>
-                  <span>
-                    {indexProgress.total > 0
-                      ? Math.round((indexProgress.done / indexProgress.total) * 100)
-                      : 0}
-                    %
-                  </span>
-                </div>
-                <div className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-full h-1 overflow-hidden">
-                  <div
-                    className="bg-blue-500 h-1 rounded-full transition-all duration-300 ease-out"
-                    style={{
-                      width:
-                        indexProgress.total > 0
-                          ? `${Math.round((indexProgress.done / indexProgress.total) * 100)}%`
-                          : '0%',
-                    }}
-                  />
-                </div>
-              </div>
+              />
             )}
-          </div>
-        </div>
 
-        {/* Single model card */}
-        <div
-          className={`flex flex-col p-4 rounded-lg border transition-all duration-200 bg-slate-100/50 dark:bg-slate-800/40 shadow-sm max-w-sm ${cardRing}`}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="shrink-0 w-12 h-12 flex items-center justify-center rounded-md bg-linear-to-br from-blue-100/60 to-indigo-100/60 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-600 dark:text-blue-400">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                  />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0 pt-0.5">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 truncate">
-                  Multilingual Support
-                </h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
-                  Paraphrase-L12 <span className="mx-1">•</span> ONNX{' '}
-                  <span className="mx-1">•</span> {MODEL_SIZE}
-                </p>
-              </div>
-            </div>
-
-            {isModelDownloaded && !isActive && !isLoadingModel && (
-              <button
-                onClick={() => void handleDeleteModel()}
-                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 rounded-md transition-colors"
-                title="Delete model from disk"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-              </button>
+            {imageSearchCap && (
+              <CapabilityCard
+                cap={imageSearchCap}
+                icon={<Image className="h-5 w-5" />}
+                capProgress={progress['image_search'] ?? null}
+                isBusy={busyKind === 'image_search'}
+                onInstall={() => void handleInstall('image_search')}
+                onDelete={() => void handleDelete('image_search')}
+                description="Visual search with SigLIP2 ViT-B/16. Find images by describing them."
+                accent="violet"
+              />
             )}
           </div>
 
-          <div className="mt-3 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Supports 50+ languages including Japanese, Spanish, German, and more. Runs fully offline
-            on your device.
+          {/* Native OCR — slim row */}
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-100/30 dark:bg-slate-900/30 px-4 py-2.5">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <ScanText className="h-3.5 w-3.5" />
+            </div>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Text Recognition (OCR)
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-2.5 w-2.5" />
+                Always active
+              </span>
+            </div>
+            <span className="shrink-0 text-[11px] text-gray-400 dark:text-gray-500 hidden sm:block">
+              Apple Vision · Windows OCR · Tesseract
+            </span>
           </div>
+        </section>
 
-          <div className="mt-4 pt-3 border-t border-gray-100 dark:border-white/5 flex flex-col gap-2">
-            {isActive ? (
-              <div className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-sm font-medium border border-emerald-200/80 dark:border-emerald-500/20">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2.5}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-                {semanticStatus?.state === 'indexing' ? 'Active · Indexing' : 'Active'}
-              </div>
-            ) : isLoadingModel ? (
-              <div className="flex items-center justify-center gap-2 w-full py-1.5 rounded-md bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm font-medium border border-amber-200/70 dark:border-amber-500/20">
-                <svg
-                  className="animate-spin h-3.5 w-3.5"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
-                </svg>
-                Loading…
-              </div>
-            ) : isDegraded ? (
-              <div className="flex items-center gap-1.5 w-full px-3 py-1.5 rounded-md bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm font-medium border border-red-200/70 dark:border-red-500/20">
-                <svg
-                  className="w-3.5 h-3.5 shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-                  />
-                </svg>
-                <span className="flex-1 min-w-0 truncate">
-                  <span className="font-semibold">Error</span>
-                  {semanticStatus?.message && (
-                    <span className="font-normal opacity-75"> — {semanticStatus.message}</span>
-                  )}
+        {/* ── Search index ── */}
+        <section className="space-y-2">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+            Search Index
+          </h2>
+
+          {/* Coverage card */}
+          <div className="rounded-xl border border-white/10 bg-slate-100/40 dark:bg-slate-900/40 px-4 py-3 space-y-2.5">
+            {/* Top row: numbers */}
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-bold tabular-nums leading-none">{indexed}</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">
+                  / {eligible} indexed
                 </span>
               </div>
-            ) : isDownloading ? (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">
-                  <span className="flex items-center gap-1.5">
-                    <svg
-                      className="animate-spin h-3.5 w-3.5"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                    Downloading...
-                  </span>
-                  <span>{progressPct}%</span>
-                </div>
-                <div className="w-full bg-blue-100 dark:bg-blue-900/30 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${progressPct}%` }}
-                  />
-                </div>
-                {downloadProgress && (
-                  <div className="text-[10px] text-gray-400 text-right mt-0.5">
-                    {formatBytes(downloadProgress.downloaded)} /{' '}
-                    {formatBytes(downloadProgress.total)}
-                  </div>
-                )}
-              </div>
-            ) : !isModelDownloaded ? (
-              <button
-                onClick={() => void handleDownloadModel()}
-                className="flex items-center justify-center gap-2 w-full py-1.5 rounded text-sm font-medium transition-colors bg-slate-100/60 dark:bg-slate-700 text-gray-900 dark:text-gray-100 hover:bg-slate-200/60 dark:hover:bg-slate-600"
+              <span
+                className={`text-sm font-semibold tabular-nums ${indexedPct === 100 ? 'text-emerald-500' : indexedPct > 50 ? 'text-blue-500' : 'text-amber-500'}`}
               >
-                Download ({MODEL_SIZE})
-              </button>
-            ) : null}
+                {indexedPct}%
+              </span>
+            </div>
+
+            {/* Coverage bar */}
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200/60 dark:bg-gray-700/40">
+              <div
+                className={`h-1.5 rounded-full transition-all duration-500 ease-out ${
+                  indexedPct === 100
+                    ? 'bg-emerald-500'
+                    : indexedPct > 50
+                      ? 'bg-blue-500'
+                      : 'bg-amber-500'
+                }`}
+                style={{ width: `${indexedPct}%` }}
+              />
+            </div>
+
+            {/* Mini stats row */}
+            <div className="flex items-center gap-4 pt-0.5">
+              <MiniStat
+                label="Missing"
+                value={overview?.missingCount ?? 0}
+                warn={(overview?.missingCount ?? 0) > 0}
+              />
+              <MiniStat
+                label="Stale"
+                value={overview?.staleCount ?? 0}
+                warn={(overview?.staleCount ?? 0) > 0}
+              />
+              <MiniStat
+                label="Failed"
+                value={overview?.failedCount ?? 0}
+                warn={(overview?.failedCount ?? 0) > 0}
+              />
+              <MiniStat label="Pending" value={overview?.pendingCount ?? 0} />
+            </div>
           </div>
-        </div>
+
+          {/* Index progress */}
+          {indexProgress && (
+            <div className="rounded-lg border border-blue-200/60 bg-blue-50/60 px-3 py-2 dark:border-blue-500/20 dark:bg-blue-900/10">
+              <div className="mb-1.5 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Indexing…
+                </span>
+                <span className="tabular-nums">
+                  {indexProgress.done} / {indexProgress.total}
+                  {indexProgress.total > 0 &&
+                    ` · ${Math.round((indexProgress.done / indexProgress.total) * 100)}%`}
+                </span>
+              </div>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900/40">
+                <div
+                  className="h-1 rounded-full bg-blue-500 transition-all duration-300 ease-out"
+                  style={{
+                    width:
+                      indexProgress.total > 0
+                        ? `${Math.round((indexProgress.done / indexProgress.total) * 100)}%`
+                        : '0%',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Last error */}
+          {overview?.lastErrorSummary && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {overview.lastErrorSummary}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={() => void handleIndexMissing()}
+              disabled={!isAiUsable || !hasMissingOrStale}
+            >
+              Index Missing / Stale
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Sparkles className="h-3.5 w-3.5" />}
+              onClick={() => void handleReindexAll()}
+              disabled={!isAiUsable}
+            >
+              Reindex All
+            </Button>
+          </div>
+        </section>
       </div>
+    </div>
+  )
+}
+
+// ── Capability card ───────────────────────────────────────────────────────────
+
+type Accent = 'indigo' | 'violet'
+
+const accentStyles: Record<Accent, { icon: string; glow: string; bar: string }> = {
+  indigo: {
+    icon: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400',
+    glow: 'from-indigo-500/5 to-transparent',
+    bar: 'bg-indigo-500',
+  },
+  violet: {
+    icon: 'bg-violet-500/10 text-violet-600 dark:text-violet-400',
+    glow: 'from-violet-500/5 to-transparent',
+    bar: 'bg-violet-500',
+  },
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return ''
+  const gb = bytes / 1024 / 1024 / 1024
+  if (gb >= 0.1) return `${gb.toFixed(1)} GB`
+  const mb = bytes / 1024 / 1024
+  if (mb >= 0.5) return `${mb.toFixed(0)} MB`
+  return `${(bytes / 1024).toFixed(0)} KB`
+}
+
+interface CapabilityCardProps {
+  cap: AiCapabilityStatus
+  icon: React.ReactNode
+  capProgress: { label: string; downloaded: number; total: number; phase: string } | null
+  isBusy: boolean
+  onInstall: () => void
+  onDelete: () => void
+  description: string
+  accent: Accent
+  extra?: React.ReactNode
+}
+
+function CapabilityCard({
+  cap,
+  icon,
+  capProgress,
+  isBusy,
+  onInstall,
+  onDelete,
+  description,
+  accent,
+  extra,
+}: CapabilityCardProps) {
+  const styles = accentStyles[accent]
+  const isDownloading =
+    cap.installState === 'downloading' || (isBusy && cap.installState !== 'ready')
+  const pct =
+    isDownloading && capProgress && capProgress.total > 0
+      ? Math.min(100, Math.round((capProgress.downloaded / capProgress.total) * 100))
+      : 0
+  const isReady = cap.installState === 'ready'
+  const isError = cap.installState === 'error'
+
+  return (
+    <div
+      className={`relative flex flex-col rounded-xl border bg-slate-100/40 dark:bg-slate-900/40 overflow-hidden transition-all duration-200 ${
+        isReady
+          ? 'border-emerald-500/30 dark:border-emerald-500/20'
+          : isError
+            ? 'border-red-400/40 dark:border-red-500/30'
+            : 'border-white/10'
+      }`}
+    >
+      {/* Accent gradient wash */}
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-linear-to-b ${styles.glow} opacity-60`}
+      />
+
+      <div className="relative flex flex-col gap-3 p-4 flex-1">
+        {/* Header row */}
+        <div className="flex items-start justify-between">
+          <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${styles.icon}`}>
+            {icon}
+          </div>
+          {isReady && !isBusy && (
+            <button
+              onClick={onDelete}
+              className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+              title="Remove from disk"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Name + status */}
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-900 dark:text-gray-100">
+              {cap.displayName}
+            </span>
+            <StatusBadge state={cap.installState} />
+          </div>
+          <p className="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">
+            {cap.deliveryMode === 'cache_managed' ? 'Cache-managed' : 'Self-managed'}
+            {cap.sizeBytes > 0 ? ` · ${formatBytes(cap.sizeBytes)}` : ''}
+          </p>
+        </div>
+
+        {/* Description */}
+        <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400 flex-1">
+          {description}
+        </p>
+
+        {/* Error */}
+        {isError && cap.lastError && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {cap.lastError}
+          </div>
+        )}
+
+        {/* Extra slot */}
+        {extra && <div>{extra}</div>}
+
+        {/* Install / retry */}
+        {!isReady && (
+          <Button
+            variant="outline"
+            size="sm"
+            isLoading={isDownloading}
+            leftIcon={
+              isError ? <RefreshCw className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />
+            }
+            onClick={onInstall}
+            disabled={isDownloading}
+          >
+            {isDownloading ? 'Downloading…' : isError ? 'Retry' : 'Download'}
+          </Button>
+        )}
+
+        {/* Download progress */}
+        {isDownloading && capProgress && (
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[11px] text-blue-600 dark:text-blue-400">
+              <span className="max-w-[65%] truncate font-medium">{capProgress.label}</span>
+              <span className="tabular-nums">
+                {capProgress.total > 0
+                  ? `${formatBytes(capProgress.downloaded)} / ${formatBytes(capProgress.total)}`
+                  : `${pct}%`}
+              </span>
+            </div>
+            <div className="h-1 w-full overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900/30">
+              <div
+                className={`h-1 rounded-full transition-all duration-300 ease-out ${styles.bar}`}
+                style={{ width: capProgress.total > 0 ? `${pct}%` : '100%' }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Status badge ──────────────────────────────────────────────────────────────
+
+function StatusBadge({ state }: { state: AiCapabilityStatus['installState'] }) {
+  if (state === 'ready') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+        <CheckCircle2 className="h-3 w-3" />
+        Installed
+      </span>
+    )
+  }
+  if (state === 'downloading') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-400">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Downloading
+      </span>
+    )
+  }
+  if (state === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
+        <AlertCircle className="h-3 w-3" />
+        Error
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-gray-700/40 dark:text-gray-400">
+      <ChevronRight className="h-3 w-3" />
+      Not installed
+    </span>
+  )
+}
+
+// ── Mini stat ─────────────────────────────────────────────────────────────────
+
+function MiniStat({
+  label,
+  value,
+  warn = false,
+}: {
+  label: string
+  value: number
+  warn?: boolean
+}) {
+  return (
+    <div className="flex items-baseline gap-1">
+      <span
+        className={`text-sm font-bold tabular-nums ${warn && value > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-gray-700 dark:text-gray-300'}`}
+      >
+        {value}
+      </span>
+      <span className="text-[10px] text-gray-400 dark:text-gray-500">{label}</span>
     </div>
   )
 }

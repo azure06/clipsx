@@ -1,16 +1,10 @@
-use anyhow::{anyhow, Context, Result};
-use fastembed::{
-    InitOptionsUserDefined, Pooling, QuantizationMode, TextEmbedding, TokenizerFiles,
-    UserDefinedEmbeddingModel,
-};
+use anyhow::{anyhow, Result};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
 use tokio::task;
 
-pub const MULTILINGUAL_MODEL: &str = "paraphrase-multilingual-MiniLM-L12-v2";
-const ONNX_URL: &str = "https://github.com/azure06/clipsx/releases/download/models-v1/paraphrase-multilingual-MiniLM-L12-v2-model.onnx";
-const TOKENIZER_URL: &str = "https://github.com/azure06/clipsx/releases/download/models-v1/paraphrase-multilingual-MiniLM-L12-v2-tokenizer.json";
-const EXPECTED_DOWNLOAD_BYTES: u64 = 252_000_000;
+pub const ACTIVE_TEXT_MODEL: EmbeddingModel = EmbeddingModel::BGEM3;
 
 #[derive(Debug, Clone)]
 pub enum SemanticRuntimeStatus {
@@ -32,11 +26,16 @@ pub enum SemanticRuntimeStatus {
     },
 }
 
-/// Handles Local Semantic Search functionality using fastembed (ONNX Runtime)
-/// Model assets are sourced from GitHub Releases (models-v1 tag).
+/// Text embedding service for bundled local AI search.
+///
+/// The current stack uses fastembed's ONNX Runtime-backed BGE-M3 support while
+/// keeping the outer service boundary stable so later runtime work can swap the
+/// backend without touching indexing or search orchestration.
+///
+/// Note: this path is currently NOT self-hosted through ai_stack_manifest_v1.json.
+/// fastembed resolves BGE-M3 from its upstream source and caches files under
+/// app_data/.fastembed_cache (or HF_HOME / FASTEMBED_CACHE_DIR when configured).
 pub struct SemanticService {
-    /// Note: We use std::sync::RwLock because fastembed operations are blocking
-    /// and should be run inside task::spawn_blocking anyway.
     model: Arc<StdRwLock<Option<TextEmbedding>>>,
     loaded_model_name: Arc<StdRwLock<Option<String>>>,
     runtime_status: Arc<StdRwLock<SemanticRuntimeStatus>>,
@@ -56,7 +55,7 @@ impl SemanticService {
     fn emit_status_changed(app_handle: Option<&tauri::AppHandle>) {
         if let Some(app) = app_handle {
             use tauri::Emitter;
-            let _ = app.emit("semantic-status-changed", ());
+            let _ = app.emit("ai-stack-status-changed", ());
         }
     }
 
@@ -64,70 +63,59 @@ impl SemanticService {
         self.app_data_dir.join(".fastembed_cache")
     }
 
-    fn model_subdir(&self, model_name: &str) -> std::path::PathBuf {
-        self.model_cache_dir().join(model_name)
+    fn model_name() -> String {
+        TextEmbedding::get_model_info(&ACTIVE_TEXT_MODEL)
+            .map(|info| info.model_code.clone())
+            .unwrap_or_else(|_| "BAAI/bge-m3".to_string())
     }
 
-    fn onnx_path(&self, model_name: &str) -> std::path::PathBuf {
-        self.model_subdir(model_name).join("model.onnx")
+    fn model_repo_dir_name() -> String {
+        format!("models--{}", Self::model_name().replace('/', "--"))
     }
 
-    fn tokenizer_path(&self, model_name: &str) -> std::path::PathBuf {
-        self.model_subdir(model_name).join("tokenizer.json")
+    fn model_dimensions() -> i32 {
+        TextEmbedding::get_model_info(&ACTIVE_TEXT_MODEL)
+            .map(|info| info.dim as i32)
+            .unwrap_or(1024)
     }
 
-    fn tokenizer_files(tokenizer_file: Vec<u8>) -> TokenizerFiles {
-        TokenizerFiles {
-            tokenizer_file,
-            config_file: br#"{"pad_token_id":0}"#.to_vec(),
-            special_tokens_map_file: br#"{"cls_token":"[CLS]","mask_token":"[MASK]","pad_token":"[PAD]","sep_token":"[SEP]","unk_token":"[UNK]"}"#.to_vec(),
-            tokenizer_config_file: br#"{"model_max_length":256,"pad_token":"[PAD]"}"#.to_vec(),
+    fn model_dir(&self) -> std::path::PathBuf {
+        self.model_cache_dir().join(Self::model_repo_dir_name())
+    }
+
+    fn legacy_model_dir(&self) -> std::path::PathBuf {
+        self.model_cache_dir().join(Self::model_name())
+    }
+
+    fn dir_contains_files(dir: &std::path::Path) -> bool {
+        if !dir.exists() {
+            return false;
         }
+
+        walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .any(|entry| entry.file_type().is_file())
     }
 
-    fn load_user_defined_model(model_dir: &std::path::Path) -> Result<TextEmbedding> {
-        let onnx_file = std::fs::read(model_dir.join("model.onnx"))
-            .with_context(|| format!("Failed to read model.onnx from {}", model_dir.display()))?;
-        let tokenizer_file =
-            std::fs::read(model_dir.join("tokenizer.json")).with_context(|| {
-                format!("Failed to read tokenizer.json from {}", model_dir.display())
-            })?;
-
-        // Multilingual model is a static-quantized ONNX with mean pooling.
-        let model =
-            UserDefinedEmbeddingModel::new(onnx_file, Self::tokenizer_files(tokenizer_file))
-                .with_pooling(Pooling::Mean)
-                .with_quantization(QuantizationMode::Static);
-
-        let options = InitOptionsUserDefined::new().with_max_length(256);
-        TextEmbedding::try_new_from_user_defined(model, options)
-            .map_err(|e| anyhow!("Failed to load embedding model: {}", e))
+    pub fn are_model_files_cached(&self) -> bool {
+        Self::dir_contains_files(&self.model_dir())
+            || Self::dir_contains_files(&self.legacy_model_dir())
     }
 
-    /// Downloads (if necessary) and loads the ONNX model into memory.
-    /// This is a blocking operation so it must be spawned on a blocking thread.
-    pub async fn init_model(
-        &self,
-        model_name: String,
-        app_handle: Option<tauri::AppHandle>,
-    ) -> Result<()> {
-        // Only the multilingual model is supported; normalize legacy values.
-        let model_name = if model_name != MULTILINGUAL_MODEL {
-            eprintln!(
-                "[semantic] Unknown model '{}', falling back to {}",
-                model_name, MULTILINGUAL_MODEL
-            );
-            MULTILINGUAL_MODEL.to_string()
-        } else {
-            model_name
-        };
+    fn should_reset_partial_cache(message: &str) -> bool {
+        message.contains("Failed to retrieve")
+            || message.contains("Constant_7_attr__value")
+            || message.contains("model.onnx_data")
+    }
 
+    pub async fn init_model(&self, app_handle: Option<tauri::AppHandle>) -> Result<()> {
         let model_arc = self.model.clone();
         let name_arc = self.loaded_model_name.clone();
         let status_arc = self.runtime_status.clone();
-        let model_dir = self.model_subdir(&model_name);
-        let onnx_path = self.onnx_path(&model_name);
-        let tokenizer_path = self.tokenizer_path(&model_name);
+        let cache_dir = self.model_cache_dir();
+        let repo_dir = self.model_dir();
+        let model_name = Self::model_name();
 
         {
             let mut status = self.runtime_status.write().unwrap();
@@ -137,78 +125,86 @@ impl SemanticService {
         }
         Self::emit_status_changed(app_handle.as_ref());
 
-        let is_downloaded = self.get_downloaded_models().contains(&model_name);
         let progress_cancel = Arc::new(StdRwLock::new(false));
+        if let Some(app) = app_handle.clone() {
+            let model_dir = repo_dir.clone();
+            let cancel_clone = progress_cancel.clone();
+            let model_name_clone = model_name.clone();
 
-        if !is_downloaded {
-            std::fs::create_dir_all(&model_dir).with_context(|| {
-                format!(
-                    "Failed to create model cache directory {}",
-                    model_dir.display()
-                )
-            })?;
+            tokio::spawn(async move {
+                use tauri::Emitter;
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    if *cancel_clone.read().unwrap() {
+                        break;
+                    }
 
-            if let Some(app) = app_handle.clone() {
-                let model_dir_clone = model_dir.clone();
-                let cancel_clone = progress_cancel.clone();
-                let model_name_clone = model_name.clone();
-                let expected_total = EXPECTED_DOWNLOAD_BYTES;
-
-                tokio::spawn(async move {
-                    use tauri::Emitter;
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                        if *cancel_clone.read().unwrap() {
-                            break;
-                        }
-
-                        let mut size = 0;
-                        if let Ok(entries) = walkdir::WalkDir::new(&model_dir_clone)
-                            .into_iter()
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            for entry in entries {
-                                if let Ok(metadata) = entry.metadata() {
-                                    if metadata.is_file() {
-                                        size += metadata.len();
-                                    }
+                    let mut size = 0;
+                    if let Ok(entries) = walkdir::WalkDir::new(&model_dir)
+                        .into_iter()
+                        .collect::<std::result::Result<Vec<_>, walkdir::Error>>()
+                    {
+                        for entry in entries {
+                            if let Ok(metadata) = entry.metadata() {
+                                if metadata.is_file() {
+                                    size += metadata.len();
                                 }
                             }
                         }
-
-                        #[derive(serde::Serialize, Clone)]
-                        struct ProgressPayload {
-                            model: String,
-                            downloaded: u64,
-                            total: u64,
-                        }
-
-                        let _ = app.emit(
-                            "download-progress",
-                            ProgressPayload {
-                                model: model_name_clone.clone(),
-                                downloaded: size,
-                                total: expected_total,
-                            },
-                        );
                     }
-                });
-            }
 
-            let client = reqwest::Client::new();
-            download_file(&client, ONNX_URL, &onnx_path).await?;
-            download_file(&client, TOKENIZER_URL, &tokenizer_path).await?;
+                    #[derive(serde::Serialize, Clone)]
+                    #[serde(rename_all = "camelCase")]
+                    struct ProgressPayload {
+                        capability: String,
+                        label: String,
+                        downloaded: u64,
+                        total: u64,
+                        phase: String,
+                    }
+
+                    let _ = app.emit(
+                        "ai-capability-progress",
+                        ProgressPayload {
+                            capability: "text_search".to_string(),
+                            label: model_name_clone.clone(),
+                            downloaded: size,
+                            total: 0,
+                            phase: "cache_resolve".to_string(),
+                        },
+                    );
+                }
+            });
         }
 
         let model_name_for_load = model_name.clone();
         let join_result = task::spawn_blocking(move || -> Result<()> {
-            let model = Self::load_user_defined_model(&model_dir)?;
+            let load_model = || {
+                TextEmbedding::try_new(
+                    TextInitOptions::new(ACTIVE_TEXT_MODEL)
+                        .with_cache_dir(cache_dir.clone())
+                        .with_show_download_progress(false),
+                )
+                .map_err(|error| anyhow!("Failed to load BGE-M3: {}", error))
+            };
+
+            let model = match load_model() {
+                Ok(model) => model,
+                Err(error) if SemanticService::should_reset_partial_cache(&error.to_string()) => {
+                    if repo_dir.exists() {
+                        let _ = std::fs::remove_dir_all(&repo_dir);
+                    }
+
+                    load_model()?
+                }
+                Err(error) => return Err(error),
+            };
 
             let mut lock = model_arc.write().unwrap();
             *lock = Some(model);
 
             let mut name_lock = name_arc.write().unwrap();
-            *name_lock = Some(model_name_for_load.clone());
+            *name_lock = Some(model_name_for_load);
 
             Ok(())
         })
@@ -223,7 +219,7 @@ impl SemanticService {
                     .read()
                     .unwrap()
                     .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
+                    .unwrap_or_else(Self::model_name);
                 let mut status = self.runtime_status.write().unwrap();
                 *status = SemanticRuntimeStatus::Ready { model_name };
                 Self::emit_status_changed(app_handle.as_ref());
@@ -241,7 +237,7 @@ impl SemanticService {
             Err(err) => {
                 let mut status = status_arc.write().unwrap();
                 *status = SemanticRuntimeStatus::Error {
-                    model_name: Some(model_name.clone()),
+                    model_name: Some(model_name),
                     message: err.to_string(),
                 };
                 Self::emit_status_changed(app_handle.as_ref());
@@ -254,12 +250,6 @@ impl SemanticService {
         self.runtime_status.read().unwrap().clone()
     }
 
-    /// Checks if the model is currently loaded in memory.
-    pub fn is_ready(&self) -> bool {
-        self.model.read().unwrap().is_some()
-    }
-
-    /// Unloads the model from memory to save RAM when semantic search is disabled.
     pub fn unload_model(&self) {
         let mut lock = self.model.write().unwrap();
         *lock = None;
@@ -269,10 +259,10 @@ impl SemanticService {
         *status = SemanticRuntimeStatus::Idle;
     }
 
-    /// Returns the currently loaded model name and its dimension size (always 384).
     pub fn get_model_info(&self) -> Option<(String, i32)> {
         let lock = self.loaded_model_name.read().unwrap();
-        lock.as_ref().map(|name| (name.clone(), 384))
+        lock.as_ref()
+            .map(|name| (name.clone(), Self::model_dimensions()))
     }
 
     pub fn set_indexing_status(&self, done: u64, total: u64) {
@@ -305,27 +295,10 @@ impl SemanticService {
         };
     }
 
-    pub fn get_downloaded_models(&self) -> Vec<String> {
-        let model_dir = self.model_subdir(MULTILINGUAL_MODEL);
-        if model_dir.join("model.onnx").exists() && model_dir.join("tokenizer.json").exists() {
-            vec![MULTILINGUAL_MODEL.to_string()]
-        } else {
-            vec![]
-        }
-    }
-
-    pub fn delete_model(&self, model_name: &str) -> Result<()> {
-        if model_name != MULTILINGUAL_MODEL {
-            return Err(anyhow!(
-                "Unsupported model '{}'; only '{}' is allowed",
-                model_name,
-                MULTILINGUAL_MODEL
-            ));
-        }
-
+    pub fn delete_cached_model(&self) -> Result<()> {
         self.unload_model();
 
-        let model_dir = self.model_subdir(model_name);
+        let model_dir = self.model_dir();
         if model_dir.exists() {
             std::fs::remove_dir_all(&model_dir).map_err(|e| {
                 anyhow!(
@@ -335,6 +308,18 @@ impl SemanticService {
                 )
             })?;
         }
+
+        let legacy_model_dir = self.legacy_model_dir();
+        if legacy_model_dir.exists() {
+            std::fs::remove_dir_all(&legacy_model_dir).map_err(|e| {
+                anyhow!(
+                    "Failed to delete legacy model directory {}: {}",
+                    legacy_model_dir.display(),
+                    e
+                )
+            })?;
+        }
+
         Ok(())
     }
 
@@ -356,7 +341,7 @@ impl SemanticService {
                 }
             } else {
                 Err(anyhow!(
-                    "Semantic model is not loaded. Please initialize it first."
+                    "Bundled AI text model is not loaded. Please initialize it first."
                 ))
             }
         })
@@ -402,40 +387,6 @@ impl SemanticService {
     }
 }
 
-async fn download_file(client: &reqwest::Client, url: &str, dest: &std::path::Path) -> Result<()> {
-    use tokio::io::AsyncWriteExt as _;
-
-    let mut response = client
-        .get(url)
-        .header(
-            reqwest::header::USER_AGENT,
-            "clipsx/semantic-service (https://github.com/azure06/clipsx)",
-        )
-        .send()
-        .await
-        .context("Download request failed")?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(anyhow!("Download returned HTTP {}", status));
-    }
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let mut file = tokio::fs::File::create(dest)
-        .await
-        .context("Failed to create destination file")?;
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .context("Failed to read response chunk")?
-    {
-        file.write_all(&chunk)
-            .await
-            .context("Failed to write chunk to file")?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,11 +414,22 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenizer_files_include_required_metadata() {
-        let files = SemanticService::tokenizer_files(vec![1, 2, 3]);
-        assert_eq!(files.tokenizer_file, vec![1, 2, 3]);
-        assert!(!files.config_file.is_empty());
-        assert!(!files.special_tokens_map_file.is_empty());
-        assert!(!files.tokenizer_config_file.is_empty());
+    fn test_are_model_files_cached_returns_false_when_cache_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = SemanticService::new(temp_dir.path().to_path_buf());
+
+        assert!(!service.are_model_files_cached());
+    }
+
+    #[test]
+    fn test_are_model_files_cached_returns_true_when_repo_cache_has_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let service = SemanticService::new(temp_dir.path().to_path_buf());
+        let repo_dir = service.model_dir();
+
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        std::fs::write(repo_dir.join("model.onnx"), b"cached").unwrap();
+
+        assert!(service.are_model_files_cached());
     }
 }
