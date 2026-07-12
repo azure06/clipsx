@@ -999,6 +999,18 @@ pub async fn install_ai_capability(
                 .install(&app_handle)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            state.visual_service.set_enabled(true);
+
+            let mut settings = state
+                .settings_repository
+                .load()
+                .map_err(|e| e.to_string())?;
+            settings.image_search_enabled = true;
+            state
+                .settings_repository
+                .save(&settings)
+                .map_err(|e| e.to_string())?;
         }
     }
     Ok(())
@@ -1032,6 +1044,18 @@ pub fn delete_ai_capability(
             state
                 .image_search
                 .delete(&app_handle)
+                .map_err(|e| e.to_string())?;
+
+            state.visual_service.set_enabled(false);
+
+            let mut settings = state
+                .settings_repository
+                .load()
+                .map_err(|e| e.to_string())?;
+            settings.image_search_enabled = false;
+            state
+                .settings_repository
+                .save(&settings)
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -1077,6 +1101,48 @@ pub async fn set_text_search_enabled(
     if !enabled {
         let _ = app_handle.emit("ai-capabilities-changed", ());
     }
+
+    Ok(settings)
+}
+
+/// Toggle the image-search capability on or off (load/unload image models).
+/// Keeps downloaded files on disk while disabled so they can be re-enabled later.
+#[tauri::command]
+pub async fn set_image_search_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<AppSettings, String> {
+    use tauri::Emitter;
+
+    let mut settings = state
+        .settings_repository
+        .load()
+        .map_err(|e| e.to_string())?;
+
+    if enabled {
+        let image_status = state.image_search.status();
+        if image_status.install_state != crate::models::AiCapabilityInstallState::Ready {
+            return Err("Image Search is not installed. Install it from Plugins first.".to_string());
+        }
+        state
+            .visual_service
+            .preload_models()
+            .await
+            .map_err(|e| e.to_string())?;
+        state.visual_service.set_enabled(true);
+        settings.image_search_enabled = true;
+    } else {
+        state.visual_service.set_enabled(false);
+        settings.image_search_enabled = false;
+    }
+
+    state
+        .settings_repository
+        .save(&settings)
+        .map_err(|e| e.to_string())?;
+
+    let _ = app_handle.emit("ai-capabilities-changed", ());
 
     Ok(settings)
 }

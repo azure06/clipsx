@@ -46,6 +46,7 @@ export interface AppSettings {
 
   // Plugins
   text_search_enabled: boolean
+  image_search_enabled: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,4 +73,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   show_copy_toast: true,
   has_seen_welcome: false,
   text_search_enabled: false,
+  image_search_enabled: true,
 }

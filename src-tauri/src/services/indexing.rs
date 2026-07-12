@@ -183,6 +183,10 @@ impl IndexingService {
     }
 
     async fn build_visual_work(&self, clip: &ClipItem) -> Result<Option<VisualIndexWork>> {
+        if !self.visual_service.is_enabled() {
+            return Ok(None);
+        }
+
         if !matches!(clip.content_type.as_str(), "image" | "office") {
             return Ok(None);
         }
@@ -395,13 +399,16 @@ impl IndexingService {
         let visual_model = self.visual_service.image_model_code();
 
         let text_model_loaded = model_info.is_some();
+        let visual_enabled = self.visual_service.is_enabled();
 
         self.vector_store
             .clear_text_embeddings_for_model(&model_name)
             .await?;
-        self.vector_store
-            .clear_image_embeddings_for_model(&visual_model)
-            .await?;
+        if visual_enabled {
+            self.vector_store
+                .clear_image_embeddings_for_model(&visual_model)
+                .await?;
+        }
 
         // Text embedding pass — skipped entirely when text search model is not loaded.
         if text_model_loaded {
@@ -474,44 +481,46 @@ impl IndexingService {
         }
 
         // Visual embedding backfill — runs independently of text search.
-        let visual_candidates = self
-            .repository
-            .get_visual_embedding_candidates_for_model(&visual_model)
-            .await?;
+        if visual_enabled {
+            let visual_candidates = self
+                .repository
+                .get_visual_embedding_candidates_for_model(&visual_model)
+                .await?;
 
-        for candidate in visual_candidates {
-            if let Some(clip_row) = self.repository.get_by_id(&candidate.id).await? {
-                self.sync_search_projection(&clip_row).await?;
-                self.repository
-                    .mark_search_job_running(&candidate.id)
-                    .await?;
+            for candidate in visual_candidates {
+                if let Some(clip_row) = self.repository.get_by_id(&candidate.id).await? {
+                    self.sync_search_projection(&clip_row).await?;
+                    self.repository
+                        .mark_search_job_running(&candidate.id)
+                        .await?;
 
-                let mut visual_reindex_error = None;
-                if let Some(visual_work) = self.build_visual_work(&clip_row).await? {
-                    if let Err(error) = Self::save_visual_embedding(
-                        self.vector_store.as_ref(),
-                        self.visual_service.as_ref(),
-                        &candidate.id,
-                        &visual_work,
-                    )
-                    .await
-                    {
-                        eprintln!(
-                            "[WARN] Failed to save visual-only embedding during reindex for {}: {}",
-                            candidate.id, error
-                        );
-                        visual_reindex_error = Some(error.to_string());
+                    let mut visual_reindex_error = None;
+                    if let Some(visual_work) = self.build_visual_work(&clip_row).await? {
+                        if let Err(error) = Self::save_visual_embedding(
+                            self.vector_store.as_ref(),
+                            self.visual_service.as_ref(),
+                            &candidate.id,
+                            &visual_work,
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "[WARN] Failed to save visual-only embedding during reindex for {}: {}",
+                                candidate.id, error
+                            );
+                            visual_reindex_error = Some(error.to_string());
+                        }
                     }
-                }
 
-                if let Some(message) = visual_reindex_error {
-                    self.repository
-                        .mark_search_job_failed(&candidate.id, &message)
-                        .await?;
-                } else {
-                    self.repository
-                        .mark_search_job_completed(&candidate.id)
-                        .await?;
+                    if let Some(message) = visual_reindex_error {
+                        self.repository
+                            .mark_search_job_failed(&candidate.id, &message)
+                            .await?;
+                    } else {
+                        self.repository
+                            .mark_search_job_completed(&candidate.id)
+                            .await?;
+                    }
                 }
             }
         }

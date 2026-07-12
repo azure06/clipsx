@@ -145,6 +145,17 @@ export const Plugins = () => {
     }
   }
 
+  const handleToggleImageSearch = async (enabled: boolean) => {
+    try {
+      setError(null)
+      await invoke('set_image_search_enabled', { enabled })
+      await loadSettings()
+      await fetchCapabilities()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
   const handleIndexMissing = async () => {
     try {
       setError(null)
@@ -191,6 +202,10 @@ export const Plugins = () => {
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             Install only what you need. Models run entirely on-device.
           </p>
+          <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            Each model uses about 1.5 GB of RAM while loaded. Text Search and Image Search can be
+            enabled independently, so you can choose which models stay in memory.
+          </p>
         </div>
 
         {/* ── Global error ── */}
@@ -216,7 +231,7 @@ export const Plugins = () => {
                 isBusy={busyKind === 'text_search'}
                 onInstall={() => void handleInstall('text_search')}
                 onDelete={() => void handleDelete('text_search')}
-                description="Semantic search using BGE-M3. Understands meaning, not just keywords."
+                description="Semantic search using BGE-M3. Understands meaning, not just keywords. This model uses about 1.5 GB RAM while loaded."
                 accent="indigo"
                 extra={
                   textSearchCap.installState === 'ready' ? (
@@ -243,8 +258,22 @@ export const Plugins = () => {
                 isBusy={busyKind === 'image_search'}
                 onInstall={() => void handleInstall('image_search')}
                 onDelete={() => void handleDelete('image_search')}
-                description="Visual search with SigLIP2 ViT-B/16. Find images by describing them."
+                description="Visual search with SigLIP2 ViT-B/16. Find images by describing them. This model uses about 1.5 GB RAM while loaded."
                 accent="violet"
+                extra={
+                  imageSearchCap.installState === 'ready' ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        Keep in memory
+                      </span>
+                      <Switch
+                        checked={settings?.image_search_enabled ?? true}
+                        disabled={busyKind !== null}
+                        onChange={value => void handleToggleImageSearch(value)}
+                      />
+                    </div>
+                  ) : null
+                }
               />
             )}
           </div>

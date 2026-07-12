@@ -99,6 +99,11 @@ pub struct AppSettings {
         alias = "semanticSearchEnabled"
     )]
     pub text_search_enabled: bool,
+
+    /// Whether the image-search capability should stay loaded in memory.
+    /// Defaults to enabled to preserve previous behavior for existing users.
+    #[serde(default = "default_true")]
+    pub image_search_enabled: bool,
 }
 
 fn default_item_activation_mode() -> ItemActivationMode {
@@ -139,6 +144,7 @@ impl Default for AppSettings {
             show_copy_toast: true,
             has_seen_welcome: false,
             text_search_enabled: false,
+            image_search_enabled: true,
         }
     }
 }

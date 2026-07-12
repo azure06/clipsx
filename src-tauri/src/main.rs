@@ -247,8 +247,12 @@ fn main() {
                     }
                 }
 
-                // Image Search: preload models when files are present (no explicit toggle).
-                if app_state.visual_service.are_models_downloaded() {
+                app_state
+                    .visual_service
+                    .set_enabled(settings.image_search_enabled);
+
+                // Image Search: only preload when user keeps runtime toggle enabled.
+                if settings.image_search_enabled && app_state.visual_service.are_models_downloaded() {
                     let visual_service = app_state.visual_service.clone();
                     tokio::spawn(async move {
                         if let Err(error) = visual_service.preload_models().await {
@@ -258,6 +262,9 @@ fn main() {
                             );
                         }
                     });
+                } else if settings.image_search_enabled {
+                    settings.image_search_enabled = false;
+                    let _ = app_state.settings_repository.save(&settings);
                 }
 
                 // Register global shortcut on startup
@@ -308,6 +315,7 @@ fn main() {
             commands::install_ai_capability,
             commands::delete_ai_capability,
             commands::set_text_search_enabled,
+            commands::set_image_search_enabled,
             commands::get_text_search_status,
             commands::get_indexing_overview,
             commands::index_missing_search_content,

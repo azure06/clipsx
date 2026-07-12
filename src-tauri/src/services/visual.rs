@@ -25,6 +25,7 @@ struct SigLipModels {
 
 pub struct VisualService {
     models: Arc<StdRwLock<Option<SigLipModels>>>,
+    enabled: Arc<StdRwLock<bool>>,
     load_lock: Arc<Mutex<()>>,
     app_data_dir: PathBuf,
 }
@@ -33,6 +34,7 @@ impl VisualService {
     pub fn new(app_data_dir: PathBuf) -> Self {
         Self {
             models: Arc::new(StdRwLock::new(None)),
+            enabled: Arc::new(StdRwLock::new(true)),
             load_lock: Arc::new(Mutex::new(())),
             app_data_dir,
         }
@@ -59,6 +61,17 @@ impl VisualService {
         dir.join("siglip2-base-patch16-224-vision.onnx").exists()
             && dir.join("siglip2-base-patch16-224-text.onnx").exists()
             && dir.join("siglip2-tokenizer.json").exists()
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        *self.enabled.read().unwrap()
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        *self.enabled.write().unwrap() = enabled;
+        if !enabled {
+            self.unload_models();
+        }
     }
 
     pub async fn preload_models(&self) -> Result<()> {

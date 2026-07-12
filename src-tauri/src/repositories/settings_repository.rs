@@ -90,6 +90,7 @@ mod tests {
         assert!(settings.enable_images);
         assert!(settings.paste_on_enter);
         assert!(!settings.text_search_enabled);
+        assert!(settings.image_search_enabled);
     }
 
     #[test]
@@ -142,5 +143,20 @@ mod tests {
 
         let loaded = repo.load().unwrap();
         assert!(loaded.text_search_enabled);
+    }
+
+    #[test]
+    fn test_save_and_load_image_search_setting() {
+        let (repo, _temp) = create_test_repo();
+
+        let settings = AppSettings {
+            image_search_enabled: false,
+            ..AppSettings::default()
+        };
+
+        repo.save(&settings).unwrap();
+
+        let loaded = repo.load().unwrap();
+        assert!(!loaded.image_search_enabled);
     }
 }

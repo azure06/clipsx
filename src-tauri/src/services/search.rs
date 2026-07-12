@@ -250,32 +250,34 @@ impl SearchService {
         }
 
         let mut visual_hits = Vec::new();
-        match self
-            .visual_service
-            .embed_query(Self::normalize_visual_query(query))
-            .await
-        {
-            Ok(query_vector) => {
-                let visual_model = self.visual_service.image_model_code();
-                visual_hits = self
-                    .vector_store
-                    .rank_image_query(
-                        &query_vector,
-                        filter_types.clone(),
-                        favorites_only,
-                        pinned_only,
-                        tag_filter,
-                        &visual_model,
-                        DEFAULT_VISUAL_SIMILARITY_THRESHOLD,
-                    )
-                    .await?;
-                visual_hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-            }
-            Err(error) => {
-                eprintln!(
-                    "[WARN] Failed to generate visual query embedding for search: {}",
-                    error
-                );
+        if self.visual_service.is_enabled() {
+            match self
+                .visual_service
+                .embed_query(Self::normalize_visual_query(query))
+                .await
+            {
+                Ok(query_vector) => {
+                    let visual_model = self.visual_service.image_model_code();
+                    visual_hits = self
+                        .vector_store
+                        .rank_image_query(
+                            &query_vector,
+                            filter_types.clone(),
+                            favorites_only,
+                            pinned_only,
+                            tag_filter,
+                            &visual_model,
+                            DEFAULT_VISUAL_SIMILARITY_THRESHOLD,
+                        )
+                        .await?;
+                    visual_hits.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[WARN] Failed to generate visual query embedding for search: {}",
+                        error
+                    );
+                }
             }
         }
 
