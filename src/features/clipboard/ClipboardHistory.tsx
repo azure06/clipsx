@@ -15,6 +15,21 @@ interface ClipboardHistoryProps {
   onPreviewItem?: (clipId: string | null) => void
 }
 
+const hasNativeCopySelection = (): boolean => {
+  const activeElement = document.activeElement
+
+  if (activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement) {
+    return (
+      activeElement.selectionStart !== null &&
+      activeElement.selectionEnd !== null &&
+      activeElement.selectionStart !== activeElement.selectionEnd
+    )
+  }
+
+  const selection = window.getSelection()
+  return selection != null && !selection.isCollapsed && selection.toString().length > 0
+}
+
 export const ClipboardHistory = ({
   searchQuery = '',
   className,
@@ -301,6 +316,9 @@ export const ClipboardHistory = ({
         })
 
         if (shortcutAction) {
+          if (shortcutAction.id === 'copy' && hasNativeCopySelection()) {
+            return
+          }
           e.preventDefault()
           void shortcutAction.execute(selectedContent)
           return

@@ -15,6 +15,7 @@ const {
   toggleFavoriteMock,
   togglePinMock,
   loadMoreClipsMock,
+  performCopyMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   toastMock: vi.fn(),
@@ -22,6 +23,7 @@ const {
   toggleFavoriteMock: vi.fn(),
   togglePinMock: vi.fn(),
   loadMoreClipsMock: vi.fn(),
+  performCopyMock: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -87,6 +89,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     deleteClipMock.mockResolvedValue(undefined)
     toggleFavoriteMock.mockResolvedValue(undefined)
     togglePinMock.mockResolvedValue(undefined)
+    performCopyMock.mockResolvedValue(undefined)
 
     vi.stubGlobal(
       'IntersectionObserver',
@@ -125,7 +128,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
       clearAllClips: vi.fn(),
       copyDerivedText: vi.fn(),
       performPrimaryAction: vi.fn(),
-      performCopy: vi.fn(),
+      performCopy: performCopyMock,
       resetPagination: vi.fn(),
       availableTags: [],
     })
@@ -231,6 +234,38 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     })
 
     input.remove()
+  })
+
+  it('keeps native copy when text is selected outside inputs', async () => {
+    setNavigatorPlatform('MacIntel')
+    render(<ClipboardHistory />)
+
+    const previewText = document.createElement('p')
+    previewText.textContent = 'hello world from preview'
+    document.body.appendChild(previewText)
+
+    const range = document.createRange()
+    range.selectNodeContents(previewText)
+
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'C',
+          metaKey: true,
+        })
+      )
+    })
+
+    await waitFor(() => {
+      expect(performCopyMock).not.toHaveBeenCalled()
+    })
+
+    selection?.removeAllRanges()
+    previewText.remove()
   })
 
   it('keeps bare Delete native in search input on Windows', async () => {
