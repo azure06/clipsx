@@ -8,6 +8,7 @@ export type ContentType =
   | 'url'
   | 'email'
   | 'color'
+  | 'markdown'
   | 'code'
   | 'json'
   | 'csv'

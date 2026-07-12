@@ -3,6 +3,7 @@ import type { Content } from '../types'
 import { ColorPreview } from './ColorPreview'
 import { URLPreview } from './URLPreview'
 import { CodePreview } from './CodePreview'
+import { MarkdownPreview } from './MarkdownPreview'
 import { EmailPreview } from './EmailPreview'
 import { JSONPreview } from './JSONPreview'
 import { TextPreview } from './TextPreview'
@@ -30,6 +31,8 @@ const ContentPreviewComponent = ({ content }: ContentPreviewProps) => {
       return <URLPreview content={content} />
     case 'code':
       return <CodePreview content={content} />
+    case 'markdown':
+      return <MarkdownPreview content={content} />
     case 'email':
       return <EmailPreview content={content} />
     case 'json':
@@ -67,6 +70,7 @@ export const ContentPreview = memo(ContentPreviewComponent)
 export { ColorPreview } from './ColorPreview'
 export { URLPreview } from './URLPreview'
 export { CodePreview } from './CodePreview'
+export { MarkdownPreview } from './MarkdownPreview'
 export { EmailPreview } from './EmailPreview'
 export { JSONPreview } from './JSONPreview'
 export { TextPreview } from './TextPreview'

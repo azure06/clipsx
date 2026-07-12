@@ -18,6 +18,7 @@ pub enum ContentType {
     Url,
     Email,
     Color,
+    Markdown,
     Code,
     Path,
     Json,
@@ -39,6 +40,7 @@ impl ContentType {
             ContentType::Url => "url",
             ContentType::Email => "email",
             ContentType::Color => "color",
+            ContentType::Markdown => "markdown",
             ContentType::Code => "code",
             ContentType::Path => "path",
             ContentType::Json => "json",
@@ -80,6 +82,9 @@ impl DetectionResult {
 
 /// Minimum text length for code heuristic (avoids false positives on short strings)
 const MIN_CODE_LENGTH: usize = 20;
+const MIN_MARKDOWN_WEAK_LENGTH: usize = 32;
+const MIN_MARKDOWN_LIST_LINES: usize = 2;
+const MIN_MARKDOWN_BLOCKQUOTE_LINES: usize = 2;
 
 /// Plausible Unix timestamp range: 2001-01-01 to 2040-01-01
 const MIN_TIMESTAMP: i64 = 978_307_200;
@@ -150,6 +155,9 @@ pub fn detect(text: &str) -> DetectionResult {
     }
 
     // Priority 5: Code (Broadest heuristic)
+    if let Some(r) = detect_markdown(trimmed) {
+        return r;
+    }
     if let Some(r) = detect_code(trimmed) {
         return r;
     }
@@ -646,6 +654,150 @@ fn detect_code(text: &str) -> Option<DetectionResult> {
     })
 }
 
+fn markdown_result(text: &str, confidence: f32) -> DetectionResult {
+    DetectionResult {
+        detected_type: ContentType::Markdown,
+        confidence,
+        metadata: json!({
+            "language": "markdown",
+            "line_count": text.lines().count(),
+            "word_count": text.split_whitespace().count(),
+        }),
+    }
+}
+
+fn detect_markdown(text: &str) -> Option<DetectionResult> {
+    if text.is_empty() {
+        return None;
+    }
+
+    let has_fenced_block = has_markdown_fenced_block(text);
+    let has_table = has_markdown_table(text);
+
+    if has_fenced_block || has_table {
+        return Some(markdown_result(text, 0.95));
+    }
+
+    let line_count = text.lines().count();
+    let word_count = text.split_whitespace().count();
+    if text.len() < MIN_MARKDOWN_WEAK_LENGTH || line_count < 2 {
+        return None;
+    }
+
+    lazy_static! {
+        static ref HEADING_REGEX: Regex = Regex::new(r"(?m)^\s{0,3}#{1,6}\s+\S").unwrap();
+        static ref LINK_REGEX: Regex =
+            Regex::new(r#"\[[^\]\n]{1,80}\]\((?:[^)\s]+)(?:\s+"[^"]+")?\)"#).unwrap();
+        static ref UNORDERED_LIST_REGEX: Regex =
+            Regex::new(r"^\s{0,3}[-+*]\s+\S").unwrap();
+        static ref ORDERED_LIST_REGEX: Regex =
+            Regex::new(r"^\s{0,3}\d{1,3}[.)]\s+\S").unwrap();
+        static ref TASK_LIST_REGEX: Regex =
+            Regex::new(r"^\s{0,3}[-+*]\s+\[(?: |x|X)\]\s+\S").unwrap();
+        static ref BLOCKQUOTE_REGEX: Regex = Regex::new(r"^\s{0,3}>\s+\S").unwrap();
+    }
+
+    let has_heading = HEADING_REGEX.is_match(text);
+    let has_link = LINK_REGEX.is_match(text);
+
+    let list_count = text
+        .lines()
+        .filter(|line| {
+            UNORDERED_LIST_REGEX.is_match(line)
+                || ORDERED_LIST_REGEX.is_match(line)
+                || TASK_LIST_REGEX.is_match(line)
+        })
+        .count();
+    let task_count = text
+        .lines()
+        .filter(|line| TASK_LIST_REGEX.is_match(line))
+        .count();
+    let blockquote_count = text
+        .lines()
+        .filter(|line| BLOCKQUOTE_REGEX.is_match(line))
+        .count();
+
+    let has_list = list_count >= MIN_MARKDOWN_LIST_LINES;
+    let has_task_list = task_count >= MIN_MARKDOWN_LIST_LINES;
+    let has_blockquote = blockquote_count >= MIN_MARKDOWN_BLOCKQUOTE_LINES;
+
+    let weak_signal_count = [has_heading, has_link, has_list, has_task_list, has_blockquote]
+        .into_iter()
+        .filter(|signal| *signal)
+        .count();
+
+    let heading_with_body = has_heading && word_count >= 6;
+    let dense_list_document = has_list && list_count >= 3 && word_count >= 6;
+    let quoted_excerpt = has_blockquote && word_count >= 8;
+
+    if weak_signal_count < 2 && !heading_with_body && !dense_list_document && !quoted_excerpt {
+        return None;
+    }
+
+    Some(markdown_result(text, 0.85))
+}
+
+fn has_markdown_fenced_block(text: &str) -> bool {
+    let mut open_fence: Option<&str> = None;
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        match open_fence {
+            None if trimmed.starts_with("```") => open_fence = Some("```"),
+            None if trimmed.starts_with("~~~") => open_fence = Some("~~~"),
+            Some("```") if trimmed.starts_with("```") => return true,
+            Some("~~~") if trimmed.starts_with("~~~") => return true,
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn has_markdown_table(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 2 {
+        return false;
+    }
+
+    for window in lines.windows(2) {
+        let header = window[0].trim();
+        let separator = window[1].trim();
+
+        if markdown_table_cell_count(header) >= 2 && is_markdown_table_separator(separator) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn markdown_table_cell_count(line: &str) -> usize {
+    line.trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .count()
+}
+
+fn is_markdown_table_separator(line: &str) -> bool {
+    let columns: Vec<&str> = line
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .collect();
+
+    if columns.len() < 2 {
+        return false;
+    }
+
+    columns.iter().all(|cell| {
+        let inner = cell.trim_matches(':');
+        inner.len() >= 3 && inner.chars().all(|ch| ch == '-')
+    })
+}
+
 // ============================================================================
 // Backward-compatible wrapper (preserves existing call sites)
 // ============================================================================
@@ -708,6 +860,10 @@ fn detect_secrets(text: &str) -> Option<DetectionResult> {
 fn detect_csv(text: &str) -> Option<DetectionResult> {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() < 2 {
+        return None;
+    }
+
+    if has_markdown_table(text) {
         return None;
     }
 
@@ -1111,6 +1267,41 @@ const greeting = async () => {
         assert_eq!(r.metadata["language"], "sql");
     }
 
+    #[test]
+    fn detect_markdown_heading_and_list() {
+        let markdown = "# Release Notes\n\n- Added markdown preview\n- Kept clipboard ingestion unchanged";
+        let r = detect(markdown);
+        assert_eq!(r.detected_type, ContentType::Markdown);
+        assert_eq!(r.metadata["language"], "markdown");
+    }
+
+    #[test]
+    fn detect_markdown_table() {
+        let markdown = "| Name | Value |\n| --- | --- |\n| foo | bar |";
+        let r = detect(markdown);
+        assert_eq!(r.detected_type, ContentType::Markdown);
+    }
+
+    #[test]
+    fn detect_markdown_fenced_code_beats_code() {
+        let markdown = "```ts\nconst greeting = async () => {\n  return 42;\n}\n```";
+        let r = detect(markdown);
+        assert_eq!(r.detected_type, ContentType::Markdown);
+    }
+
+    #[test]
+    fn detect_markdown_mermaid_fence() {
+        let markdown = "```mermaid\ngraph TD\n  A --> B\n```";
+        let r = detect(markdown);
+        assert_eq!(r.detected_type, ContentType::Markdown);
+    }
+
+    #[test]
+    fn detect_markdown_rejects_short_note() {
+        let r = detect("- buy milk\n- call mom");
+        assert_eq!(r.detected_type, ContentType::Text);
+    }
+
     // --- Plain Text (Fallback) ---
 
     #[test]
@@ -1153,6 +1344,9 @@ const greeting = async () => {
 
         let json = serde_json::to_string(&ContentType::Timestamp).unwrap();
         assert_eq!(json, "\"timestamp\"");
+
+        let json = serde_json::to_string(&ContentType::Markdown).unwrap();
+        assert_eq!(json, "\"markdown\"");
     }
 
     #[test]
@@ -1160,6 +1354,7 @@ const greeting = async () => {
         assert_eq!(ContentType::Text.as_str(), "text");
         assert_eq!(ContentType::Jwt.as_str(), "jwt");
         assert_eq!(ContentType::Timestamp.as_str(), "timestamp");
+        assert_eq!(ContentType::Markdown.as_str(), "markdown");
     }
 
     // --- New Detectors Verification ---

@@ -64,6 +64,20 @@ describe('SearchBar scope slash commands', () => {
     })
   })
 
+  it('keeps /markdown as a type filter prefix', async () => {
+    const onScopeChange = vi.fn()
+    render(<ScopeHarness onScopeChange={onScopeChange} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Type to search or paste...'), {
+      target: { value: '/markdown' },
+    })
+
+    await waitFor(() => {
+      expect(onScopeChange).not.toHaveBeenCalled()
+      expect(screen.getByTestId('query-value')).toHaveTextContent('/markdown')
+    })
+  })
+
   it('does not suggest /all as a slash command', () => {
     render(<ScopeHarness />)
 

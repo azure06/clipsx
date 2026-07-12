@@ -75,6 +75,7 @@ const FILTER_TYPE_MAP: Record<string, string> = {
   image: 'image',
   url: 'url',
   text: 'text',
+  markdown: 'markdown',
   code: 'code',
   file: 'files',
   files: 'files',

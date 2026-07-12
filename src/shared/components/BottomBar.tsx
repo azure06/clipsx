@@ -22,7 +22,7 @@ export const BottomBar = () => {
       Use <Kbd>↑</Kbd> <Kbd>↓</Kbd> arrows or <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate.
     </>,
     <>
-      Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/text</Kbd> to filter clips.
+      Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/markdown</Kbd> to filter clips.
     </>,
     <>
       Press <Kbd>F</Kbd> to favorite a clip or <Kbd>P</Kbd> to pin it.

@@ -50,6 +50,7 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
 
     return (
       content.type === 'text' ||
+      content.type === 'markdown' ||
       content.type === 'code' ||
       content.type === 'json' ||
       content.type === 'csv' ||
@@ -66,7 +67,7 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
 
       let extension = 'txt'
 
-      if (content.type === 'code' && content.metadata.language) {
+      if ((content.type === 'code' || content.type === 'markdown') && content.metadata.language) {
         const lang = content.metadata.language.toLowerCase()
         extension = LANGUAGE_TO_EXTENSION[lang] || lang
       } else if (content.type === 'json') {

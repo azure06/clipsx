@@ -3,6 +3,7 @@ import {
   Link2,
   Mail,
   Code2,
+  FileCode2,
   Braces,
   FileText,
   FileSpreadsheet,
@@ -68,6 +69,8 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
         return <Mail size={iconSize} strokeWidth={2.5} />
       case 'code':
         return <Code2 size={iconSize} strokeWidth={2.5} />
+      case 'markdown':
+        return <FileCode2 size={iconSize} strokeWidth={2.5} />
       case 'json':
         return <Braces size={iconSize} strokeWidth={2.5} />
       case 'csv':
@@ -109,6 +112,8 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
         return 'bg-amber-500/20 text-amber-400 ring-amber-500/30'
       case 'code':
         return 'bg-green-500/20 text-green-400 ring-green-500/30'
+      case 'markdown':
+        return 'bg-cyan-500/20 text-cyan-500 ring-cyan-500/30'
       case 'json':
         return 'bg-emerald-500/20 text-emerald-400 ring-emerald-500/30'
       case 'csv':

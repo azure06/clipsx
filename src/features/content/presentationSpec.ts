@@ -48,6 +48,14 @@ const SPECS: readonly ContentPresentationSpec[] = [
     hiddenActions: [],
   },
   {
+    type: 'markdown',
+    interactionMode: 'read_only',
+    globalBarActions: [...GLOBAL_BAR_BASE, OPEN_IN_EDITOR],
+    previewMenuActions: [],
+    previewInlineActions: [],
+    hiddenActions: [],
+  },
+  {
     type: 'code',
     interactionMode: 'read_only',
     globalBarActions: [...GLOBAL_BAR_BASE, OPEN_IN_EDITOR],
