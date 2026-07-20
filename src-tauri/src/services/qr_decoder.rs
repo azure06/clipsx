@@ -1,24 +1,21 @@
-/// QR code detection and decoding service
-/// Handles extracting QR codes from image data and decoding their content
+/// Internal QR decoding placeholder.
 ///
-/// Note: Current implementation returns a stub. Full QR detection will be
-/// implemented in the next iteration with a proper QR library integration.
+/// This module and its Tauri command are intentionally retained for the
+/// deferred QR feature, but they are not connected to the UI or release
+/// surface. Until a decoder is implemented, both functions deterministically
+/// report that no QR code was found.
 use anyhow::Result;
 
-/// Decode QR code from raw image bytes
-/// Returns the QR content as a string if found, or None if no QR code detected
+/// Decode QR code from raw image bytes.
 #[allow(dead_code)]
 pub fn decode_qr_from_bytes(_image_bytes: &[u8]) -> Result<Option<String>> {
-    // TODO: Implement QR detection from image bytes
-    // Use rqrr or similar library to detect and decode QR codes
+    // Deferred: integrate a decoder and image preprocessing here.
     Ok(None)
 }
 
-/// Decode QR code from an image path
-/// Returns the QR content as a string if found, or None if no QR code detected
+/// Decode QR code from an image path.
 pub fn decode_qr_from_path(_path: &str) -> Result<Option<String>> {
-    // TODO: Implement QR detection from image file
-    // Load image and call decode_qr_from_bytes
+    // Deferred: load image bytes and delegate to decode_qr_from_bytes.
     Ok(None)
 }
 
@@ -27,11 +24,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_qr_decode_stub() -> Result<()> {
-        // Placeholder test - QR decoding will be implemented in next iteration
-        let result = decode_qr_from_bytes(b"placeholder")?;
-        assert_eq!(result, None, "Stub QR decoder returns None");
-
+    fn qr_decoder_is_an_explicit_no_result_placeholder() -> Result<()> {
+        assert_eq!(decode_qr_from_bytes(b"placeholder")?, None);
+        assert_eq!(decode_qr_from_path("placeholder.png")?, None);
         Ok(())
     }
 }

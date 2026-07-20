@@ -5,7 +5,7 @@ use crate::models::{
 use crate::repositories::{ClipRepository, SettingsRepository};
 use crate::services::capabilities::{ImageSearchCapability, TextSearchCapability};
 use crate::services::clipboard::ClipboardService;
-use crate::services::indexing::{AiStackProgressPayload, IndexingService};
+use crate::services::indexing::{IndexingProgressPayload, IndexingService};
 use crate::services::paste;
 use crate::services::search::{SearchService, DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD};
 use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
@@ -118,7 +118,7 @@ pub struct TextSearchStatusPayload {
     pub state: String,
     pub enabled: bool,
     pub message: String,
-    pub progress: Option<AiStackProgressPayload>,
+    pub progress: Option<IndexingProgressPayload>,
 }
 
 fn build_text_search_status(
@@ -164,7 +164,7 @@ fn build_text_search_status(
             state: "indexing".to_string(),
             enabled: true,
             message: format!("Indexing existing clips with {}.", model_name),
-            progress: Some(AiStackProgressPayload { done, total }),
+            progress: Some(IndexingProgressPayload { done, total }),
         },
         SemanticRuntimeStatus::Ready { model_name } => TextSearchStatusPayload {
             state: "ready".to_string(),
@@ -1123,7 +1123,9 @@ pub async fn set_image_search_enabled(
     if enabled {
         let image_status = state.image_search.status();
         if image_status.install_state != crate::models::AiCapabilityInstallState::Ready {
-            return Err("Image Search is not installed. Install it from Plugins first.".to_string());
+            return Err(
+                "Image Search is not installed. Install it from Plugins first.".to_string(),
+            );
         }
         state
             .visual_service

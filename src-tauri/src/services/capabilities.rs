@@ -5,7 +5,8 @@
 //
 // TextSearchCapability  — fastembed / HuggingFace, cache-managed.
 // ImageSearchCapability — SigLIP2 ViT, self-managed artifact download.
-// OcrCapability         — PaddleOCR, self-managed artifact download.
+// OCR uses the native platform engine configured by `services::ocr` and is
+// intentionally outside this capability system.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -152,7 +153,7 @@ impl TextSearchCapability {
             }
             Err(error) => {
                 let msg = error.to_string();
-                self.semantic_service.set_error_status(None, msg.clone());
+                self.semantic_service.set_error_status(msg.clone());
                 self.mark(AiCapabilityInstallState::Error, Some(msg))?;
                 emit_capabilities_changed(app_handle);
                 Err(error)

@@ -12,9 +12,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('mermaid', () => ({
   default: {
     initialize: vi.fn(),
-    render: vi.fn(async (_id: string, chart: string) => ({
-      svg: `<svg data-testid="mermaid-svg"><text>${chart}</text></svg>`,
-    })),
+    render: vi.fn((_id: string, chart: string) =>
+      Promise.resolve({
+        svg: `<svg data-testid="mermaid-svg"><text>${chart}</text></svg>`,
+      })
+    ),
   },
 }))
 

@@ -21,18 +21,16 @@ pub enum SemanticRuntimeStatus {
         model_name: String,
     },
     Error {
-        model_name: Option<String>,
         message: String,
     },
 }
 
-/// Text embedding service for bundled local AI search.
+/// Text embedding service for local semantic search.
 ///
 /// The current stack uses fastembed's ONNX Runtime-backed BGE-M3 support while
 /// keeping the outer service boundary stable so later runtime work can swap the
 /// backend without touching indexing or search orchestration.
 ///
-/// Note: this path is currently NOT self-hosted through ai_stack_manifest_v1.json.
 /// fastembed resolves BGE-M3 from its upstream source and caches files under
 /// app_data/.fastembed_cache (or HF_HOME / FASTEMBED_CACHE_DIR when configured).
 pub struct SemanticService {
@@ -55,7 +53,7 @@ impl SemanticService {
     fn emit_status_changed(app_handle: Option<&tauri::AppHandle>) {
         if let Some(app) = app_handle {
             use tauri::Emitter;
-            let _ = app.emit("ai-stack-status-changed", ());
+            let _ = app.emit("text-search-status-changed", ());
         }
     }
 
@@ -228,7 +226,6 @@ impl SemanticService {
             Ok(Err(err)) => {
                 let mut status = status_arc.write().unwrap();
                 *status = SemanticRuntimeStatus::Error {
-                    model_name: Some(model_name.clone()),
                     message: err.to_string(),
                 };
                 Self::emit_status_changed(app_handle.as_ref());
@@ -237,7 +234,6 @@ impl SemanticService {
             Err(err) => {
                 let mut status = status_arc.write().unwrap();
                 *status = SemanticRuntimeStatus::Error {
-                    model_name: Some(model_name),
                     message: err.to_string(),
                 };
                 Self::emit_status_changed(app_handle.as_ref());
@@ -287,12 +283,9 @@ impl SemanticService {
         };
     }
 
-    pub fn set_error_status(&self, model_name: Option<String>, message: String) {
+    pub fn set_error_status(&self, message: String) {
         let mut status = self.runtime_status.write().unwrap();
-        *status = SemanticRuntimeStatus::Error {
-            model_name,
-            message,
-        };
+        *status = SemanticRuntimeStatus::Error { message };
     }
 
     pub fn delete_cached_model(&self) -> Result<()> {

@@ -52,7 +52,7 @@ export interface AiCapabilityProgressEvent {
 
 // ── Index progress event ──────────────────────────────────────────────────────
 
-export interface AiIndexProgressEvent {
+export interface IndexingProgressEvent {
   done: number
   total: number
 }

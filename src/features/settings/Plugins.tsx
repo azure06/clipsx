@@ -20,7 +20,7 @@ import type {
   AiCapabilityStatus,
   AiCapabilityKind,
   AiCapabilityProgressEvent,
-  AiIndexProgressEvent,
+  IndexingProgressEvent,
 } from '../../shared/types'
 
 interface IndexingOverview {
@@ -44,7 +44,7 @@ export const Plugins = () => {
   const [capabilities, setCapabilities] = useState<AiCapabilityStatus[]>([])
   const [overview, setOverview] = useState<IndexingOverview | null>(null)
   const [progress, setProgress] = useState<CapabilityProgress>({})
-  const [indexProgress, setIndexProgress] = useState<AiIndexProgressEvent | null>(null)
+  const [indexProgress, setIndexProgress] = useState<IndexingProgressEvent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyKind, setBusyKind] = useState<AiCapabilityKind | null>(null)
 
@@ -65,7 +65,7 @@ export const Plugins = () => {
       }))
     })
 
-    const unlistenIndex = listen<AiIndexProgressEvent>('ai-stack-index-progress', event => {
+    const unlistenIndex = listen<IndexingProgressEvent>('indexing-progress', event => {
       setIndexProgress(event.payload)
     })
 
@@ -289,7 +289,7 @@ export const Plugins = () => {
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
                 <CheckCircle2 className="h-2.5 w-2.5" />
-                Always active
+                Platform-provided
               </span>
             </div>
             <span className="shrink-0 text-[11px] text-gray-400 dark:text-gray-500 hidden sm:block">

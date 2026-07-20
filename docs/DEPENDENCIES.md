@@ -1,99 +1,22 @@
 # Dependencies Overview
 
-This document is a lightweight map of the current frontend dependencies and tooling.
+Exact versions live in `package.json` and `src-tauri/Cargo.toml`.
 
-Source of truth for exact versions: `package.json`
+## Frontend
 
----
+- React 19, TypeScript, Vite, Tailwind CSS, Zustand, and Radix UI.
+- Tauri API plus autostart, clipboard manager, dialog, filesystem, shell, and updater plugins.
+- `react-markdown`, `remark-gfm`, and Mermaid for content previews.
+- Vitest and Testing Library for frontend tests; ESLint and Prettier for quality checks.
 
-## Production Dependencies
+## Backend
 
-### React and UI
-- `react`, `react-dom`
-- `lucide-react`
-- Radix UI packages for dialogs, dropdowns, labels, popovers, selects, switches, tabs, toasts, and tooltips
-- `clsx`
-- `tailwind-merge`
-
-### Tauri
-- `@tauri-apps/api`
-- `@tauri-apps/plugin-autostart`
-- `@tauri-apps/plugin-clipboard-manager`
-- `@tauri-apps/plugin-dialog`
-- `@tauri-apps/plugin-fs`
-- `@tauri-apps/plugin-shell`
-- `@cloudworxx/tauri-plugin-mac-rounded-corners`
-
-### State
-- `zustand`
-
----
-
-## Development Dependencies
-
-### Build and language
-- `vite`
-- `@vitejs/plugin-react`
-- `typescript`
-- `@types/react`
-- `@types/react-dom`
-- `@tauri-apps/cli`
-
-### Styling
-- `tailwindcss`
-- `@tailwindcss/postcss`
-- `postcss`
-- `autoprefixer`
-
-### Linting and formatting
-- `eslint`
-- `@eslint/js`
-- `typescript-eslint`
-- `eslint-plugin-react-hooks`
-- `eslint-plugin-react-refresh`
-- `prettier`
-
-### Testing
-- `vitest`
-- `@vitest/ui`
-- `@vitest/coverage-v8`
-- `@testing-library/react`
-- `@testing-library/jest-dom`
-- `@testing-library/user-event`
-- `jsdom`
-- `happy-dom`
-
-### Git hooks
-- `simple-git-hooks`
-
----
-
-## Repo Scripts
-
-### Development
-- `npm run dev`
-- `npm run tauri:dev`
-
-### Checks
-- `npm run type-check`
-- `npm run lint`
-- `npm run format`
-- `npm run test`
-- `npm run test:coverage`
-- `npm run test:rust`
-- `npm run test:all`
-
----
+- Tauri 2, Tokio, SQLite via sqlx, and arboard for clipboard access.
+- fastembed for text embeddings; ONNX Runtime, ndarray, and tokenizers for visual search.
+- Native OCR engines: Apple Vision, Windows.Media.Ocr, and the `tesseract` executable on Linux.
 
 ## Notes
 
-- The pre-commit hook currently runs `npm run format` and `npm run type-check`.
-- `npm run format` only formats `src/**/*.{ts,tsx,css}`. Markdown docs are not auto-formatted by the hook.
-- The search refactor did not add any new frontend npm dependencies; the
-  hybrid search work lives in the Rust/Tauri backend behind existing app
-  surfaces.
-- Use `package.json` as the source of truth if this document drifts.
-
----
-
-See [CODING_STYLE.md](./CODING_STYLE.md) for architecture and implementation conventions.
+- Text Search is cache-managed through fastembed; Image Search downloads checksum-verified assets managed by ClipsX.
+- OCR is not an AI capability download. On Linux it is unavailable when `tesseract` is not installed.
+- QR decoding is internal deferred infrastructure; it has no production UI or decoder dependency yet.

@@ -39,11 +39,11 @@ A clipboard manager that **understands**, **enhances**, and **organizes** everyt
 | **Frontend** | React 19.2 | New compiler auto-optimizes, massive ecosystem |
 | **Language** | TypeScript | Type safety prevents bugs, better DX |
 | **Database** | SQLite | Embedded, no server, perfect for desktop |
-| **Vector Search** | Vectra | Local/private vs cloud (Pinecone) |
+| **Vector Search** | SQLite-backed `VectorStore` | Local/private hybrid retrieval without a hosted vector database |
 | **Styling** | Tailwind 4 | Utility-first, new Oxide engine 10x faster |
 | **UI Components** | Radix UI | Headless/accessible, full control |
 | **State** | Zustand | 3KB vs Redux 30KB, minimal boilerplate |
-| **Build** | Vite 5 | Fast HMR, simple config |
+| **Build** | Vite 7 | Fast HMR, simple config |
 | **Testing** | Vitest + Playwright | Fast, modern, Vite-native |
 
 ### Release Scope
@@ -202,17 +202,14 @@ clipsx/
 
 ### Desktop App
 ```bash
-npm create tauri-app@latest clipsx --template react-ts
-cd clipsx
-npm install zustand @tanstack/react-query tailwindcss@next
-cd src-tauri && cargo add tokio sqlx arboard
+npm install
 npm run tauri dev
 ```
 
 See [PLANNING.md](./docs/PLANNING.md) for the current product direction.
 See [RELEASE.md](./docs/RELEASE.md) for the cross-platform release checklist.
 
-## 📊 Current Status (June 19, 2026)
+## 📊 Current Status (July 20, 2026)
 
 ### ✅ What's Working
 - **Clipboard Monitoring** - Multi-format capture (text, HTML, RTF, images, files)
@@ -224,7 +221,7 @@ See [RELEASE.md](./docs/RELEASE.md) for the cross-platform release checklist.
 - **Semantic Search Foundation** - Persistent enablement, startup recovery, richer readiness states
 - **Semantic Reindexing** - Existing history can be indexed after a model is enabled
 - **Search Correctness** - Canonical filter alignment across UI and backend
-- **OCR Baseline** - Automatic OCR queueing and searchable OCR text for image/office clips
+- **Native OCR** - Automatic OCR queueing and searchable OCR text for image/office clips (Apple Vision, Windows OCR, or Linux Tesseract when installed)
 - **Updater Wiring** - In-app update check, install flow, and restart prompt for release builds
 - **React UI** - List/grid views, infinite scroll, theme toggle, sidebar navigation
 - **Global Shortcut** - System-wide hotkey to toggle app (customizable)

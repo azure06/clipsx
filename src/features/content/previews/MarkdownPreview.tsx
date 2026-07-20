@@ -30,6 +30,13 @@ type MermaidDiagramProps = {
   readonly chart: string
 }
 
+const markdownChildrenToText = (children: ReactNode): string =>
+  Array.isArray(children)
+    ? children.map(markdownChildrenToText).join('')
+    : typeof children === 'string'
+      ? children
+      : ''
+
 const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const rawId = useId()
@@ -38,12 +45,13 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
 
   useEffect(() => {
     let isCancelled = false
+    const container = containerRef.current
 
     const renderDiagram = async () => {
-      if (!containerRef.current) return
+      if (!container) return
 
       setHasError(false)
-      containerRef.current.innerHTML = ''
+      container.innerHTML = ''
 
       mermaid.initialize({
         startOnLoad: false,
@@ -52,8 +60,8 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
 
       try {
         const { svg } = await mermaid.render(diagramId, chart)
-        if (!isCancelled && containerRef.current) {
-          containerRef.current.innerHTML = svg
+        if (!isCancelled) {
+          container.innerHTML = svg
         }
       } catch (error) {
         console.error('Failed to render Mermaid diagram:', error)
@@ -67,8 +75,8 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
 
     return () => {
       isCancelled = true
-      if (containerRef.current) {
-        containerRef.current.innerHTML = ''
+      if (container) {
+        container.innerHTML = ''
       }
     }
   }, [chart, diagramId])
@@ -165,7 +173,7 @@ const MarkdownPreviewComponent = ({ content }: MarkdownPreviewProps) => {
       ),
       code: ({ className, children, inline, ...rest }: MarkdownCodeProps) => {
         const language = className?.match(/language-([\w-]+)/)?.[1]?.toLowerCase()
-        const code = String(children ?? '').replace(/\n$/, '')
+        const code = markdownChildrenToText(children).replace(/\n$/, '')
 
         if (inline || !language) {
           return (

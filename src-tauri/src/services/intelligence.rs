@@ -688,10 +688,8 @@ fn detect_markdown(text: &str) -> Option<DetectionResult> {
         static ref HEADING_REGEX: Regex = Regex::new(r"(?m)^\s{0,3}#{1,6}\s+\S").unwrap();
         static ref LINK_REGEX: Regex =
             Regex::new(r#"\[[^\]\n]{1,80}\]\((?:[^)\s]+)(?:\s+"[^"]+")?\)"#).unwrap();
-        static ref UNORDERED_LIST_REGEX: Regex =
-            Regex::new(r"^\s{0,3}[-+*]\s+\S").unwrap();
-        static ref ORDERED_LIST_REGEX: Regex =
-            Regex::new(r"^\s{0,3}\d{1,3}[.)]\s+\S").unwrap();
+        static ref UNORDERED_LIST_REGEX: Regex = Regex::new(r"^\s{0,3}[-+*]\s+\S").unwrap();
+        static ref ORDERED_LIST_REGEX: Regex = Regex::new(r"^\s{0,3}\d{1,3}[.)]\s+\S").unwrap();
         static ref TASK_LIST_REGEX: Regex =
             Regex::new(r"^\s{0,3}[-+*]\s+\[(?: |x|X)\]\s+\S").unwrap();
         static ref BLOCKQUOTE_REGEX: Regex = Regex::new(r"^\s{0,3}>\s+\S").unwrap();
@@ -721,10 +719,16 @@ fn detect_markdown(text: &str) -> Option<DetectionResult> {
     let has_task_list = task_count >= MIN_MARKDOWN_LIST_LINES;
     let has_blockquote = blockquote_count >= MIN_MARKDOWN_BLOCKQUOTE_LINES;
 
-    let weak_signal_count = [has_heading, has_link, has_list, has_task_list, has_blockquote]
-        .into_iter()
-        .filter(|signal| *signal)
-        .count();
+    let weak_signal_count = [
+        has_heading,
+        has_link,
+        has_list,
+        has_task_list,
+        has_blockquote,
+    ]
+    .into_iter()
+    .filter(|signal| *signal)
+    .count();
 
     let heading_with_body = has_heading && word_count >= 6;
     let dense_list_document = has_list && list_count >= 3 && word_count >= 6;
@@ -1269,7 +1273,8 @@ const greeting = async () => {
 
     #[test]
     fn detect_markdown_heading_and_list() {
-        let markdown = "# Release Notes\n\n- Added markdown preview\n- Kept clipboard ingestion unchanged";
+        let markdown =
+            "# Release Notes\n\n- Added markdown preview\n- Kept clipboard ingestion unchanged";
         let r = detect(markdown);
         assert_eq!(r.detected_type, ContentType::Markdown);
         assert_eq!(r.metadata["language"], "markdown");

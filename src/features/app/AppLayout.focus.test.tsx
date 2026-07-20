@@ -264,7 +264,7 @@ describe('AppLayout search focus ownership', () => {
     })
   })
 
-  it('re-fetches text search status when ai-stack-status-changed fires after startup', async () => {
+  it('re-fetches text search status when text-search-status-changed fires after startup', async () => {
     invokeMock.mockResolvedValueOnce({
       state: 'loading',
       enabled: true,
@@ -294,7 +294,7 @@ describe('AppLayout search focus ownership', () => {
     })
 
     act(() => {
-      eventHandlers.get('ai-stack-status-changed')?.[0]?.({ payload: null })
+      eventHandlers.get('text-search-status-changed')?.[0]?.({ payload: null })
     })
 
     await waitFor(() => {

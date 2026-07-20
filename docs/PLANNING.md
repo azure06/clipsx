@@ -1,206 +1,63 @@
 # ClipsX Product Direction
 
-*Last Updated: June 19, 2026*
+*Last updated: July 20, 2026*
 
----
+## Current product
 
-## Purpose
+ClipsX is a local-first clipboard manager focused on reliable capture, fast retrieval, content-aware previews, and lightweight organization.
 
-ClipsX is a local-first clipboard manager focused on fast retrieval and practical workflows.
+The supported architecture is:
 
-Near-term product direction is intentionally narrow:
-- reliable clipboard capture and storage
-- strong text and semantic search
-- content-aware previews and actions
-- lightweight organization
-- OCR for image-based clips
+```text
+React feature UI + Zustand stores
+        ↕ Tauri IPC and events
+Tauri commands → Rust services → SQLite / FTS5 / vector storage
+```
 
----
+- `ClipboardService` captures clipboard formats and queues background work.
+- `ClipRepository` persists clips and maintains FTS projections.
+- `IndexingService` and `SearchService` provide asynchronous indexing and hybrid retrieval.
+- Text Search uses local BGE-M3 embeddings; Image Search uses downloadable SigLIP2 assets.
+- OCR uses platform-native engines: Apple Vision, Windows OCR, and Tesseract on Linux.
 
-## Working Principles
+## Active capabilities
 
-- **Local-first:** user data stays on device unless a future feature explicitly requires otherwise.
-- **Trustworthy:** startup state, settings persistence, and search behavior should be predictable.
-- **Fast:** search, preview rendering, and common actions should feel instant.
-- **Small increments:** build reviewable milestones and commit each cohesive step.
+- **Text Search:** cache-managed local text embeddings. It is installed and enabled independently.
+- **Image Search:** checksum-verified visual-model assets, optionally kept in memory.
+- **OCR:** automatic for eligible image and office clips. Linux requires the `tesseract` executable; unavailable engines are reported as failed OCR rather than blocking clip capture.
 
----
+## Search behavior
 
-## Current Baseline
+- Empty queries browse recent clips.
+- Keyword queries use SQLite FTS5.
+- Semantic mode fuses FTS, text-vector, and available image-vector results through reciprocal-rank fusion.
+- The same type, favorites, pinned, and tag filters apply across all retrieval modes.
 
-The current branch already includes:
-- clipboard monitoring for multiple formats
-- SQLite-backed history and scoped browse/search
-- search/indexing refactor with `SearchService` and `IndexingService`
-- `search_documents`, `search_embeddings`, and `search_jobs`
-- hybrid FTS + text-vector + image-vector retrieval through `VectorStore`
-- bundled AI stack settings (`ai_search_enabled`, `ai_stack_version`)
-- semantic search persistence and startup recovery
-- search reindexing for existing clips plus explicit `Index missing/stale`
-  and `Reindex all` actions
-- richer bundled AI stack status in the UI
-- detector-driven content previews and actions
-- repaired frontend and Rust test baseline
-- tags and notes per clip with FTS indexing and tag filter
-- automatic OCR for image and office clips with queued/running/done status
-- in-app updater wiring for release builds
-
-Known limitations on this branch:
-- the bundled AI stack migration is structurally complete but not yet runnable end-to-end:
-  - text embeddings: BGE-M3 via fastembed — shipped and working
-  - image embeddings: SigLIP2 code is wired (`visual.rs`), but the ONNX model files
-    have not been hosted yet; `are_models_downloaded()` returns false so the service
-    falls back gracefully
-  - OCR: platform branches removed, PaddleOCR ONNX sessions load correctly, but the
-    detection→recognition inference pipeline (bounding box regression, CRNN decoder,
-    character key lookup) is not yet implemented — returns empty string until both
-    the artifact hosting and the pipeline wiring are done
-  - `sqlite-vec` is still deferred behind the `VectorStore` boundary
-- the two concrete blockers before the migration can be called done:
-
-  1. host the ONNX model artifacts (SigLIP2 vision + text + tokenizer, PaddleOCR det/rec/cls/keys)
-     and fill in the URLs + sha256 checksums in `ai_stack_manifest_v1.json`
-  2. implement the PaddleOCR pre/post-processing pipeline in `ocr.rs::PaddleOcrEngine::run()`
-
----
-
-## Active Roadmap
+## Roadmap
 
 ### Done
-- [x] Semantic search persistence across restarts
-- [x] Test baseline repair
-- [x] Search filter and semantic behavior cleanup
-- [x] Semantic reindex for older clips
-- [x] Search/indexing refactor cleanup and legacy removal
-- [x] Semantic model status and search UX improvements
-- [x] Bundled AI stack settings and indexing overview actions
-- [x] Tags and notes: per-clip labels with color, inline editor, tag filter, FTS-indexed notes (collections dropped as redundant)
-- [x] Apply `tag_filter` inside semantic search so search results match browse/FTS filtering
-- [x] OCR workflows for image clips
 
-### In Progress
-
-- [~] AI stack runtime migration: PaddleOCR + SigLIP2 + self-hosted stack manifest with checksum verification
+- Clipboard monitoring and multi-format storage
+- SQLite history, FTS5, tags, notes, and OCR lifecycle state
+- Hybrid search, semantic reindexing, and capability management
+- Content-aware previews and actions
+- In-app updater wiring for release builds
 
 ### Next
 
-- [ ] Decide and land the later `sqlite-vec` backend swap behind the existing `VectorStore` abstraction
-- [ ] Keyboard-first navigation and quick actions
-- [ ] User scripts or lightweight extensibility hooks
-- [ ] Release hardening and smoke-test coverage across macOS, Windows, and Linux
+- Keyboard-first navigation and quick actions
+- Release smoke tests across macOS, Windows, and Linux
+- Evaluate a later `sqlite-vec` backend behind `VectorStore`
+
+### Deferred QR decoding
+
+QR decoding remains internal infrastructure only. `qr_decoder` and `decode_qr_code` intentionally return no result until the feature is prioritized. Completing it requires a decoder dependency, image preprocessing, an image-preview action, an explicit persistence/search decision, and end-to-end tests. It must not be presented as shipped before then.
 
 ### Later
-- [ ] Plugin system
-- [ ] Deep integrations with external tools
-- [ ] Bigger differentiators after the core roadmap is complete
 
-### Not In Current Scope
-- cloud sync
-- generative text transforms
-- Smart Paste
-- team features
+- User scripts or lightweight extensibility hooks
+- Plugin system and deeper external integrations
 
----
+### Out of scope
 
-## Implemented Detectors
-
-Detection runs in Rust during clipboard ingestion for text-bearing clips.
-
-- URL
-- Color
-- Email
-- JSON
-- Path
-- JWT
-- Timestamp
-- Code
-- Secret
-- CSV
-- Phone
-- Math
-- Date
-- Text fallback
-
-Source of truth: `src-tauri/src/services/intelligence.rs`
-
----
-
-## Architecture
-
-```mermaid
-graph TD
-    Clipboard[System Clipboard] --> Monitor[Clipboard Monitor]
-    Monitor --> Logic[Core Logic]
-    Logic --> Storage[SQLite DB]
-    Logic --> Detector[Context Detector]
-    UI[Frontend] -->|User Input| Logic
-```
-
----
-
-## v1.1 Post-Stabilization Roadmap
-
-### Completed (v1 to v1.1 Transition)
-
-**Phase 1: Core Bug Fixes**
-- [x] **OCR Empty-Result Bug**: Fixed `update_after_ocr()` to preserve original content placeholder when OCR yields empty text. Only updates and marks `primary_text_source='ocr'` on successful non-empty results. (commit 695e807)
-- [x] **Image Preview as Thumbnail**: Implemented circular (8x8px) image thumbnails in clipboard history list view with Tauri `convertFileSrc()` for safe path resolution and fallback to ContentIcon on load failure. (commit e1d4abc)
-- [x] **Clear-on-Exit Reliability**: Replaced blocking `block_in_place()` with `async_runtime::spawn()` to prevent window event handler hang during cleanup. Process: fetch all clips → delete files (images/PDF/SVG/attachments) → clear DB. (commit 005ffa4)
-
-**Phase 4: QR Detection Infrastructure**
-- [x] **Service Stub**: Created `src-tauri/src/services/qr_decoder.rs` with public API (`decode_qr_from_bytes()`, `decode_qr_from_path()`) and infrastructure test. Returns `Ok(None)` placeholder. (commit d380999)
-- [x] **Tauri Command**: Added `decode_qr_code(clip_id)` command to bridge frontend → service. Validates image clip type, retrieves path, calls decoder, returns string or error.
-- [x] **Dependency**: Added `rqrr = "0.8"` to Cargo.toml for QR detection library.
-- [x] **UI Styling**: Circular image thumbnails with `rounded-full` to match icon visual style. (commit ae15d59, 0dd7a14)
-
-### Pending Implementation
-
-**Phase 2: QR Code Detection - Full Implementation**
-- [ ] **Implement QR Library Integration**: Replace stub functions in `qr_decoder.rs` with rqrr library calls
-  - `decode_qr_from_bytes()`: Load image bytes → rqrr decode → extract payload
-  - `decode_qr_from_path()`: Read file → call `decode_qr_from_bytes()`
-  - Error handling and logging for decode failures
-- [ ] **Automatic QR Detection During OCR Worker**: Extend OCR worker (2-sec pass) to also attempt QR detection on image clips
-  - Store result in new DB field: `qr_payload` (TEXT, nullable)
-  - Mark status in UI: success, attempted-none-found, failed
-- [ ] **Manual "Decode QR" UI Action**: Add button/action in image detail pane to trigger `decode_qr_code()` command
-  - Show result in toast notification or inline detail panel
-  - Lazy decode for clips not auto-scanned (e.g., recently added)
-- [ ] **DB Schema**: Add `qr_payload` column to clips table with migration
-  - Index payload for search queries
-- [ ] **Tests**: Comprehensive unit + integration tests for auto-detect and manual-action paths
-  - Mock rqrr behavior, verify DB persistence, test error cases
-
-**Phase 3: Internationalization (i18n)**
-- [ ] **Setup i18n Stack**
-  - Install `react-i18next` + `i18next` packages
-  - Create locale JSON file structure: `src/locales/{en,es,ja,zh}/translation.json`
-  - Configure i18next in `src/main.tsx` with fallback chain: user preference → browser lang → EN
-- [ ] **Extract UI Strings**
-  - Audit all components for hardcoded strings
-  - Externalize to locale files with REQ-XXX keys
-  - Maintain key namespacing: `common.`, `search.`, `actions.`, `settings.`, etc.
-- [ ] **Target Languages**
-  - EN (English) - source
-  - ES (Spanish)
-  - JA (Japanese)
-  - ZH (Chinese Simplified)
-- [ ] **Locale Switcher**: Add language selector in Settings pane
-  - Persist selection to `settingsStore`
-  - Live switch without reload (where feasible)
-- [ ] **Tests**: Locale loading tests, string key coverage audit, RTL readiness (if Arabic added later)
-
-### Not Yet Scheduled
-
-**Phase 5: Sign-in / Sync Architecture (Design Phase)**
-- [ ] **Documentation Only** (no implementation):
-  - Define webhook strategy for clip sync across devices
-  - Document multi-device sync protocol (conflict resolution, ordering)
-  - Sketch user authentication flow (if sync requires server)
-  - Security model for synced data
-  - **Note**: Implementation deferred until core features mature and user demand validated
-
-### Open Questions / Blocked
-- QR detection library performance on large image files (may need optimization)
-- Locale string volume estimate (full audit needed before Phase 3 start)
-- Sync architecture dependencies (awaiting feature maturity metrics)
+- Cloud sync, team features, and generative text transforms

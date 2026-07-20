@@ -86,13 +86,13 @@ export const AppLayout = () => {
       void loadTextSearchStatus()
     })
 
-    const unlistenStackStatus = listen('ai-stack-status-changed', () => {
+    const unlistenTextSearchStatus = listen('text-search-status-changed', () => {
       void loadTextSearchStatus()
     })
 
     return () => {
       void unlistenCapabilities.then(fn => fn())
-      void unlistenStackStatus.then(fn => fn())
+      void unlistenTextSearchStatus.then(fn => fn())
     }
   }, [])
 

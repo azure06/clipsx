@@ -54,7 +54,7 @@ pub struct SemanticIndexStats {
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct AiStackProgressPayload {
+pub struct IndexingProgressPayload {
     pub done: u64,
     pub total: u64,
 }
@@ -443,8 +443,7 @@ impl IndexingService {
                             .repository
                             .mark_search_job_failed(&clip.id, &message)
                             .await;
-                        self.semantic_service
-                            .set_error_status(Some(model_name.clone()), message.clone());
+                        self.semantic_service.set_error_status(message.clone());
                         let _ = self.app_handle.emit("ai-capabilities-changed", ());
                         return Err(anyhow!(message));
                     }
@@ -471,8 +470,8 @@ impl IndexingService {
                 self.semantic_service
                     .set_indexing_status(index as u64 + 1, total);
                 let _ = self.app_handle.emit(
-                    "ai-stack-index-progress",
-                    AiStackProgressPayload {
+                    "indexing-progress",
+                    IndexingProgressPayload {
                         done: index as u64 + 1,
                         total,
                     },
