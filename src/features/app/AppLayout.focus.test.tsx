@@ -1,11 +1,20 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
-import { useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
+import { useAuthStore, useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
 
-const { listenMock, invokeMock, focusChangeHandlers, eventHandlers } = vi.hoisted(() => ({
+const {
+  listenMock,
+  invokeMock,
+  getCurrentMock,
+  onOpenUrlMock,
+  focusChangeHandlers,
+  eventHandlers,
+} = vi.hoisted(() => ({
   listenMock: vi.fn(),
   invokeMock: vi.fn(),
+  getCurrentMock: vi.fn(),
+  onOpenUrlMock: vi.fn(),
   focusChangeHandlers: [] as Array<(event: { payload: boolean }) => void>,
   eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
 }))
@@ -25,6 +34,11 @@ vi.mock('@tauri-apps/api/window', () => ({
       return Promise.resolve(vi.fn())
     }),
   }),
+}))
+
+vi.mock('@tauri-apps/plugin-deep-link', () => ({
+  getCurrent: getCurrentMock,
+  onOpenUrl: onOpenUrlMock,
 }))
 
 vi.mock('../../shared/hooks/useTheme', () => ({
@@ -86,6 +100,8 @@ describe('AppLayout search focus ownership', () => {
       message: '',
       progress: null,
     })
+    getCurrentMock.mockResolvedValue(null)
+    onOpenUrlMock.mockResolvedValue(vi.fn())
 
     useUIStore.setState({
       activeView: 'clips',
@@ -101,6 +117,14 @@ describe('AppLayout search focus ownership', () => {
       loadSettings: vi.fn().mockResolvedValue(undefined),
       updateSettings: vi.fn(),
       getSettingsPath: vi.fn(),
+    })
+
+    useAuthStore.setState({
+      status: 'unconfigured',
+      email: null,
+      error: null,
+      initialize: vi.fn().mockResolvedValue(undefined),
+      completeCallback: vi.fn().mockResolvedValue(false),
     })
 
     useClipboardStore.setState({
@@ -134,6 +158,39 @@ describe('AppLayout search focus ownership', () => {
       performPrimaryAction: vi.fn(),
       performCopy: vi.fn(),
       resetPagination: vi.fn(),
+    })
+  })
+
+  it('processes a callback that launched ClipsX and brings the main window forward', async () => {
+    const completeCallback = vi.fn().mockResolvedValue(true)
+    getCurrentMock.mockResolvedValue(['clipsx://auth/callback?code=one-time-code'])
+    useAuthStore.setState({ completeCallback })
+
+    render(<AppLayout />)
+
+    await waitFor(() => {
+      expect(completeCallback).toHaveBeenCalledWith('clipsx://auth/callback?code=one-time-code')
+      expect(invokeMock).toHaveBeenCalledWith('show_main_window_command')
+    })
+  })
+
+  it('processes a callback delivered while ClipsX is already open', async () => {
+    const completeCallback = vi.fn().mockResolvedValue(true)
+    let openUrlHandler: ((urls: string[]) => void) | undefined
+    onOpenUrlMock.mockImplementation((handler: (urls: string[]) => void) => {
+      openUrlHandler = handler
+      return Promise.resolve(vi.fn())
+    })
+    useAuthStore.setState({ completeCallback })
+
+    render(<AppLayout />)
+
+    await waitFor(() => expect(openUrlHandler).toBeDefined())
+    openUrlHandler?.(['clipsx://auth/callback?code=fresh-code'])
+
+    await waitFor(() => {
+      expect(completeCallback).toHaveBeenCalledWith('clipsx://auth/callback?code=fresh-code')
+      expect(invokeMock).toHaveBeenCalledWith('show_main_window_command')
     })
   })
 

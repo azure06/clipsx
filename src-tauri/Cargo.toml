@@ -53,6 +53,9 @@ lazy_static = "1.5.0"
 url = "2.5.8"
 tempfile = "3.27.0"
 open = "5.3.5"
+keyring = "4.1.5"
+tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
 fastembed = "5.17.2"
 ort = { version = "2.0.0-rc.12", features = ["ndarray"] }
 ndarray = "0.17"

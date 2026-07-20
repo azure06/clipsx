@@ -4,7 +4,7 @@ import { enable, disable } from '@tauri-apps/plugin-autostart'
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 
-import { useSettingsStore } from '../../stores'
+import { useAuthStore, useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { Theme, PasteFormat, AppSettings, ItemActivationMode } from '../../shared/types'
@@ -33,10 +33,12 @@ import {
   Clock,
   Calendar,
   RefreshCw,
+  UserRound,
+  LogOut,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
 
-type Tab = 'general' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
+type Tab = 'general' | 'account' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
 
 // --- Settings-specific layout components (not shared) ---
 
@@ -226,6 +228,11 @@ export const Settings = () => {
   const downloadAndInstallUpdate = useUpdaterStore(state => state.downloadAndInstallUpdate)
   const restartToApplyUpdate = useUpdaterStore(state => state.restartToApplyUpdate)
   const { setThemeMode } = useTheme()
+  const authStatus = useAuthStore(state => state.status)
+  const authEmail = useAuthStore(state => state.email)
+  const authError = useAuthStore(state => state.error)
+  const signIn = useAuthStore(state => state.signIn)
+  const signOut = useAuthStore(state => state.signOut)
   const [activeTab, setActiveTab] = useState<Tab>('general')
 
   useEffect(() => {
@@ -341,6 +348,7 @@ export const Settings = () => {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: 'General', icon: <SettingsIcon className="h-4 w-4" /> },
+    { id: 'account', label: 'Account', icon: <UserRound className="h-4 w-4" /> },
     { id: 'clipboard', label: 'Clipboard', icon: <Clipboard className="h-4 w-4" /> },
     { id: 'storage', label: 'Storage', icon: <Database className="h-4 w-4" /> },
     { id: 'privacy', label: 'Privacy', icon: <Shield className="h-4 w-4" /> },
@@ -751,6 +759,70 @@ export const Settings = () => {
                     </p>
                   )}
                 </div>
+              </SettingsSection>
+            </>
+          )}
+
+          {/* ACCOUNT TAB */}
+          {activeTab === 'account' && (
+            <>
+              <SettingsSection
+                icon={<UserRound className="h-4 w-4" />}
+                title="Account"
+                description="Optional browser sign-in for future account features"
+              >
+                <div className="rounded-xl border border-gray-200/70 bg-slate-100/40 p-4 dark:border-white/10 dark:bg-slate-100/5">
+                  {authStatus === 'unconfigured' && (
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      Account sign-in is not configured in this build.
+                    </p>
+                  )}
+
+                  {authStatus === 'loading' && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Restoring your session…
+                    </div>
+                  )}
+
+                  {authStatus === 'signed_in' && (
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          Signed in
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{authEmail}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<LogOut className="h-3.5 w-3.5" />}
+                        onClick={() => void signOut()}
+                      >
+                        Sign out
+                      </Button>
+                    </div>
+                  )}
+
+                  {(authStatus === 'signed_out' || authStatus === 'error') && (
+                    <div className="space-y-3">
+                      {authError && (
+                        <p className="text-xs text-red-600 dark:text-red-400">{authError}</p>
+                      )}
+                      <Button onClick={() => void signIn()}>Sign in in your browser</Button>
+                    </div>
+                  )}
+
+                  {authStatus === 'signing_in' && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Continue sign-in in your browser.
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Signing in does not upload clipboard history, search indexes, OCR data, or AI
+                  assets. They remain on this device.
+                </p>
               </SettingsSection>
             </>
           )}

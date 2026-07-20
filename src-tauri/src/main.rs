@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "windows")]
 use tauri_plugin_decorum::WebviewWindowExt;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 mod commands;
 mod events;
@@ -36,7 +37,12 @@ fn updater_public_key() -> Option<String> {
 }
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_autostart::Builder::new().build());
+    // Must be registered before deep-link so Windows and Linux callbacks are
+    // forwarded to the existing process instead of creating a second instance.
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::Builder::new().build());
 
     #[cfg(target_os = "windows")]
     {
@@ -62,6 +68,13 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let updater_configured = updater_public_key().is_some();
+
+            // Bring the app forward for a callback delivered to an existing process.
+            // The frontend still validates and exchanges the URL before updating auth state.
+            let deep_link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |_| {
+                let _ = commands::show_main_window(&deep_link_app);
+            });
 
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
@@ -288,6 +301,10 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::show_main_window_command,
+            commands::auth_storage_get,
+            commands::auth_storage_set,
+            commands::auth_storage_remove,
             commands::get_recent_clips,
             commands::get_recent_clips_paginated,
             commands::get_clips_after_timestamp,

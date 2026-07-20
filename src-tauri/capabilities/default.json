@@ -33,6 +33,8 @@
         }
       ]
     },
-    "clipboard-manager:default"
+    "clipboard-manager:default",
+    "shell:allow-open",
+    "deep-link:default"
   ]
 }

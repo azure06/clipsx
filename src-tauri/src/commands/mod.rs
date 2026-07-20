@@ -17,6 +17,59 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tauri::State;
 
+const AUTH_KEYRING_SERVICE: &str = "com.infiniti.clipsx";
+const MAX_AUTH_SECRET_BYTES: usize = 64 * 1024;
+
+fn is_valid_auth_storage_key(key: &str) -> bool {
+    key.len() <= 128
+        && key.starts_with("sb-")
+        && key.contains("-auth-token")
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn auth_keyring_entry(key: &str) -> Result<keyring::Entry, String> {
+    if !is_valid_auth_storage_key(key) {
+        return Err("Invalid secure auth storage key".to_string());
+    }
+
+    keyring::Entry::new(AUTH_KEYRING_SERVICE, key)
+        .map_err(|_| "Unable to access the system credential vault".to_string())
+}
+
+/// Reads Supabase PKCE/session material from the operating system credential vault.
+/// Values are deliberately never logged or written to application settings.
+#[tauri::command]
+pub fn auth_storage_get(key: String) -> Result<Option<String>, String> {
+    let entry = auth_keyring_entry(&key)?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("Unable to read from the system credential vault".to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn auth_storage_set(key: String, value: String) -> Result<(), String> {
+    if value.len() > MAX_AUTH_SECRET_BYTES {
+        return Err("Secure auth value exceeds the allowed size".to_string());
+    }
+
+    auth_keyring_entry(&key)?
+        .set_password(&value)
+        .map_err(|_| "Unable to write to the system credential vault".to_string())
+}
+
+#[tauri::command]
+pub fn auth_storage_remove(key: String) -> Result<(), String> {
+    let entry = auth_keyring_entry(&key)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err("Unable to clear the system credential vault".to_string()),
+    }
+}
+
 pub struct AppState {
     pub repository: Arc<ClipRepository>,
     pub clipboard_service: Arc<ClipboardService>,
@@ -844,6 +897,11 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn show_main_window_command(app: tauri::AppHandle) -> Result<(), String> {
+    show_main_window(&app)
+}
+
 // ============================================================================
 // Settings Commands
 // ============================================================================
@@ -1344,6 +1402,8 @@ pub async fn update_clip_note(
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::is_valid_auth_storage_key;
+
     type OleWriteCase = (Option<&'static [u8]>, Option<&'static str>, bool);
 
     /// Decode a hex string using the same safe `str::get` pattern used in
@@ -1378,6 +1438,19 @@ mod tests {
     fn hex_decode_invalid_chars_skipped() {
         // "__" is not valid hex — from_str_radix returns Err → filtered out
         assert_eq!(hex_decode("de__ef"), vec![0xde, 0xef]);
+    }
+
+    #[test]
+    fn auth_storage_key_is_limited_to_supabase_auth_keys() {
+        assert!(is_valid_auth_storage_key("sb-project-auth-token"));
+        assert!(is_valid_auth_storage_key(
+            "sb-project-auth-token-code-verifier"
+        ));
+        assert!(!is_valid_auth_storage_key("settings"));
+        assert!(!is_valid_auth_storage_key("sb-project-token"));
+        assert!(!is_valid_auth_storage_key(
+            "sb-project-auth-token/../../secret"
+        ));
     }
 
     #[test]

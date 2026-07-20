@@ -32,6 +32,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["clipsx"]
+      }
+    },
     "updater": {
       "endpoints": ["https://github.com/azure06/clipsx/releases/latest/download/latest.json"],
       "pubkey": "dW50cnRzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGMTJGQThGREQ4N0Q5OTAKUldTUTJZZmRqL29TWDRsQVV6eFptdk5oL1I1MmNTcS8zUi9tcWx2QWVjYXhqRTg4UnpXK2RJSXEK"

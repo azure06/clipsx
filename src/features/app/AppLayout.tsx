@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 
 import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
 import { UpdateBanner } from './UpdateBanner'
@@ -12,7 +13,7 @@ import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
-import { useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
+import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { TextSearchStatus, ClipItem } from '../../shared/types'
 
@@ -35,6 +36,8 @@ export const AppLayout = () => {
   const addNewClip = useClipboardStore(state => state.addNewClip)
   const mergeClipUpdate = useClipboardStore(state => state.mergeClipUpdate)
   const { setThemeMode } = useTheme()
+  const initializeAuth = useAuthStore(state => state.initialize)
+  const completeAuthCallback = useAuthStore(state => state.completeCallback)
   const [textSearchStatus, setTextSearchStatus] = useState<TextSearchStatus | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
@@ -62,6 +65,43 @@ export const AppLayout = () => {
   useEffect(() => {
     void loadSettings()
   }, [loadSettings])
+
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+
+    const handleUrls = (urls: string[]) => {
+      for (const url of urls) {
+        void completeAuthCallback(url).then(completed => {
+          if (completed) {
+            void invoke('show_main_window_command')
+          }
+        })
+      }
+    }
+
+    const setupAuth = async () => {
+      await initializeAuth()
+
+      unlisten = await onOpenUrl(urls => {
+        if (!cancelled) handleUrls(urls)
+      })
+
+      const initialUrls = await getCurrent()
+      if (!cancelled && initialUrls) {
+        handleUrls(initialUrls)
+      }
+    }
+
+    void setupAuth().catch(() => {
+      // Auth stays unavailable until Settings is opened if platform setup failed.
+    })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [completeAuthCallback, initializeAuth])
 
   // Apply theme as soon as settings load
   useEffect(() => {
