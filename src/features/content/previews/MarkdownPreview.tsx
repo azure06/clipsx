@@ -12,6 +12,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import mermaid from 'mermaid'
 import { FileCode2 } from 'lucide-react'
+import { useTheme } from '../../../shared/hooks/useTheme'
 import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewHeader } from './PreviewShell'
@@ -38,6 +39,7 @@ const markdownChildrenToText = (children: ReactNode): string =>
       : ''
 
 const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
+  const { appliedTheme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const rawId = useId()
   const [hasError, setHasError] = useState(false)
@@ -56,6 +58,7 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'strict',
+        theme: appliedTheme === 'dark' ? 'dark' : 'default',
       })
 
       try {
@@ -79,7 +82,7 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
         container.innerHTML = ''
       }
     }
-  }, [chart, diagramId])
+  }, [appliedTheme, chart, diagramId])
 
   if (hasError) {
     return (

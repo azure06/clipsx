@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import mermaid from 'mermaid'
+import { ThemeProvider, useTheme } from '../../../shared/hooks/useTheme'
 import type { Content } from '../types'
 import { MarkdownPreview } from './MarkdownPreview'
 
@@ -57,8 +58,23 @@ const makeContent = (text: string): Content => ({
   },
 })
 
+const renderPreview = (content: Content, extra?: React.ReactNode) =>
+  render(
+    <ThemeProvider>
+      {extra}
+      <MarkdownPreview content={content} />
+    </ThemeProvider>
+  )
+
+const ThemeControls = () => {
+  const { setThemeMode } = useTheme()
+  return <button onClick={() => setThemeMode('dark')}>Use dark theme</button>
+}
+
 describe('MarkdownPreview', () => {
   beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('themeMode', 'light')
     document.documentElement.className = 'light'
     vi.clearAllMocks()
   })
@@ -79,7 +95,7 @@ describe('MarkdownPreview', () => {
       '```',
     ].join('\n')
 
-    render(<MarkdownPreview content={makeContent(markdown)} />)
+    renderPreview(makeContent(markdown))
 
     expect(screen.getByText('Release Notes')).toHaveClass('text-gray-900')
     expect(screen.getByText('Item one')).toBeInTheDocument()
@@ -89,11 +105,7 @@ describe('MarkdownPreview', () => {
   })
 
   it('renders mermaid fences through the Mermaid component path', async () => {
-    render(
-      <MarkdownPreview
-        content={makeContent(['```mermaid', 'graph TD', '  A --> B', '```'].join('\n'))}
-      />
-    )
+    renderPreview(makeContent(['```mermaid', 'graph TD', '  A --> B', '```'].join('\n')))
 
     await screen.findByTestId('mermaid-diagram')
     await screen.findByTestId('mermaid-svg')
@@ -101,14 +113,51 @@ describe('MarkdownPreview', () => {
     expect(mermaid.initialize).toHaveBeenCalledWith({
       startOnLoad: false,
       securityLevel: 'strict',
+      theme: 'default',
     })
     expect(mermaid.render).toHaveBeenCalled()
   })
 
+  it('uses the dark Mermaid theme and rerenders when the applied theme changes', async () => {
+    const chart = ['```mermaid', 'graph TD', '  A --> B', '```'].join('\n')
+    renderPreview(makeContent(chart), <ThemeControls />)
+
+    await screen.findByTestId('mermaid-svg')
+    expect(mermaid.initialize).toHaveBeenLastCalledWith({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'default',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use dark theme' }))
+
+    await waitFor(() => {
+      expect(mermaid.initialize).toHaveBeenLastCalledWith({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'dark',
+      })
+    })
+    expect(mermaid.render).toHaveBeenCalledTimes(2)
+  })
+
+  it('passes explicit Mermaid styling through unchanged', async () => {
+    const diagram = [
+      "%%{init: {'theme': 'base'}}%%",
+      'flowchart TD',
+      '  A --> B',
+      '  style A fill:#123456,color:#ffffff',
+    ].join('\n')
+
+    renderPreview(makeContent(['```mermaid', diagram, '```'].join('\n')))
+
+    await waitFor(() => {
+      expect(mermaid.render).toHaveBeenCalledWith(expect.any(String), diagram)
+    })
+  })
+
   it('keeps non-mermaid fenced blocks as code', async () => {
-    render(
-      <MarkdownPreview content={makeContent(['```json', '{"hello":"world"}', '```'].join('\n'))} />
-    )
+    renderPreview(makeContent(['```json', '{"hello":"world"}', '```'].join('\n')))
 
     await waitFor(() => {
       expect(screen.getByText('{"hello":"world"}').closest('pre')).not.toBeNull()
@@ -117,11 +166,7 @@ describe('MarkdownPreview', () => {
   })
 
   it('does not execute raw html', () => {
-    render(
-      <MarkdownPreview
-        content={makeContent('<div data-testid="raw-html">unsafe</div>\n\nParagraph text')}
-      />
-    )
+    renderPreview(makeContent('<div data-testid="raw-html">unsafe</div>\n\nParagraph text'))
 
     expect(screen.queryByTestId('raw-html')).not.toBeInTheDocument()
     expect(screen.getByText('Paragraph text')).toBeInTheDocument()
