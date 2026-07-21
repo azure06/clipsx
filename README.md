@@ -10,8 +10,12 @@ Built with Tauri 2.x + React 19 + Rust + TypeScript
 
 - **[README.md](./README.md)** ← You are here (High-level overview)
 - **[PLANNING.md](./docs/PLANNING.md)** - Current product direction and roadmap
+- **[SEARCH.md](./docs/SEARCH.md)** - Search and indexing architecture
+- **[SUPABASE_AUTH.md](./docs/SUPABASE_AUTH.md)** - Optional desktop account sign-in setup
+- **[RELEASE.md](./docs/RELEASE.md)** - Cross-platform release checklist
 - **[CODING_STYLE.md](./docs/CODING_STYLE.md)** - Functional-first style guide for TypeScript and Rust
-- **[DEPENDENCIES.md](./docs/DEPENDENCIES.md)** - Dependency and tooling overview
+
+Exact dependency versions live in `package.json` and `src-tauri/Cargo.toml`.
 
 ---
 
@@ -208,6 +212,7 @@ npm run tauri dev
 
 See [PLANNING.md](./docs/PLANNING.md) for the current product direction.
 See [RELEASE.md](./docs/RELEASE.md) for the cross-platform release checklist.
+See [SUPABASE_AUTH.md](./docs/SUPABASE_AUTH.md) when configuring optional desktop account sign-in.
 
 ## 📊 Current Status (July 20, 2026)
 

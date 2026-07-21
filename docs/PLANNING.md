@@ -25,6 +25,7 @@ Tauri commands → Rust services → SQLite / FTS5 / vector storage
 - **Text Search:** cache-managed local text embeddings. It is installed and enabled independently.
 - **Image Search:** checksum-verified visual-model assets, optionally kept in memory.
 - **OCR:** automatic for eligible image and office clips. Linux requires the `tesseract` executable; unavailable engines are reported as failed OCR rather than blocking clip capture.
+- **Optional account sign-in:** browser-based Supabase login, stored through the operating-system credential vault. It does not upload clipboard data, enable sync, or gate local features.
 
 ## Search behavior
 
@@ -61,3 +62,5 @@ QR decoding remains internal infrastructure only. `qr_decoder` and `decode_qr_co
 ### Out of scope
 
 - Cloud sync, team features, and generative text transforms
+
+Optional account login is already available for future account-backed features; its setup and security boundary are documented in [SUPABASE_AUTH.md](./SUPABASE_AUTH.md).
