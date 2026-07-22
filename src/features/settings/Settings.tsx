@@ -37,6 +37,8 @@ import {
   LogOut,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
+import { useTranslation } from 'react-i18next'
+import { normalizeLanguage } from '../../i18n'
 
 type Tab = 'general' | 'account' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
 
@@ -128,6 +130,7 @@ const KeyChip = ({ label }: { label: string }) => (
 )
 
 const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
+  const { t } = useTranslation()
   const [isRecording, setIsRecording] = useState(false)
   const [pendingShortcut, setPendingShortcut] = useState<ReturnType<typeof parseAccelerator>>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -163,7 +166,7 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
         ref={containerRef}
         tabIndex={0}
         role="button"
-        aria-label="Shortcut recorder. Click then press your key combination."
+        aria-label={t('settings.shortcutAria')}
         onFocus={() => {
           setIsRecording(true)
           setPendingShortcut(null)
@@ -195,7 +198,9 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
 
         {/* Placeholder if no keys yet */}
         {chips.length === 0 && (
-          <span className="text-xs text-gray-400 dark:text-gray-500">Press a shortcut…</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {t('settings.pressShortcut')}
+          </span>
         )}
       </div>
 
@@ -203,7 +208,7 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
       <p
         className={`text-[10px] transition-colors duration-150 ${isRecording ? 'text-blue-500' : 'text-gray-400 dark:text-gray-600'}`}
       >
-        {isRecording ? 'Hold modifiers then press your key' : 'Click to record'}
+        {isRecording ? t('settings.shortcutRecording') : t('settings.shortcutIdle')}
       </p>
     </div>
   )
@@ -212,8 +217,8 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
 // --- Main Settings component ---
 
 export const Settings = () => {
-  const { settings, isLoading, error, loadSettings, updateSettings, resetSettings } =
-    useSettingsStore()
+  const { t, i18n } = useTranslation()
+  const { settings, isLoading, error, updateSettings, resetSettings } = useSettingsStore()
   const clearAllClips = useClipboardStore(state => state.clearAllClips)
   const initializeUpdater = useUpdaterStore(state => state.initialize)
   const currentVersion = useUpdaterStore(state => state.currentVersion)
@@ -236,10 +241,6 @@ export const Settings = () => {
   const [activeTab, setActiveTab] = useState<Tab>('general')
 
   useEffect(() => {
-    void loadSettings()
-  }, [loadSettings])
-
-  useEffect(() => {
     void initializeUpdater()
   }, [initializeUpdater])
 
@@ -260,13 +261,9 @@ export const Settings = () => {
   }, [settings?.global_shortcut])
 
   const handleClearAllData = async () => {
-    if (
-      confirm(
-        'Are you sure you want to delete ALL clipboard history? This action cannot be undone!'
-      )
-    ) {
+    if (confirm(t('settings.deleteAllConfirm'))) {
       await clearAllClips()
-      alert('All clipboard data has been deleted.')
+      alert(t('settings.deleteAllSuccess'))
     }
   }
 
@@ -288,17 +285,24 @@ export const Settings = () => {
     if (!path) return
     try {
       const text = await readTextFile(path)
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      const imported = JSON.parse(text)
-      await updateSettings(imported as Partial<AppSettings>)
+      const imported = JSON.parse(text) as Partial<AppSettings>
+      const importedLanguage =
+        typeof imported.language === 'string'
+          ? normalizeLanguage(imported.language)
+          : (settings?.language ?? 'en')
+      await updateSettings({
+        ...imported,
+        language: importedLanguage,
+        language_initialized: true,
+      })
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (_error) {
-      alert('Failed to import settings. Please check the file format.')
+      alert(t('errors.settingsImport'))
     }
   }
 
   const handleReset = async () => {
-    if (confirm('Are you sure you want to reset all settings to defaults?')) {
+    if (confirm(t('settings.resetConfirm'))) {
       await resetSettings()
     }
   }
@@ -319,9 +323,9 @@ export const Settings = () => {
         <div className="max-w-md text-center space-y-4">
           <div className="text-red-500 dark:text-red-400">
             <SettingsIcon className="h-12 w-12 mx-auto mb-3" />
-            <h2 className="text-lg font-semibold">Failed to Load Settings</h2>
+            <h2 className="text-lg font-semibold">{t('errors.settingsLoadTitle')}</h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-              {error || 'Settings file may be corrupted'}
+              {t('errors.settingsLoadDescription')}
             </p>
           </div>
           <Button
@@ -332,12 +336,12 @@ export const Settings = () => {
                   await resetSettings()
                 } catch (err) {
                   console.error('Failed to reset settings:', err)
-                  alert('Failed to reset settings: ' + String(err))
+                  alert(t('errors.settingsReset'))
                 }
               })()
             }}
           >
-            Reset to Default Settings
+            {t('settings.resetDefaults')}
           </Button>
         </div>
       </div>
@@ -347,57 +351,53 @@ export const Settings = () => {
   // --- Option lists ---
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'general', label: 'General', icon: <SettingsIcon className="h-4 w-4" /> },
-    { id: 'account', label: 'Account', icon: <UserRound className="h-4 w-4" /> },
-    { id: 'clipboard', label: 'Clipboard', icon: <Clipboard className="h-4 w-4" /> },
-    { id: 'storage', label: 'Storage', icon: <Database className="h-4 w-4" /> },
-    { id: 'privacy', label: 'Privacy', icon: <Shield className="h-4 w-4" /> },
-    { id: 'advanced', label: 'Advanced', icon: <Keyboard className="h-4 w-4" /> },
+    { id: 'general', label: t('settings.general'), icon: <SettingsIcon className="h-4 w-4" /> },
+    { id: 'account', label: t('settings.account'), icon: <UserRound className="h-4 w-4" /> },
+    { id: 'clipboard', label: t('settings.clipboard'), icon: <Clipboard className="h-4 w-4" /> },
+    { id: 'storage', label: t('settings.storage'), icon: <Database className="h-4 w-4" /> },
+    { id: 'privacy', label: t('settings.privacy'), icon: <Shield className="h-4 w-4" /> },
+    { id: 'advanced', label: t('settings.advanced'), icon: <Keyboard className="h-4 w-4" /> },
   ]
 
   const themeOptions = [
-    { value: 'auto' as Theme, label: 'Auto (System)' },
-    { value: 'light' as Theme, label: 'Light' },
-    { value: 'dark' as Theme, label: 'Dark' },
+    { value: 'auto' as Theme, label: t('settings.themeAuto') },
+    { value: 'light' as Theme, label: t('settings.themeLight') },
+    { value: 'dark' as Theme, label: t('settings.themeDark') },
   ]
 
   const languageOptions = [
-    { value: 'en', label: 'English' },
-    { value: 'es', label: 'Español' },
-    { value: 'fr', label: 'Français' },
-    { value: 'de', label: 'Deutsch' },
-    { value: 'ja', label: '日本語' },
-    { value: 'zh', label: '中文' },
+    { value: 'en', label: t('settings.english') },
+    { value: 'ja', label: t('settings.japanese') },
   ]
 
   const pasteFormatOptions = [
-    { value: 'auto' as PasteFormat, label: 'Auto (Original Format)' },
-    { value: 'plain' as PasteFormat, label: 'Plain Text' },
+    { value: 'auto' as PasteFormat, label: t('settings.pasteAuto') },
+    { value: 'plain' as PasteFormat, label: t('settings.pastePlain') },
   ]
 
   const itemActivationOptions = [
-    { value: 'single_click_copy' as ItemActivationMode, label: 'Single click activates' },
-    { value: 'double_click_primary' as ItemActivationMode, label: 'Double click activates' },
+    { value: 'single_click_copy' as ItemActivationMode, label: t('settings.singleClick') },
+    { value: 'double_click_primary' as ItemActivationMode, label: t('settings.doubleClick') },
   ]
 
   const updaterStatusLabel =
     updaterStatus === 'unavailable'
-      ? 'Not configured for this build'
+      ? t('settings.notConfigured')
       : updaterStatus === 'idle'
-        ? 'Idle'
+        ? t('settings.idle')
         : updaterStatus === 'up-to-date'
-          ? 'Up to date'
+          ? t('settings.upToDate')
           : updaterStatus === 'available'
-            ? `Update ${availableUpdate?.version ?? ''} available`
+            ? t('settings.updateAvailable', { version: availableUpdate?.version ?? '' })
             : updaterStatus === 'downloading'
-              ? 'Installing update…'
+              ? t('settings.installingUpdate')
               : updaterStatus === 'downloaded'
-                ? 'Restart required'
+                ? t('settings.restartRequired')
                 : updaterStatus === 'checking'
-                  ? 'Checking…'
+                  ? t('settings.checking')
                   : updaterStatus === 'error'
-                    ? 'Update failed'
-                    : 'Idle'
+                    ? t('errors.update')
+                    : t('settings.idle')
 
   // --- Render ---
 
@@ -407,7 +407,7 @@ export const Settings = () => {
       <div className="w-48 shrink-0 flex flex-col border-r border-gray-200/50 dark:border-white/10 bg-slate-100/30 dark:bg-slate-900/30">
         <div className="p-4">
           <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">
-            Settings
+            {t('settings.title')}
           </h2>
           <div className="space-y-1">
             {tabs.map(tab => (
@@ -440,7 +440,7 @@ export const Settings = () => {
               {tabs.find(t => t.id === activeTab)?.label}
             </h1>
             <p className="text-sm text-gray-500 mt-1">
-              Manage your {tabs.find(t => t.id === activeTab)?.label.toLowerCase()} preferences
+              {t('settings.manageTab', { tab: tabs.find(tab => tab.id === activeTab)?.label })}
             </p>
           </div>
           {/* GENERAL TAB */}
@@ -448,10 +448,13 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<Palette className="h-4 w-4" />}
-                title="Appearance"
-                description="Customize the look and feel"
+                title={t('settings.appearance')}
+                description={t('settings.appearanceDescription')}
               >
-                <SettingRow label="Theme" description="Choose your preferred color scheme">
+                <SettingRow
+                  label={t('settings.theme')}
+                  description={t('settings.themeDescription')}
+                >
                   <Select
                     value={settings.theme}
                     onChange={value => void updateSettings({ theme: value })}
@@ -460,10 +463,15 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow label="Language" description="Select your preferred language">
+                <SettingRow
+                  label={t('settings.language')}
+                  description={t('settings.languageDescription')}
+                >
                   <Select
                     value={settings.language}
-                    onChange={value => void updateSettings({ language: value })}
+                    onChange={value =>
+                      void updateSettings({ language: value, language_initialized: true })
+                    }
                     options={languageOptions}
                     className="w-40"
                   />
@@ -472,12 +480,12 @@ export const Settings = () => {
 
               <SettingsSection
                 icon={<Keyboard className="h-4 w-4" />}
-                title="Shortcuts"
-                description="Keyboard shortcuts"
+                title={t('settings.shortcuts')}
+                description={t('settings.shortcutsDescription')}
               >
                 <SettingRow
-                  label="Global Shortcut"
-                  description="Keyboard shortcut to show/hide the app"
+                  label={t('settings.globalShortcut')}
+                  description={t('settings.globalShortcutDescription')}
                 >
                   <ShortcutRecorder
                     value={settings.global_shortcut}
@@ -488,10 +496,13 @@ export const Settings = () => {
 
               <SettingsSection
                 icon={<SettingsIcon className="h-4 w-4" />}
-                title="Window Behavior"
-                description="Control how the window behaves"
+                title={t('settings.windowBehavior')}
+                description={t('settings.windowBehaviorDescription')}
               >
-                <SettingRow label="Hide on Blur" description="Hide window when it loses focus">
+                <SettingRow
+                  label={t('settings.hideOnBlur')}
+                  description={t('settings.hideOnBlurDescription')}
+                >
                   <Switch
                     checked={settings.hide_on_blur}
                     onChange={value => void updateSettings({ hide_on_blur: value })}
@@ -499,8 +510,8 @@ export const Settings = () => {
                 </SettingRow>
 
                 <SettingRow
-                  label="Always on Top"
-                  description="Keep window floating above other apps"
+                  label={t('settings.alwaysOnTop')}
+                  description={t('settings.alwaysOnTopDescription')}
                 >
                   <Switch
                     checked={settings.always_on_top}
@@ -516,24 +527,33 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<Clipboard className="h-4 w-4" />}
-                title="Clipboard Monitoring"
-                description="Control what gets captured"
+                title={t('settings.monitoring')}
+                description={t('settings.monitoringDescription')}
               >
-                <SettingRow label="Capture Images" description="Save images from clipboard">
+                <SettingRow
+                  label={t('settings.captureImages')}
+                  description={t('settings.captureImagesDescription')}
+                >
                   <Switch
                     checked={settings.enable_images}
                     onChange={value => void updateSettings({ enable_images: value })}
                   />
                 </SettingRow>
 
-                <SettingRow label="Capture Files" description="Save file paths from clipboard">
+                <SettingRow
+                  label={t('settings.captureFiles')}
+                  description={t('settings.captureFilesDescription')}
+                >
                   <Switch
                     checked={settings.enable_files}
                     onChange={value => void updateSettings({ enable_files: value })}
                   />
                 </SettingRow>
 
-                <SettingRow label="Capture Rich Text" description="Save HTML/RTF formatting">
+                <SettingRow
+                  label={t('settings.captureRichText')}
+                  description={t('settings.captureRichTextDescription')}
+                >
                   <Switch
                     checked={settings.enable_rich_text}
                     onChange={value => void updateSettings({ enable_rich_text: value })}
@@ -541,8 +561,8 @@ export const Settings = () => {
                 </SettingRow>
 
                 <SettingRow
-                  label="Capture Office Formats"
-                  description="Save PowerPoint, Word, Excel objects"
+                  label={t('settings.captureOffice')}
+                  description={t('settings.captureOfficeDescription')}
                 >
                   <Switch
                     checked={settings.enable_office_formats}
@@ -553,8 +573,8 @@ export const Settings = () => {
 
               <SettingsSection
                 icon={<Clipboard className="h-4 w-4" />}
-                title="Clipboard Interactions"
-                description="What happens when you click a clip or press Enter"
+                title={t('settings.interactions')}
+                description={t('settings.interactionsDescription')}
               >
                 <div className="space-y-3">
                   {/* Option 1: Paste to App */}
@@ -592,13 +612,12 @@ export const Settings = () => {
                         <h4
                           className={`text-sm font-semibold ${settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}
                         >
-                          Paste to Active App (Recommended)
+                          {t('settings.pasteActive')}
                         </h4>
                         <p
                           className={`text-xs mt-1 leading-relaxed ${settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}
                         >
-                          Instantly paste the selected item into the application you were just
-                          using. The Clips window will close automatically.
+                          {t('settings.pasteActiveDescription')}
                         </p>
                       </div>
                     </div>
@@ -639,13 +658,12 @@ export const Settings = () => {
                         <h4
                           className={`text-sm font-semibold ${!settings.paste_on_enter ? 'text-blue-900 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}
                         >
-                          Copy to Clipboard Only
+                          {t('settings.copyOnly')}
                         </h4>
                         <p
                           className={`text-xs mt-1 leading-relaxed ${!settings.paste_on_enter ? 'text-blue-700/80 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}
                         >
-                          Copy the item to your system clipboard without pasting it. The Clips
-                          window will remain open so you can copy multiple items.
+                          {t('settings.copyOnlyDescription')}
                         </p>
                       </div>
                     </div>
@@ -654,8 +672,8 @@ export const Settings = () => {
 
                 <div className="pt-4 border-t border-gray-100 dark:border-white/5 space-y-4">
                   <SettingRow
-                    label="Default Paste Format"
-                    description="Format to use when copying/pasting"
+                    label={t('settings.pasteFormat')}
+                    description={t('settings.pasteFormatDescription')}
                   >
                     <Select
                       value={settings.default_paste_format}
@@ -666,8 +684,8 @@ export const Settings = () => {
                   </SettingRow>
 
                   <SettingRow
-                    label="Click Behavior"
-                    description="Single click copies, or double click to activate"
+                    label={t('settings.clickBehavior')}
+                    description={t('settings.clickBehaviorDescription')}
                   >
                     <Select
                       value={settings.item_activation_mode}
@@ -681,21 +699,21 @@ export const Settings = () => {
 
               <SettingsSection
                 icon={<Shield className="h-4 w-4" />}
-                title="App Exclusions"
-                description="Prevent specific apps from being monitored"
+                title={t('settings.exclusions')}
+                description={t('settings.exclusionsDescription')}
               >
                 <div className="space-y-3">
                   <div>
                     <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Excluded Applications
+                      {t('settings.excludedApplications')}
                     </label>
                     <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-500 mb-2">
-                      Clipboard content from these apps won't be captured
+                      {t('settings.excludedApplicationsDescription')}
                     </p>
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        placeholder="Enter app name..."
+                        placeholder={t('settings.appNamePlaceholder')}
                         onKeyDown={e => {
                           if (e.key === 'Enter') {
                             const input = e.currentTarget
@@ -724,7 +742,7 @@ export const Settings = () => {
                           }
                         }}
                       >
-                        Add
+                        {t('settings.add')}
                       </Button>
                     </div>
                   </div>
@@ -744,7 +762,7 @@ export const Settings = () => {
                               })
                             }}
                             className="text-gray-500 hover:text-red-500 transition-colors cursor-pointer"
-                            aria-label={`Remove ${app}`}
+                            aria-label={t('clipboard.removeApp', { name: app })}
                           >
                             ×
                           </button>
@@ -755,7 +773,7 @@ export const Settings = () => {
 
                   {settings.excluded_apps.length === 0 && (
                     <p className="text-xs text-gray-400 dark:text-gray-600 italic">
-                      No excluded apps. Add apps to prevent clipboard monitoring.
+                      {t('settings.noExcludedApps')}
                     </p>
                   )}
                 </div>
@@ -768,19 +786,19 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<UserRound className="h-4 w-4" />}
-                title="Account"
-                description="Optional browser sign-in for future account features"
+                title={t('settings.account')}
+                description={t('settings.accountDescription')}
               >
                 <div className="rounded-xl border border-gray-200/70 bg-slate-100/40 p-4 dark:border-white/10 dark:bg-slate-100/5">
                   {authStatus === 'unconfigured' && (
                     <p className="text-sm text-gray-600 dark:text-gray-300">
-                      Account sign-in is not configured in this build.
+                      {t('settings.accountUnconfigured')}
                     </p>
                   )}
 
                   {authStatus === 'loading' && (
                     <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Restoring your session…
+                      <Loader2 className="h-4 w-4 animate-spin" /> {t('settings.restoringSession')}
                     </div>
                   )}
 
@@ -788,7 +806,7 @@ export const Settings = () => {
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          Signed in
+                          {t('settings.signedIn')}
                         </p>
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{authEmail}</p>
                       </div>
@@ -798,7 +816,7 @@ export const Settings = () => {
                         leftIcon={<LogOut className="h-3.5 w-3.5" />}
                         onClick={() => void signOut()}
                       >
-                        Sign out
+                        {t('settings.signOut')}
                       </Button>
                     </div>
                   )}
@@ -806,22 +824,23 @@ export const Settings = () => {
                   {(authStatus === 'signed_out' || authStatus === 'error') && (
                     <div className="space-y-3">
                       {authError && (
-                        <p className="text-xs text-red-600 dark:text-red-400">{authError}</p>
+                        <p className="text-xs text-red-600 dark:text-red-400">
+                          {t('errors.genericDescription')}
+                        </p>
                       )}
-                      <Button onClick={() => void signIn()}>Sign in in your browser</Button>
+                      <Button onClick={() => void signIn()}>{t('settings.signIn')}</Button>
                     </div>
                   )}
 
                   {authStatus === 'signing_in' && (
                     <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Continue sign-in in your browser.
+                      <Loader2 className="h-4 w-4 animate-spin" /> {t('settings.continueSignIn')}
                     </div>
                   )}
                 </div>
 
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Signing in does not upload clipboard history, search indexes, OCR data, or AI
-                  assets. They remain on this device.
+                  {t('settings.accountPrivacy')}
                 </p>
               </SettingsSection>
             </>
@@ -832,46 +851,76 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<Database className="h-4 w-4" />}
-                title="History Limits"
-                description="Control your data footprint"
+                title={t('settings.historyLimits')}
+                description={t('settings.historyLimitsDescription')}
               >
                 <SettingRow
-                  label="Maximum Clips"
-                  description="How many items to keep in your history"
+                  label={t('settings.maximumClips')}
+                  description={t('settings.maximumClipsDescription')}
                 >
                   <ButtonGroup
                     value={settings.max_clips}
                     onChange={value => void updateSettings({ max_clips: value })}
                     options={[
-                      { value: 0, label: 'Unlimited', icon: <InfinityIcon className="h-3 w-3" /> },
+                      {
+                        value: 0,
+                        label: t('settings.unlimited'),
+                        icon: <InfinityIcon className="h-3 w-3" />,
+                      },
                       { value: 100, label: '100' },
                       { value: 500, label: '500' },
-                      { value: 1000, label: '1,000' },
-                      { value: 5000, label: '5,000' },
+                      {
+                        value: 1000,
+                        label: new Intl.NumberFormat(i18n.resolvedLanguage).format(1000),
+                      },
+                      {
+                        value: 5000,
+                        label: new Intl.NumberFormat(i18n.resolvedLanguage).format(5000),
+                      },
                     ]}
                   />
                 </SettingRow>
 
                 <SettingRow
-                  label="Delete Clips Older Than"
-                  description="Automatically clean up older clipboard entries"
+                  label={t('settings.deleteOlder')}
+                  description={t('settings.deleteOlderDescription')}
                 >
                   <ButtonGroup
                     value={settings.max_age_days}
                     onChange={value => void updateSettings({ max_age_days: value })}
                     options={[
-                      { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
-                      { value: 1, label: '24 hours', icon: <Clock className="h-3 w-3" /> },
-                      { value: 7, label: '1 week', icon: <Calendar className="h-3 w-3" /> },
-                      { value: 30, label: '1 month', icon: <Calendar className="h-3 w-3" /> },
-                      { value: 90, label: '3 months', icon: <Calendar className="h-3 w-3" /> },
+                      {
+                        value: 0,
+                        label: t('settings.never'),
+                        icon: <InfinityIcon className="h-3 w-3" />,
+                      },
+                      {
+                        value: 1,
+                        label: t('settings.hours24'),
+                        icon: <Clock className="h-3 w-3" />,
+                      },
+                      {
+                        value: 7,
+                        label: t('settings.week1'),
+                        icon: <Calendar className="h-3 w-3" />,
+                      },
+                      {
+                        value: 30,
+                        label: t('settings.month1'),
+                        icon: <Calendar className="h-3 w-3" />,
+                      },
+                      {
+                        value: 90,
+                        label: t('settings.months3'),
+                        icon: <Calendar className="h-3 w-3" />,
+                      },
                     ]}
                   />
                 </SettingRow>
 
                 <SettingRow
-                  label="Max Item Size (Combined)"
-                  description="Maximum combined size of text, HTML, and RTF content before skipping. Set to 0 to disable."
+                  label={t('settings.maxItemSize')}
+                  description={t('settings.maxItemSizeDescription')}
                 >
                   <ButtonGroup
                     value={settings.max_item_size_mb}
@@ -893,10 +942,10 @@ export const Settings = () => {
                   leftIcon={<Trash className="h-4 w-4" />}
                   onClick={() => void handleClearAllData()}
                 >
-                  Clear All Clipboard Data
+                  {t('settings.clearAllData')}
                 </Button>
                 <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
-                  Permanently delete all clipboard history. This action cannot be undone.
+                  {t('settings.clearAllDescription')}
                 </p>
               </Card>
             </>
@@ -907,29 +956,49 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<Shield className="h-4 w-4" />}
-                title="Privacy & Security"
-                description="Protect your sensitive information"
+                title={t('settings.privacySecurity')}
+                description={t('settings.privacySecurityDescription')}
               >
                 <SettingRow
-                  label="Auto-clear After Copy"
-                  description="Automatically delete sensitive clips after a set time"
+                  label={t('settings.autoClear')}
+                  description={t('settings.autoClearDescription')}
                 >
                   <ButtonGroup
                     value={settings.auto_clear_minutes}
                     onChange={value => void updateSettings({ auto_clear_minutes: value })}
                     options={[
-                      { value: 0, label: 'Never', icon: <InfinityIcon className="h-3 w-3" /> },
-                      { value: 5, label: '5 min', icon: <Zap className="h-3 w-3" /> },
-                      { value: 15, label: '15 min', icon: <Timer className="h-3 w-3" /> },
-                      { value: 30, label: '30 min', icon: <Clock className="h-3 w-3" /> },
-                      { value: 60, label: '1 hour', icon: <Clock className="h-3 w-3" /> },
+                      {
+                        value: 0,
+                        label: t('settings.never'),
+                        icon: <InfinityIcon className="h-3 w-3" />,
+                      },
+                      {
+                        value: 5,
+                        label: t('settings.minutes5'),
+                        icon: <Zap className="h-3 w-3" />,
+                      },
+                      {
+                        value: 15,
+                        label: t('settings.minutes15'),
+                        icon: <Timer className="h-3 w-3" />,
+                      },
+                      {
+                        value: 30,
+                        label: t('settings.minutes30'),
+                        icon: <Clock className="h-3 w-3" />,
+                      },
+                      {
+                        value: 60,
+                        label: t('settings.hour1'),
+                        icon: <Clock className="h-3 w-3" />,
+                      },
                     ]}
                   />
                 </SettingRow>
 
                 <SettingRow
-                  label="Clear on Exit"
-                  description="Delete all clipboard history when closing the app"
+                  label={t('settings.clearOnExit')}
+                  description={t('settings.clearOnExitDescription')}
                 >
                   <Switch
                     checked={settings.clear_on_exit}
@@ -945,12 +1014,12 @@ export const Settings = () => {
             <>
               <SettingsSection
                 icon={<SettingsIcon className="h-4 w-4" />}
-                title="System"
-                description="System integration"
+                title={t('settings.system')}
+                description={t('settings.systemDescription')}
               >
                 <SettingRow
-                  label="Auto-start on Login"
-                  description="Launch automatically when you log in"
+                  label={t('settings.autoStart')}
+                  description={t('settings.autoStartDescription')}
                 >
                   <Switch
                     checked={settings.auto_start}
@@ -971,7 +1040,10 @@ export const Settings = () => {
                   />
                 </SettingRow>
 
-                <SettingRow label="Show Copy Toast" description="Display notification when copying">
+                <SettingRow
+                  label={t('settings.copyToast')}
+                  description={t('settings.copyToastDescription')}
+                >
                   <Switch
                     checked={settings.show_copy_toast}
                     onChange={value => void updateSettings({ show_copy_toast: value })}
@@ -981,8 +1053,8 @@ export const Settings = () => {
 
               <SettingsSection
                 icon={<RefreshCw className="h-4 w-4" />}
-                title="Updates"
-                description="Version status and in-app update controls"
+                title={t('settings.updates')}
+                description={t('settings.updatesDescription')}
               >
                 <div className="rounded-xl border border-gray-200/70 dark:border-white/10 bg-slate-100/40 dark:bg-slate-100/5 px-4 py-3">
                   <div className="flex items-start justify-between gap-4">
@@ -995,22 +1067,22 @@ export const Settings = () => {
                       </p>
                       {availableUpdate && (
                         <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                          Latest version: {availableUpdate.version}
+                          {t('settings.latestVersion', { version: availableUpdate.version })}
                         </p>
                       )}
                       {updaterConfigured === false && (
                         <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                          This build does not have an updater public key configured yet.
+                          {t('settings.updaterKeyMissing')}
                         </p>
                       )}
                       {updaterError && (
                         <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                          {updaterError}
+                          {t('errors.update')}
                         </p>
                       )}
                       {updateReady && (
                         <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
-                          The update was installed successfully. Restart the app to apply it.
+                          {t('settings.updateInstalled')}
                         </p>
                       )}
                     </div>
@@ -1023,7 +1095,7 @@ export const Settings = () => {
                         leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
                         onClick={() => void checkForUpdates()}
                       >
-                        Check now
+                        {t('settings.checkNow')}
                       </Button>
 
                       {availableUpdate && !updateReady && (
@@ -1032,13 +1104,13 @@ export const Settings = () => {
                           isLoading={isDownloadingUpdate}
                           onClick={() => void downloadAndInstallUpdate()}
                         >
-                          Install update
+                          {t('settings.installUpdate')}
                         </Button>
                       )}
 
                       {updateReady && (
                         <Button size="sm" onClick={() => void restartToApplyUpdate()}>
-                          Restart now
+                          {t('settings.restartNow')}
                         </Button>
                       )}
                     </div>
@@ -1048,7 +1120,7 @@ export const Settings = () => {
 
               <Card className="shadow-sm">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">
-                  Manage Settings
+                  {t('settings.manageSettings')}
                 </h3>
                 <div className="flex gap-3">
                   <Button
@@ -1056,21 +1128,21 @@ export const Settings = () => {
                     leftIcon={<Download className="h-4 w-4" />}
                     onClick={() => void handleExport()}
                   >
-                    Export
+                    {t('settings.export')}
                   </Button>
                   <Button
                     variant="outline"
                     leftIcon={<Upload className="h-4 w-4" />}
                     onClick={() => void handleImport()}
                   >
-                    Import
+                    {t('settings.import')}
                   </Button>
                   <Button
                     variant="destructive"
                     leftIcon={<RotateCcw className="h-4 w-4" />}
                     onClick={() => void handleReset()}
                   >
-                    Reset to Defaults
+                    {t('settings.resetToDefaults')}
                   </Button>
                 </div>
               </Card>

@@ -3,6 +3,7 @@ import { Plus, X } from 'lucide-react'
 import type { Tag } from '../../../shared/types'
 import { useClipboardStore } from '../../../stores/clipboardStore'
 import { previewTheme } from '../../content/previews/previewTheme'
+import { useTranslation } from 'react-i18next'
 
 interface TagChipsProps {
   clipId: string
@@ -10,6 +11,7 @@ interface TagChipsProps {
 }
 
 export const TagChips = ({ clipId, tags }: TagChipsProps) => {
+  const { t } = useTranslation()
   const [isEditing, setIsEditing] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -108,7 +110,7 @@ export const TagChips = ({ clipId, tags }: TagChipsProps) => {
                 setInputValue('')
               }, 150)
             }}
-            placeholder="tag name..."
+            placeholder={t('clipboard.tagPlaceholder')}
             className="text-[10px] px-2 py-0.5 rounded-md border border-blue-400/40 bg-blue-500/10 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none w-24"
           />
           {filteredSuggestions.length > 0 && inputValue && (
@@ -137,7 +139,7 @@ export const TagChips = ({ clipId, tags }: TagChipsProps) => {
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-blue-600 hover:bg-slate-100 transition-colors border-t border-slate-200/70 dark:border-white/5 dark:text-blue-400 dark:hover:bg-slate-700"
                   >
                     <Plus className="h-3 w-3" />
-                    Create &ldquo;{inputValue.trim()}&rdquo;
+                    {t('clipboard.createTag', { name: inputValue.trim() })}
                   </button>
                 )}
             </div>
@@ -152,7 +154,7 @@ export const TagChips = ({ clipId, tags }: TagChipsProps) => {
           className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] text-gray-500 hover:text-gray-800 border border-transparent hover:border-slate-300/80 transition-colors shrink-0 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:border-gray-600/50"
         >
           <Plus className="h-3 w-3" />
-          tag
+          {t('clipboard.tag')}
         </button>
       )}
     </div>

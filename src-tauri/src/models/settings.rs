@@ -45,6 +45,9 @@ pub struct AppSettings {
     // General
     pub theme: Theme,
     pub language: String,
+    // Missing on legacy settings files means the existing selection is intentional.
+    #[serde(default = "default_language_initialized")]
+    pub language_initialized: bool,
 
     // Shortcuts
     pub global_shortcut: String,
@@ -119,6 +122,7 @@ impl Default for AppSettings {
         Self {
             theme: Theme::default(),
             language: "en".to_string(),
+            language_initialized: false,
             global_shortcut: if cfg!(target_os = "macos") {
                 "Cmd+Shift+V".to_string()
             } else {
@@ -155,4 +159,8 @@ fn default_true() -> bool {
 
 fn default_false() -> bool {
     false
+}
+
+fn default_language_initialized() -> bool {
+    true
 }

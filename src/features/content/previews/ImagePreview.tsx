@@ -2,8 +2,10 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { memo, useMemo } from 'react'
 import type { Content } from '../types'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 export const ImagePreview = memo(({ content }: { content: Content }) => {
+  const { t } = useTranslation()
   const clip = content.clip
   const src = useMemo(() => {
     if (clip.imagePath) return convertFileSrc(clip.imagePath)
@@ -20,7 +22,7 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
   if (!src) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-4 text-gray-500 text-sm gap-2">
-        <span>No image source found</span>
+        <span>{t('preview.noImageSource')}</span>
         <span className="text-xs opacity-50 font-mono">{content.text}</span>
       </div>
     )
@@ -34,7 +36,7 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
       >
         <img
           src={src}
-          alt="Clip Preview"
+          alt={t('preview.imagePreview')}
           className="max-w-full max-h-full object-contain rounded shadow-sm bg-white/50 dark:bg-black/20"
           onError={e => {
             console.error('Failed to load image:', src)
@@ -47,23 +49,23 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
       {hasOcrPanel && (
         <div className="flex-1 min-h-0 flex flex-col border-t border-slate-100/10 dark:border-slate-100/5">
           <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 dark:text-gray-500 shrink-0 flex items-center gap-2">
-            <span>OCR Text</span>
+            <span>{t('preview.ocrText')}</span>
             {ocrPending && (
               <span className="text-sky-400 animate-pulse normal-case font-normal tracking-normal">
-                {clip.ocrStatus === 'running' ? 'running…' : 'queued'}
+                {clip.ocrStatus === 'running' ? t('preview.running') : t('preview.queued')}
               </span>
             )}
           </div>
 
           {ocrPending && (
             <div className="flex-1 flex items-center justify-center text-xs text-gray-500 dark:text-gray-600 italic px-4">
-              Extracting text from image…
+              {t('preview.extractingText')}
             </div>
           )}
 
           {clip.ocrStatus === 'failed' && (
             <div className="flex-1 flex items-center justify-center text-xs text-gray-500 dark:text-gray-600 italic px-4">
-              OCR not available on this platform
+              {t('preview.ocrPlatformUnavailable')}
             </div>
           )}
 
@@ -71,7 +73,7 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
             <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-3">
               {ocrText.trim() === '' ? (
                 <p className="text-xs text-gray-500 dark:text-gray-600 italic">
-                  No text found in image
+                  {t('preview.noTextInImage')}
                 </p>
               ) : (
                 <p

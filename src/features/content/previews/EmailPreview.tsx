@@ -3,12 +3,14 @@ import { Mail, AtSign, Send } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type EmailPreviewProps = {
   readonly content: Content
 }
 
 const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
+  const { t } = useTranslation()
   const email = content.metadata.email || content.text
   const [user, domain] = email.split('@')
   const gravatarUrl = `https://www.gravatar.com/avatar/${email.toLowerCase()}?d=mp&s=120`
@@ -41,7 +43,7 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
             <div className="flex items-center gap-1.5 mb-1">
               <Mail size={12} className="text-amber-400 shrink-0" />
               <span className="text-xs text-amber-300 font-semibold uppercase tracking-wider">
-                Email
+                {t('content.email')}
               </span>
             </div>
             <div className="flex items-baseline gap-1 flex-wrap">
@@ -60,11 +62,13 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
 
       {/* Hint */}
       <div className={`text-center text-[10px] font-medium ${previewTheme.textMuted}`}>
-        Click to compose email
+        {t('preview.clickCompose')}
       </div>
 
       {/* Inline domain copy */}
-      {domain && <CopyableRow label="Domain" value={domain} sourceClipId={content.clip.id} />}
+      {domain && (
+        <CopyableRow label={t('preview.domain')} value={domain} sourceClipId={content.clip.id} />
+      )}
     </div>
   )
 }

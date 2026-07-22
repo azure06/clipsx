@@ -3,12 +3,14 @@ import { Clock } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type TimestampPreviewProps = {
   readonly content: Content
 }
 
 const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
+  const { t, i18n } = useTranslation()
   const { tsValue, unit, humanReadable, iso } = useMemo(() => {
     const raw = content.text
     const unitMeta = content.metadata.unit ?? 'seconds'
@@ -26,14 +28,14 @@ const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
       tsValue: raw,
       unit: unitMeta,
       humanReadable: valid
-        ? d.toLocaleString(undefined, {
+        ? d.toLocaleString(i18n.resolvedLanguage, {
             dateStyle: 'full',
             timeStyle: 'medium',
           })
         : '',
       iso: valid ? d.toISOString() : '',
     }
-  }, [content.text, content.metadata.unit, content.metadata.value])
+  }, [content.text, content.metadata.unit, content.metadata.value, i18n.resolvedLanguage])
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -55,7 +57,7 @@ const TimestampPreviewComponent = ({ content }: TimestampPreviewProps) => {
 
       {/* Copyable fields */}
       <div className="flex flex-col gap-2">
-        <CopyableRow label="Original" value={tsValue} sourceClipId={content.clip.id} />
+        <CopyableRow label={t('preview.original')} value={tsValue} sourceClipId={content.clip.id} />
         {iso && <CopyableRow label="ISO 8601" value={iso} sourceClipId={content.clip.id} />}
       </div>
     </div>

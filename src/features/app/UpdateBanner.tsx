@@ -3,16 +3,18 @@ import { Download, RotateCcw } from 'lucide-react'
 import { Button } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
 import { useUpdaterStore } from '../../stores'
+import { useTranslation } from 'react-i18next'
 
-const formatBytes = (bytes: number): string => {
+const formatBytes = (bytes: number, locale: string | undefined): string => {
   if (bytes <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
   const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   const value = bytes / 1024 ** exponent
-  return `${value.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: exponent === 0 ? 0 : 1 }).format(value)} ${units[exponent]}`
 }
 
 export const UpdateBanner = () => {
+  const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const initialize = useUpdaterStore(state => state.initialize)
   const status = useUpdaterStore(state => state.status)
@@ -39,10 +41,10 @@ export const UpdateBanner = () => {
     lastAnnouncedVersionRef.current = update.version
     toast({
       type: 'success',
-      title: `Update ${update.version} is ready`,
-      description: 'Download it now or install it later from Settings.',
+      title: t('updater.readyToast', { version: update.version }),
+      description: t('updater.readyDescription'),
     })
-  }, [status, toast, update])
+  }, [status, t, toast, update])
 
   useEffect(() => {
     if (status !== 'error' || !error) return
@@ -51,18 +53,22 @@ export const UpdateBanner = () => {
     lastErrorRef.current = error
     toast({
       type: 'error',
-      title: 'Update failed',
-      description: error,
+      title: t('errors.update'),
+      description: t('errors.genericDescription'),
     })
-  }, [error, status, toast])
+  }, [error, status, t, toast])
 
   const progressLabel = useMemo(() => {
     if (!isDownloading) return null
-    if (!totalBytes || totalBytes <= 0) return `${formatBytes(downloadedBytes)} downloaded`
+    if (!totalBytes || totalBytes <= 0) {
+      return t('updater.downloaded', {
+        size: formatBytes(downloadedBytes, i18n.resolvedLanguage),
+      })
+    }
 
     const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-    return `${percent}% · ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
-  }, [downloadedBytes, isDownloading, totalBytes])
+    return `${percent}% · ${formatBytes(downloadedBytes, i18n.resolvedLanguage)} / ${formatBytes(totalBytes, i18n.resolvedLanguage)}`
+  }, [downloadedBytes, i18n.resolvedLanguage, isDownloading, t, totalBytes])
 
   const downloadPercent = useMemo(() => {
     if (!isDownloading || !totalBytes || totalBytes <= 0) return null
@@ -88,10 +94,10 @@ export const UpdateBanner = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-gray-800 dark:text-gray-100">
-                    Update available — {update.version}
+                    {t('updater.available', { version: update.version })}
                   </p>
                   <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    You are on {update.currentVersion}
+                    {t('updater.currentVersion', { version: update.currentVersion })}
                   </p>
                   {update.body && (
                     <p className="mt-2 line-clamp-2 text-[11px] text-gray-500 dark:text-gray-500 whitespace-pre-wrap">
@@ -120,14 +126,14 @@ export const UpdateBanner = () => {
 
               <div className="mt-3 flex items-center justify-end gap-1.5">
                 <Button variant="ghost" size="sm" onClick={() => void dismissUpdate()}>
-                  Later
+                  {t('common.later')}
                 </Button>
                 <Button
                   size="sm"
                   isLoading={isDownloading}
                   onClick={() => void downloadAndInstallUpdate()}
                 >
-                  {isDownloading ? 'Installing…' : 'Install update'}
+                  {isDownloading ? t('updater.installing') : t('updater.installUpdate')}
                 </Button>
               </div>
             </>
@@ -141,20 +147,20 @@ export const UpdateBanner = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-gray-800 dark:text-gray-100">
-                    Ready to apply update
+                    {t('updater.ready')}
                   </p>
                   <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    Restart to finish installing the new version.
+                    {t('updater.restartDescription')}
                   </p>
                 </div>
               </div>
 
               <div className="mt-3 flex items-center justify-end gap-1.5">
                 <Button variant="ghost" size="sm" onClick={() => void dismissUpdate()}>
-                  Later
+                  {t('common.later')}
                 </Button>
                 <Button size="sm" onClick={() => void restartToApplyUpdate()}>
-                  Restart now
+                  {t('updater.restartNow')}
                 </Button>
               </div>
             </>

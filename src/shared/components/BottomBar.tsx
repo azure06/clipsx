@@ -2,38 +2,36 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Lightbulb } from 'lucide-react'
 import { useUIStore } from '../../stores'
 import { getDeleteShortcut, getShortcutChips } from '../keyboard/shortcuts'
+import { Trans, useTranslation } from 'react-i18next'
 
-const Kbd = ({ children }: { children: ReactNode }) => (
+const Kbd = ({ children }: { children?: ReactNode }) => (
   <span className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded bg-slate-100/80 dark:bg-slate-100/10 border border-gray-300/70 dark:border-gray-100/10 text-[10px] font-mono font-semibold text-gray-700 dark:text-gray-200 leading-none">
     {children}
   </span>
 )
 
 export const BottomBar = () => {
+  const { t } = useTranslation()
   const { activeView } = useUIStore()
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
   const [isFading, setIsFading] = useState(false)
   const deleteShortcutHint = getShortcutChips(getDeleteShortcut())
   const tips: ReactNode[] = [
-    <>
-      Press <Kbd>Enter</Kbd> to paste the selected clip.
-    </>,
-    <>
-      Use <Kbd>↑</Kbd> <Kbd>↓</Kbd> arrows or <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate.
-    </>,
-    <>
-      Type <Kbd>/image</Kbd> <Kbd>/url</Kbd> or <Kbd>/markdown</Kbd> to filter clips.
-    </>,
-    <>
-      Press <Kbd>F</Kbd> to favorite a clip or <Kbd>P</Kbd> to pin it.
-    </>,
-    <>
-      Press{' '}
-      {deleteShortcutHint.map(part => (
-        <Kbd key={part}>{part}</Kbd>
-      ))}{' '}
-      to remove a clip.
-    </>,
+    <Trans i18nKey="bottomBar.paste" components={{ key: <Kbd /> }} />,
+    <Trans
+      i18nKey="bottomBar.navigate"
+      components={{ up: <Kbd />, down: <Kbd />, j: <Kbd />, k: <Kbd /> }}
+    />,
+    <Trans
+      i18nKey="bottomBar.filter"
+      components={{ image: <Kbd />, url: <Kbd />, markdown: <Kbd /> }}
+    />,
+    <Trans i18nKey="bottomBar.favorite" components={{ favorite: <Kbd />, pin: <Kbd /> }} />,
+    <Trans
+      i18nKey="bottomBar.remove"
+      values={{ shortcut: deleteShortcutHint.join('+') }}
+      components={{ key: <Kbd /> }}
+    />,
   ]
 
   // Rotate tips every 10 seconds
@@ -58,7 +56,9 @@ export const BottomBar = () => {
       {/* Left: Rotating Tips */}
       <div className="flex items-center gap-2 overflow-hidden flex-1">
         <Lightbulb className="h-3.5 w-3.5 text-yellow-600 dark:text-yellow-500/80 shrink-0" />
-        <span className="font-medium text-gray-700 dark:text-gray-400">Pro Tip:</span>
+        <span className="font-medium text-gray-700 dark:text-gray-400">
+          {t('bottomBar.proTip')}
+        </span>
         <span
           className={`text-gray-700 dark:text-gray-300 truncate transition-opacity duration-500 ease-in-out ${
             isFading ? 'opacity-0' : 'opacity-100'
@@ -73,11 +73,11 @@ export const BottomBar = () => {
         {activeView === 'clips' && (
           <img
             src="/monochromatic.svg"
-            alt="Clips Icon"
+            alt={t('bottomBar.iconAlt')}
             className="w-5 h-5 opacity-70 mt-[0.12rem]"
           />
         )}
-        <span className="font-bold tracking-widest text-xs">{activeView}</span>
+        <span className="font-bold tracking-widest text-xs">{t(`titleBar.${activeView}`)}</span>
       </div>
     </div>
   )

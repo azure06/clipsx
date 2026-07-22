@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useClipboardStore } from '../../../stores/clipboardStore'
+import { useTranslation } from 'react-i18next'
 
 interface NoteFieldProps {
   clipId: string
 }
 
 export const NoteField = ({ clipId }: NoteFieldProps) => {
+  const { t } = useTranslation()
   const note = useClipboardStore(
     state => state.clips.find(clip => clip.id === clipId)?.note ?? null
   )
@@ -171,7 +173,9 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[10px] text-gray-500 shrink-0 uppercase tracking-wider">Note</span>
+      <span className="text-[10px] text-gray-500 shrink-0 uppercase tracking-wider">
+        {t('clipboard.note')}
+      </span>
       <input
         type="text"
         value={value}
@@ -186,7 +190,7 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
             ;(e.target as HTMLInputElement).blur()
           }
         }}
-        placeholder="Add a note... (searchable)"
+        placeholder={t('clipboard.notePlaceholder')}
         className={`flex-1 text-[11px] bg-transparent border-b outline-none py-0.5 transition-colors placeholder-gray-500 text-gray-700 dark:text-gray-300 ${
           isFocused
             ? 'border-blue-400/60'

@@ -55,6 +55,7 @@ const ActionIconButton = ({ action, content }: { action: SmartAction; content: C
       <Tooltip.Trigger asChild>
         <button
           onClick={() => void action.execute(content)}
+          aria-label={action.label}
           className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50 ${
             isActive
               ? 'text-blue-400 bg-blue-500/10 hover:bg-blue-500/20'

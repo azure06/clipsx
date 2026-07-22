@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
+import { useTranslation } from 'react-i18next'
 
 type ClipboardListItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[] }
@@ -32,6 +33,7 @@ const ClipboardListItemComponent = ({
   isSelected = false,
   index,
 }: ClipboardListItemProps) => {
+  const { t } = useTranslation()
   const platform = getPlatform()
   const isMac = platform === 'macos'
   const preview = formatClipPreview(clip, 100)
@@ -80,7 +82,7 @@ const ClipboardListItemComponent = ({
           {clip.contentType === 'image' && clip.imagePath ? (
             <img
               src={convertFileSrc(clip.imagePath)}
-              alt="Thumbnail"
+              alt={t('clipboard.thumbnail')}
               className="h-6 w-6 rounded-full object-cover ring-2 ring-gray-200/50 dark:ring-gray-700/50 shadow-sm"
               onError={e => {
                 // Fallback to icon if image fails to load
@@ -111,7 +113,9 @@ const ClipboardListItemComponent = ({
                 borderColor: 'rgba(236,72,153,0.2)',
                 color: '#ec4899', // Pinkish text to match gradient
               }}
-              title={`Semantic Match Score: ${Math.round(clip.similarityScore * 100)}%`}
+              title={t('clipboard.semanticScore', {
+                score: Math.round(clip.similarityScore * 100),
+              })}
             >
               <Sparkles className="h-2.5 w-2.5 inline mr-0.5" strokeWidth={3} />
               {Math.round(clip.similarityScore * 100)}%
@@ -133,12 +137,18 @@ const ClipboardListItemComponent = ({
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
               )}
               {ocrPending && (
-                <span title={clip.ocrStatus === 'running' ? 'OCR running…' : 'OCR queued'}>
+                <span
+                  title={
+                    clip.ocrStatus === 'running'
+                      ? t('clipboard.ocrRunning')
+                      : t('clipboard.ocrQueued')
+                  }
+                >
                   <ScanText className="h-3 w-3 text-sky-400 animate-pulse" strokeWidth={2.5} />
                 </span>
               )}
               {clip.hasEmbedding && (
-                <span title="AI Search Indexed">
+                <span title={t('clipboard.aiIndexed')}>
                   <svg width="0" height="0" className="absolute">
                     <linearGradient
                       id={`sparkle-grad-${clip.id}`}

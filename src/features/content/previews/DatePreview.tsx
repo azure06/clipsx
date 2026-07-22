@@ -3,13 +3,15 @@ import { CalendarDays } from 'lucide-react'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type DatePreviewProps = {
   readonly content: Content
 }
 
 const DatePreviewComponent = ({ content }: DatePreviewProps) => {
-  const { original, iso, format } = useMemo(() => {
+  const { i18n } = useTranslation()
+  const { original, iso, format, display } = useMemo(() => {
     const raw = content.text
     const isoVal = content.metadata.iso
 
@@ -19,7 +21,7 @@ const DatePreviewComponent = ({ content }: DatePreviewProps) => {
     try {
       const d = new Date(raw)
       if (!isNaN(d.getTime())) {
-        displayDate = d.toLocaleDateString(undefined, {
+        displayDate = d.toLocaleDateString(i18n.resolvedLanguage, {
           weekday: 'long',
           year: 'numeric',
           month: 'long',
@@ -37,7 +39,7 @@ const DatePreviewComponent = ({ content }: DatePreviewProps) => {
       format: content.metadata.format,
       display: displayDate,
     }
-  }, [content.text, content.metadata.iso, content.metadata.format])
+  }, [content.text, content.metadata.iso, content.metadata.format, i18n.resolvedLanguage])
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -47,7 +49,7 @@ const DatePreviewComponent = ({ content }: DatePreviewProps) => {
           <CalendarDays size={22} strokeWidth={2} />
         </div>
         <span className={`text-xl font-semibold text-center ${previewTheme.textPrimary}`}>
-          {original}
+          {display || original}
         </span>
         {format && (
           <MetaChip className="bg-sky-500/10 text-sky-400 border-sky-500/20">{format}</MetaChip>

@@ -1,14 +1,18 @@
 import { useTheme } from '../hooks/useTheme'
+import { useTranslation } from 'react-i18next'
 
 export const ThemeToggle = () => {
+  const { t } = useTranslation()
   const { appliedTheme, toggleTheme } = useTheme()
 
   return (
     <button
       onClick={toggleTheme}
       className="rounded-lg border border-gray-200/70 bg-slate-100/70 p-2 text-gray-700 transition-colors hover:bg-slate-200/60 dark:border-gray-700 dark:bg-slate-800 dark:text-gray-300 dark:hover:bg-slate-700"
-      aria-label="Toggle theme"
-      title={`Switch to ${appliedTheme === 'light' ? 'dark' : 'light'} mode`}
+      aria-label={t('theme.toggle')}
+      title={t('theme.switchTo', {
+        theme: t(appliedTheme === 'light' ? 'theme.dark' : 'theme.light'),
+      })}
     >
       {appliedTheme === 'light' ? (
         <svg

@@ -24,8 +24,10 @@ import { useCallPhoneAction, useSmsAction } from './type-specific/PhoneActions'
 import { useCopyIsoDateAction, useCopyTimestampAction } from './type-specific/DateActions'
 import { useCsvToJsonAction, useCsvToMarkdownAction } from './type-specific/CSVActions'
 import { useRevealSecretAction } from './type-specific/SecretActions'
+import { useTranslation } from 'react-i18next'
 
 export const useActionRegistry = (context?: ActionContext) => {
+  const { t } = useTranslation()
   // Core
   const copyAction = useCopyAction()
   const deleteAction = useDeleteAction(context?.onDelete)
@@ -56,29 +58,8 @@ export const useActionRegistry = (context?: ActionContext) => {
 
   const revealSecret = useRevealSecretAction()
 
-  const allActions = useMemo(
-    () => [
-      copyAction,
-      openDefaultEditor,
-      favoriteAction,
-      pinAction,
-      deleteAction,
-      openUrl,
-      searchUrl,
-      copyDomain,
-      sendEmail,
-      copyEmailDomain,
-      formatCode,
-      copyMathResult,
-      callPhone,
-      sms,
-      copyIsoDate,
-      copyTimestamp,
-      csvToJson,
-      csvToMd,
-      revealSecret,
-    ],
-    [
+  const allActions = useMemo(() => {
+    const actions = [
       copyAction,
       openDefaultEditor,
       favoriteAction,
@@ -99,7 +80,55 @@ export const useActionRegistry = (context?: ActionContext) => {
       csvToMd,
       revealSecret,
     ]
-  )
+    const labels: Record<string, string> = {
+      copy: copyAction.label === 'Copied!' ? t('actions.copied') : t('actions.copy'),
+      delete: t('actions.delete'),
+      favorite: t('actions.favorite'),
+      pin: t('actions.pin'),
+      'open-default-editor': t('actions.openEditor'),
+      paste: t('actions.paste'),
+      'csv-to-json': t('actions.csvJson'),
+      'csv-to-markdown': t('actions.csvMarkdown'),
+      'format-code': t('actions.formatCode'),
+      'copy-code': t('actions.copyCode'),
+      'download-code': t('actions.downloadFile'),
+      'copy-iso-date': t('actions.copyIso'),
+      'copy-timestamp': t('actions.copyTimestamp'),
+      'send-email': t('actions.composeEmail'),
+      'copy-email': t('actions.copyAddress'),
+      'copy-email-domain': t('actions.copyDomain'),
+      'copy-math-result': t('actions.copyResult'),
+      'copy-equation': t('actions.copyEquation'),
+      'call-phone': t('actions.call'),
+      'sms-phone': t('actions.sendSms'),
+      'reveal-secret': t('actions.reveal'),
+      'open-url': t('actions.openLink'),
+      'search-url': t('actions.searchDomain'),
+      'copy-domain': t('actions.copyDomain'),
+    }
+    return actions.map(action => ({ ...action, label: labels[action.id] ?? action.label }))
+  }, [
+    copyAction,
+    openDefaultEditor,
+    favoriteAction,
+    pinAction,
+    deleteAction,
+    openUrl,
+    searchUrl,
+    copyDomain,
+    sendEmail,
+    copyEmailDomain,
+    formatCode,
+    copyMathResult,
+    callPhone,
+    sms,
+    copyIsoDate,
+    copyTimestamp,
+    csvToJson,
+    csvToMd,
+    revealSecret,
+    t,
+  ])
 
   const getActionsByPlacement = (
     content: Content | null,

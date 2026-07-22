@@ -22,6 +22,7 @@ import type {
   AiCapabilityProgressEvent,
   IndexingProgressEvent,
 } from '../../shared/types'
+import { useTranslation } from 'react-i18next'
 
 interface IndexingOverview {
   totalEligibleClips: number
@@ -40,6 +41,7 @@ type CapabilityProgress = Record<
 >
 
 export const Plugins = () => {
+  const { t, i18n } = useTranslation()
   const { settings, loadSettings } = useSettingsStore()
   const [capabilities, setCapabilities] = useState<AiCapabilityStatus[]>([])
   const [overview, setOverview] = useState<IndexingOverview | null>(null)
@@ -198,13 +200,12 @@ export const Plugins = () => {
       <div className="px-6 py-6 space-y-6">
         {/* ── Header ── */}
         <div>
-          <h1 className="text-lg font-bold tracking-tight">AI Capabilities</h1>
+          <h1 className="text-lg font-bold tracking-tight">{t('plugins.title')}</h1>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            Install only what you need. Models run entirely on-device.
+            {t('plugins.description')}
           </p>
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-            Each model uses about 1.5 GB of RAM while loaded. Text Search and Image Search can be
-            enabled independently, so you can choose which models stay in memory.
+            {t('plugins.memoryWarning')}
           </p>
         </div>
 
@@ -212,14 +213,14 @@ export const Plugins = () => {
         {error && (
           <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {error}
+            {t('errors.plugin')}
           </div>
         )}
 
         {/* ── Model cards grid ── */}
         <section className="space-y-2">
           <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-            Models
+            {t('plugins.models')}
           </h2>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -231,13 +232,13 @@ export const Plugins = () => {
                 isBusy={busyKind === 'text_search'}
                 onInstall={() => void handleInstall('text_search')}
                 onDelete={() => void handleDelete('text_search')}
-                description="Semantic search using BGE-M3. Understands meaning, not just keywords. This model uses about 1.5 GB RAM while loaded."
+                description={t('plugins.textSearchDescription')}
                 accent="indigo"
                 extra={
                   textSearchCap.installState === 'ready' ? (
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        Enable search
+                        {t('plugins.enableSearch')}
                       </span>
                       <Switch
                         checked={settings?.text_search_enabled ?? false}
@@ -258,13 +259,13 @@ export const Plugins = () => {
                 isBusy={busyKind === 'image_search'}
                 onInstall={() => void handleInstall('image_search')}
                 onDelete={() => void handleDelete('image_search')}
-                description="Visual search with SigLIP2 ViT-B/16. Find images by describing them. This model uses about 1.5 GB RAM while loaded."
+                description={t('plugins.imageSearchDescription')}
                 accent="violet"
                 extra={
                   imageSearchCap.installState === 'ready' ? (
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        Keep in memory
+                        {t('plugins.keepInMemory')}
                       </span>
                       <Switch
                         checked={settings?.image_search_enabled ?? true}
@@ -285,11 +286,11 @@ export const Plugins = () => {
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                Text Recognition (OCR)
+                {t('plugins.ocr')}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
                 <CheckCircle2 className="h-2.5 w-2.5" />
-                Platform-provided
+                {t('plugins.platformProvided')}
               </span>
             </div>
             <span className="shrink-0 text-[11px] text-gray-400 dark:text-gray-500 hidden sm:block">
@@ -301,7 +302,7 @@ export const Plugins = () => {
         {/* ── Search index ── */}
         <section className="space-y-2">
           <h2 className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
-            Search Index
+            {t('plugins.searchIndex')}
           </h2>
 
           {/* Coverage card */}
@@ -311,7 +312,9 @@ export const Plugins = () => {
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl font-bold tabular-nums leading-none">{indexed}</span>
                 <span className="text-xs text-gray-400 dark:text-gray-500">
-                  / {eligible} indexed
+                  {t('plugins.indexed', {
+                    total: new Intl.NumberFormat(i18n.resolvedLanguage).format(eligible),
+                  })}
                 </span>
               </div>
               <span
@@ -338,21 +341,21 @@ export const Plugins = () => {
             {/* Mini stats row */}
             <div className="flex items-center gap-4 pt-0.5">
               <MiniStat
-                label="Missing"
+                label={t('plugins.missing')}
                 value={overview?.missingCount ?? 0}
                 warn={(overview?.missingCount ?? 0) > 0}
               />
               <MiniStat
-                label="Stale"
+                label={t('plugins.stale')}
                 value={overview?.staleCount ?? 0}
                 warn={(overview?.staleCount ?? 0) > 0}
               />
               <MiniStat
-                label="Failed"
+                label={t('plugins.failed')}
                 value={overview?.failedCount ?? 0}
                 warn={(overview?.failedCount ?? 0) > 0}
               />
-              <MiniStat label="Pending" value={overview?.pendingCount ?? 0} />
+              <MiniStat label={t('plugins.pending')} value={overview?.pendingCount ?? 0} />
             </div>
           </div>
 
@@ -362,7 +365,7 @@ export const Plugins = () => {
               <div className="mb-1.5 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                 <span className="flex items-center gap-1.5">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Indexing…
+                  {t('plugins.indexing')}
                 </span>
                 <span className="tabular-nums">
                   {indexProgress.done} / {indexProgress.total}
@@ -388,7 +391,7 @@ export const Plugins = () => {
           {overview?.lastErrorSummary && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {overview.lastErrorSummary}
+              {t('errors.plugin')}
             </div>
           )}
 
@@ -401,7 +404,7 @@ export const Plugins = () => {
               onClick={() => void handleIndexMissing()}
               disabled={!isAiUsable || !hasMissingOrStale}
             >
-              Index Missing / Stale
+              {t('plugins.indexMissing')}
             </Button>
             <Button
               variant="secondary"
@@ -410,7 +413,7 @@ export const Plugins = () => {
               onClick={() => void handleReindexAll()}
               disabled={!isAiUsable}
             >
-              Reindex All
+              {t('plugins.reindexAll')}
             </Button>
           </div>
         </section>
@@ -436,13 +439,15 @@ const accentStyles: Record<Accent, { icon: string; glow: string; bar: string }> 
   },
 }
 
-function formatBytes(bytes: number): string {
+function formatBytes(bytes: number, locale?: string): string {
   if (bytes === 0) return ''
   const gb = bytes / 1024 / 1024 / 1024
-  if (gb >= 0.1) return `${gb.toFixed(1)} GB`
+  if (gb >= 0.1)
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(gb)} GB`
   const mb = bytes / 1024 / 1024
-  if (mb >= 0.5) return `${mb.toFixed(0)} MB`
-  return `${(bytes / 1024).toFixed(0)} KB`
+  if (mb >= 0.5)
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(mb)} MB`
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(bytes / 1024)} KB`
 }
 
 interface CapabilityCardProps {
@@ -468,6 +473,7 @@ function CapabilityCard({
   accent,
   extra,
 }: CapabilityCardProps) {
+  const { t, i18n } = useTranslation()
   const styles = accentStyles[accent]
   const isDownloading =
     cap.installState === 'downloading' || (isBusy && cap.installState !== 'ready')
@@ -503,7 +509,7 @@ function CapabilityCard({
             <button
               onClick={onDelete}
               className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-              title="Remove from disk"
+              title={t('plugins.removeDisk')}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -519,8 +525,10 @@ function CapabilityCard({
             <StatusBadge state={cap.installState} />
           </div>
           <p className="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">
-            {cap.deliveryMode === 'cache_managed' ? 'Cache-managed' : 'Self-managed'}
-            {cap.sizeBytes > 0 ? ` · ${formatBytes(cap.sizeBytes)}` : ''}
+            {cap.deliveryMode === 'cache_managed'
+              ? t('plugins.cacheManaged')
+              : t('plugins.selfManaged')}
+            {cap.sizeBytes > 0 ? ` · ${formatBytes(cap.sizeBytes, i18n.resolvedLanguage)}` : ''}
           </p>
         </div>
 
@@ -533,7 +541,7 @@ function CapabilityCard({
         {isError && cap.lastError && (
           <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {cap.lastError}
+            {t('errors.plugin')}
           </div>
         )}
 
@@ -552,7 +560,11 @@ function CapabilityCard({
             onClick={onInstall}
             disabled={isDownloading}
           >
-            {isDownloading ? 'Downloading…' : isError ? 'Retry' : 'Download'}
+            {isDownloading
+              ? t('plugins.downloading')
+              : isError
+                ? t('plugins.retry')
+                : t('plugins.download')}
           </Button>
         )}
 
@@ -560,10 +572,10 @@ function CapabilityCard({
         {isDownloading && capProgress && (
           <div>
             <div className="mb-1 flex items-center justify-between text-[11px] text-blue-600 dark:text-blue-400">
-              <span className="max-w-[65%] truncate font-medium">{capProgress.label}</span>
+              <span className="max-w-[65%] truncate font-medium">{t('plugins.downloading')}</span>
               <span className="tabular-nums">
                 {capProgress.total > 0
-                  ? `${formatBytes(capProgress.downloaded)} / ${formatBytes(capProgress.total)}`
+                  ? `${formatBytes(capProgress.downloaded, i18n.resolvedLanguage)} / ${formatBytes(capProgress.total, i18n.resolvedLanguage)}`
                   : `${pct}%`}
               </span>
             </div>
@@ -583,11 +595,12 @@ function CapabilityCard({
 // ── Status badge ──────────────────────────────────────────────────────────────
 
 function StatusBadge({ state }: { state: AiCapabilityStatus['installState'] }) {
+  const { t } = useTranslation()
   if (state === 'ready') {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
         <CheckCircle2 className="h-3 w-3" />
-        Installed
+        {t('plugins.installed')}
       </span>
     )
   }
@@ -595,7 +608,7 @@ function StatusBadge({ state }: { state: AiCapabilityStatus['installState'] }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-400">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Downloading
+        {t('plugins.downloadingStatus')}
       </span>
     )
   }
@@ -603,14 +616,14 @@ function StatusBadge({ state }: { state: AiCapabilityStatus['installState'] }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-400">
         <AlertCircle className="h-3 w-3" />
-        Error
+        {t('common.error')}
       </span>
     )
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-gray-700/40 dark:text-gray-400">
       <ChevronRight className="h-3 w-3" />
-      Not installed
+      {t('plugins.notInstalled')}
     </span>
   )
 }

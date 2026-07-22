@@ -81,6 +81,9 @@ pub struct AppState {
     pub search_service: Arc<SearchService>,
     pub indexing_service: Arc<IndexingService>,
     pub updater_configured: bool,
+    pub tray_open_item: tauri::menu::MenuItem<tauri::Wry>,
+    pub tray_settings_item: tauri::menu::MenuItem<tauri::Wry>,
+    pub tray_quit_item: tauri::menu::MenuItem<tauri::Wry>,
     #[cfg(target_os = "macos")]
     pub previous_app_pid: Mutex<Option<i32>>,
 }
@@ -928,13 +931,43 @@ pub fn update_settings(
     Ok(settings)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayLabels {
+    open: String,
+    settings: String,
+    quit: String,
+}
+
+#[tauri::command]
+pub fn set_tray_labels(labels: TrayLabels, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .tray_open_item
+        .set_text(labels.open)
+        .map_err(|error| error.to_string())?;
+    state
+        .tray_settings_item
+        .set_text(labels.settings)
+        .map_err(|error| error.to_string())?;
+    state
+        .tray_quit_item
+        .set_text(labels.quit)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn reset_settings(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<AppSettings, String> {
     use tauri::Manager;
-    let settings = AppSettings::default();
+    let current = state.settings_repository.load().unwrap_or_default();
+    let settings = AppSettings {
+        language: current.language,
+        language_initialized: true,
+        ..AppSettings::default()
+    };
     state
         .settings_repository
         .save(&settings)

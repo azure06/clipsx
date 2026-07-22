@@ -5,12 +5,14 @@ import type { Content } from '../types'
 import { safeEval } from '../utils/math'
 import { useClipboardStore } from '../../../stores/clipboardStore'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type MathPreviewProps = {
   readonly content: Content
 }
 
 const MathPreviewComponent = ({ content }: MathPreviewProps) => {
+  const { t, i18n } = useTranslation()
   const [copied, setCopied] = useState(false)
   const copyDerivedText = useClipboardStore(state => state.copyDerivedText)
   const result = safeEval(content.text)
@@ -34,14 +36,16 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
         <span
           className={`text-xs font-semibold uppercase tracking-wider ${previewTheme.textPrimary}`}
         >
-          Math Expression
+          {t('preview.mathExpression')}
         </span>
       </div>
 
       <div className="flex flex-col gap-4">
         {/* Expression Display */}
         <div className={`p-3 rounded-xl ${previewTheme.surfaceMuted}`}>
-          <div className={`text-sm font-mono mb-1 ${previewTheme.textMuted}`}>Equation</div>
+          <div className={`text-sm font-mono mb-1 ${previewTheme.textMuted}`}>
+            {t('preview.equation')}
+          </div>
           <div
             className={`text-lg font-medium font-mono break-all leading-relaxed ${previewTheme.textPrimary}`}
           >
@@ -57,17 +61,19 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
             <div className="relative p-4 rounded-xl bg-linear-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 flex flex-col items-center justify-center gap-2 text-center">
               <div className="flex items-center gap-2 text-indigo-300/80 mb-1">
                 <Equal size={20} strokeWidth={2.5} />
-                <span className="text-xs font-semibold uppercase tracking-wider">Result</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">
+                  {t('preview.result')}
+                </span>
               </div>
 
               <div
                 className="text-4xl font-bold text-transparent bg-clip-text bg-linear-to-r from-indigo-200 via-gray-100 to-purple-200 select-all cursor-pointer hover:scale-105 transition-transform duration-200 font-mono"
                 onClick={() => void handleCopyResult()}
-                title="Click to copy result"
+                title={t('preview.clickCopyResult')}
               >
                 {
                   /* Format large numbers nicely */
-                  result.toLocaleString(undefined, { maximumFractionDigits: 10 })
+                  result.toLocaleString(i18n.resolvedLanguage, { maximumFractionDigits: 10 })
                 }
               </div>
 
@@ -79,12 +85,12 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
                   {copied ? (
                     <>
                       <Check size={12} className="text-green-400" />
-                      <span className="text-green-400">Copied</span>
+                      <span className="text-green-400">{t('preview.copied')}</span>
                     </>
                   ) : (
                     <>
                       <Copy size={12} />
-                      <span>Copy Result</span>
+                      <span>{t('preview.copyResult')}</span>
                     </>
                   )}
                 </button>
@@ -93,7 +99,7 @@ const MathPreviewComponent = ({ content }: MathPreviewProps) => {
           </div>
         ) : (
           <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm text-center">
-            Invalid Expression
+            {t('preview.invalidExpression')}
           </div>
         )}
       </div>

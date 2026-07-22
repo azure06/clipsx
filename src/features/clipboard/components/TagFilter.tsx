@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { X } from 'lucide-react'
 import { useClipboardStore } from '../../../stores/clipboardStore'
+import { useTranslation } from 'react-i18next'
 
 export const TagFilter = () => {
+  const { t } = useTranslation()
   const tags = useClipboardStore(state => state.availableTags)
   const tagFilter = useClipboardStore(state => state.tagFilter)
   const setTagFilter = useClipboardStore(state => state.setTagFilter)
@@ -34,7 +36,7 @@ export const TagFilter = () => {
           <button
             onClick={() => void setTagFilter(null)}
             className="opacity-70 hover:opacity-100 transition-opacity ml-0.5"
-            title="Clear filter"
+            title={t('clipboard.clearFilter')}
           >
             <X className="h-2.5 w-2.5" />
           </button>
@@ -78,7 +80,7 @@ export const TagFilter = () => {
                 event.stopPropagation()
                 void handleDelete(tag.id)
               }}
-              title="Delete tag"
+              title={t('clipboard.deleteTag')}
               className="absolute right-1 opacity-0 group-hover:opacity-100 transition-opacity text-white/70 hover:text-white"
             >
               <X className="h-2.5 w-2.5" />

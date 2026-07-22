@@ -5,6 +5,7 @@ import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { CopyableRow, MetaChip, PreviewLocalMenu } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type URLPreviewProps = {
   readonly content: Content
@@ -38,6 +39,7 @@ const parseURL = (raw: string): ParsedURL | null => {
 }
 
 const URLPreviewComponent = ({ content }: URLPreviewProps) => {
+  const { t } = useTranslation()
   const raw = content.metadata.url || content.text
   const parsed = useMemo(() => parseURL(raw), [raw])
 
@@ -98,7 +100,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
           {isImage ? (
             <img
               src={raw}
-              alt="URL Preview"
+              alt={t('preview.urlPreview')}
               className="max-w-full max-h-64 object-contain"
               onError={e => {
                 e.currentTarget.style.display = 'none'
@@ -121,17 +123,29 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
-            URL Structure
+            {t('preview.urlStructure')}
           </span>
           {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}
         </div>
 
-        <CopyableRow label="Domain" value={parsed.hostname} sourceClipId={content.clip.id} />
+        <CopyableRow
+          label={t('preview.domain')}
+          value={parsed.hostname}
+          sourceClipId={content.clip.id}
+        />
         {parsed.pathname && (
-          <CopyableRow label="Path" value={parsed.pathname} sourceClipId={content.clip.id} />
+          <CopyableRow
+            label={t('preview.path')}
+            value={parsed.pathname}
+            sourceClipId={content.clip.id}
+          />
         )}
         {parsed.hash && (
-          <CopyableRow label="Fragment" value={parsed.hash} sourceClipId={content.clip.id} />
+          <CopyableRow
+            label={t('preview.fragment')}
+            value={parsed.hash}
+            sourceClipId={content.clip.id}
+          />
         )}
         {parsed.searchParams.map(([key, val]) => (
           <CopyableRow key={key} label={`?${key}`} value={val} sourceClipId={content.clip.id} />

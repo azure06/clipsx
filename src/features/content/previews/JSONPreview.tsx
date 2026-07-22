@@ -2,12 +2,14 @@ import { memo } from 'react'
 import { Braces } from 'lucide-react'
 import type { Content } from '../types'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type JSONPreviewProps = {
   readonly content: Content
 }
 
 const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
+  const { t } = useTranslation()
   let parsed: unknown = null
   let formatted = content.text
   let keyCount = 0
@@ -37,7 +39,9 @@ const JSONPreviewComponent = ({ content }: JSONPreviewProps) => {
               JSON
             </span>
             {keyCount > 0 && (
-              <span className={`text-[10px] ${previewTheme.textMuted}`}>{keyCount} keys</span>
+              <span className={`text-[10px] ${previewTheme.textMuted}`}>
+                {t('preview.keys', { count: keyCount })}
+              </span>
             )}
           </div>
         </div>

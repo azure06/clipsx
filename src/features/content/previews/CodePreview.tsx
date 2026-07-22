@@ -4,12 +4,14 @@ import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewLocalMenu } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type CodePreviewProps = {
   readonly content: Content
 }
 
 const CodePreviewComponent = ({ content }: CodePreviewProps) => {
+  const { t } = useTranslation()
   const lineCount = content.text.split('\n').length
   const language = content.metadata.language
 
@@ -29,9 +31,9 @@ const CodePreviewComponent = ({ content }: CodePreviewProps) => {
               {language}
             </MetaChip>
           )}
-          <MetaChip>{lineCount} lines</MetaChip>
+          <MetaChip>{t('clipboard.lines', { count: lineCount })}</MetaChip>
           {content.metadata.word_count != null && (
-            <MetaChip>{content.metadata.word_count} words</MetaChip>
+            <MetaChip>{t('preview.words', { count: content.metadata.word_count })}</MetaChip>
           )}
         </div>
         {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}

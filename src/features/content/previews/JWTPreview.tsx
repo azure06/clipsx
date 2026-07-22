@@ -3,6 +3,7 @@ import { KeyRound } from 'lucide-react'
 import type { Content } from '../types'
 import { MetaChip } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type JWTPreviewProps = {
   readonly content: Content
@@ -22,6 +23,7 @@ const SegmentBlock = ({ label, value, color }: { label: string; value: string; c
 )
 
 const JWTPreviewComponent = ({ content }: JWTPreviewProps) => {
+  const { t } = useTranslation()
   const { header, payload, signature, headerDecoded, isValid } = useMemo(() => {
     const parts = content.text.trim().split('.')
     if (parts.length !== 3) {
@@ -78,14 +80,12 @@ const JWTPreviewComponent = ({ content }: JWTPreviewProps) => {
 
       {/* Segments */}
       <div className="flex flex-col gap-3">
-        <SegmentBlock label="Header" value={header} color="text-red-400" />
-        <SegmentBlock label="Payload" value={payload} color="text-purple-400" />
-        <SegmentBlock label="Signature" value={signature} color="text-blue-400" />
+        <SegmentBlock label={t('preview.header')} value={header} color="text-red-400" />
+        <SegmentBlock label={t('preview.payload')} value={payload} color="text-purple-400" />
+        <SegmentBlock label={t('preview.signature')} value={signature} color="text-blue-400" />
       </div>
 
-      <p className="text-[10px] text-gray-600 text-center">
-        Payload content is not decoded in this view.
-      </p>
+      <p className="text-[10px] text-gray-600 text-center">{t('preview.payloadNotDecoded')}</p>
     </div>
   )
 }

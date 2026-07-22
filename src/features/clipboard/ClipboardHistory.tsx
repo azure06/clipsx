@@ -5,6 +5,7 @@ import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
 import { clipToContent, useActionRegistry } from '../content'
 import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
+import { useTranslation } from 'react-i18next'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -35,6 +36,7 @@ export const ClipboardHistory = ({
   className,
   onPreviewItem,
 }: ClipboardHistoryProps) => {
+  const { t } = useTranslation()
   const {
     clips,
     loading,
@@ -181,10 +183,10 @@ export const ClipboardHistory = ({
     async (text: string, clipId: string) => {
       await performPrimaryAction(text, clipId)
       if (settings?.show_copy_toast) {
-        toast({ title: 'Ready to paste', type: 'success' })
+        toast({ title: t('clipboard.readyToPaste'), type: 'success' })
       }
     },
-    [performPrimaryAction, settings?.show_copy_toast, toast]
+    [performPrimaryAction, settings?.show_copy_toast, t, toast]
   )
 
   // Explicit Copy handler (copy icon) — delegates to centralized store
@@ -192,10 +194,10 @@ export const ClipboardHistory = ({
     async (text: string, clipId: string) => {
       await performCopy(text, clipId)
       if (settings?.show_copy_toast) {
-        toast({ title: 'Copied to clipboard', type: 'success' })
+        toast({ title: t('clipboard.copiedToClipboard'), type: 'success' })
       }
     },
-    [performCopy, settings?.show_copy_toast, toast]
+    [performCopy, settings?.show_copy_toast, t, toast]
   )
 
   const handleDelete = useCallback(
@@ -414,7 +416,7 @@ export const ClipboardHistory = ({
       {loading && (
         <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
           <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 dark:border-gray-700 border-t-gray-600 dark:border-t-gray-400"></div>
-          Loading more...
+          {t('clipboard.loadingMore')}
         </div>
       )}
     </div>
@@ -427,7 +429,9 @@ export const ClipboardHistory = ({
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
             <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 dark:border-gray-700 border-t-gray-600 dark:border-t-gray-400"></div>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading clipboard history...</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {t('clipboard.loadingHistory')}
+            </p>
           </div>
         </div>
       )
@@ -453,7 +457,9 @@ export const ClipboardHistory = ({
                 />
               </svg>
             </div>
-            <p className="text-sm font-medium text-red-600 dark:text-red-400">Error: {error}</p>
+            <p className="text-sm font-medium text-red-600 dark:text-red-400">
+              {t('clipboard.loadError')}
+            </p>
           </div>
         </div>
       )
@@ -471,10 +477,10 @@ export const ClipboardHistory = ({
               }}
             />
             <p className="-mt-4 text-xs text-gray-500 dark:text-gray-400">
-              {mode === 'search' ? 'No clips match your search' : 'Your clipboard is empty'}
+              {mode === 'search' ? t('clipboard.noSearchResults') : t('clipboard.empty')}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              {mode === 'search' ? 'Try a different query' : 'Start copying to build your history'}
+              {mode === 'search' ? t('clipboard.tryDifferentQuery') : t('clipboard.startCopying')}
             </p>
           </div>
         </div>
@@ -510,7 +516,7 @@ export const ClipboardHistory = ({
                 : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-black/5 dark:hover:bg-slate-100/5 border border-transparent'
             }`}
           >
-            {filter.charAt(0).toUpperCase() + filter.slice(1)}
+            {t(`clipboard.${filter}`)}
           </button>
         ))}
       </div>

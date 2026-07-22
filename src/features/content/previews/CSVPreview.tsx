@@ -4,12 +4,14 @@ import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewLocalMenu } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type CSVPreviewProps = {
   readonly content: Content
 }
 
 const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
+  const { t } = useTranslation()
   const { headers, rows, colCount } = useMemo(() => {
     const lines = content.text.split(/\r?\n/).filter(line => line.trim() !== '')
     if (lines.length === 0) return { headers: [], rows: [], colCount: 0 }
@@ -29,15 +31,15 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
   const delimiter = content.metadata.delimiter || ','
   const delimiterLabel =
     delimiter === ','
-      ? 'comma'
+      ? t('preview.comma')
       : delimiter === '\t'
-        ? 'tab'
+        ? t('preview.tab')
         : delimiter === ';'
-          ? 'semicolon'
+          ? t('preview.semicolon')
           : delimiter
 
   if (headers.length === 0) {
-    return <div className="p-4 text-gray-500">Empty CSV</div>
+    return <div className="p-4 text-gray-500">{t('preview.emptyCsv')}</div>
   }
 
   return (
@@ -51,8 +53,8 @@ const CSVPreviewComponent = ({ content }: CSVPreviewProps) => {
           <MetaChip className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
             CSV
           </MetaChip>
-          <MetaChip>{rows.length} rows</MetaChip>
-          <MetaChip>{colCount} cols</MetaChip>
+          <MetaChip>{t('preview.rows', { count: rows.length })}</MetaChip>
+          <MetaChip>{t('preview.columns', { count: colCount })}</MetaChip>
           <MetaChip>{delimiterLabel}</MetaChip>
         </div>
         {menuActions.length > 0 && <PreviewLocalMenu actions={menuActions} content={content} />}

@@ -1,5 +1,6 @@
 import { Layers, Blocks, Settings, User } from 'lucide-react'
 import { useUIStore } from '../../stores'
+import { useTranslation } from 'react-i18next'
 
 type SidebarProps = {
   // activeView and onViewChange handled by store now
@@ -7,6 +8,7 @@ type SidebarProps = {
 }
 
 export const Sidebar = ({ onLoginClick }: SidebarProps) => {
+  const { t } = useTranslation()
   const { activeView, setActiveView } = useUIStore()
 
   return (
@@ -20,7 +22,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
           }`}
-          title="Clipboard History"
+          title={t('sidebar.clipboard')}
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'clips' && (
@@ -35,7 +37,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
           }`}
-          title="Plugins"
+          title={t('sidebar.plugins')}
         >
           <Blocks className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'plugins' && (
@@ -52,7 +54,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
         <button
           onClick={onLoginClick}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 transition-colors cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-gray-800 dark:hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
-          title="Account"
+          title={t('sidebar.account')}
         >
           <User className="h-3.5 w-3.5" strokeWidth={1.5} />
         </button>
@@ -64,7 +66,7 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
           }`}
-          title="Settings"
+          title={t('sidebar.settings')}
         >
           <Settings className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'settings' && (

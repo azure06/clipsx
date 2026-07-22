@@ -219,6 +219,9 @@ fn main() {
                     search_service,
                     indexing_service,
                     updater_configured,
+                    tray_open_item: open_i.clone(),
+                    tray_settings_item: settings_i.clone(),
+                    tray_quit_item: quit_i.clone(),
                     #[cfg(target_os = "macos")]
                     previous_app_pid: std::sync::Mutex::new(None),
                 };
@@ -323,6 +326,7 @@ fn main() {
             commands::update_settings,
             commands::reset_settings,
             commands::get_settings_path,
+            commands::set_tray_labels,
             mac_rounded_corners::enable_rounded_corners,
             mac_rounded_corners::enable_modern_window_style,
             mac_rounded_corners::reposition_traffic_lights,

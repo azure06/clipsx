@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Content } from '../types'
 import { CopyableRow, MetaChip } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type PathPreviewProps = {
   readonly content: Content
@@ -21,6 +22,7 @@ const parsePath = (raw: string) => {
 }
 
 const PathPreviewComponent = ({ content }: PathPreviewProps) => {
+  const { t } = useTranslation()
   const raw = content.text
   const { filename, ext, dir, platform } = parsePath(raw)
 
@@ -55,19 +57,23 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
           )}
           <MetaChip>{platform}</MetaChip>
           <MetaChip className="bg-orange-500/10 text-orange-400 border-orange-500/20 opacity-0 group-hover:opacity-100 transition-opacity">
-            Open
+            {t('common.open')}
           </MetaChip>
         </div>
       </div>
 
       {/* Copyable fields */}
       <div className="flex flex-col gap-2">
-        <CopyableRow label="Full Path" value={raw} sourceClipId={content.clip.id} />
+        <CopyableRow label={t('preview.fullPath')} value={raw} sourceClipId={content.clip.id} />
         {filename && (
-          <CopyableRow label="Filename" value={filename} sourceClipId={content.clip.id} />
+          <CopyableRow
+            label={t('preview.filename')}
+            value={filename}
+            sourceClipId={content.clip.id}
+          />
         )}
         {dir && dir !== raw && (
-          <CopyableRow label="Directory" value={dir} sourceClipId={content.clip.id} />
+          <CopyableRow label={t('preview.directory')} value={dir} sourceClipId={content.clip.id} />
         )}
       </div>
     </div>

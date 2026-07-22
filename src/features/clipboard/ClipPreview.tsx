@@ -12,12 +12,14 @@ import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
 import { useClipboardStore } from '../../stores/clipboardStore'
+import { useTranslation } from 'react-i18next'
 
 interface ClipPreviewProps {
   clip: ClipItem
 }
 
 export const ClipPreview = ({ clip }: ClipPreviewProps) => {
+  const { t, i18n } = useTranslation()
   const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
 
   // Convert ClipItem to unified Content
@@ -25,6 +27,7 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
   const typeLabel = getContentDisplayLabel(content)
   const typeAccent = getContentDisplayAccentType(content)
   const sourceLabel = getContentSourceLabel(content)
+  const localizedTypeLabel = t(`content.${typeLabel}` as 'content.text')
 
   const actionContext = useMemo(
     () => ({
@@ -44,11 +47,11 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/10">
             <span className={`w-1.5 h-1.5 rounded-full ${getTypeColor(typeAccent)}`} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
-              {typeLabel}
+              {localizedTypeLabel}
             </span>
           </div>
           <span className="text-xs text-gray-600 dark:text-gray-500 tabular-nums">
-            {new Date(clip.createdAt * 1000).toLocaleString()}
+            {new Date(clip.createdAt * 1000).toLocaleString(i18n.resolvedLanguage)}
           </span>
         </div>
 
@@ -72,16 +75,20 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
       {/* Status Bar: L2 */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-100/60 dark:bg-black/20 border-t border-slate-200/70 dark:border-slate-100/5 text-[10px] text-gray-600 dark:text-gray-500 font-mono">
         <div className="flex items-center gap-4">
-          <span>{content.text.length} chars</span>
-          {content.metadata.line_count && <span>{content.metadata.line_count} lines</span>}
+          <span>{t('clipboard.characters', { count: content.text.length })}</span>
+          {content.metadata.line_count && (
+            <span>{t('clipboard.lines', { count: content.metadata.line_count })}</span>
+          )}
           {content.metadata.language && <span>{content.metadata.language}</span>}
           {(clip.ocrStatus === 'pending' || clip.ocrStatus === 'running') && (
             <span className="text-sky-500 dark:text-sky-400 animate-pulse">
-              {clip.ocrStatus === 'running' ? 'OCR running…' : 'OCR queued'}
+              {clip.ocrStatus === 'running' ? t('clipboard.ocrRunning') : t('clipboard.ocrQueued')}
             </span>
           )}
           {clip.ocrStatus === 'failed' && clip.contentType === 'image' && (
-            <span className="text-amber-600 dark:text-amber-400">OCR unavailable</span>
+            <span className="text-amber-600 dark:text-amber-400">
+              {t('clipboard.ocrUnavailable')}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -90,7 +97,7 @@ export const ClipPreview = ({ clip }: ClipPreviewProps) => {
           )}
           {sourceLabel && (
             <span className="text-gray-600 dark:text-gray-400">
-              <span className="opacity-60 mr-1">Source:</span>
+              <span className="opacity-60 mr-1">{t('clipboard.source')}</span>
               {sourceLabel}
             </span>
           )}

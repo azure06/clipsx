@@ -3,6 +3,7 @@ import type { ClipItem, Tag } from '../../../shared/types'
 import { formatTimestamp } from '../../../shared/types'
 import { Star, Sparkles, Pin, Hash } from 'lucide-react'
 import { ContentIcon, clipToContent } from '../../content'
+import { useTranslation } from 'react-i18next'
 
 type ClipboardGridItemProps = {
   readonly clip: ClipItem & { readonly tags?: Tag[] }
@@ -21,7 +22,8 @@ const ClipboardGridItemComponent = ({
   isSelected = false,
   index,
 }: ClipboardGridItemProps) => {
-  const timestamp = formatTimestamp(clip.createdAt)
+  const { t, i18n } = useTranslation()
+  const timestamp = formatTimestamp(clip.createdAt, i18n.resolvedLanguage)
 
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
@@ -68,7 +70,7 @@ const ClipboardGridItemComponent = ({
             {isPinned && (
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-linear-to-r from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-700 dark:text-blue-300 text-[9px] font-medium">
                 <Pin className="h-2 w-2" strokeWidth={2.5} />
-                Pin
+                {t('clipboard.pin')}
               </span>
             )}
 
@@ -80,7 +82,7 @@ const ClipboardGridItemComponent = ({
 
             {clip.hasEmbedding && (
               <span
-                title="AI Search Indexed"
+                title={t('clipboard.aiIndexed')}
                 className="inline-flex relative items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-100/50 dark:bg-indigo-900/20 text-[9px] font-medium border border-indigo-200/50 dark:border-indigo-500/20"
               >
                 <svg width="0" height="0" className="absolute">
@@ -106,7 +108,9 @@ const ClipboardGridItemComponent = ({
 
             {typeof clip.similarityScore === 'number' && clip.similarityScore > 0 && (
               <span
-                title={`Semantic Match Score: ${Math.round(clip.similarityScore * 100)}%`}
+                title={t('clipboard.semanticScore', {
+                  score: Math.round(clip.similarityScore * 100),
+                })}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold"
                 style={{
                   background:
@@ -116,7 +120,7 @@ const ClipboardGridItemComponent = ({
                   color: '#ec4899',
                 }}
               >
-                {Math.round(clip.similarityScore * 100)}% Match
+                {t('clipboard.match', { score: Math.round(clip.similarityScore * 100) })}
               </span>
             )}
 
@@ -145,7 +149,7 @@ const ClipboardGridItemComponent = ({
         {/* Timestamp and access count */}
         <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-500">
           <span className="font-medium">{timestamp}</span>
-          {clip.accessCount > 0 && <span>Used {clip.accessCount}×</span>}
+          {clip.accessCount > 0 && <span>{t('clipboard.used', { count: clip.accessCount })}</span>}
         </div>
       </div>
     </div>

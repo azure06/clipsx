@@ -17,6 +17,7 @@ import type { Content } from '../types'
 import { useActionRegistry } from '../actions/registry'
 import { MetaChip, PreviewHeader } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type MarkdownPreviewProps = {
   readonly content: Content
@@ -39,6 +40,7 @@ const markdownChildrenToText = (children: ReactNode): string =>
       : ''
 
 const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
+  const { t } = useTranslation()
   const { appliedTheme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const rawId = useId()
@@ -87,7 +89,7 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
   if (hasError) {
     return (
       <div className="rounded-xl border border-amber-300/70 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-        Unable to render Mermaid diagram.
+        {t('preview.unableMermaid')}
       </div>
     )
   }
@@ -104,6 +106,7 @@ const MermaidDiagram = ({ chart }: MermaidDiagramProps) => {
 }
 
 const MarkdownPreviewComponent = ({ content }: MarkdownPreviewProps) => {
+  const { t } = useTranslation()
   const { getPreviewMenuActions } = useActionRegistry()
   const menuActions = getPreviewMenuActions(content)
   const lineCount = content.text.split('\n').length
@@ -210,14 +213,14 @@ const MarkdownPreviewComponent = ({ content }: MarkdownPreviewProps) => {
       <div className={`shrink-0 border-b px-4 py-3 ${previewTheme.surfaceMuted}`}>
         <PreviewHeader
           icon={<FileCode2 size={15} className="text-cyan-500" />}
-          title="Markdown document"
+          title={t('preview.markdownDocument')}
           meta={
             <>
               <MetaChip className="bg-cyan-500/10 text-cyan-700 border-cyan-500/20 dark:text-cyan-300">
                 markdown
               </MetaChip>
-              <MetaChip>{lineCount} lines</MetaChip>
-              <MetaChip>{wordCount} words</MetaChip>
+              <MetaChip>{t('clipboard.lines', { count: lineCount })}</MetaChip>
+              <MetaChip>{t('preview.words', { count: wordCount })}</MetaChip>
             </>
           }
           menuActions={menuActions}

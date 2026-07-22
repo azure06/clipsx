@@ -5,6 +5,7 @@ import type { SmartAction, Content } from '../types'
 import { useClipboardStore } from '../../../stores/clipboardStore'
 import { cn } from '../../../shared/utils/cn'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 // ────────────────────────────────────────────────
 // CopyableRow — a clickable row that copies a value
@@ -126,6 +127,7 @@ type PreviewLocalMenuProps = {
 }
 
 export const PreviewLocalMenu = ({ actions, content }: PreviewLocalMenuProps) => {
+  const { t } = useTranslation()
   if (actions.length === 0) return null
 
   return (
@@ -136,7 +138,7 @@ export const PreviewLocalMenu = ({ actions, content }: PreviewLocalMenuProps) =>
             'p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/40',
             previewTheme.iconButton
           )}
-          aria-label="More actions"
+          aria-label={t('preview.moreActions')}
         >
           <MoreHorizontal size={15} />
         </button>

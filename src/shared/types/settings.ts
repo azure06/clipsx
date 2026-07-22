@@ -9,6 +9,7 @@ export interface AppSettings {
   // General
   theme: Theme
   language: string
+  language_initialized: boolean
 
   // Shortcuts
   global_shortcut: string
@@ -52,6 +53,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'auto',
   language: 'en',
+  language_initialized: false,
   global_shortcut: getDefaultGlobalShortcut(),
   enable_images: true,
   enable_files: true,

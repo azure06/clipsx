@@ -3,12 +3,14 @@ import { Phone, MessageSquare } from 'lucide-react'
 import type { Content } from '../types'
 import { InlineCTAButton } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type PhonePreviewProps = {
   readonly content: Content
 }
 
 const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
+  const { t } = useTranslation()
   const number = content.text
 
   const handleCall = () => {
@@ -36,11 +38,15 @@ const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
       <div className="flex gap-2 justify-center">
         <InlineCTAButton
           icon={<Phone size={16} />}
-          label="Call"
+          label={t('preview.call')}
           onClick={handleCall}
           variant="primary"
         />
-        <InlineCTAButton icon={<MessageSquare size={16} />} label="Send SMS" onClick={handleSms} />
+        <InlineCTAButton
+          icon={<MessageSquare size={16} />}
+          label={t('preview.sendSms')}
+          onClick={handleSms}
+        />
       </div>
     </div>
   )

@@ -2,6 +2,7 @@ import * as React from 'react'
 import * as ToastPrimitives from '@radix-ui/react-toast'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { useTranslation } from 'react-i18next'
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -74,20 +75,23 @@ ToastAction.displayName = ToastPrimitives.Action.displayName
 const ToastClose = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Close>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Close>
->(({ className, ...props }, ref) => (
-  <ToastPrimitives.Close
-    ref={ref}
-    className={cn(
-      'absolute py-1 px-2 right-1 top-1 rounded-md text-gray-500 opacity-0 transition-opacity hover:text-gray-900 focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 dark:text-gray-400 dark:hover:text-gray-50',
-      className
-    )}
-    toast-close=""
-    {...props}
-  >
-    <span className="sr-only">Close</span>
-    <span aria-hidden>×</span>
-  </ToastPrimitives.Close>
-))
+>(({ className, ...props }, ref) => {
+  const { t } = useTranslation()
+  return (
+    <ToastPrimitives.Close
+      ref={ref}
+      className={cn(
+        'absolute py-1 px-2 right-1 top-1 rounded-md text-gray-500 opacity-0 transition-opacity hover:text-gray-900 focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 dark:text-gray-400 dark:hover:text-gray-50',
+        className
+      )}
+      toast-close=""
+      {...props}
+    >
+      <span className="sr-only">{t('common.close')}</span>
+      <span aria-hidden>×</span>
+    </ToastPrimitives.Close>
+  )
+})
 ToastClose.displayName = ToastPrimitives.Close.displayName
 
 const ToastTitle = React.forwardRef<

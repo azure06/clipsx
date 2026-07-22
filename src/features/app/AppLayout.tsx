@@ -16,8 +16,10 @@ import { Plugins } from '../settings/Plugins'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { TextSearchStatus, ClipItem } from '../../shared/types'
+import { useTranslation } from 'react-i18next'
 
 export const AppLayout = () => {
+  const { t } = useTranslation()
   const {
     activeView,
     setActiveView,
@@ -29,7 +31,7 @@ export const AppLayout = () => {
     isSemanticActive,
     toggleSemantic,
   } = useUIStore()
-  const { settings, loadSettings } = useSettingsStore()
+  const settings = useSettingsStore(state => state.settings)
   const clips = useClipboardStore(state => state.clips)
   const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
@@ -60,11 +62,6 @@ export const AppLayout = () => {
       searchBarRef.current?.focus()
     })
   }
-
-  // Load settings on app start
-  useEffect(() => {
-    void loadSettings()
-  }, [loadSettings])
 
   useEffect(() => {
     let cancelled = false
@@ -267,11 +264,10 @@ export const AppLayout = () => {
                       return (
                         <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 border-dashed">
                           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Capture Something First
+                            {t('app.emptyTitle')}
                           </p>
                           <p className="text-xs text-gray-500 mt-2 text-center max-w-60">
-                            Your clipboard history is currently empty. Start copying items, and
-                            they'll appear here for preview.
+                            {t('app.emptyDescription')}
                           </p>
                         </div>
                       )

@@ -1,22 +1,11 @@
 import { useUIStore, useClipboardStore } from '../../stores'
-
-const getViewTitle = (view: string): string => {
-  switch (view) {
-    case 'clips':
-      return 'Clips'
-    case 'plugins':
-      return 'Plugins'
-    case 'settings':
-      return 'Settings'
-    default:
-      return 'Clips'
-  }
-}
+import { useTranslation } from 'react-i18next'
 
 // Decorum injects 3 buttons × 40px = 120px of window controls on the right on Windows
 const isWindows = navigator.platform.includes('Win')
 
 export const TitleBar = () => {
+  const { t } = useTranslation()
   const { activeView } = useUIStore()
   const { clips } = useClipboardStore()
   const clipCount = clips.length
@@ -37,7 +26,7 @@ export const TitleBar = () => {
           />
           {/* Title text */}
           <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300 tracking-wider">
-            {getViewTitle(activeView)}
+            {t(`titleBar.${activeView}`)}
           </span>
         </div>
       </div>
@@ -47,7 +36,7 @@ export const TitleBar = () => {
         className="ml-auto text-[11px] font-semibold text-gray-600 dark:text-gray-400 pointer-events-none"
         style={isWindows ? { marginRight: '146px' } : undefined}
       >
-        {clipCount} {clipCount === 1 ? 'clip' : 'clips'}
+        {t('titleBar.clipCount', { count: clipCount })}
       </div>
     </div>
   )

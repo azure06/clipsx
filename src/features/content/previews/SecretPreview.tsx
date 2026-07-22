@@ -3,6 +3,7 @@ import { ShieldAlert } from 'lucide-react'
 import type { Content } from '../types'
 import { MetaChip } from './PreviewShell'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type SecretPreviewProps = {
   readonly content: Content
@@ -14,6 +15,7 @@ const mask = (text: string): string => {
 }
 
 const SecretPreviewComponent = ({ content }: SecretPreviewProps) => {
+  const { t } = useTranslation()
   const kind = content.metadata.format ?? 'secret'
   const masked = mask(content.text)
 
@@ -26,14 +28,14 @@ const SecretPreviewComponent = ({ content }: SecretPreviewProps) => {
         </div>
         <div className="flex flex-col items-center gap-1">
           <span className="text-sm font-semibold text-red-700 dark:text-red-300">
-            Sensitive Content Detected
+            {t('preview.sensitiveDetected')}
           </span>
           <MetaChip className="bg-red-500/10 text-red-400 border-red-500/20 uppercase">
             {kind}
           </MetaChip>
         </div>
         <p className={`text-xs text-center max-w-xs ${previewTheme.textMuted}`}>
-          This clip contains potentially sensitive data. The content is masked for safety.
+          {t('preview.sensitiveDescription')}
         </p>
       </div>
 
@@ -42,7 +44,7 @@ const SecretPreviewComponent = ({ content }: SecretPreviewProps) => {
         <span
           className={`text-[10px] uppercase tracking-wider block mb-1 ${previewTheme.textMuted}`}
         >
-          Value
+          {t('preview.value')}
         </span>
         <p className={`text-sm font-mono break-all select-none ${previewTheme.textSecondary}`}>
           {masked}

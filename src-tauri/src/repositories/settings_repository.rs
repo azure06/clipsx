@@ -91,6 +91,19 @@ mod tests {
         assert!(settings.paste_on_enter);
         assert!(!settings.text_search_enabled);
         assert!(settings.image_search_enabled);
+        assert!(!settings.language_initialized);
+    }
+
+    #[test]
+    fn test_legacy_settings_preserve_existing_language_selection() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("language_initialized");
+
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert!(settings.language_initialized);
     }
 
     #[test]

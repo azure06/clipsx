@@ -14,23 +14,24 @@ import {
   Database,
 } from 'lucide-react'
 import { previewTheme } from './previewTheme'
+import { useTranslation } from 'react-i18next'
 
 type FilePreviewProps = {
   readonly content: Content
 }
 
-const formatBytes = (bytes: number, decimals = 2) => {
+const formatBytes = (bytes: number, locale: string | undefined, decimals = 2) => {
   if (bytes === 0) return '0 Bytes'
   const k = 1024
   const dm = decimals < 0 ? 0 : decimals
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: dm }).format(bytes / Math.pow(k, i))} ${sizes[i]}`
 }
 
-const formatDate = (timestamp: number) => {
+const formatDate = (timestamp: number, locale: string | undefined) => {
   if (!timestamp) return '-'
-  return new Date(timestamp * 1000).toLocaleString()
+  return new Date(timestamp * 1000).toLocaleString(locale)
 }
 
 const getFileIcon = (path: string) => {
@@ -99,6 +100,7 @@ const getFileIcon = (path: string) => {
 }
 
 const FileItem = ({ file }: { file: FileMetadata }) => {
+  const { t, i18n } = useTranslation()
   const handleOpen = async () => {
     try {
       await invoke('open_path', { path: file.path })
@@ -129,9 +131,9 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
               {file.path}
             </div>
             <div className={`flex gap-3 text-xs mt-1 ${previewTheme.textSubtle}`}>
-              <span>{formatBytes(file.size)}</span>
+              <span>{formatBytes(file.size, i18n.resolvedLanguage)}</span>
               <span>•</span>
-              <span>{formatDate(file.modified)}</span>
+              <span>{formatDate(file.modified, i18n.resolvedLanguage)}</span>
             </div>
           </div>
         </div>
@@ -139,9 +141,9 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
         <button
           onClick={() => void handleOpen()}
           className="opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-slate-200/60 dark:hover:bg-slate-100/10 rounded text-xs text-gray-500 hover:text-gray-900 dark:text-white/60 dark:hover:text-white shrink-0"
-          title="Open File"
+          title={t('preview.openFile')}
         >
-          Open
+          {t('common.open')}
         </button>
       </div>
 
@@ -177,6 +179,7 @@ const FileItem = ({ file }: { file: FileMetadata }) => {
 }
 
 const FilePreviewComponent = ({ content }: FilePreviewProps) => {
+  const { t } = useTranslation()
   const files = content.metadata.files || []
 
   if (files.length === 0) {
@@ -185,7 +188,7 @@ const FilePreviewComponent = ({ content }: FilePreviewProps) => {
         className={`w-full h-full p-4 flex flex-col items-center justify-center ${previewTheme.textSubtle}`}
       >
         <FileArchive className="w-16 h-16 mb-4 opacity-50" />
-        <div className="text-sm">No file metadata available</div>
+        <div className="text-sm">{t('preview.noFileMetadata')}</div>
         <div className="text-xs mt-2 opacity-50 font-mono">{content.text}</div>
       </div>
     )

@@ -16,33 +16,64 @@ import {
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
 import type { TextSearchStatus } from '../../shared/types'
+import { useTranslation } from 'react-i18next'
 
 const FILTER_OPTIONS = [
-  { prefix: '/image', label: 'Images', description: 'Screenshots, photos', icon: Image },
-  { prefix: '/url', label: 'URLs', description: 'Links and web addresses', icon: Link },
-  { prefix: '/text', label: 'Text', description: 'Plain text clips', icon: Type },
-  { prefix: '/markdown', label: 'Markdown', description: 'Markdown documents', icon: FileCode2 },
-  { prefix: '/code', label: 'Code', description: 'Code snippets', icon: Code },
-  { prefix: '/file', label: 'Files', description: 'File paths', icon: FileText },
-  { prefix: '/office', label: 'Office', description: 'Word, Excel, PPT', icon: Briefcase },
+  {
+    prefix: '/image',
+    labelKey: 'search.images',
+    descriptionKey: 'search.imagesDescription',
+    icon: Image,
+  },
+  { prefix: '/url', labelKey: 'search.urls', descriptionKey: 'search.urlsDescription', icon: Link },
+  {
+    prefix: '/text',
+    labelKey: 'search.text',
+    descriptionKey: 'search.textDescription',
+    icon: Type,
+  },
+  {
+    prefix: '/markdown',
+    labelKey: 'search.markdown',
+    descriptionKey: 'search.markdownDescription',
+    icon: FileCode2,
+  },
+  {
+    prefix: '/code',
+    labelKey: 'search.code',
+    descriptionKey: 'search.codeDescription',
+    icon: Code,
+  },
+  {
+    prefix: '/file',
+    labelKey: 'search.files',
+    descriptionKey: 'search.filesDescription',
+    icon: FileText,
+  },
+  {
+    prefix: '/office',
+    labelKey: 'search.office',
+    descriptionKey: 'search.officeDescription',
+    icon: Briefcase,
+  },
 ] as const
 
 const SCOPE_OPTIONS = [
   {
     prefix: '/favorites',
-    label: 'Favorites',
-    description: 'Browse favorited clips. Backspace on empty clears it.',
+    labelKey: 'search.favorites',
+    descriptionKey: 'search.favoritesDescription',
     scope: 'favorites' as const,
     icon: Star,
   },
   {
     prefix: '/pinned',
-    label: 'Pinned',
-    description: 'Browse pinned clips. Backspace on empty clears it.',
+    labelKey: 'search.pinned',
+    descriptionKey: 'search.pinnedDescription',
     scope: 'pinned' as const,
     icon: Pin,
   },
-]
+] as const
 
 const COMMAND_OPTIONS = [
   ...SCOPE_OPTIONS.map(option => ({ ...option, kind: 'scope' as const })),
@@ -76,7 +107,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     onClear,
     onScopeChange,
     activeScope,
-    placeholder = 'Type to search or paste...',
+    placeholder,
     autoFocus = true,
     semanticStatus = null,
     isSemanticActive = false,
@@ -84,6 +115,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   },
   ref
 ) {
+  const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
@@ -92,9 +124,9 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
   const semanticHint =
     semanticStatus?.state === 'indexing'
-      ? 'Semantic search is available while existing clips finish indexing in the background.'
+      ? t('search.semanticIndexing')
       : semanticStatus && semanticStatus.state !== 'ready'
-        ? `${semanticStatus.message}${isSemanticActive ? ' Using text search for now.' : ''}`
+        ? t('search.semanticFallback')
         : null
 
   useEffect(() => {
@@ -222,11 +254,11 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         {scopePillConfig && (
           <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-md border border-blue-200 dark:border-blue-500/30 whitespace-nowrap shadow-sm">
             <scopePillConfig.icon className="w-4 h-4" />
-            <span className="text-sm font-medium">{scopePillConfig.label}</span>
+            <span className="text-sm font-medium">{t(scopePillConfig.labelKey)}</span>
             <button
               onClick={() => onScopeChange?.('all')}
               className="ml-0.5 rounded hover:bg-blue-200/60 dark:hover:bg-blue-400/20 p-0.5 transition-colors"
-              aria-label="Clear scope filter"
+              aria-label={t('search.clearScope')}
             >
               <X className="w-3 h-3" />
             </button>
@@ -237,7 +269,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         {activeCommand && (
           <div className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-md border border-blue-200 dark:border-blue-500/30 whitespace-nowrap shadow-sm">
             <activeCommand.icon className="w-4 h-4" />
-            <span className="text-sm font-medium">{activeCommand.label}</span>
+            <span className="text-sm font-medium">{t(activeCommand.labelKey)}</span>
           </div>
         )}
 
@@ -262,10 +294,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           onBlur={() => setIsInputFocused(false)}
           placeholder={
             activeCommand
-              ? `Search in ${activeCommand.label}...`
+              ? t('search.searchIn', { name: t(activeCommand.labelKey) })
               : scopePillConfig
-                ? `Search in ${scopePillConfig.label}...`
-                : placeholder
+                ? t('search.searchIn', { name: t(scopePillConfig.labelKey) })
+                : (placeholder ?? t('search.placeholder'))
           }
           className={`flex-1 bg-transparent border-none outline-none py-4 text-lg text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-0 ${activeCommand || scopePillConfig ? 'px-3' : 'px-4'}`}
         />
@@ -281,11 +313,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
                   ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 shadow-sm shadow-indigo-500/10'
                   : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-black/5 dark:hover:bg-slate-100/5'
               }`}
-              title={
-                isSemanticActive
-                  ? 'Semantic search: On — click to switch to text search'
-                  : 'Text search — click to switch to AI semantic search'
-              }
+              title={isSemanticActive ? t('search.semanticOn') : t('search.semanticOff')}
             >
               <Sparkles className="w-4 h-4" />
             </button>
@@ -294,10 +322,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           {!isSemanticAvailable && semanticStatus && (
             <div
               className="hidden sm:flex items-center gap-1 rounded-md border border-amber-200/70 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
-              title={semanticStatus.message}
+              title={t('search.semanticFallback')}
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>AI unavailable</span>
+              <span>{t('search.aiUnavailable')}</span>
             </div>
           )}
 
@@ -330,7 +358,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-gray-200/60 dark:border-white/10 bg-slate-100/80 dark:bg-slate-900/95 backdrop-blur-2xl shadow-xl shadow-black/5 dark:shadow-2xl overflow-hidden z-50 animate-fade-in">
           <div className="p-1.5">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-              Commands
+              {t('search.commands')}
             </div>
             {filteredOptions.map((option, index) => {
               const Icon = option.icon
@@ -349,7 +377,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium font-mono">{option.prefix}</span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {option.description}
+                        {t(option.descriptionKey)}
                       </span>
                     </div>
                   </div>
