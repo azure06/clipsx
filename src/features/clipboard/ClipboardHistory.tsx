@@ -258,6 +258,35 @@ export const ClipboardHistory = ({
     }
   }, [])
 
+  const selectBoundaryClip = useCallback(
+    async (boundary: 'newest' | 'oldest') => {
+      if (boundary === 'oldest') {
+        let state = useClipboardStore.getState()
+
+        // History is loaded newest-first in pages. Continue until the repository
+        // reports the end, so End reaches the true oldest result rather than the
+        // oldest item in the currently rendered page.
+        while (state.hasMore && !state.loading) {
+          const previousOffset = state.currentOffset
+          await state.loadMoreClips(50)
+          state = useClipboardStore.getState()
+
+          // Stop if a failed or mocked load made no progress; otherwise an error
+          // could leave this keyboard command in an infinite loop.
+          if (state.currentOffset <= previousOffset) break
+        }
+      }
+
+      const boundaryIndex =
+        boundary === 'newest' ? 0 : useClipboardStore.getState().clips.length - 1
+      if (boundaryIndex < 0) return
+
+      setSelectedIndex(boundaryIndex)
+      requestAnimationFrame(() => scrollSelectedIntoView(boundaryIndex))
+    },
+    [scrollSelectedIntoView]
+  )
+
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -278,10 +307,10 @@ export const ClipboardHistory = ({
         return
       }
 
-      // If active is our search input, only allow arrows, enter, escape, and cmd+number
+      // If active is our search input, only allow navigation, activation, and shortcuts.
       if (isInput) {
         if (
-          !['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key) &&
+          !['ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter', 'Escape'].includes(e.key) &&
           !e.metaKey &&
           !e.ctrlKey
         ) {
@@ -331,6 +360,16 @@ export const ClipboardHistory = ({
       if (maxIndex < 0) return
 
       switch (e.key) {
+        case 'Home': {
+          e.preventDefault()
+          void selectBoundaryClip('newest')
+          break
+        }
+        case 'End': {
+          e.preventDefault()
+          void selectBoundaryClip('oldest')
+          break
+        }
         case 'ArrowUp': {
           e.preventDefault()
           setSelectedIndex(prev => {
@@ -392,6 +431,7 @@ export const ClipboardHistory = ({
     handleAction,
     handleDelete,
     getActionsForContent,
+    selectBoundaryClip,
   ])
 
   // ADDED: Notify parent of selection change for preview

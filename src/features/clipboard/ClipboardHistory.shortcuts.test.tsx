@@ -45,8 +45,8 @@ vi.mock('./components', () => ({
   ClipboardListItem: () => null,
 }))
 
-const makeClip = (): ClipItem => ({
-  id: 'clip-1',
+const makeClip = (id = 'clip-1'): ClipItem => ({
+  id,
   contentType: 'text',
   detectedType: 'text',
   contentText: 'hello world',
@@ -289,6 +289,65 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     })
 
     input.remove()
+  })
+
+  it('selects the newest loaded clip with Home', async () => {
+    const onPreviewItem = vi.fn()
+    useClipboardStore.setState({
+      clips: [makeClip('newest'), makeClip('older')],
+      hasMore: false,
+      currentOffset: 2,
+    })
+    render(<ClipboardHistory onPreviewItem={onPreviewItem} />)
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }))
+    })
+
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('newest'))
+    input.remove()
+  })
+
+  it('loads remaining history and selects the oldest clip with End', async () => {
+    const onPreviewItem = vi.fn()
+    useClipboardStore.setState({
+      clips: [makeClip('newest')],
+      hasMore: false,
+      currentOffset: 1,
+    })
+    render(<ClipboardHistory onPreviewItem={onPreviewItem} />)
+
+    await waitFor(() => expect(loadMoreClipsMock).toHaveBeenCalledTimes(1))
+    loadMoreClipsMock.mockClear()
+    loadMoreClipsMock.mockImplementation(() => {
+      useClipboardStore.setState({
+        clips: [makeClip('newest'), makeClip('oldest')],
+        hasMore: false,
+        currentOffset: 2,
+      })
+    })
+    act(() => {
+      useClipboardStore.setState({
+        clips: [makeClip('newest')],
+        hasMore: true,
+        currentOffset: 1,
+      })
+    })
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(loadMoreClipsMock).toHaveBeenCalledTimes(1)
+      expect(onPreviewItem).toHaveBeenLastCalledWith('oldest')
+    })
   })
 
   it('formats pin shortcut for action surfaces', () => {
