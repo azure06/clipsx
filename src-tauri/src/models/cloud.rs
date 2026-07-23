@@ -63,3 +63,76 @@ pub enum CollectionRole {
     Editor,
     Viewer,
 }
+
+pub const VAULT_SNAPSHOT_VERSION: u16 = 1;
+
+/// The deliberately saved portion of a local clip. It is serialized only inside
+/// an encrypted vault payload, never stored as cloud-visible metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultSnapshot {
+    pub format_version: u16,
+    pub content_type: String,
+    pub content_text: Option<String>,
+    pub content_html: Option<String>,
+    pub content_rtf: Option<String>,
+    pub file_paths: Option<String>,
+    pub ocr_text: Option<String>,
+    pub metadata: Option<String>,
+    pub note: Option<String>,
+    pub app_name: Option<String>,
+    pub captured_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultItem {
+    pub id: String,
+    pub collection_id: String,
+    pub key_version: u32,
+    pub encrypted_payload: EncryptedPayload,
+    pub wrapped_item_key: EncryptedPayload,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub version: u64,
+    pub deleted_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboxOperationKind {
+    UpsertVaultItem,
+    DeleteVaultItem,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxOperation {
+    pub id: String,
+    pub kind: OutboxOperationKind,
+    pub collection_id: String,
+    pub vault_item_id: String,
+    pub payload: String,
+    pub idempotency_key: String,
+    pub attempt_count: u32,
+    pub next_attempt_at: i64,
+    pub last_error: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tombstone {
+    pub collection_id: String,
+    pub vault_item_id: String,
+    pub version: u64,
+    pub deleted_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCursor {
+    pub collection_id: String,
+    pub cursor: Option<String>,
+    pub updated_at: i64,
+}

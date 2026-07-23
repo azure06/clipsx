@@ -19,6 +19,7 @@ export type AuthStatus =
 type AuthState = {
   status: AuthStatus
   email: string | null
+  userId: string | null
   error: string | null
   initialize: () => Promise<void>
   signIn: () => Promise<void>
@@ -26,17 +27,18 @@ type AuthState = {
   signOut: () => Promise<void>
 }
 
-const signedOutState = { status: 'signed_out' as const, email: null, error: null }
+const signedOutState = { status: 'signed_out' as const, email: null, userId: null, error: null }
 const genericError = 'Account sign-in could not be completed. Please try again.'
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   status: isSupabaseConfigured() ? 'loading' : 'unconfigured',
   email: null,
+  userId: null,
   error: null,
 
   initialize: async () => {
     if (!isSupabaseConfigured()) {
-      set({ status: 'unconfigured', email: null, error: null })
+      set({ status: 'unconfigured', email: null, userId: null, error: null })
       return
     }
 
@@ -45,7 +47,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const session = await restoreSupabaseSession()
       set(
         session
-          ? { status: 'signed_in', email: session.user.email ?? session.user.id, error: null }
+          ? {
+              status: 'signed_in',
+              email: session.user.email ?? session.user.id,
+              userId: session.user.id,
+              error: null,
+            }
           : signedOutState
       )
     } catch {
@@ -70,7 +77,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: 'signing_in', error: null })
     try {
       const session = await completeSupabaseCallback(url)
-      set({ status: 'signed_in', email: session.user.email ?? session.user.id, error: null })
+      set({
+        status: 'signed_in',
+        email: session.user.email ?? session.user.id,
+        userId: session.user.id,
+        error: null,
+      })
       return true
     } catch {
       set({ ...signedOutState, status: 'error', error: genericError })

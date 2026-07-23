@@ -1,4 +1,5 @@
 use crate::services::cloud_crypto::{CloudCryptoError, DeviceKeyMaterial};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 const E2EE_KEYRING_SERVICE: &str = "com.infiniti.clipsx.e2ee";
 
@@ -42,12 +43,53 @@ impl SecureKeyStore {
         }
     }
 
+    pub fn store_collection_key(
+        collection_id: &str,
+        key_version: u32,
+        key: &[u8; 32],
+    ) -> Result<(), SecureKeyStoreError> {
+        Self::collection_entry(collection_id, key_version)?
+            .set_password(&URL_SAFE_NO_PAD.encode(key))
+            .map_err(|_| SecureKeyStoreError::CredentialVault)
+    }
+
+    pub fn load_collection_key(
+        collection_id: &str,
+        key_version: u32,
+    ) -> Result<[u8; 32], SecureKeyStoreError> {
+        let encoded = match Self::collection_entry(collection_id, key_version)?.get_password() {
+            Ok(value) => value,
+            Err(keyring::Error::NoEntry) => return Err(SecureKeyStoreError::NotFound),
+            Err(_) => return Err(SecureKeyStoreError::CredentialVault),
+        };
+        let decoded = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| SecureKeyStoreError::InvalidKey(CloudCryptoError::InvalidKey))?;
+        decoded
+            .try_into()
+            .map_err(|_| SecureKeyStoreError::InvalidKey(CloudCryptoError::InvalidKey))
+    }
+
     fn entry(device_id: &str) -> Result<keyring::Entry, SecureKeyStoreError> {
         if !is_valid_device_id(device_id) {
             return Err(SecureKeyStoreError::InvalidIdentifier);
         }
         keyring::Entry::new(E2EE_KEYRING_SERVICE, &format!("device-{device_id}"))
             .map_err(|_| SecureKeyStoreError::CredentialVault)
+    }
+
+    fn collection_entry(
+        collection_id: &str,
+        key_version: u32,
+    ) -> Result<keyring::Entry, SecureKeyStoreError> {
+        if !is_valid_device_id(collection_id) {
+            return Err(SecureKeyStoreError::InvalidIdentifier);
+        }
+        keyring::Entry::new(
+            E2EE_KEYRING_SERVICE,
+            &format!("collection-{collection_id}-v{key_version}"),
+        )
+        .map_err(|_| SecureKeyStoreError::CredentialVault)
     }
 }
 

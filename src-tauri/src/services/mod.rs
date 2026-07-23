@@ -16,5 +16,6 @@ pub mod qr_decoder;
 pub mod search;
 pub mod secure_key_store;
 pub mod semantic;
+pub mod vault;
 pub mod vector_store;
 pub mod visual;

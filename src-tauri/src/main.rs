@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use commands::AppState;
-use repositories::{ClipRepository, EntitlementRepository, SettingsRepository};
+use repositories::{ClipRepository, EntitlementRepository, SettingsRepository, VaultRepository};
 use services::capabilities::{
     repair_stale_downloading_states, ImageSearchCapability, TextSearchCapability,
 };
@@ -167,6 +167,11 @@ fn main() {
                     EntitlementRepository::new(&app_handle)
                         .expect("Failed to initialize entitlement repository"),
                 );
+                let vault_repository = Arc::new(
+                    VaultRepository::new(&database_url)
+                        .await
+                        .expect("Failed to initialize vault repository"),
+                );
 
                 // Repair any persisted "downloading" states left from a prior crashed session.
                 repair_stale_downloading_states(&app_dir);
@@ -217,6 +222,7 @@ fn main() {
                     clipboard_service,
                     settings_repository: settings_repository.clone(),
                     entitlement_repository,
+                    vault_repository,
                     text_search: text_search.clone(),
                     image_search: image_search.clone(),
                     semantic_service: semantic_service.clone(),
@@ -316,6 +322,7 @@ fn main() {
             commands::get_entitlement_state,
             commands::cache_entitlement_state,
             commands::get_office_restore_allowance,
+            commands::add_clip_to_vault,
             commands::get_recent_clips,
             commands::get_recent_clips_paginated,
             commands::get_clips_after_timestamp,

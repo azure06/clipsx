@@ -8,6 +8,7 @@ import { useDeleteAction } from './shared/DeleteAction'
 import { useFavoriteAction } from './shared/FavoriteAction'
 import { usePinAction } from './shared/PinAction'
 import { useOpenInDefaultEditorAction } from './shared/OpenInDefaultEditorAction'
+import { useVaultAction } from './shared/VaultAction'
 
 // Type-Specific Actions
 import {
@@ -34,6 +35,7 @@ export const useActionRegistry = (context?: ActionContext) => {
   const favoriteAction = useFavoriteAction(context?.onToggleFavorite)
   const pinAction = usePinAction(context?.onTogglePin)
   const openDefaultEditor = useOpenInDefaultEditorAction()
+  const vaultAction = useVaultAction()
 
   // Type Specific
   const openUrl = useOpenURLAction()
@@ -62,6 +64,7 @@ export const useActionRegistry = (context?: ActionContext) => {
     const actions = [
       copyAction,
       openDefaultEditor,
+      vaultAction,
       favoriteAction,
       pinAction,
       deleteAction,
@@ -110,6 +113,7 @@ export const useActionRegistry = (context?: ActionContext) => {
   }, [
     copyAction,
     openDefaultEditor,
+    vaultAction,
     favoriteAction,
     pinAction,
     deleteAction,

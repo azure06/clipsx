@@ -1,9 +1,11 @@
 // Tauri commands (IPC handlers)
 use crate::models::{
     AiCapabilityKind, AiCapabilityStatus, AppSettings, ClipItem, EntitlementState,
-    IndexingOverview, OfficeRestoreAllowance,
+    IndexingOverview, OfficeRestoreAllowance, VaultItem,
 };
-use crate::repositories::{ClipRepository, EntitlementRepository, SettingsRepository};
+use crate::repositories::{
+    ClipRepository, EntitlementRepository, SettingsRepository, VaultRepository,
+};
 use crate::services::capabilities::{ImageSearchCapability, TextSearchCapability};
 use crate::services::clipboard::ClipboardService;
 use crate::services::indexing::{IndexingProgressPayload, IndexingService};
@@ -11,6 +13,10 @@ use crate::services::paste;
 use crate::services::search::{SearchService, DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD};
 use crate::services::semantic::{SemanticRuntimeStatus, SemanticService};
 use crate::services::visual::VisualService;
+use crate::services::{
+    secure_key_store::{is_valid_device_id, SecureKeyStore, SecureKeyStoreError},
+    vault,
+};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
@@ -76,6 +82,7 @@ pub struct AppState {
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
     pub entitlement_repository: Arc<EntitlementRepository>,
+    pub vault_repository: Arc<VaultRepository>,
     pub text_search: Arc<TextSearchCapability>,
     pub image_search: Arc<ImageSearchCapability>,
     pub semantic_service: Arc<SemanticService>,
@@ -117,6 +124,58 @@ pub fn get_office_restore_allowance(
         .entitlement_repository
         .office_allowance(chrono::Utc::now().timestamp())
         .map_err(|error| error.to_string())
+}
+
+/// Creates an independent encrypted snapshot and queues only its ciphertext for
+/// later sync. It never uploads clipboard history or native Office binaries.
+#[tauri::command]
+pub async fn add_clip_to_vault(
+    clip_id: String,
+    owner_id: String,
+    state: State<'_, AppState>,
+) -> Result<VaultItem, String> {
+    if !is_valid_device_id(&owner_id) {
+        return Err("Invalid signed-in account identifier".to_string());
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let entitlement = state
+        .entitlement_repository
+        .entitlement()
+        .map_err(|error| error.to_string())?;
+    if !entitlement.has_pro_access_at(now) {
+        return Err("ClipsX Pro is required to add items to Vault".to_string());
+    }
+
+    let clip = state
+        .repository
+        .get_by_id(&clip_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Clip not found".to_string())?;
+    let collection_id = format!("personal-{owner_id}");
+    let collection_key = match SecureKeyStore::load_collection_key(&collection_id, 1) {
+        Ok(key) => key,
+        Err(SecureKeyStoreError::NotFound) => {
+            let key = crate::services::cloud_crypto::generate_symmetric_key();
+            SecureKeyStore::store_collection_key(&collection_id, 1, &key)
+                .map_err(|error| error.to_string())?;
+            key
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let item = vault::create_vault_item(&owner_id, &collection_id, 1, &collection_key, &clip, now)
+        .map_err(|error| error.to_string())?;
+    let operation =
+        vault::create_upsert_outbox_operation(&item, now).map_err(|error| error.to_string())?;
+    state
+        .vault_repository
+        .insert_item_and_enqueue(&clip.id, &item, &operation)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(item)
 }
 
 #[cfg(target_os = "macos")]
