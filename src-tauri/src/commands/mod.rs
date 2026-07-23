@@ -1,8 +1,9 @@
 // Tauri commands (IPC handlers)
 use crate::models::{
-    AiCapabilityKind, AiCapabilityStatus, AppSettings, ClipItem, IndexingOverview,
+    AiCapabilityKind, AiCapabilityStatus, AppSettings, ClipItem, EntitlementState,
+    IndexingOverview, OfficeRestoreAllowance,
 };
-use crate::repositories::{ClipRepository, SettingsRepository};
+use crate::repositories::{ClipRepository, EntitlementRepository, SettingsRepository};
 use crate::services::capabilities::{ImageSearchCapability, TextSearchCapability};
 use crate::services::clipboard::ClipboardService;
 use crate::services::indexing::{IndexingProgressPayload, IndexingService};
@@ -74,6 +75,7 @@ pub struct AppState {
     pub repository: Arc<ClipRepository>,
     pub clipboard_service: Arc<ClipboardService>,
     pub settings_repository: Arc<SettingsRepository>,
+    pub entitlement_repository: Arc<EntitlementRepository>,
     pub text_search: Arc<TextSearchCapability>,
     pub image_search: Arc<ImageSearchCapability>,
     pub semantic_service: Arc<SemanticService>,
@@ -86,6 +88,35 @@ pub struct AppState {
     pub tray_quit_item: tauri::menu::MenuItem<tauri::Wry>,
     #[cfg(target_os = "macos")]
     pub previous_app_pid: Mutex<Option<i32>>,
+}
+
+#[tauri::command]
+pub fn get_entitlement_state(state: State<'_, AppState>) -> Result<EntitlementState, String> {
+    state
+        .entitlement_repository
+        .entitlement()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn cache_entitlement_state(
+    entitlement: EntitlementState,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .entitlement_repository
+        .cache_entitlement(entitlement)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_office_restore_allowance(
+    state: State<'_, AppState>,
+) -> Result<OfficeRestoreAllowance, String> {
+    state
+        .entitlement_repository
+        .office_allowance(chrono::Utc::now().timestamp())
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -647,6 +678,32 @@ async fn reconstruct_clipboard_content(
     Ok(content)
 }
 
+fn has_native_office_payload(
+    content: &crate::services::clipboard_platform::ClipboardContent,
+) -> bool {
+    matches!(
+        content,
+        crate::services::clipboard_platform::ClipboardContent::Office {
+            ole_data: Some(_),
+            ole_type: Some(_),
+            ..
+        }
+    )
+}
+
+fn office_text_fallback(
+    content: crate::services::clipboard_platform::ClipboardContent,
+) -> crate::services::clipboard_platform::ClipboardContent {
+    use crate::services::clipboard_platform::ClipboardContent;
+
+    match content {
+        ClipboardContent::Office { extracted_text, .. } => ClipboardContent::Text {
+            content: extracted_text,
+        },
+        other => other,
+    }
+}
+
 /// Shared write pipeline for all OS clipboard writes.
 ///
 /// - `track_usage=true` + `clip_id` present → calls `touch()` to update recency
@@ -692,10 +749,29 @@ async fn execute_clipboard_write(
             clip.image_path.as_ref().map(|_| "set")
         );
 
-        let content = reconstruct_clipboard_content(&clip, text).await?;
+        let mut content = reconstruct_clipboard_content(&clip, text).await?;
+        let attempts_native_office = has_native_office_payload(&content)
+            && cfg!(any(target_os = "macos", target_os = "windows"));
+
+        if attempts_native_office
+            && !state
+                .entitlement_repository
+                .can_restore_native_office(chrono::Utc::now().timestamp())
+                .map_err(|error| error.to_string())?
+        {
+            content = office_text_fallback(content);
+            eprintln!("[RECONSTRUCT] Native Office allowance exhausted; writing text fallback");
+        }
 
         crate::services::clipboard_platform::write_clipboard(&content)
             .map_err(|e| format!("Failed to write clipboard: {}", e))?;
+
+        if attempts_native_office && has_native_office_payload(&content) {
+            state
+                .entitlement_repository
+                .record_native_office_restore(chrono::Utc::now().timestamp())
+                .map_err(|error| error.to_string())?;
+        }
 
         {
             let monitor = state.clipboard_service.get_monitor();
@@ -1435,7 +1511,10 @@ pub async fn update_clip_note(
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::is_valid_auth_storage_key;
+    use crate::commands::{
+        has_native_office_payload, is_valid_auth_storage_key, office_text_fallback,
+    };
+    use crate::services::clipboard_platform::ClipboardContent;
 
     type OleWriteCase = (Option<&'static [u8]>, Option<&'static str>, bool);
 
@@ -1521,6 +1600,30 @@ mod tests {
                 expected_written
             );
         }
+    }
+
+    #[test]
+    fn office_allowance_fallback_removes_every_native_format() {
+        let content = ClipboardContent::Office {
+            ole_data: Some(vec![1, 2, 3]),
+            ole_type: Some("com.microsoft.test".to_string()),
+            extra_types: vec![("com.microsoft.extra".to_string(), vec![4])],
+            svg_data: Some(vec![5]),
+            pdf_data: Some(vec![6]),
+            png_data: Some(vec![7]),
+            html_data: Some("<b>value</b>".to_string()),
+            rtf_data: Some("{\\rtf1 value}".to_string()),
+            extracted_text: "value".to_string(),
+            source_app: "Microsoft Office".to_string(),
+        };
+
+        assert!(has_native_office_payload(&content));
+        let fallback = office_text_fallback(content);
+        assert!(!has_native_office_payload(&fallback));
+        assert!(matches!(
+            fallback,
+            ClipboardContent::Text { content } if content == "value"
+        ));
     }
 
     #[tokio::test]
