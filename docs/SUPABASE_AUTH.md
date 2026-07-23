@@ -56,4 +56,10 @@ A future website can use the same Supabase project and its own approved HTTPS re
 
 ## Security boundary
 
-Session and PKCE data are stored only through the operating system credential vault adapter. They are not written to Zustand persistence, normal app settings, clipboard history, diagnostics, or logs. Login has no database schema, RLS, cloud-sync, entitlement, OCR, search-index, or AI-asset behavior in ClipsX.
+Session and PKCE data are stored only through the operating system credential vault adapter. They are not written to Zustand persistence, normal app settings, clipboard history, diagnostics, or logs.
+
+Authentication alone does not upload clipboard history and never grants access
+to another user's cloud rows. Future Pro services use explicit entitlements,
+collection membership, and Row Level Security in addition to authentication.
+The end-to-end encryption and deliberate-upload boundary are documented in
+[CLOUD_SECURITY.md](./CLOUD_SECURITY.md).
