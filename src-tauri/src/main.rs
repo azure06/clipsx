@@ -72,6 +72,12 @@ fn main() {
             // Bring the app forward for a callback delivered to an existing process.
             // The frontend still validates and exchanges the URL before updating auth state.
             let deep_link_app = app.handle().clone();
+
+            // Windows and Linux register configured deep links automatically for installed
+            // applications, but development builds need explicit runtime registration.
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
+
             app.deep_link().on_open_url(move |_| {
                 let _ = commands::show_main_window(&deep_link_app);
             });

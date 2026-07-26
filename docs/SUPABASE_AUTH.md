@@ -9,10 +9,13 @@ Provide these public build-time values to the desktop build environment. Do not 
 ```text
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
-VITE_SUPABASE_AUTH_PROVIDER=github
+VITE_CLIPSX_WEB_ORIGIN=https://clipsx.app
+VITE_SUPABASE_AUTH_PROVIDER=google
 ```
 
-`VITE_SUPABASE_AUTH_PROVIDER` is optional and defaults to `github`. It uses Supabase's provider names, so a later enabled provider can be selected without changing the desktop UI. Builds without the URL or publishable key simply show that account sign-in is unavailable.
+`VITE_CLIPSX_WEB_ORIGIN` is optional and defaults to `https://clipsx.app`. It must be an HTTPS origin, except local builds may use a loopback HTTP origin such as `http://localhost:3000`. `VITE_SUPABASE_AUTH_PROVIDER` is optional and defaults to `google`; this first desktop browser flow supports Google only. Builds without the URL or publishable key simply show that account sign-in is unavailable.
+
+`npm run tauri:dev` and `npm run tauri:build` generate an ignored `src-tauri/tauri.auth.csp.conf.json` from `VITE_SUPABASE_URL`. It permits the exact configured Supabase origin in Tauri's `connect-src`; it never uses a `*.supabase.co` wildcard. Keep these values in an ignored local or CI environment file.
 
 Never put a Supabase `service_role` key in a desktop build. The publishable key is intentionally public; service-role keys bypass Row Level Security and belong only in trusted server environments.
 
@@ -26,15 +29,17 @@ Never put a Supabase `service_role` key in a desktop build. The publishable key 
    ```
 
    Use the exact callback URL shown by the Supabase provider setup screen if it differs.
+
 3. Under **Authentication → URL Configuration**, add this exact Redirect URL:
 
    ```text
-   clipsx://auth/callback
+   https://clipsx.app/auth/callback
+   https://clipsx.app/auth/desktop/callback
    ```
 
-   Keep any production website URLs separate and explicit; do not use a broad redirect wildcard.
+   For local desktop development, also add `http://localhost:3000/auth/desktop/callback`. Keep any production website URLs separate and explicit; do not use a broad redirect wildcard. The website callback bridge must be deployed before releasing a desktop build.
 
-The desktop app requests the Supabase PKCE flow, opens the returned authorization URL in the system browser, and exchanges the short-lived callback code locally. Codes are one-time and expire quickly, so a duplicate or old callback is safely rejected.
+The desktop app requests the Supabase PKCE flow, opens the returned authorization URL in the system browser, and sets its redirect to `https://clipsx.app/auth/desktop/callback`. The website bridge forwards only the unexchanged short-lived code (or provider error) to the fixed `clipsx://auth/callback` deep link. The desktop then exchanges that code locally using its original PKCE verifier. Codes are one-time and expire quickly, so a duplicate or old callback is safely rejected.
 
 ## Deep-link registration and testing
 
@@ -50,9 +55,9 @@ Test each packaged target, not only a browser build:
 
 During development, protocol registration behavior varies by platform. Use a packaged application for final Windows, macOS, and Linux verification.
 
-## Future website integration
+## Website callback bridge
 
-A future website can use the same Supabase project and its own approved HTTPS redirect URLs. It must run its own browser PKCE/session flow. The website must not receive, relay, or attempt to reuse a ClipsX callback code, PKCE verifier, or desktop session token.
+The website uses its own approved HTTPS redirect URLs for normal web sessions. For desktop login, `/auth/desktop/callback` is deliberately a small relay: it must not call `exchangeCodeForSession`, set website auth cookies, receive the PKCE verifier, or accept an arbitrary final destination. It forwards only the allowed callback values to the fixed `clipsx://auth/callback` scheme.
 
 ## Security boundary
 

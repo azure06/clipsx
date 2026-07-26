@@ -825,7 +825,7 @@ export const Settings = () => {
                     <div className="space-y-3">
                       {authError && (
                         <p className="text-xs text-red-600 dark:text-red-400">
-                          {t('errors.genericDescription')}
+                          {import.meta.env.DEV ? authError : t('errors.genericDescription')}
                         </p>
                       )}
                       <Button onClick={() => void signIn()}>{t('settings.signIn')}</Button>

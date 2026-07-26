@@ -43,5 +43,6 @@ Thumbs.db
 /src-tauri/target
 /src-tauri/WixTools
 /src-tauri/gen
+/src-tauri/tauri.auth.csp.conf.json
 
 docs/deploy.txt

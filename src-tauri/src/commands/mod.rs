@@ -26,6 +26,8 @@ use tauri::State;
 
 const AUTH_KEYRING_SERVICE: &str = "com.infiniti.clipsx";
 const MAX_AUTH_SECRET_BYTES: usize = 64 * 1024;
+const MAX_AUTH_CREDENTIAL_UTF16_UNITS: usize = 1_000;
+const AUTH_CHUNK_MANIFEST_PREFIX: &str = "clipsx-auth-chunks-v1:";
 
 fn is_valid_auth_storage_key(key: &str) -> bool {
     key.len() <= 128
@@ -42,19 +44,103 @@ fn auth_keyring_entry(key: &str) -> Result<keyring::Entry, String> {
     }
 
     keyring::Entry::new(AUTH_KEYRING_SERVICE, key)
-        .map_err(|_| "Unable to access the system credential vault".to_string())
+        .map_err(|error| format!("Unable to access the system credential vault: {error}"))
+}
+
+fn read_auth_value(key: &str) -> Result<Option<String>, String> {
+    let entry = auth_keyring_entry(key)?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(format!(
+            "Unable to read from the system credential vault: {error}"
+        )),
+    }
+}
+
+fn write_auth_value(key: &str, value: &str) -> Result<(), String> {
+    let utf16_units = value.encode_utf16().count();
+    auth_keyring_entry(key)?
+        .set_password(value)
+        .map_err(|error| {
+            format!(
+                "Unable to write to the system credential vault for {key} ({utf16_units} UTF-16 units): {error}"
+            )
+        })
+}
+
+fn remove_auth_value(key: &str) -> Result<(), String> {
+    match auth_keyring_entry(key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!(
+            "Unable to clear the system credential vault: {error}"
+        )),
+    }
+}
+
+fn auth_chunk_key(key: &str, index: usize) -> String {
+    format!("{key}-chunk-{index}")
+}
+
+fn auth_chunk_count(value: &str) -> Option<usize> {
+    value
+        .strip_prefix(AUTH_CHUNK_MANIFEST_PREFIX)?
+        .parse::<usize>()
+        .ok()
+        .filter(|count| *count > 0)
+}
+
+fn split_auth_value(value: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    let mut chunk_utf16_units = 0;
+
+    for character in value.chars() {
+        let character_utf16_units = character.len_utf16();
+        if chunk_utf16_units + character_utf16_units > MAX_AUTH_CREDENTIAL_UTF16_UNITS {
+            chunks.push(std::mem::take(&mut chunk));
+            chunk_utf16_units = 0;
+        }
+        chunk.push(character);
+        chunk_utf16_units += character_utf16_units;
+    }
+
+    if !chunk.is_empty() || chunks.is_empty() {
+        chunks.push(chunk);
+    }
+
+    chunks
+}
+
+fn remove_auth_chunks(key: &str, from: usize, to: usize) -> Result<(), String> {
+    for index in from..to {
+        remove_auth_value(&auth_chunk_key(key, index))?;
+    }
+    Ok(())
 }
 
 /// Reads Supabase PKCE/session material from the operating system credential vault.
 /// Values are deliberately never logged or written to application settings.
 #[tauri::command]
 pub fn auth_storage_get(key: String) -> Result<Option<String>, String> {
-    let entry = auth_keyring_entry(&key)?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err("Unable to read from the system credential vault".to_string()),
+    let Some(value) = read_auth_value(&key)? else {
+        return Ok(None);
+    };
+
+    let Some(chunk_count) = auth_chunk_count(&value) else {
+        return Ok(Some(value));
+    };
+
+    let mut assembled_value = String::new();
+    for index in 0..chunk_count {
+        let chunk_key = auth_chunk_key(&key, index);
+        let chunk = read_auth_value(&chunk_key)?.ok_or_else(|| {
+            "Secure auth storage is missing a chunk of the saved value".to_string()
+        })?;
+        assembled_value.push_str(&chunk);
     }
+
+    Ok(Some(assembled_value))
 }
 
 #[tauri::command]
@@ -63,18 +149,36 @@ pub fn auth_storage_set(key: String, value: String) -> Result<(), String> {
         return Err("Secure auth value exceeds the allowed size".to_string());
     }
 
-    auth_keyring_entry(&key)?
-        .set_password(&value)
-        .map_err(|_| "Unable to write to the system credential vault".to_string())
+    let previous_chunk_count = read_auth_value(&key)?
+        .as_deref()
+        .and_then(auth_chunk_count)
+        .unwrap_or_default();
+    let chunks = split_auth_value(&value);
+
+    if chunks.len() == 1 {
+        write_auth_value(&key, &value)?;
+        remove_auth_chunks(&key, 0, previous_chunk_count)?;
+        return Ok(());
+    }
+
+    for (index, chunk) in chunks.iter().enumerate() {
+        write_auth_value(&auth_chunk_key(&key, index), chunk)?;
+    }
+    write_auth_value(
+        &key,
+        &format!("{AUTH_CHUNK_MANIFEST_PREFIX}{}", chunks.len()),
+    )?;
+    remove_auth_chunks(&key, chunks.len(), previous_chunk_count)
 }
 
 #[tauri::command]
 pub fn auth_storage_remove(key: String) -> Result<(), String> {
-    let entry = auth_keyring_entry(&key)?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err("Unable to clear the system credential vault".to_string()),
+    if let Some(value) = read_auth_value(&key)? {
+        if let Some(chunk_count) = auth_chunk_count(&value) {
+            remove_auth_chunks(&key, 0, chunk_count)?;
+        }
     }
+    remove_auth_value(&key)
 }
 
 pub struct AppState {
@@ -1572,6 +1676,7 @@ pub async fn update_clip_note(
 mod tests {
     use crate::commands::{
         has_native_office_payload, is_valid_auth_storage_key, office_text_fallback,
+        split_auth_value, MAX_AUTH_CREDENTIAL_UTF16_UNITS,
     };
     use crate::services::clipboard_platform::ClipboardContent;
 
@@ -1622,6 +1727,18 @@ mod tests {
         assert!(!is_valid_auth_storage_key(
             "sb-project-auth-token/../../secret"
         ));
+    }
+
+    #[test]
+    fn auth_storage_chunks_values_at_the_windows_credential_limit() {
+        let value = "a".repeat(MAX_AUTH_CREDENTIAL_UTF16_UNITS + 1);
+        let chunks = split_auth_value(&value);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks.concat(), value);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.encode_utf16().count() <= MAX_AUTH_CREDENTIAL_UTF16_UNITS));
     }
 
     #[test]

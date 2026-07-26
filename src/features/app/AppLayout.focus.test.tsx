@@ -194,6 +194,27 @@ describe('AppLayout search focus ownership', () => {
     })
   })
 
+  it('processes a reused callback only once', async () => {
+    const completeCallback = vi.fn().mockResolvedValue(true)
+    let openUrlHandler: ((urls: string[]) => void) | undefined
+    onOpenUrlMock.mockImplementation((handler: (urls: string[]) => void) => {
+      openUrlHandler = handler
+      return Promise.resolve(vi.fn())
+    })
+    useAuthStore.setState({ completeCallback })
+
+    render(<AppLayout />)
+
+    await waitFor(() => expect(openUrlHandler).toBeDefined())
+    openUrlHandler?.(['clipsx://auth/callback?code=one-time-code'])
+    openUrlHandler?.(['clipsx://auth/callback?code=one-time-code'])
+
+    await waitFor(() => expect(completeCallback).toHaveBeenCalledTimes(1))
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'show_main_window_command')
+    ).toHaveLength(1)
+  })
+
   it('focuses search input on initial clips render', async () => {
     render(<AppLayout />)
 

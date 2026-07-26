@@ -42,6 +42,7 @@ export const AppLayout = () => {
   const completeAuthCallback = useAuthStore(state => state.completeCallback)
   const [textSearchStatus, setTextSearchStatus] = useState<TextSearchStatus | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const handledAuthUrlsRef = useRef(new Set<string>())
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
 
   const shouldPreserveFocusedEditor = () => {
@@ -68,7 +69,30 @@ export const AppLayout = () => {
     let unlisten: (() => void) | undefined
 
     const handleUrls = (urls: string[]) => {
+      if (import.meta.env.DEV) {
+        console.info(
+          '[AUTH] Deep-link callback received',
+          urls.map(url => {
+            try {
+              const parsed = new URL(url)
+              return {
+                protocol: parsed.protocol,
+                host: parsed.host,
+                path: parsed.pathname,
+                hasCode: parsed.searchParams.has('code'),
+                hasError: parsed.searchParams.has('error'),
+              }
+            } catch {
+              return { invalidUrl: true }
+            }
+          })
+        )
+      }
+
       for (const url of urls) {
+        if (handledAuthUrlsRef.current.has(url)) continue
+        handledAuthUrlsRef.current.add(url)
+
         void completeAuthCallback(url).then(completed => {
           if (completed) {
             void invoke('show_main_window_command')
@@ -84,7 +108,12 @@ export const AppLayout = () => {
         if (!cancelled) handleUrls(urls)
       })
 
+      if (import.meta.env.DEV) console.info('[AUTH] Deep-link listener registered')
+
       const initialUrls = await getCurrent()
+      if (import.meta.env.DEV) {
+        console.info('[AUTH] Initial deep-link state', { urlCount: initialUrls?.length ?? 0 })
+      }
       if (!cancelled && initialUrls) {
         handleUrls(initialUrls)
       }

@@ -29,6 +29,16 @@ type AuthState = {
 
 const signedOutState = { status: 'signed_out' as const, email: null, userId: null, error: null }
 const genericError = 'Account sign-in could not be completed. Please try again.'
+const authErrorMessage = (error: unknown) => {
+  if (!import.meta.env.DEV) return genericError
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  return `Authentication failed (${typeof error}).`
+}
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   status: isSupabaseConfigured() ? 'loading' : 'unconfigured',
@@ -55,8 +65,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             }
           : signedOutState
       )
-    } catch {
-      set({ ...signedOutState, status: 'error', error: genericError })
+    } catch (error) {
+      set({ ...signedOutState, status: 'error', error: authErrorMessage(error) })
     }
   },
 
@@ -66,8 +76,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: 'signing_in', error: null })
     try {
       await startSupabaseLogin()
-    } catch {
-      set({ ...signedOutState, status: 'error', error: genericError })
+    } catch (error) {
+      set({ ...signedOutState, status: 'error', error: authErrorMessage(error) })
     }
   },
 
@@ -84,8 +94,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         error: null,
       })
       return true
-    } catch {
-      set({ ...signedOutState, status: 'error', error: genericError })
+    } catch (error) {
+      set({ ...signedOutState, status: 'error', error: authErrorMessage(error) })
       return false
     }
   },
@@ -96,8 +106,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       await signOutSupabase()
       set(signedOutState)
-    } catch {
-      set({ status: 'error', error: genericError })
+    } catch (error) {
+      set({ status: 'error', error: authErrorMessage(error) })
     }
   },
 }))
