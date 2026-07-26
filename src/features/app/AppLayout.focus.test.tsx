@@ -10,6 +10,7 @@ const {
   onOpenUrlMock,
   focusChangeHandlers,
   eventHandlers,
+  testRefs,
 } = vi.hoisted(() => ({
   listenMock: vi.fn(),
   invokeMock: vi.fn(),
@@ -17,6 +18,13 @@ const {
   onOpenUrlMock: vi.fn(),
   focusChangeHandlers: [] as Array<(event: { payload: boolean }) => void>,
   eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
+  testRefs: {
+    sidebarProps: null as {
+      onAccountClick: () => void
+      onSettingsClick: () => void
+    } | null,
+    settingsProps: null as { initialTab?: string } | null,
+  },
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -56,7 +64,10 @@ vi.mock('../../shared/components/BottomBar', () => ({
 }))
 
 vi.mock('../../shared/components/Sidebar', () => ({
-  Sidebar: () => <div data-testid="sidebar" />,
+  Sidebar: (props: { onAccountClick: () => void; onSettingsClick: () => void }) => {
+    testRefs.sidebarProps = props
+    return <div data-testid="sidebar" />
+  },
 }))
 
 vi.mock('../clipboard/ClipboardHistory', () => ({
@@ -68,7 +79,10 @@ vi.mock('../clipboard/ClipPreview', () => ({
 }))
 
 vi.mock('../settings/Settings', () => ({
-  Settings: () => <div data-testid="settings-view" />,
+  Settings: (props: { initialTab?: string }) => {
+    testRefs.settingsProps = props
+    return <div data-testid="settings-view" />
+  },
 }))
 
 vi.mock('../settings/Plugins', () => ({
@@ -84,6 +98,8 @@ describe('AppLayout search focus ownership', () => {
     vi.clearAllMocks()
     focusChangeHandlers.length = 0
     eventHandlers.clear()
+    testRefs.sidebarProps = null
+    testRefs.settingsProps = null
     listenMock.mockImplementation(
       (eventName: string, handler: (event: { payload: unknown }) => void) => {
         const handlers = eventHandlers.get(eventName) ?? []
@@ -213,6 +229,18 @@ describe('AppLayout search focus ownership', () => {
     expect(
       invokeMock.mock.calls.filter(([command]) => command === 'show_main_window_command')
     ).toHaveLength(1)
+  })
+
+  it('opens the Account settings tab from the sidebar account indicator', async () => {
+    render(<AppLayout />)
+
+    await waitFor(() => expect(testRefs.sidebarProps).not.toBeNull())
+
+    act(() => {
+      testRefs.sidebarProps?.onAccountClick()
+    })
+
+    await waitFor(() => expect(testRefs.settingsProps?.initialTab).toBe('account'))
   })
 
   it('focuses search input on initial clips render', async () => {

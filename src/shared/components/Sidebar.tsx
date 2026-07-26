@@ -1,15 +1,52 @@
-import { Layers, Blocks, Settings, User } from 'lucide-react'
-import { useUIStore } from '../../stores'
+import { Blocks, CircleAlert, Layers, Loader2, Settings, User } from 'lucide-react'
+import { useAuthStore, useUIStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 
 type SidebarProps = {
-  // activeView and onViewChange handled by store now
-  onLoginClick: () => void
+  onAccountClick: () => void
+  onSettingsClick: () => void
 }
 
-export const Sidebar = ({ onLoginClick }: SidebarProps) => {
+export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
   const { t } = useTranslation()
   const { activeView, setActiveView } = useUIStore()
+  const authStatus = useAuthStore(state => state.status)
+  const authEmail = useAuthStore(state => state.email)
+
+  const accountLabel = (() => {
+    switch (authStatus) {
+      case 'signed_in':
+        return t('sidebar.accountSignedIn', { email: authEmail ?? '' })
+      case 'loading':
+        return t('sidebar.accountRestoring')
+      case 'signing_in':
+        return t('sidebar.accountSigningIn')
+      case 'error':
+        return t('sidebar.accountError')
+      case 'unconfigured':
+        return t('sidebar.accountUnavailable')
+      default:
+        return t('sidebar.accountSignedOut')
+    }
+  })()
+
+  const accountIcon =
+    authStatus === 'loading' || authStatus === 'signing_in' ? (
+      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
+    ) : authStatus === 'error' ? (
+      <CircleAlert className="h-3.5 w-3.5" strokeWidth={1.5} />
+    ) : (
+      <User className="h-3.5 w-3.5" strokeWidth={1.5} />
+    )
+
+  const statusColor =
+    authStatus === 'signed_in'
+      ? 'bg-emerald-500'
+      : authStatus === 'error'
+        ? 'bg-amber-500'
+        : authStatus === 'unconfigured'
+          ? 'bg-gray-400'
+          : 'bg-gray-500'
 
   return (
     <div className="flex w-12 shrink-0 flex-col items-center py-3">
@@ -52,15 +89,20 @@ export const Sidebar = ({ onLoginClick }: SidebarProps) => {
       {/* Bottom Icons */}
       <div className="flex flex-col items-center gap-1">
         <button
-          onClick={onLoginClick}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 transition-colors cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-gray-800 dark:hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
-          title={t('sidebar.account')}
+          onClick={onAccountClick}
+          className="relative flex h-8 w-8 items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 transition-colors cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-gray-800 dark:hover:text-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
+          title={accountLabel}
+          aria-label={accountLabel}
         >
-          <User className="h-3.5 w-3.5" strokeWidth={1.5} />
+          {accountIcon}
+          <span
+            aria-hidden="true"
+            className={`absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-2 ring-slate-100/80 dark:ring-slate-950/80 ${statusColor}`}
+          />
         </button>
 
         <button
-          onClick={() => setActiveView('settings')}
+          onClick={onSettingsClick}
           className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
             activeView === 'settings'
               ? 'text-gray-900 dark:text-gray-100'

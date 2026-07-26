@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -11,7 +11,7 @@ import { Sidebar } from '../../shared/components/Sidebar'
 import { TitleBar } from '../../shared/components/TitleBar'
 import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
-import { Settings } from '../settings/Settings'
+import { Settings, type SettingsTab } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
@@ -41,9 +41,19 @@ export const AppLayout = () => {
   const initializeAuth = useAuthStore(state => state.initialize)
   const completeAuthCallback = useAuthStore(state => state.completeCallback)
   const [textSearchStatus, setTextSearchStatus] = useState<TextSearchStatus | null>(null)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+
+  const openSettings = useCallback(
+    (tab: SettingsTab) => {
+      setSettingsInitialTab(tab)
+      setActiveView('settings')
+      resetSearch()
+    },
+    [resetSearch, setActiveView]
+  )
 
   const shouldPreserveFocusedEditor = () => {
     const active = document.activeElement
@@ -187,13 +197,12 @@ export const AppLayout = () => {
   // Event Listener for Tray "Settings" click
   useEffect(() => {
     const unlisten = listen('open-settings', () => {
-      setActiveView('settings')
-      resetSearch()
+      openSettings('general')
     })
     return () => {
       void unlisten.then(f => f())
     }
-  }, [setActiveView, resetSearch])
+  }, [openSettings])
 
   useEffect(() => {
     focusSearchBar()
@@ -247,7 +256,10 @@ export const AppLayout = () => {
       {/* Middle Section: Sidebar + Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* 2. Sidebar (Left) */}
-        <Sidebar onLoginClick={() => console.log('Login clicked')} />
+        <Sidebar
+          onAccountClick={() => openSettings('account')}
+          onSettingsClick={() => openSettings('general')}
+        />
 
         {/* 3. Main Content — glass L1 wrapper */}
         <div className="flex-1 relative my-1 flex flex-col min-w-0 rounded-xl overflow-hidden mr-2 bg-slate-100/40 dark:bg-slate-100/5 backdrop-blur-xl border border-white/10 dark:border-white/10">
@@ -306,7 +318,7 @@ export const AppLayout = () => {
               </div>
             )}
 
-            {activeView === 'settings' && <Settings />}
+            {activeView === 'settings' && <Settings initialTab={settingsInitialTab} />}
 
             {activeView === 'plugins' && <Plugins />}
 

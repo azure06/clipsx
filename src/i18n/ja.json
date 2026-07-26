@@ -36,6 +36,12 @@
     "clipboard": "クリップボード履歴",
     "plugins": "プラグイン",
     "account": "アカウント",
+    "accountSignedIn": "{{email}} でサインイン中",
+    "accountRestoring": "アカウントのセッションを復元中",
+    "accountSigningIn": "ブラウザーのサインインを完了中",
+    "accountSignedOut": "サインインしていません。アカウント設定を開きます",
+    "accountError": "アカウントのサインインに問題があります",
+    "accountUnavailable": "このビルドではアカウントのサインインを利用できません",
     "settings": "設定"
   },
   "titleBar": {

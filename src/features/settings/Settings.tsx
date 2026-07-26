@@ -40,7 +40,11 @@ import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 import { normalizeLanguage } from '../../i18n'
 
-type Tab = 'general' | 'account' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
+export type SettingsTab = 'general' | 'account' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
+
+type SettingsProps = {
+  initialTab?: SettingsTab
+}
 
 // --- Settings-specific layout components (not shared) ---
 
@@ -216,7 +220,7 @@ const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
 
 // --- Main Settings component ---
 
-export const Settings = () => {
+export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const { t, i18n } = useTranslation()
   const { settings, isLoading, error, updateSettings, resetSettings } = useSettingsStore()
   const clearAllClips = useClipboardStore(state => state.clearAllClips)
@@ -238,7 +242,11 @@ export const Settings = () => {
   const authError = useAuthStore(state => state.error)
   const signIn = useAuthStore(state => state.signIn)
   const signOut = useAuthStore(state => state.signOut)
-  const [activeTab, setActiveTab] = useState<Tab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
+
+  useEffect(() => {
+    setActiveTab(initialTab)
+  }, [initialTab])
 
   useEffect(() => {
     void initializeUpdater()
@@ -350,7 +358,7 @@ export const Settings = () => {
 
   // --- Option lists ---
 
-  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: t('settings.general'), icon: <SettingsIcon className="h-4 w-4" /> },
     { id: 'account', label: t('settings.account'), icon: <UserRound className="h-4 w-4" /> },
     { id: 'clipboard', label: t('settings.clipboard'), icon: <Clipboard className="h-4 w-4" /> },

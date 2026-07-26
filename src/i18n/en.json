@@ -36,6 +36,12 @@
     "clipboard": "Clipboard History",
     "plugins": "Plugins",
     "account": "Account",
+    "accountSignedIn": "Signed in as {{email}}",
+    "accountRestoring": "Restoring account session",
+    "accountSigningIn": "Completing browser sign-in",
+    "accountSignedOut": "Not signed in — open account settings",
+    "accountError": "Account sign-in needs attention",
+    "accountUnavailable": "Account sign-in is unavailable in this build",
     "settings": "Settings"
   },
   "titleBar": {
