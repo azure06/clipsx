@@ -77,6 +77,7 @@ export const AppLayout = () => {
   useEffect(() => {
     let cancelled = false
     let unlisten: (() => void) | undefined
+    let unlistenLocalAuthCallback: (() => void) | undefined
 
     const handleUrls = (urls: string[]) => {
       if (import.meta.env.DEV) {
@@ -114,6 +115,10 @@ export const AppLayout = () => {
     const setupAuth = async () => {
       await initializeAuth()
 
+      unlistenLocalAuthCallback = await listen<string>('auth-callback-url', event => {
+        if (!cancelled) handleUrls([event.payload])
+      })
+
       unlisten = await onOpenUrl(urls => {
         if (!cancelled) handleUrls(urls)
       })
@@ -136,6 +141,7 @@ export const AppLayout = () => {
     return () => {
       cancelled = true
       unlisten?.()
+      unlistenLocalAuthCallback?.()
     }
   }, [completeAuthCallback, initializeAuth])
 

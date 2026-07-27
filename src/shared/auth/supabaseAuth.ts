@@ -3,8 +3,12 @@ import { open } from '@tauri-apps/plugin-shell'
 import { createClient, type Provider, type SupportedStorage } from '@supabase/supabase-js'
 
 const CALLBACK_URL = new URL('clipsx://auth/callback')
+const CALLBACK_BRIDGE_PATH = '/auth/desktop/callback'
 const AUTH_STORAGE_KEY = 'sb-clipsx-auth-token'
-const DEFAULT_WEB_ORIGIN = 'https://clipsx.app'
+const getDefaultWebOrigin = () =>
+  import.meta.env.VITE_NEXT_PUBLIC_SITE_URL?.trim() ||
+  import.meta.env.VITE_CLIPSX_WEB_ORIGIN?.trim() ||
+  'https://clipsx.app'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
 export const DEFAULT_SUPABASE_AUTH_PROVIDER: Provider = 'google'
@@ -53,12 +57,30 @@ const getClient = () => {
 export type ParsedAuthCallback = { code: string }
 
 export const isSupabaseConfigured = () => Boolean(supabaseUrl && supabasePublishableKey)
+const shouldUseLocalDesktopOAuthCallback = () => import.meta.env.DEV
 
 const isLoopbackHost = (hostname: string) =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 
+const isCustomSchemeCallbackUrl = (url: URL) =>
+  url.protocol === CALLBACK_URL.protocol &&
+  url.hostname === CALLBACK_URL.hostname &&
+  url.pathname === CALLBACK_URL.pathname
+
+const isLoopbackCallbackUrl = (url: URL) =>
+  url.protocol === 'http:' && isLoopbackHost(url.hostname) && url.pathname === CALLBACK_BRIDGE_PATH
+
+const isHostedCallbackUrl = (url: URL) => {
+  try {
+    const expected = new URL(getDesktopOAuthRedirectUrl())
+    return url.origin === expected.origin && url.pathname === expected.pathname
+  } catch {
+    return false
+  }
+}
+
 export const getDesktopOAuthRedirectUrl = (configuredOrigin?: string) => {
-  const rawOrigin = configuredOrigin?.trim() || DEFAULT_WEB_ORIGIN
+  const rawOrigin = configuredOrigin?.trim() || getDefaultWebOrigin()
   let origin: URL
 
   try {
@@ -82,7 +104,7 @@ export const getDesktopOAuthRedirectUrl = (configuredOrigin?: string) => {
     )
   }
 
-  return new URL('/auth/desktop/callback', origin.origin).toString()
+  return new URL(CALLBACK_BRIDGE_PATH, origin.origin).toString()
 }
 
 export const parseAuthCallbackUrl = (rawUrl: string): ParsedAuthCallback => {
@@ -93,11 +115,7 @@ export const parseAuthCallbackUrl = (rawUrl: string): ParsedAuthCallback => {
     throw new Error('The sign-in callback was not a valid URL.')
   }
 
-  if (
-    url.protocol !== CALLBACK_URL.protocol ||
-    url.hostname !== CALLBACK_URL.hostname ||
-    url.pathname !== CALLBACK_URL.pathname
-  ) {
+  if (!isCustomSchemeCallbackUrl(url) && !isLoopbackCallbackUrl(url) && !isHostedCallbackUrl(url)) {
     throw new Error('The sign-in callback was not intended for ClipsX.')
   }
 
@@ -117,10 +135,32 @@ export const startOAuthLogin = async (
   authClient: ReturnType<typeof createClient>,
   provider: Provider
 ) => {
+  let redirectTo = getDesktopOAuthRedirectUrl(import.meta.env.VITE_NEXT_PUBLIC_SITE_URL)
+
+  if (shouldUseLocalDesktopOAuthCallback()) {
+    try {
+      // macOS deep-link handlers are discovered from installed app bundles, so
+      // dev/unregistered builds can fail to open `clipsx://...` from the browser.
+      // Keep the local loopback callback as a development-only fallback and use
+      // the hosted bridge for production builds, where the bundle should be registered.
+      redirectTo = await invoke<string>('start_local_auth_callback_listener')
+      if (import.meta.env.DEV) {
+        console.info('[AUTH] Using local auth callback listener', { redirectTo })
+      }
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn('[AUTH] Falling back to the hosted auth callback bridge', {
+          redirectTo,
+          error,
+        })
+      }
+    }
+  }
+
   const { data, error } = await authClient.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: getDesktopOAuthRedirectUrl(import.meta.env.VITE_CLIPSX_WEB_ORIGIN),
+      redirectTo,
       skipBrowserRedirect: true,
     },
   })

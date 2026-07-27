@@ -1,16 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const { createClientMock, openMock, signInWithOAuthMock } = vi.hoisted(() => ({
+const { createClientMock, invokeMock, openMock, signInWithOAuthMock } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
+  invokeMock: vi.fn(),
   openMock: vi.fn(),
   signInWithOAuthMock: vi.fn(),
 }))
 
 const appEnv = import.meta.env as Record<string, string | undefined>
-const initialWebOrigin = appEnv['VITE_CLIPSX_WEB_ORIGIN']
+const initialWebOrigin = appEnv['VITE_NEXT_PUBLIC_SITE_URL']
+const initialLegacyWebOrigin = appEnv['VITE_CLIPSX_WEB_ORIGIN']
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: createClientMock,
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
 }))
 
 vi.mock('@tauri-apps/plugin-shell', () => ({
@@ -31,6 +37,14 @@ describe('parseAuthCallbackUrl', () => {
     })
   })
 
+  it('accepts a loopback browser callback and preserves the one-time code', () => {
+    expect(
+      parseAuthCallbackUrl('http://127.0.0.1:43123/auth/desktop/callback?code=one-time-code')
+    ).toEqual({
+      code: 'one-time-code',
+    })
+  })
+
   it.each([
     'https://auth/callback?code=code',
     'clipsx://auth/not-callback?code=code',
@@ -46,10 +60,16 @@ describe('parseAuthCallbackUrl', () => {
 describe('startSupabaseLogin', () => {
   afterEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
     if (initialWebOrigin === undefined) {
+      delete appEnv['VITE_NEXT_PUBLIC_SITE_URL']
+    } else {
+      appEnv['VITE_NEXT_PUBLIC_SITE_URL'] = initialWebOrigin
+    }
+    if (initialLegacyWebOrigin === undefined) {
       delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
     } else {
-      appEnv['VITE_CLIPSX_WEB_ORIGIN'] = initialWebOrigin
+      appEnv['VITE_CLIPSX_WEB_ORIGIN'] = initialLegacyWebOrigin
     }
   })
 
@@ -57,7 +77,37 @@ describe('startSupabaseLogin', () => {
     expect(DEFAULT_SUPABASE_AUTH_PROVIDER).toBe('google')
   })
 
-  it('opens the provider authorization URL with the website callback bridge', async () => {
+  it('opens the provider authorization URL with a local callback listener when available', async () => {
+    vi.stubEnv('DEV', true)
+    invokeMock.mockResolvedValue('http://127.0.0.1:43123/auth/desktop/callback')
+
+    const authClient = {
+      auth: {
+        signInWithOAuth: signInWithOAuthMock.mockResolvedValue({
+          data: { url: 'https://project.supabase.co/auth/v1/authorize?provider=google' },
+          error: null,
+        }),
+      },
+    }
+
+    await startOAuthLogin(authClient as never, 'google')
+
+    expect(signInWithOAuthMock).toHaveBeenCalledWith({
+      provider: 'google',
+      options: {
+        redirectTo: 'http://127.0.0.1:43123/auth/desktop/callback',
+        skipBrowserRedirect: true,
+      },
+    })
+    expect(openMock).toHaveBeenCalledWith(
+      'https://project.supabase.co/auth/v1/authorize?provider=google'
+    )
+  })
+
+  it('falls back to the hosted website callback bridge when the local listener fails', async () => {
+    vi.stubEnv('DEV', true)
+    invokeMock.mockRejectedValue(new Error('listener unavailable'))
+    delete appEnv['VITE_NEXT_PUBLIC_SITE_URL']
     delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
 
     const authClient = {
@@ -78,9 +128,30 @@ describe('startSupabaseLogin', () => {
         skipBrowserRedirect: true,
       },
     })
-    expect(openMock).toHaveBeenCalledWith(
-      'https://project.supabase.co/auth/v1/authorize?provider=google'
-    )
+  })
+
+  it('uses the hosted website callback bridge in production builds', async () => {
+    vi.stubEnv('DEV', false)
+
+    const authClient = {
+      auth: {
+        signInWithOAuth: signInWithOAuthMock.mockResolvedValue({
+          data: { url: 'https://project.supabase.co/auth/v1/authorize?provider=google' },
+          error: null,
+        }),
+      },
+    }
+
+    await startOAuthLogin(authClient as never, 'google')
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(signInWithOAuthMock).toHaveBeenCalledWith({
+      provider: 'google',
+      options: {
+        redirectTo: getDesktopOAuthRedirectUrl(import.meta.env.VITE_NEXT_PUBLIC_SITE_URL),
+        skipBrowserRedirect: true,
+      },
+    })
   })
 })
 
@@ -92,6 +163,11 @@ describe('getDesktopOAuthRedirectUrl', () => {
     ['http://127.0.0.1:3000', 'http://127.0.0.1:3000/auth/desktop/callback'],
     ['http://[::1]:3000', 'http://[::1]:3000/auth/desktop/callback'],
   ])('accepts an allowed web origin: %s', (origin, expected) => {
+    if (origin === undefined) {
+      delete appEnv['VITE_NEXT_PUBLIC_SITE_URL']
+      delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
+    }
+
     expect(getDesktopOAuthRedirectUrl(origin)).toBe(expected)
   })
 

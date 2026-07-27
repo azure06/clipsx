@@ -210,6 +210,28 @@ describe('AppLayout search focus ownership', () => {
     })
   })
 
+  it('processes a callback delivered from the local browser listener', async () => {
+    const completeCallback = vi.fn().mockResolvedValue(true)
+    useAuthStore.setState({ completeCallback })
+
+    render(<AppLayout />)
+
+    await waitFor(() => expect(eventHandlers.has('auth-callback-url')).toBe(true))
+
+    act(() => {
+      for (const handler of eventHandlers.get('auth-callback-url') ?? []) {
+        handler({ payload: 'http://127.0.0.1:43123/auth/desktop/callback?code=fresh-code' })
+      }
+    })
+
+    await waitFor(() => {
+      expect(completeCallback).toHaveBeenCalledWith(
+        'http://127.0.0.1:43123/auth/desktop/callback?code=fresh-code'
+      )
+      expect(invokeMock).toHaveBeenCalledWith('show_main_window_command')
+    })
+  })
+
   it('processes a reused callback only once', async () => {
     const completeCallback = vi.fn().mockResolvedValue(true)
     let openUrlHandler: ((urls: string[]) => void) | undefined

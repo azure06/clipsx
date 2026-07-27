@@ -325,6 +325,7 @@ fn main() {
             commands::auth_storage_get,
             commands::auth_storage_set,
             commands::auth_storage_remove,
+            commands::start_local_auth_callback_listener,
             commands::get_entitlement_state,
             commands::cache_entitlement_state,
             commands::get_office_restore_allowance,

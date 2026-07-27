@@ -20,14 +20,23 @@ use crate::services::{
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex;
+use std::time::Duration;
+use tauri::Emitter;
 #[cfg(target_os = "macos")]
 use tauri::Manager;
 use tauri::State;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 const AUTH_KEYRING_SERVICE: &str = "com.infiniti.clipsx";
 const MAX_AUTH_SECRET_BYTES: usize = 64 * 1024;
+#[cfg(target_os = "windows")]
 const MAX_AUTH_CREDENTIAL_UTF16_UNITS: usize = 1_000;
+#[cfg(not(target_os = "windows"))]
+const MAX_AUTH_CREDENTIAL_UTF16_UNITS: usize = MAX_AUTH_SECRET_BYTES;
 const AUTH_CHUNK_MANIFEST_PREFIX: &str = "clipsx-auth-chunks-v1:";
+const LOCAL_AUTH_CALLBACK_EVENT: &str = "auth-callback-url";
+const LOCAL_AUTH_CALLBACK_PATH: &str = "/auth/desktop/callback";
 
 fn is_valid_auth_storage_key(key: &str) -> bool {
     key.len() <= 128
@@ -179,6 +188,108 @@ pub fn auth_storage_remove(key: String) -> Result<(), String> {
         }
     }
     remove_auth_value(&key)
+}
+
+fn parse_local_auth_callback_request_line(
+    request_line: &str,
+    port: u16,
+) -> Result<Option<String>, String> {
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+
+    if method != "GET" || target.is_empty() {
+        return Ok(None);
+    }
+
+    let url = url::Url::parse(&format!("http://127.0.0.1:{port}{target}"))
+        .map_err(|error| format!("Unable to parse local auth callback URL: {error}"))?;
+
+    if url.path() != LOCAL_AUTH_CALLBACK_PATH {
+        return Ok(None);
+    }
+
+    Ok(Some(url.to_string()))
+}
+
+fn local_auth_callback_response(status_line: &str, body: &str) -> String {
+    format!(
+        "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+async fn serve_local_auth_callback(listener: TcpListener, port: u16, app: tauri::AppHandle) {
+    let Ok(accept_result) = tokio::time::timeout(Duration::from_secs(300), listener.accept()).await
+    else {
+        eprintln!("[AUTH] Local auth callback listener timed out.");
+        return;
+    };
+
+    let Ok((mut stream, _)) = accept_result else {
+        eprintln!("[AUTH] Local auth callback listener failed to accept a connection.");
+        return;
+    };
+
+    let mut buffer = [0_u8; 8 * 1024];
+    let Ok(bytes_read) = stream.read(&mut buffer).await else {
+        eprintln!("[AUTH] Local auth callback listener failed to read the request.");
+        return;
+    };
+
+    if bytes_read == 0 {
+        return;
+    }
+
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let request_line = request.lines().next().unwrap_or_default();
+
+    let response = match parse_local_auth_callback_request_line(request_line, port) {
+        Ok(Some(callback_url)) => {
+            if let Err(error) = app.emit(LOCAL_AUTH_CALLBACK_EVENT, callback_url) {
+                eprintln!("[AUTH] Failed to emit local auth callback event: {error}");
+                local_auth_callback_response(
+                    "HTTP/1.1 500 Internal Server Error",
+                    "<!doctype html><title>ClipsX Sign-in</title><body><p>ClipsX could not finish sign-in automatically. Please return to the app and try again.</p></body>",
+                )
+            } else {
+                let _ = show_main_window(&app);
+                local_auth_callback_response(
+                    "HTTP/1.1 200 OK",
+                    "<!doctype html><title>ClipsX Sign-in</title><body><p>ClipsX received the sign-in callback. Return to the app to finish sign-in.</p><script>window.close()</script></body>",
+                )
+            }
+        }
+        Ok(None) => local_auth_callback_response(
+            "HTTP/1.1 404 Not Found",
+            "<!doctype html><title>Not Found</title><body><p>This callback URL is not used by ClipsX.</p></body>",
+        ),
+        Err(error) => {
+            eprintln!("[AUTH] Failed to parse local auth callback request: {error}");
+            local_auth_callback_response(
+                "HTTP/1.1 400 Bad Request",
+                "<!doctype html><title>Bad Request</title><body><p>ClipsX could not read the sign-in callback.</p></body>",
+            )
+        }
+    };
+
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.shutdown().await;
+}
+
+#[tauri::command]
+pub async fn start_local_auth_callback_listener(app: tauri::AppHandle) -> Result<String, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|error| format!("Unable to start a local auth callback listener: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("Unable to read the local auth callback address: {error}"))?
+        .port();
+
+    tauri::async_runtime::spawn(serve_local_auth_callback(listener, port, app));
+
+    Ok(format!("http://127.0.0.1:{port}{LOCAL_AUTH_CALLBACK_PATH}"))
 }
 
 pub struct AppState {
@@ -1676,7 +1787,7 @@ pub async fn update_clip_note(
 mod tests {
     use crate::commands::{
         has_native_office_payload, is_valid_auth_storage_key, office_text_fallback,
-        split_auth_value, MAX_AUTH_CREDENTIAL_UTF16_UNITS,
+        parse_local_auth_callback_request_line, split_auth_value, MAX_AUTH_CREDENTIAL_UTF16_UNITS,
     };
     use crate::services::clipboard_platform::ClipboardContent;
 
@@ -1730,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_storage_chunks_values_at_the_windows_credential_limit() {
+    fn auth_storage_chunking_tracks_the_platform_limit() {
         let value = "a".repeat(MAX_AUTH_CREDENTIAL_UTF16_UNITS + 1);
         let chunks = split_auth_value(&value);
 
@@ -1739,6 +1850,28 @@ mod tests {
         assert!(chunks
             .iter()
             .all(|chunk| chunk.encode_utf16().count() <= MAX_AUTH_CREDENTIAL_UTF16_UNITS));
+    }
+
+    #[test]
+    fn local_auth_callback_request_accepts_expected_callback_path() {
+        let callback = parse_local_auth_callback_request_line(
+            "GET /auth/desktop/callback?code=one-time-code HTTP/1.1",
+            43123,
+        )
+        .expect("callback URL should parse");
+
+        assert_eq!(
+            callback,
+            Some("http://127.0.0.1:43123/auth/desktop/callback?code=one-time-code".to_string())
+        );
+    }
+
+    #[test]
+    fn local_auth_callback_request_rejects_other_paths() {
+        let callback = parse_local_auth_callback_request_line("GET /healthz HTTP/1.1", 43123)
+            .expect("unexpected path should be ignored");
+
+        assert_eq!(callback, None);
     }
 
     #[test]
