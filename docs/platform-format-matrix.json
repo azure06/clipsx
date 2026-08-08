@@ -1,0 +1,18 @@
+{
+  "$schema": "https://clipsx.app/schemas/platform-format-matrix-v1.json",
+  "version": 1,
+  "formats": [
+    {"platform":"macos","selector":"public.utf8-plain-text","formatKey":"macos:public.utf8-plain-text","mimeType":"text/plain","storageKind":"text","byteContract":"normalized_utf8","renderer":"text","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"macos","selector":"public.html","formatKey":"macos:public.html","mimeType":"text/html","storageKind":"text","byteContract":"normalized_utf8","renderer":"html","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"macos","selector":"public.rtf","formatKey":"macos:public.rtf","mimeType":"text/rtf","storageKind":"text","byteContract":"normalized_utf8","renderer":"rich_text","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"macos","selector":"public.file-url","formatKey":"macos:public.file-url","mimeType":null,"storageKind":"file_list","byteContract":"reference","renderer":"files","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"macos","selector":"captured exact Office/native UTI","formatKey":"macos:{captured-native-type}","mimeType":null,"storageKind":"binary_asset","byteContract":"byte_exact","renderer":"office","capture":"supported","writeBack":"only_exact_captured_type","unsupportedBehavior":"retain_without_writeback"},
+    {"platform":"windows","selector":"CF_UNICODETEXT","formatKey":"windows:CF_UNICODETEXT","mimeType":"text/plain","storageKind":"text","byteContract":"normalized_utf8","renderer":"text","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"windows","selector":"HTML Format","formatKey":"windows:HTML Format","mimeType":"text/html","storageKind":"text","byteContract":"normalized_utf8","renderer":"html","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"windows","selector":"Rich Text Format","formatKey":"windows:Rich Text Format","mimeType":"text/rtf","storageKind":"text","byteContract":"normalized_utf8","renderer":"rich_text","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"windows","selector":"CF_HDROP","formatKey":"windows:CF_HDROP","mimeType":null,"storageKind":"file_list","byteContract":"reference","renderer":"files","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"windows","selector":"captured exact registered Office/native format","formatKey":"windows:{captured-native-type}","mimeType":null,"storageKind":"binary_asset","byteContract":"byte_exact","renderer":"office","capture":"supported","writeBack":"only_exact_captured_type","unsupportedBehavior":"retain_without_writeback"},
+    {"platform":"linux_x11","selector":"UTF8_STRING","formatKey":"linux_x11:UTF8_STRING","mimeType":"text/plain","storageKind":"text","byteContract":"normalized_utf8","renderer":"text","capture":"supported","writeBack":"supported","unsupportedBehavior":"skip"},
+    {"platform":"linux_x11","selector":"non-text formats","formatKey":"linux_x11:{unsupported}","mimeType":null,"storageKind":"binary_asset","byteContract":"byte_exact","renderer":null,"capture":"unsupported","writeBack":"unsupported","unsupportedBehavior":"skip"}
+  ]
+}

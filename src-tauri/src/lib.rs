@@ -1,9 +1,3 @@
-#![allow(unexpected_cfgs)]
-
-pub mod commands;
-pub mod events;
-pub mod models;
-pub mod plugins;
-pub mod repositories;
-pub mod services;
-mod window_behavior;
+//! ClipsX v2 foundation. Product capture and rendering are reintroduced in M1+.
+pub mod contracts;
+pub mod foundation;
