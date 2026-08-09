@@ -5,6 +5,8 @@ mod contracts;
 mod contributions;
 mod foundation;
 mod history;
+mod paste;
+mod transformers;
 
 use clipboard::{
     capture_coherent, is_self_write_snapshot, ClipboardAdapter, SystemClipboardAdapter,
@@ -18,6 +20,7 @@ struct AppState {
     roots: AppRoots,
     schema_state: SchemaState,
     history: HistoryRepository,
+    transforms: transformers::TransformService,
 }
 
 #[tauri::command]
@@ -97,15 +100,186 @@ async fn capture_clipboard(
 }
 #[tauri::command]
 async fn copy_clip_original(clip_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let representations = state
-        .history
-        .reconstruction(&clip_id)
+    copy_policy(transformers::OutputPolicy::Original { clip_id }, &state)
         .await
-        .map_err(|e| e.to_string())?;
-    SystemClipboardAdapter::new()
-        .write(&representations)
-        .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+async fn policy_output(
+    policy: &transformers::OutputPolicy,
+    state: &AppState,
+) -> anyhow::Result<(Vec<history::CapturedRepresentation>, Option<String>)> {
+    match policy {
+        transformers::OutputPolicy::Original { clip_id } => Ok((
+            state.history.reconstruction(clip_id).await?,
+            Some(clip_id.clone()),
+        )),
+        transformers::OutputPolicy::PlainText { clip_id } => Ok((
+            state.history.plain_text_reconstruction(clip_id).await?,
+            Some(clip_id.clone()),
+        )),
+        transformers::OutputPolicy::Transformed { result_id } => {
+            let (_, source_clip_id, _) = state.transforms.saved_metadata(result_id)?;
+            Ok((
+                state.transforms.transformed(result_id)?,
+                Some(source_clip_id),
+            ))
+        }
+    }
+}
+
+async fn copy_policy(policy: transformers::OutputPolicy, state: &AppState) -> anyhow::Result<()> {
+    let (representations, source_clip) = policy_output(&policy, state).await?;
+    SystemClipboardAdapter::new().write(&representations)?;
+    if let Some(id) = source_clip {
+        state.history.touch(&id).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_transformer_contributions(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<transformers::TransformerDescriptor>, String> {
+    state
+        .transforms
+        .list(&state.history, &clip_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn create_transform_preview(
+    clip_id: String,
+    transformer_id: String,
+    source_id: String,
+    parameters: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<transformers::TransformPreview, String> {
+    state
+        .transforms
+        .preview(
+            &state.history,
+            &clip_id,
+            &transformer_id,
+            &source_id,
+            parameters,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn copy_clip_output(
+    policy: transformers::OutputPolicy,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    copy_policy(policy, &state)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn paste_clip_output(
+    app: tauri::AppHandle,
+    policy: transformers::OutputPolicy,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Err(error) = copy_policy(policy, &state).await {
+        let message = error.to_string();
+        let _ = app.emit("paste-failed", &message);
+        return Err(message);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.hide() {
+            let message = error.to_string();
+            let _ = app.emit("paste-failed", &message);
+            return Err(message);
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    if let Err(error) = paste::simulate_paste() {
+        let message = error.to_string();
+        let _ = app.emit("paste-failed", &message);
+        return Err(message);
+    }
+    let _ = app.emit("paste-completed", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn save_transform_result(
+    app: tauri::AppHandle,
+    result_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let (preview, source_clip_id, parameter_sha256) = state
+        .transforms
+        .saved_metadata(&result_id)
+        .map_err(|error| error.to_string())?;
+    let snapshot = history::CapturedSnapshot {
+        token: 0,
+        source_app_name: Some("ClipsX".into()),
+        source_app_id: Some("clipsx.transform".into()),
+        representations: state
+            .transforms
+            .transformed(&result_id)
+            .map_err(|error| error.to_string())?,
+    };
+    let settings = state
+        .history
+        .settings()
+        .await
+        .map_err(|error| error.to_string())?;
+    let clip_id = state
+        .history
+        .capture_forced(
+            snapshot,
+            &settings,
+            &history::TransformProvenance {
+                source_clip_id,
+                source_representation_id: preview.source_id,
+                transformer_id: preview.transformer_id,
+                transformer_version: preview.transformer_version,
+                parameter_sha256,
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let history = state.history.clone();
+    let detect_id = clip_id.clone();
+    let detect_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if contributions::detect_clip(&history, &detect_id)
+            .await
+            .is_ok()
+        {
+            let _ = detect_app.emit("clip-facets-updated", detect_id);
+        }
+    });
+    let _ = app.emit("transform-result-saved", &clip_id);
+    let _ = app.emit("clip-captured", &clip_id);
+    Ok(clip_id)
+}
+
+#[tauri::command]
+async fn get_transform_preferences(
+    state: State<'_, AppState>,
+) -> Result<transformers::TransformPreferences, String> {
+    transformers::preferences(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn update_transform_preferences(
+    preferences: transformers::TransformPreferences,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    transformers::update_preferences(&state.history, &preferences)
+        .await
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 async fn delete_clip(
@@ -429,6 +603,7 @@ fn main() {
                 roots,
                 schema_state,
                 history,
+                transforms: transformers::TransformService::default(),
             });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -443,6 +618,13 @@ fn main() {
             get_clip_detail,
             capture_clipboard,
             copy_clip_original,
+            list_transformer_contributions,
+            create_transform_preview,
+            copy_clip_output,
+            paste_clip_output,
+            save_transform_result,
+            get_transform_preferences,
+            update_transform_preferences,
             delete_clip,
             set_clip_pinned,
             set_clip_favorite,

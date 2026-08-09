@@ -93,3 +93,26 @@ export type RenderModel =
   | { kind: 'image'; artifactId: string }
   | { kind: 'html'; sanitizedHtml: string }
   | { kind: 'error'; message: string }
+export type TransformerDescriptor = {
+  id: string
+  version: string
+  label: string
+  parameterSchema: unknown
+  inputLimitBytes: number
+  timeoutMs: number
+}
+export type TransformOutputDescriptor = { canonicalMimeType?: string; byteLength: number }
+export type TransformPreview = {
+  resultId: string
+  expiresAt: number
+  transformerId: string
+  transformerVersion: string
+  sourceId: string
+  outputs: TransformOutputDescriptor[]
+  model: RenderModel
+}
+export type OutputPolicy =
+  | { kind: 'original'; clipId: string }
+  | { kind: 'plain_text'; clipId: string }
+  | { kind: 'transformed'; resultId: string }
+export type TransformPreferences = { favoriteTransformerIds: string[] }

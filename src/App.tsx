@@ -11,6 +11,9 @@ import type {
   RenderModel,
   RendererPreferences,
   Tag,
+  TransformPreferences,
+  TransformPreview,
+  TransformerDescriptor,
 } from './shared/types/architecture'
 
 const date = (value: number) =>
@@ -30,6 +33,8 @@ const App = () => {
   const [settings, setSettings] = useState<CaptureSettings | null>(null)
   const [notice, setNotice] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [transformOpen, setTransformOpen] = useState(false)
+  const [activeTransform, setActiveTransform] = useState<TransformPreview | null>(null)
   const composing = useRef(false)
   const compositionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const load = async () => {
@@ -90,7 +95,10 @@ const App = () => {
       }, 100)
     }
     const key = (event: KeyboardEvent) => {
-      if (composing.current || hasNativeSelection()) return
+      const typing =
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      if (composing.current || typing || hasNativeSelection()) return
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         const next = Math.max(
@@ -101,9 +109,24 @@ const App = () => {
         const clip = page.items[next]
         if (clip) void select(clip)
       }
+      if (event.key.toLowerCase() === 't' && selected) {
+        event.preventDefault()
+        setTransformOpen(true)
+      }
       if (event.key === 'Enter' && selected) {
         event.preventDefault()
-        void invoke('copy_clip_original', { clipId: selected.clip.id })
+        if ((event.ctrlKey || event.metaKey) && activeTransform)
+          void invoke('paste_clip_output', {
+            policy: { kind: 'transformed', resultId: activeTransform.resultId },
+          })
+        else if (event.shiftKey)
+          void invoke('paste_clip_output', {
+            policy: { kind: 'plain_text', clipId: selected.clip.id },
+          })
+        else
+          void invoke('paste_clip_output', {
+            policy: { kind: 'original', clipId: selected.clip.id },
+          })
       }
       if (event.key === 'Delete' && selected) {
         event.preventDefault()
@@ -242,7 +265,14 @@ const App = () => {
         </section>
         <section className="panel p-5">
           {selected ? (
-            <Detail detail={selected} action={action} tags={tags} />
+            <Detail
+              detail={selected}
+              action={action}
+              tags={tags}
+              transformOpen={transformOpen}
+              setTransformOpen={setTransformOpen}
+              setActiveTransform={setActiveTransform}
+            />
           ) : (
             <p className="text-slate-400">Select a clip to inspect its original representations.</p>
           )}
@@ -265,10 +295,16 @@ const Detail = ({
   detail,
   action,
   tags,
+  transformOpen,
+  setTransformOpen,
+  setActiveTransform,
 }: {
   detail: ClipDetail
   action: (c: string, a: Record<string, unknown>) => Promise<void>
   tags: Tag[]
+  transformOpen: boolean
+  setTransformOpen: (value: boolean) => void
+  setActiveTransform: (value: TransformPreview | null) => void
 }) => (
   <>
     <div className="flex gap-2">
@@ -277,6 +313,9 @@ const Detail = ({
         onClick={() => void invoke('copy_clip_original', { clipId: detail.clip.id })}
       >
         Copy original
+      </button>
+      <button className="button" onClick={() => setTransformOpen(!transformOpen)}>
+        Transform (T)
       </button>
       <button
         className="button"
@@ -333,6 +372,14 @@ const Detail = ({
       ))}
     </div>
     <Views clipId={detail.clip.id} />
+    {transformOpen && (
+      <Transformations
+        clipId={detail.clip.id}
+        representations={detail.representations}
+        close={() => setTransformOpen(false)}
+        setActive={setActiveTransform}
+      />
+    )}
     <h2 className="mt-6 font-semibold">Raw representations</h2>
     {detail.representations.map(rep => (
       <article key={rep.id} className="mt-3 rounded border border-slate-700 p-3">
@@ -361,6 +408,184 @@ const Detail = ({
     ))}
   </>
 )
+
+const Transformations = ({
+  clipId,
+  representations,
+  close,
+  setActive,
+}: {
+  clipId: string
+  representations: ClipDetail['representations']
+  close: () => void
+  setActive: (value: TransformPreview | null) => void
+}) => {
+  const [items, setItems] = useState<TransformerDescriptor[]>([])
+  const [preferences, setPreferences] = useState<TransformPreferences>({
+    favoriteTransformerIds: [],
+  })
+  const [transformerId, setTransformerId] = useState('')
+  const [sourceId, setSourceId] = useState('')
+  const [rootName, setRootName] = useState('Root')
+  const [preview, setPreview] = useState<TransformPreview | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    void Promise.all([
+      invoke<TransformerDescriptor[]>('list_transformer_contributions', { clipId }),
+      invoke<TransformPreferences>('get_transform_preferences'),
+    ]).then(([descriptors, prefs]) => {
+      const ordered = [...descriptors].sort((a, b) => {
+        const af = prefs.favoriteTransformerIds.includes(a.id) ? 0 : 1
+        const bf = prefs.favoriteTransformerIds.includes(b.id) ? 0 : 1
+        return af - bf || a.label.localeCompare(b.label)
+      })
+      setItems(ordered)
+      setPreferences(prefs)
+      setTransformerId(ordered[0]?.id ?? '')
+      setSourceId(
+        representations.find(rep => rep.textValue !== undefined)?.id ?? representations[0]?.id ?? ''
+      )
+    })
+  }, [clipId, representations])
+  const run = async () => {
+    try {
+      const parameters =
+        transformerId === 'builtin.transform.json.to_typescript' ? { rootName } : {}
+      const value = await invoke<TransformPreview>('create_transform_preview', {
+        clipId,
+        transformerId,
+        sourceId,
+        parameters,
+      })
+      setPreview(value)
+      setActive(value)
+      setError('')
+    } catch (reason) {
+      setError(String(reason))
+    }
+  }
+  const favorite = async () => {
+    if (!transformerId) return
+    const ids = preferences.favoriteTransformerIds.includes(transformerId)
+      ? preferences.favoriteTransformerIds.filter(id => id !== transformerId)
+      : [...preferences.favoriteTransformerIds, transformerId]
+    const next = { favoriteTransformerIds: ids }
+    await invoke('update_transform_preferences', { preferences: next })
+    setPreferences(next)
+  }
+  return (
+    <section
+      className="mt-6 rounded border border-sky-800 bg-slate-900 p-3"
+      aria-label="Transformations"
+    >
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold">Transform</h2>
+        <button className="tag" onClick={close}>
+          Esc
+        </button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label className="text-sm">
+          Utility
+          <select
+            className="mt-1 w-full rounded bg-slate-800 p-2"
+            value={transformerId}
+            onChange={e => setTransformerId(e.target.value)}
+          >
+            {items.map(item => (
+              <option key={item.id} value={item.id}>
+                {preferences.favoriteTransformerIds.includes(item.id) ? '★ ' : ''}
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm">
+          Source
+          <select
+            className="mt-1 w-full rounded bg-slate-800 p-2"
+            value={sourceId}
+            onChange={e => setSourceId(e.target.value)}
+          >
+            {representations
+              .filter(rep => rep.textValue !== undefined || rep.binaryFileId)
+              .map(rep => (
+                <option key={rep.id} value={rep.id}>
+                  {rep.formatKey}
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
+      {transformerId === 'builtin.transform.json.to_typescript' && (
+        <label className="mt-2 block text-sm">
+          Root type name
+          <input
+            className="mt-1 w-full rounded bg-slate-800 p-2"
+            value={rootName}
+            onChange={e => setRootName(e.target.value)}
+          />
+        </label>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button
+          className="button"
+          disabled={!transformerId || !sourceId}
+          onClick={() => void run()}
+        >
+          Preview
+        </button>
+        <button className="tag" disabled={!transformerId} onClick={() => void favorite()}>
+          {preferences.favoriteTransformerIds.includes(transformerId) ? 'Unfavorite' : 'Favorite'}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+      {preview && (
+        <div className="mt-3">
+          <RenderView model={preview.model} />
+          <p className="mt-2 text-xs text-slate-400">
+            Expires {date(preview.expiresAt)} ·{' '}
+            {preview.outputs
+              .map(output => `${output.canonicalMimeType ?? 'binary'} ${output.byteLength} bytes`)
+              .join(', ')}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="button"
+              onClick={() =>
+                void invoke('copy_clip_output', {
+                  policy: { kind: 'transformed', resultId: preview.resultId },
+                })
+              }
+            >
+              Copy transformed
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                void invoke('paste_clip_output', {
+                  policy: { kind: 'transformed', resultId: preview.resultId },
+                })
+              }
+            >
+              Paste transformed
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                void invoke<string>('save_transform_result', { resultId: preview.resultId }).then(
+                  close
+                )
+              }
+            >
+              Save as new clip
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
 const Views = ({ clipId }: { clipId: string }) => {
   const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
   const [active, setActive] = useState<string | null>(null)

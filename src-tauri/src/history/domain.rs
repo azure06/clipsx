@@ -105,3 +105,11 @@ pub struct CapturedSnapshot {
     pub source_app_id: Option<String>,
     pub representations: Vec<CapturedRepresentation>,
 }
+#[derive(Debug, Clone)]
+pub struct TransformProvenance {
+    pub source_clip_id: String,
+    pub source_representation_id: String,
+    pub transformer_id: String,
+    pub transformer_version: String,
+    pub parameter_sha256: String,
+}

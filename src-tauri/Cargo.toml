@@ -52,13 +52,16 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Memory",
   "Win32_System_Threading",
   "Win32_UI_Shell",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging"
 ] }
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2.7"
+core-graphics = "0.25"
+foreign-types = "0.5"
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["xtest"] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

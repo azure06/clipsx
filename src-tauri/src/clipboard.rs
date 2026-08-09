@@ -1195,6 +1195,35 @@ mod tests {
     fn changed_snapshot_exhausts_retries() {
         assert!(capture_coherent(&mut Changing { token: 0 }).is_err());
     }
+    #[test]
+    fn self_write_requires_matching_token_and_fingerprint() {
+        let representations = vec![CapturedRepresentation {
+            format_key: "windows:text/plain".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: None,
+            platform: "windows".into(),
+            capture_priority: 1,
+            payload: CapturedPayload::Text("expected".into()),
+        }];
+        remember_self_write(42, &representations);
+        let matching = CapturedSnapshot {
+            token: 42,
+            source_app_name: None,
+            source_app_id: None,
+            representations: representations.clone(),
+        };
+        assert!(is_self_write_snapshot(&matching));
+        let changed = CapturedSnapshot {
+            token: 42,
+            source_app_name: None,
+            source_app_id: None,
+            representations: vec![CapturedRepresentation {
+                payload: CapturedPayload::Text("other".into()),
+                ..representations[0].clone()
+            }],
+        };
+        assert!(!is_self_write_snapshot(&changed));
+    }
     #[cfg(target_os = "windows")]
     #[test]
     fn html_wrapper_offsets_select_the_fragment() {

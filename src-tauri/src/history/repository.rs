@@ -93,6 +93,35 @@ impl HistoryRepository {
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
     ) -> Result<(String, bool)> {
+        self.capture_inner(snapshot, settings, false).await
+    }
+    /// Explicitly saved transformation output is deliberately distinct even if
+    /// the produced bytes already exist in history.
+    pub async fn capture_forced(
+        &self,
+        snapshot: CapturedSnapshot,
+        settings: &CaptureSettings,
+        provenance: &TransformProvenance,
+    ) -> Result<String> {
+        let (id, _) = self.capture_inner(snapshot, settings, true).await?;
+        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,transformer_id,transformer_version,parameter_sha256,created_at) VALUES(?,?,?,?,?,?,?)")
+            .bind(&id)
+            .bind(&provenance.source_clip_id)
+            .bind(&provenance.source_representation_id)
+            .bind(&provenance.transformer_id)
+            .bind(&provenance.transformer_version)
+            .bind(&provenance.parameter_sha256)
+            .bind(now_ms())
+            .execute(&self.pool)
+            .await?;
+        Ok(id)
+    }
+    async fn capture_inner(
+        &self,
+        snapshot: CapturedSnapshot,
+        settings: &CaptureSettings,
+        force_new: bool,
+    ) -> Result<(String, bool)> {
         let _platform_token = snapshot.token;
         if snapshot.representations.is_empty() {
             bail!("empty snapshot")
@@ -111,17 +140,19 @@ impl HistoryRepository {
         let fingerprint = capture_fingerprint(&snapshot.representations);
         let now = now_ms();
         let mut tx = self.pool.begin().await?;
-        if let Some(row) = sqlx::query(
-            "SELECT id FROM clip_items WHERE capture_sha256=? AND lifecycle_state='ready'",
-        )
-        .bind(&fingerprint)
-        .fetch_optional(&mut *tx)
-        .await?
-        {
-            let id: String = row.get(0);
-            sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=? WHERE id=?").bind(now).bind(now).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(&id).execute(&mut *tx).await?;
-            tx.commit().await?;
-            return Ok((id, true));
+        if !force_new {
+            if let Some(row) = sqlx::query(
+                "SELECT id FROM clip_items WHERE capture_sha256=? AND lifecycle_state='ready'",
+            )
+            .bind(&fingerprint)
+            .fetch_optional(&mut *tx)
+            .await?
+            {
+                let id: String = row.get(0);
+                sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=? WHERE id=?").bind(now).bind(now).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(&id).execute(&mut *tx).await?;
+                tx.commit().await?;
+                return Ok((id, true));
+            }
         }
         let id = new_id();
         sqlx::query("INSERT INTO clip_items(id,source_app_name,source_app_id,captured_at,updated_at,lifecycle_state,capture_sha256,total_payload_bytes) VALUES(?,?,?,?,?,'pending',?,?)").bind(&id).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(now).bind(now).bind(&fingerprint).bind(total as i64).execute(&mut *tx).await?;
@@ -327,6 +358,63 @@ impl HistoryRepository {
             });
         }
         Ok(result)
+    }
+    pub async fn plain_text_reconstruction(&self, id: &str) -> Result<Vec<CapturedRepresentation>> {
+        let rows = sqlx::query("SELECT r.format_key,r.canonical_mime_type,r.native_type,r.platform,r.capture_priority,t.text_value FROM clip_representations r JOIN clip_items c ON c.id=r.clip_id JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=? AND r.lifecycle_state='ready' AND c.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1")
+            .bind(id)
+            .fetch_all(&self.pool)
+            .await?;
+        let Some(row) = rows.into_iter().next() else {
+            bail!("clip has no ready text/plain representation")
+        };
+        Ok(vec![CapturedRepresentation {
+            format_key: row.get(0),
+            canonical_mime_type: row.get(1),
+            native_type: row.get(2),
+            platform: row.get(3),
+            capture_priority: row.get(4),
+            payload: CapturedPayload::Text(row.get(5)),
+        }])
+    }
+    pub async fn source_representation(
+        &self,
+        clip_id: &str,
+        representation_id: &str,
+    ) -> Result<(CapturedRepresentation, String)> {
+        let row = sqlx::query("SELECT r.format_key,r.canonical_mime_type,r.native_type,r.platform,r.capture_priority,r.storage_kind,t.text_value,r.binary_file_id,COALESCE(t.sha256,b.sha256) FROM clip_representations r JOIN clip_items c ON c.id=r.clip_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.id=? AND r.clip_id=? AND r.lifecycle_state='ready' AND c.lifecycle_state='ready'")
+            .bind(representation_id)
+            .bind(clip_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .context("ready source representation not found")?;
+        let kind: String = row.get(5);
+        let payload = match kind.as_str() {
+            "text" => CapturedPayload::Text(row.get(6)),
+            "binary_asset" => {
+                CapturedPayload::Binary(self.asset(&row.get::<String, _>(7)).await?.0)
+            }
+            "file_list" => bail!("file-list representations are not transform inputs"),
+            _ => bail!("unsupported transform input"),
+        };
+        Ok((
+            CapturedRepresentation {
+                format_key: row.get(0),
+                canonical_mime_type: row.get(1),
+                native_type: row.get(2),
+                platform: row.get(3),
+                capture_priority: row.get(4),
+                payload,
+            },
+            row.get(8),
+        ))
+    }
+    pub async fn touch(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE clip_items SET access_count=access_count+1,updated_at=? WHERE id=? AND lifecycle_state='ready'")
+            .bind(now_ms())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
     pub async fn set_flag(&self, id: &str, column: &str, value: bool) -> Result<()> {
         if !matches!(column, "is_pinned" | "is_favorite") {

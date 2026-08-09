@@ -599,6 +599,8 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "cocoa",
+ "core-graphics 0.25.0",
+ "foreign-types",
  "image",
  "keyring",
  "objc",
