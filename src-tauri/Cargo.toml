@@ -43,6 +43,22 @@ keyring = "4.1.5"
 uuid = { version = "1.18.1", features = ["v7"] }
 arboard = "3.6.1"
 image = { version = "0.25.9", default-features = false, features = ["png"] }
+url = "2.5.7"
+base64 = "0.22.1"
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging"
+] }
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2.7"
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

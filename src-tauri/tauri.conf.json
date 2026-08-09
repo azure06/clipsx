@@ -72,7 +72,7 @@
         "enable": true,
         "scope": ["**"]
       },
-      "csp": "default-src 'self' http://localhost:5173; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost; media-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost; connect-src 'self' http://localhost:5173 ipc://localhost https://api.openrouter.ai; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self' http://localhost:5173; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost clipsx-asset: http://clipsx-asset.localhost; media-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost clipsx-asset: http://clipsx-asset.localhost; connect-src 'self' http://localhost:5173 ipc://localhost; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     },
     "withGlobalTauri": true
   }

@@ -1,30 +1,64 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { clipsxAssetUrl } from './shared/rendering'
 import type {
   CaptureSettings,
   ClipDetail,
   ClipPage,
   ClipSummary,
+  ClipViewSet,
+  RenderModel,
+  RendererPreferences,
   Tag,
 } from './shared/types/architecture'
 
 const date = (value: number) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(value)
+const hasNativeSelection = () => {
+  const active = document.activeElement
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
+    return active.selectionStart !== active.selectionEnd
+  return !(window.getSelection()?.isCollapsed ?? true)
+}
 const App = () => {
   const [page, setPage] = useState<ClipPage>({ items: [] })
   const [selected, setSelected] = useState<ClipDetail | null>(null)
   const [scope, setScope] = useState('all')
+  const [tagFilter, setTagFilter] = useState<string | undefined>()
   const [tags, setTags] = useState<Tag[]>([])
   const [settings, setSettings] = useState<CaptureSettings | null>(null)
   const [notice, setNotice] = useState('')
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const composing = useRef(false)
+  const compositionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const load = async () => {
-    setPage(await invoke<ClipPage>('list_clips', { request: { limit: 50, scope } }))
+    setPage(
+      await invoke<ClipPage>('list_clips', { request: { limit: 50, scope, tagId: tagFilter } })
+    )
     setTags(await invoke<Tag[]>('list_tags'))
   }
   useEffect(() => {
-    void invoke<ClipPage>('list_clips', { request: { limit: 50, scope } }).then(setPage)
+    void invoke<ClipPage>('list_clips', { request: { limit: 50, scope, tagId: tagFilter } }).then(
+      setPage
+    )
     void invoke<Tag[]>('list_tags').then(setTags)
-  }, [scope])
+  }, [scope, tagFilter])
+  useEffect(() => {
+    const refresh = () =>
+      void invoke<ClipPage>('list_clips', { request: { limit: 50, scope, tagId: tagFilter } }).then(
+        setPage
+      )
+    const subscriptions = [
+      'clip-captured',
+      'clip-updated',
+      'clip-deleted',
+      'clip-facets-updated',
+    ].map(event => listen(event, refresh))
+    return () => {
+      void Promise.all(subscriptions).then(values => values.forEach(unlisten => unlisten()))
+    }
+  }, [scope, tagFilter])
   const select = async (clip: ClipSummary) =>
     setSelected(await invoke<ClipDetail>('get_clip_detail', { clipId: clip.id }))
   const capture = async () => {
@@ -39,9 +73,53 @@ const App = () => {
   const action = async (command: string, args: Record<string, unknown>) => {
     await invoke(command, args)
     await load()
-    if (selected)
+    if (command === 'delete_clip') {
+      setSelected(null)
+    } else if (selected) {
       setSelected(await invoke<ClipDetail>('get_clip_detail', { clipId: selected.clip.id }))
+    }
   }
+  useEffect(() => {
+    const start = () => {
+      if (compositionTimer.current) clearTimeout(compositionTimer.current)
+      composing.current = true
+    }
+    const end = () => {
+      compositionTimer.current = setTimeout(() => {
+        composing.current = false
+      }, 100)
+    }
+    const key = (event: KeyboardEvent) => {
+      if (composing.current || hasNativeSelection()) return
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const next = Math.max(
+          0,
+          Math.min(page.items.length - 1, selectedIndex + (event.key === 'ArrowDown' ? 1 : -1))
+        )
+        setSelectedIndex(next)
+        const clip = page.items[next]
+        if (clip) void select(clip)
+      }
+      if (event.key === 'Enter' && selected) {
+        event.preventDefault()
+        void invoke('copy_clip_original', { clipId: selected.clip.id })
+      }
+      if (event.key === 'Delete' && selected) {
+        event.preventDefault()
+        void action('delete_clip', { clipId: selected.clip.id })
+      }
+    }
+    window.addEventListener('compositionstart', start)
+    window.addEventListener('compositionend', end)
+    window.addEventListener('keydown', key)
+    return () => {
+      window.removeEventListener('compositionstart', start)
+      window.removeEventListener('compositionend', end)
+      window.removeEventListener('keydown', key)
+      if (compositionTimer.current) clearTimeout(compositionTimer.current)
+    }
+  })
   const scopes: Array<[string, string]> = [
     ['all', 'All'],
     ['favorites', 'Favorites'],
@@ -57,6 +135,18 @@ const App = () => {
         <div className="flex gap-2">
           <button className="button" onClick={() => void capture()}>
             Capture clipboard
+          </button>
+          <button
+            className="button"
+            onClick={() => {
+              const name = window.prompt('Tag name')
+              if (name?.trim())
+                void invoke<Tag>('create_tag', { name: name.trim(), color: null }).then(tag =>
+                  setTags(current => [...current, tag].sort((a, b) => a.name.localeCompare(b.name)))
+                )
+            }}
+          >
+            New tag
           </button>
           <button
             className="button"
@@ -77,6 +167,29 @@ const App = () => {
             {label}
           </button>
         ))}
+        {tags.map(tag => (
+          <span key={tag.id} className="flex items-center rounded bg-slate-900">
+            <button
+              className={tagFilter === tag.id ? 'tab tab-active' : 'tab'}
+              onClick={() => setTagFilter(tagFilter === tag.id ? undefined : tag.id)}
+            >
+              {tag.name}
+            </button>
+            <button
+              className="px-1 text-xs text-slate-500 hover:text-red-300"
+              aria-label={`Delete ${tag.name} tag`}
+              onClick={() => {
+                if (window.confirm(`Delete tag “${tag.name}”?`))
+                  void invoke('delete_tag', { tagId: tag.id }).then(() => {
+                    setTags(current => current.filter(item => item.id !== tag.id))
+                    if (tagFilter === tag.id) setTagFilter(undefined)
+                  })
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
       </nav>
       <div className="grid min-h-[70vh] grid-cols-[minmax(18rem,2fr)_minmax(22rem,3fr)] gap-4">
         <section className="panel overflow-auto">
@@ -84,7 +197,15 @@ const App = () => {
             <p className="p-6 text-slate-400">No clips yet. Capture your clipboard to begin.</p>
           ) : (
             page.items.map(clip => (
-              <button key={clip.id} className="clip" onClick={() => void select(clip)}>
+              <button
+                key={clip.id}
+                className="clip"
+                aria-selected={selected?.clip.id === clip.id}
+                onClick={() => {
+                  setSelectedIndex(page.items.indexOf(clip))
+                  void select(clip)
+                }}
+              >
                 <div className="flex justify-between gap-2">
                   <strong className="truncate">{clip.safeSummary}</strong>
                   <span>
@@ -103,6 +224,20 @@ const App = () => {
                 )}
               </button>
             ))
+          )}
+          {page.nextCursor && (
+            <button
+              className="clip text-center text-sky-300"
+              onClick={() =>
+                void invoke<ClipPage>('list_clips', {
+                  request: { cursor: page.nextCursor, limit: 50, scope, tagId: tagFilter },
+                }).then(next =>
+                  setPage({ items: [...page.items, ...next.items], nextCursor: next.nextCursor })
+                )
+              }
+            >
+              Load more
+            </button>
           )}
         </section>
         <section className="panel p-5">
@@ -197,6 +332,7 @@ const Detail = ({
         </button>
       ))}
     </div>
+    <Views clipId={detail.clip.id} />
     <h2 className="mt-6 font-semibold">Raw representations</h2>
     {detail.representations.map(rep => (
       <article key={rep.id} className="mt-3 rounded border border-slate-700 p-3">
@@ -225,6 +361,135 @@ const Detail = ({
     ))}
   </>
 )
+const Views = ({ clipId }: { clipId: string }) => {
+  const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
+  const [active, setActive] = useState<string | null>(null)
+  const [model, setModel] = useState<RenderModel | null>(null)
+  useEffect(() => {
+    void invoke<ClipViewSet>('get_clip_views', { clipId }).then(value => {
+      setViewSet(value)
+      setActive(value.views[0]?.id ?? null)
+    })
+  }, [clipId])
+  useEffect(() => {
+    const view = viewSet?.views.find(item => item.id === active)
+    if (view)
+      void invoke<RenderModel>('render_clip_view', {
+        clipId,
+        rendererId: view.rendererId,
+        sourceId: view.sourceId,
+      }).then(setModel)
+  }, [active, clipId, viewSet])
+  if (!viewSet || viewSet.views.length === 0) return null
+  const activeView = viewSet.views.find(view => view.id === active)
+  const makeDefault = async () => {
+    if (!activeView) return
+    const preferences = await invoke<RendererPreferences>('get_renderer_preferences')
+    if (activeView.facetId) preferences.byFacetId[activeView.facetId] = activeView.rendererId
+    else if (activeView.mimeType)
+      preferences.byMimeType[activeView.mimeType] = activeView.rendererId
+    else return
+    await invoke('update_renderer_preferences', { preferences })
+  }
+  return (
+    <section className="mt-6">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold">Views</h2>
+        {activeView && !activeView.isOriginal && (activeView.facetId || activeView.mimeType) && (
+          <button className="tag" onClick={() => void makeDefault()}>
+            Use as default
+          </button>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {viewSet.views.map(view => (
+          <button
+            key={view.id}
+            className={active === view.id ? 'tab tab-active' : 'tab'}
+            onClick={() => setActive(view.id)}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+      {model && <RenderView model={model} />}
+    </section>
+  )
+}
+const RenderView = ({ model }: { model: RenderModel }) => {
+  if (model.kind === 'html')
+    return (
+      <iframe
+        className="mt-3 min-h-48 w-full rounded bg-white"
+        sandbox=""
+        srcDoc={model.sanitizedHtml}
+        title="Sanitized HTML preview"
+      />
+    )
+  if (model.kind === 'image') {
+    const source = clipsxAssetUrl(model.artifactId)
+    return <img className="mt-3 max-h-80 rounded" src={source} alt="Captured clipboard" />
+  }
+  if (model.kind === 'tree')
+    return (
+      <pre className="mt-3 max-h-64 overflow-auto rounded bg-slate-950 p-3 text-xs">
+        {JSON.stringify(model.value, null, 2)}
+      </pre>
+    )
+  if (model.kind === 'table')
+    return (
+      <div className="mt-3 overflow-auto">
+        <table className="text-sm">
+          <thead>
+            <tr>
+              {model.columns.map(column => (
+                <th key={column} className="border border-slate-700 p-2 text-left">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {model.rows.map((row, index) => (
+              <tr key={index}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex} className="border border-slate-700 p-2">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  if (model.kind === 'key_value')
+    return (
+      <dl className="mt-3 space-y-1 text-sm">
+        {model.entries.map(([key, value]) => (
+          <div key={key}>
+            <dt className="inline font-medium">{key}: </dt>
+            <dd className="inline text-slate-300">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    )
+  const text =
+    model.kind === 'code'
+      ? model.text
+      : model.kind === 'text'
+        ? model.text
+        : model.kind === 'markdown'
+          ? model.markdown
+          : model.kind === 'error'
+            ? model.message
+            : 'Binary preview unavailable'
+  return (
+    <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-3 text-xs">
+      {text}
+    </pre>
+  )
+}
 const Settings = ({
   settings,
   close,
@@ -256,6 +521,14 @@ const Settings = ({
         <p className="my-2 text-sm text-slate-400">
           Blank disables a limit. Pinned and favorite clips are protected.
         </p>
+        <p className="mb-3 text-xs text-slate-500">
+          Currently using {value.managedBytesUsed.toLocaleString()} managed bytes.
+        </p>
+        {value.retentionWarning && (
+          <p className="mb-3 rounded bg-amber-950 p-2 text-sm text-amber-200">
+            {value.retentionWarning}
+          </p>
+        )}
         <div className="space-y-3">
           {field('maxOrdinaryClips', 'Maximum ordinary clips')}
           {field('maxAgeDays', 'Expiry days')}

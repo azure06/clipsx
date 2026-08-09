@@ -1,10 +1,11 @@
+use super::domain::*;
+
 use anyhow::{bail, Context, Result};
-use arboard::{Clipboard, ImageData};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, Row, SqlitePool};
 use std::{
     fs,
+    io::Write,
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -18,205 +19,6 @@ pub struct HistoryRepository {
     managed_root: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CaptureSettings {
-    pub max_ordinary_clips: Option<u32>,
-    pub max_age_days: Option<u32>,
-    pub max_managed_bytes: Option<u64>,
-    pub max_representation_bytes: Option<u64>,
-    pub max_snapshot_bytes: Option<u64>,
-}
-impl Default for CaptureSettings {
-    fn default() -> Self {
-        Self {
-            max_ordinary_clips: Some(1000),
-            max_age_days: None,
-            max_managed_bytes: Some(1_073_741_824),
-            max_representation_bytes: Some(52_428_800),
-            max_snapshot_bytes: Some(104_857_600),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClipSummary {
-    pub id: String,
-    pub source_app_name: Option<String>,
-    pub source_app_id: Option<String>,
-    pub captured_at: i64,
-    pub updated_at: i64,
-    pub is_pinned: bool,
-    pub is_favorite: bool,
-    pub note: Option<String>,
-    pub tags: Vec<Tag>,
-    pub safe_summary: String,
-    pub representation_count: i64,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClipPage {
-    pub items: Vec<ClipSummary>,
-    pub next_cursor: Option<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Tag {
-    pub id: String,
-    pub name: String,
-    pub color: Option<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClipDetail {
-    pub clip: ClipSummary,
-    pub representations: Vec<RepresentationDetail>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepresentationDetail {
-    pub id: String,
-    pub format_key: String,
-    pub canonical_mime_type: Option<String>,
-    pub native_type: Option<String>,
-    pub storage_kind: String,
-    pub ordinal: i64,
-    pub byte_length: i64,
-    pub text_value: Option<String>,
-    pub file_references: Vec<String>,
-    pub binary_file_id: Option<String>,
-    pub sha256: Option<String>,
-}
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListRequest {
-    pub cursor: Option<String>,
-    pub limit: Option<u32>,
-    pub scope: Option<String>,
-    pub tag_id: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub enum CapturedPayload {
-    Text(String),
-    Binary(Vec<u8>),
-    Files(Vec<String>),
-}
-#[derive(Debug, Clone)]
-pub struct CapturedRepresentation {
-    pub format_key: String,
-    pub canonical_mime_type: Option<String>,
-    pub native_type: Option<String>,
-    pub platform: String,
-    pub capture_priority: i64,
-    pub payload: CapturedPayload,
-}
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct CapturedSnapshot {
-    pub token: u64,
-    pub source_app_name: Option<String>,
-    pub source_app_id: Option<String>,
-    pub representations: Vec<CapturedRepresentation>,
-}
-
-#[allow(dead_code)]
-pub trait ClipboardAdapter: Send {
-    fn snapshot_token(&mut self) -> Result<u64>;
-    fn capture(&mut self) -> Result<CapturedSnapshot>;
-    fn write(&mut self, representations: &[RepresentationDetail]) -> Result<()>;
-}
-pub struct SystemClipboardAdapter {
-    last_token: u64,
-}
-impl SystemClipboardAdapter {
-    pub fn new() -> Self {
-        Self { last_token: 0 }
-    }
-}
-impl ClipboardAdapter for SystemClipboardAdapter {
-    fn snapshot_token(&mut self) -> Result<u64> {
-        // arboard deliberately abstracts platform tokens. The fingerprint still prevents repeated
-        // captures; platform-specific adapters can replace this boundary without touching storage.
-        Ok(self.last_token)
-    }
-    fn capture(&mut self) -> Result<CapturedSnapshot> {
-        let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
-        let mut reps = Vec::new();
-        if let Ok(text) = clipboard.get_text() {
-            if !text.is_empty() {
-                reps.push(CapturedRepresentation {
-                    format_key: "text/plain".into(),
-                    canonical_mime_type: Some("text/plain;charset=utf-8".into()),
-                    native_type: None,
-                    platform: platform_name().into(),
-                    capture_priority: 100,
-                    payload: CapturedPayload::Text(text),
-                });
-            }
-        }
-        if let Ok(image) = clipboard.get_image() {
-            let bytes = encode_png(image)?;
-            reps.push(CapturedRepresentation {
-                format_key: "image/png".into(),
-                canonical_mime_type: Some("image/png".into()),
-                native_type: None,
-                platform: platform_name().into(),
-                capture_priority: 200,
-                payload: CapturedPayload::Binary(bytes),
-            });
-        }
-        if reps.is_empty() {
-            bail!("clipboard has no supported representations")
-        }
-        self.last_token = self.last_token.wrapping_add(1);
-        Ok(CapturedSnapshot {
-            token: self.last_token,
-            source_app_name: None,
-            source_app_id: None,
-            representations: reps,
-        })
-    }
-    fn write(&mut self, representations: &[RepresentationDetail]) -> Result<()> {
-        let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
-        if let Some(text) = representations.iter().find_map(|r| r.text_value.as_ref()) {
-            clipboard.set_text(text.clone())?;
-            return Ok(());
-        }
-        bail!("no writeable representation is available")
-    }
-}
-
-fn encode_png(image: ImageData<'_>) -> Result<Vec<u8>> {
-    // Kept as a byte-exact managed asset after this one normalization boundary.
-    let mut output = Vec::new();
-    let encoder = image::codecs::png::PngEncoder::new(&mut output);
-    use image::ImageEncoder;
-    encoder.write_image(
-        &image.bytes,
-        image
-            .width
-            .try_into()
-            .context("clipboard image width exceeds u32")?,
-        image
-            .height
-            .try_into()
-            .context("clipboard image height exceeds u32")?,
-        image::ExtendedColorType::Rgba8,
-    )?;
-    Ok(output)
-}
-fn platform_name() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else {
-        "linux_x11"
-    }
-}
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -282,13 +84,16 @@ impl HistoryRepository {
             .max_connections(5)
             .connect(&url)
             .await?;
-        Ok(Self { pool, managed_root })
+        let repository = Self { pool, managed_root };
+        repository.recover_managed_files().await?;
+        Ok(repository)
     }
     pub async fn capture(
         &self,
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
     ) -> Result<(String, bool)> {
+        let _platform_token = snapshot.token;
         if snapshot.representations.is_empty() {
             bail!("empty snapshot")
         }
@@ -369,11 +174,20 @@ impl HistoryRepository {
                         new_id()
                     ));
                     fs::create_dir_all(temporary.parent().unwrap())?;
-                    fs::write(&temporary, bytes)?;
+                    let mut staged = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&temporary)?;
+                    staged.write_all(bytes)?;
+                    staged.sync_all()?;
+                    drop(staged);
                     fs::rename(temporary, &full)?;
+                    if let Some(parent) = full.parent() {
+                        let _ = fs::File::open(parent).and_then(|directory| directory.sync_all());
+                    }
                 }
                 let binary_id = new_id();
-                sqlx::query("INSERT INTO clip_binary_files(id,sha256,byte_length,relative_path,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?, 'ready',?,?) ON CONFLICT(sha256) DO NOTHING").bind(&binary_id).bind(&hash).bind(bytes.len() as i64).bind(relative.to_string_lossy().to_string()).bind(now).bind(now).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO clip_binary_files(id,sha256,byte_length,relative_path,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?, 'ready',?,?) ON CONFLICT(sha256) DO NOTHING").bind(&binary_id).bind(&hash).bind(bytes.len() as i64).bind(relative.to_string_lossy().replace('\\', "/")).bind(now).bind(now).execute(&mut **tx).await?;
                 let actual: String =
                     sqlx::query_scalar("SELECT id FROM clip_binary_files WHERE sha256=?")
                         .bind(&hash)
@@ -483,6 +297,36 @@ impl HistoryRepository {
             clip: self.summary_from_row(row).await?,
             representations,
         })
+    }
+    pub async fn reconstruction(&self, id: &str) -> Result<Vec<CapturedRepresentation>> {
+        let rows=sqlx::query("SELECT r.format_key,r.canonical_mime_type,r.native_type,r.platform,r.capture_priority,r.storage_kind,t.text_value,b.id FROM clip_representations r JOIN clip_items c ON c.id=r.clip_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.clip_id=? AND r.lifecycle_state='ready' AND c.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal").bind(id).fetch_all(&self.pool).await?;
+        let mut result = Vec::new();
+        for row in rows {
+            let kind: String = row.get(5);
+            let payload = match kind.as_str() {
+                "text" => CapturedPayload::Text(row.get::<String, _>(6)),
+                "binary_asset" => {
+                    let binary_id: String = row.get(7);
+                    CapturedPayload::Binary(self.asset(&binary_id).await?.0)
+                }
+                "file_list" => {
+                    let format_key: String = row.get(0);
+                    let representation_id:Option<String>=sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=? AND format_key=? AND lifecycle_state='ready'").bind(id).bind(&format_key).fetch_optional(&self.pool).await?;
+                    let files=sqlx::query_scalar::<_,String>("SELECT file_reference FROM clip_file_list_entries WHERE representation_id=? ORDER BY ordinal").bind(representation_id.context("file-list representation missing")?).fetch_all(&self.pool).await?;
+                    CapturedPayload::Files(files)
+                }
+                _ => continue,
+            };
+            result.push(CapturedRepresentation {
+                format_key: row.get(0),
+                canonical_mime_type: row.get(1),
+                native_type: row.get(2),
+                platform: row.get(3),
+                capture_priority: row.get(4),
+                payload,
+            });
+        }
+        Ok(result)
     }
     pub async fn set_flag(&self, id: &str, column: &str, value: bool) -> Result<()> {
         if !matches!(column, "is_pinned" | "is_favorite") {
@@ -600,6 +444,25 @@ impl HistoryRepository {
                 _ => {}
             }
         }
+        s.managed_bytes_used = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(byte_length),0) FROM clip_binary_files WHERE lifecycle_state='ready'",
+        )
+        .fetch_one(&self.pool)
+        .await? as u64;
+        let removable_binary_clip: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM clip_items c JOIN clip_representations r ON r.clip_id=c.id WHERE c.lifecycle_state='ready' AND c.is_pinned=0 AND c.is_favorite=0 AND r.binary_file_id IS NOT NULL LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        if s.max_managed_bytes
+            .is_some_and(|limit| s.managed_bytes_used > limit)
+            && removable_binary_clip.is_none()
+        {
+            s.retention_warning = Some(
+                "Protected clips currently keep managed storage above the configured target."
+                    .into(),
+            );
+        }
         Ok(s)
     }
     pub async fn update_settings(&self, s: &CaptureSettings) -> Result<()> {
@@ -681,6 +544,81 @@ impl HistoryRepository {
         }
         Ok(())
     }
+    async fn recover_managed_files(&self) -> Result<()> {
+        let staging = self.managed_root.join("staging");
+        fs::create_dir_all(&staging)?;
+        for entry in fs::read_dir(&staging)? {
+            let path = entry?.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_file() || metadata.file_type().is_symlink() {
+                let _ = fs::remove_file(path);
+            }
+        }
+        let rows = sqlx::query("SELECT id,sha256,relative_path FROM clip_binary_files WHERE lifecycle_state IN ('pending','ready')").fetch_all(&self.pool).await?;
+        for row in rows {
+            let id: String = row.get(0);
+            let expected: String = row.get(1);
+            let relative: String = row.get(2);
+            if !safe_relative(&relative) {
+                sqlx::query("UPDATE clip_binary_files SET lifecycle_state='quarantined',updated_at=? WHERE id=?").bind(now_ms()).bind(id).execute(&self.pool).await?;
+                continue;
+            }
+            let path = self.managed_root.join(&relative);
+            let state = match fs::read(&path) {
+                Ok(bytes) if sha256(&bytes) == expected => "ready",
+                Ok(_) => "quarantined",
+                Err(_) => "missing",
+            };
+            sqlx::query("UPDATE clip_binary_files SET lifecycle_state=?,updated_at=? WHERE id=?")
+                .bind(state)
+                .bind(now_ms())
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+        self.cleanup_orphans().await?;
+        let known: std::collections::HashSet<String> =
+            sqlx::query_scalar("SELECT relative_path FROM clip_binary_files")
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .collect();
+        let managed = self.managed_root.join("managed");
+        if managed.exists() {
+            for path in managed_files(&managed)? {
+                if let Ok(relative) = path.strip_prefix(&self.managed_root) {
+                    let key = relative.to_string_lossy().replace('\\', "/");
+                    if !known.contains(&key) {
+                        let _ = fs::remove_file(path);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    pub async fn asset(&self, binary_id: &str) -> Result<(Vec<u8>, String)> {
+        let row=sqlx::query("SELECT b.sha256,b.relative_path,COALESCE(r.canonical_mime_type,'application/octet-stream') FROM clip_binary_files b JOIN clip_representations r ON r.binary_file_id=b.id AND r.lifecycle_state='ready' JOIN clip_items c ON c.id=r.clip_id AND c.lifecycle_state='ready' WHERE b.id=? AND b.lifecycle_state='ready' LIMIT 1").bind(binary_id).fetch_optional(&self.pool).await?.context("asset not found")?;
+        let expected: String = row.get(0);
+        let relative: String = row.get(1);
+        let mime: String = row.get(2);
+        if !safe_relative(&relative) {
+            bail!("invalid managed asset path")
+        }
+        let path = self.managed_root.join(relative);
+        if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            bail!("managed asset cannot be a symlink")
+        }
+        let root = fs::canonicalize(&self.managed_root)?;
+        let canonical = fs::canonicalize(&path)?;
+        if !canonical.starts_with(root) {
+            bail!("managed asset escaped its root")
+        }
+        let bytes = fs::read(canonical)?;
+        if sha256(&bytes) != expected {
+            bail!("managed asset hash mismatch")
+        }
+        Ok((bytes, mime))
+    }
 }
 fn payload_len(r: &CapturedRepresentation) -> u64 {
     match &r.payload {
@@ -688,6 +626,22 @@ fn payload_len(r: &CapturedRepresentation) -> u64 {
         CapturedPayload::Binary(v) => v.len() as u64,
         CapturedPayload::Files(v) => v.iter().map(|x| x.len() as u64).sum(),
     }
+}
+fn managed_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut result = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        } else if metadata.is_dir() {
+            result.extend(managed_files(&path)?)
+        } else if metadata.is_file() {
+            result.push(path)
+        }
+    }
+    Ok(result)
 }
 pub fn safe_relative(value: &str) -> bool {
     let path = Path::new(value);
@@ -731,5 +685,57 @@ mod tests {
         assert!(!safe_relative("../x"));
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
+    }
+    #[tokio::test]
+    async fn persists_atomic_multi_representation_snapshot_and_promotes_duplicate() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let snapshot = CapturedSnapshot {
+            token: 1,
+            source_app_name: Some("Editor".into()),
+            source_app_id: None,
+            representations: vec![
+                CapturedRepresentation {
+                    format_key: "windows:CF_UNICODETEXT".into(),
+                    canonical_mime_type: Some("text/plain".into()),
+                    native_type: Some("CF_UNICODETEXT".into()),
+                    platform: "windows".into(),
+                    capture_priority: 20,
+                    payload: CapturedPayload::Text("hello".into()),
+                },
+                CapturedRepresentation {
+                    format_key: "windows:PNG".into(),
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type: Some("PNG".into()),
+                    platform: "windows".into(),
+                    capture_priority: 10,
+                    payload: CapturedPayload::Binary(vec![1, 2, 3]),
+                },
+            ],
+        };
+        let (id, duplicate) = repo
+            .capture(snapshot.clone(), &CaptureSettings::default())
+            .await
+            .unwrap();
+        assert!(!duplicate);
+        assert_eq!(repo.detail(&id).await.unwrap().representations.len(), 2);
+        repo.note(&id, Some("keep".into())).await.unwrap();
+        repo.set_flag(&id, "is_pinned", true).await.unwrap();
+        let (same, promoted) = repo
+            .capture(snapshot, &CaptureSettings::default())
+            .await
+            .unwrap();
+        assert_eq!(id, same);
+        assert!(promoted);
+        let detail = repo.detail(&id).await.unwrap();
+        assert_eq!(detail.clip.note.as_deref(), Some("keep"));
+        assert!(detail.clip.is_pinned);
     }
 }

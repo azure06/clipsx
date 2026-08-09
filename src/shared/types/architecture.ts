@@ -58,4 +58,38 @@ export type CaptureSettings = {
   maxManagedBytes?: number
   maxRepresentationBytes?: number
   maxSnapshotBytes?: number
+  managedBytesUsed: number
+  retentionWarning?: string
 }
+export type FacetDescriptor = {
+  id: string
+  displayName: string
+  sourceRepresentationId: string
+  detectorId: string
+  detectorVersion: string
+  payload: unknown
+}
+export type ClipViewDescriptor = {
+  id: string
+  rendererId: string
+  label: string
+  sourceId: string
+  mimeType?: string
+  facetId?: string
+  isOriginal: boolean
+}
+export type ClipViewSet = { clipId: string; facets: FacetDescriptor[]; views: ClipViewDescriptor[] }
+export type RendererPreferences = {
+  byMimeType: Record<string, string>
+  byFacetId: Record<string, string>
+}
+export type RenderModel =
+  | { kind: 'text'; text: string }
+  | { kind: 'code'; language?: string; text: string }
+  | { kind: 'markdown'; markdown: string }
+  | { kind: 'table'; columns: string[]; rows: string[][] }
+  | { kind: 'tree'; value: unknown }
+  | { kind: 'key_value'; entries: [string, string][] }
+  | { kind: 'image'; artifactId: string }
+  | { kind: 'html'; sanitizedHtml: string }
+  | { kind: 'error'; message: string }

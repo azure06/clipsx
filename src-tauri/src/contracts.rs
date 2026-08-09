@@ -62,6 +62,9 @@ pub enum RenderModel {
     Image {
         artifact_id: String,
     },
+    Html {
+        sanitized_html: String,
+    },
     Error {
         message: String,
     },
