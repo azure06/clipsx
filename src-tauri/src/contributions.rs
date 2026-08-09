@@ -827,11 +827,15 @@ pub async fn render(
         .into_iter()
         .find(|renderer| renderer.descriptor().id == renderer_id)
     {
-        return Ok(renderer
-            .render(rep, facet)
-            .unwrap_or_else(|error| RenderModel::Error {
-                message: format!("renderer failed: {error}"),
-            }));
+        return match renderer.render(rep, facet) {
+            Ok(model) => Ok(model),
+            Err(error) => {
+                // Rendering is derived UI state. A failed rich renderer must
+                // never block access to canonical original content.
+                eprintln!("[RENDER] renderer {renderer_id} failed: {error}; using Original");
+                Ok(original(rep))
+            }
+        };
     }
     Ok(RenderModel::Error {
         message: "unknown renderer".into(),

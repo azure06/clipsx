@@ -1,15 +1,55 @@
-use crate::history::{CapturedPayload, CapturedRepresentation, CapturedSnapshot};
+use crate::history::{
+    capture_fingerprint, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
+};
 use anyhow::{bail, Context, Result};
 use arboard::{Clipboard, ImageData};
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
+    collections::VecDeque,
+    sync::{Mutex, OnceLock},
     thread,
     time::Duration,
 };
 
-static SELF_WRITE_TOKEN: AtomicU64 = AtomicU64::new(u64::MAX);
-pub fn is_self_write_token(token: u64) -> bool {
-    SELF_WRITE_TOKEN.load(Ordering::Acquire) == token
+#[derive(Debug, Clone)]
+struct SelfWrite {
+    token: u64,
+    fingerprint: String,
+    expires_at: std::time::Instant,
+}
+
+static SELF_WRITES: OnceLock<Mutex<VecDeque<SelfWrite>>> = OnceLock::new();
+
+fn self_writes() -> &'static Mutex<VecDeque<SelfWrite>> {
+    SELF_WRITES.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+/// Records the exact snapshot written by ClipsX. A platform change token alone is
+/// not sufficient: other owners can advance or reuse observable token values.
+pub fn remember_self_write(token: u64, representations: &[CapturedRepresentation]) {
+    let now = std::time::Instant::now();
+    let mut writes = self_writes().lock().expect("self-write ledger poisoned");
+    writes.retain(|entry| entry.expires_at > now);
+    writes.push_back(SelfWrite {
+        token,
+        fingerprint: capture_fingerprint(representations),
+        expires_at: now + Duration::from_secs(10),
+    });
+    while writes.len() > 16 {
+        writes.pop_front();
+    }
+}
+
+/// Suppression deliberately compares both the platform token and the complete
+/// representation fingerprint. This prevents an unrelated clipboard update from
+/// being dropped merely because it follows a ClipsX write.
+pub fn is_self_write_snapshot(snapshot: &CapturedSnapshot) -> bool {
+    let now = std::time::Instant::now();
+    let fingerprint = capture_fingerprint(&snapshot.representations);
+    let mut writes = self_writes().lock().expect("self-write ledger poisoned");
+    writes.retain(|entry| entry.expires_at > now);
+    writes
+        .iter()
+        .any(|entry| entry.token == snapshot.token && entry.fingerprint == fingerprint)
 }
 
 pub trait ClipboardAdapter: Send {
@@ -114,50 +154,24 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         unsafe {
             write_windows_formats(reps)?;
             let token = self.snapshot_token()?;
-            SELF_WRITE_TOKEN.store(token, Ordering::Release);
+            remember_self_write(token, reps);
             Ok(token)
         }
         #[cfg(target_os = "macos")]
         unsafe {
             write_macos_formats(reps)?;
             let token = self.snapshot_token()?;
-            SELF_WRITE_TOKEN.store(token, Ordering::Release);
+            remember_self_write(token, reps);
             Ok(token)
         }
         #[cfg(target_os = "linux")]
         {
-            let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
-            if let Some(bytes) = reps.iter().find_map(|r| match &r.payload {
-                CapturedPayload::Binary(bytes)
-                    if r.canonical_mime_type.as_deref() == Some("image/png") =>
-                {
-                    Some(bytes)
-                }
-                _ => None,
-            }) {
-                let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?
-                    .into_rgba8();
-                let (width, height) = image.dimensions();
-                clipboard.set_image(ImageData {
-                    width: width as usize,
-                    height: height as usize,
-                    bytes: std::borrow::Cow::Owned(image.into_raw()),
-                })?;
-            } else if let Some(files) = reps.iter().find_map(|r| match &r.payload {
-                CapturedPayload::Files(files) => Some(files),
-                _ => None,
-            }) {
-                clipboard.set_text(files.join("\r\n"))?;
-            } else if let Some(text) = reps.iter().find_map(|r| match &r.payload {
-                CapturedPayload::Text(value) => Some(value),
-                _ => None,
-            }) {
-                clipboard.set_text(text.to_string())?;
-            } else {
-                bail!("no writeable representation is available")
-            }
+            // arboard can only own one payload at a time on X11. Own the
+            // CLIPBOARD selection ourselves so TARGETS can expose the complete
+            // v2 representation set to the receiving application.
+            x11_own_selection(reps.to_vec())?;
             let token = self.snapshot_token()?;
-            SELF_WRITE_TOKEN.store(token, Ordering::Release);
+            remember_self_write(token, reps);
             Ok(token)
         }
     }
@@ -514,6 +528,178 @@ fn x11_owner_token() -> Result<u64> {
     let _ = conn.destroy_window(window);
     let _ = conn.flush();
     Ok(((owner as u64) << 32) | value as u64)
+}
+
+/// Own CLIPBOARD in a dedicated thread and answer selection requests for every
+/// explicitly supported representation. The owner intentionally exits when a
+/// subsequent clipboard owner replaces it, keeping no stale background state.
+#[cfg(target_os = "linux")]
+fn x11_own_selection(representations: Vec<CapturedRepresentation>) -> Result<()> {
+    use std::sync::mpsc;
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let result = x11_selection_loop(representations).map_err(|error| error.to_string());
+        let _ = ready_tx.send(result);
+    });
+    ready_rx
+        .recv_timeout(Duration::from_millis(250))
+        .map_err(|_| anyhow::anyhow!("X11 selection owner did not become ready"))?
+        .map_err(anyhow::Error::msg)
+}
+
+#[cfg(target_os = "linux")]
+fn x11_selection_loop(representations: Vec<CapturedRepresentation>) -> Result<()> {
+    use x11rb::{
+        connection::Connection,
+        protocol::{
+            xproto::{
+                AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode,
+                SelectionNotifyEvent, WindowClass, COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
+            },
+            Event,
+        },
+    };
+    let (conn, screen_index) = x11rb::connect(None)?;
+    let atom = |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
+    let clipboard = atom(b"CLIPBOARD")?;
+    let targets = atom(b"TARGETS")?;
+    let timestamp = atom(b"TIMESTAMP")?;
+    let utf8 = atom(b"UTF8_STRING")?;
+    let atom_atom = AtomEnum::ATOM.into();
+    let integer = AtomEnum::INTEGER.into();
+    let window = conn.generate_id()?;
+    let root = conn.setup().roots[screen_index].root;
+    conn.create_window(
+        COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+    )?
+    .check()?;
+    conn.set_selection_owner(window, clipboard, CURRENT_TIME)?
+        .check()?;
+    conn.flush()?;
+
+    let mut values: std::collections::BTreeMap<u32, Vec<u8>> = Default::default();
+    let mut offered = vec![targets, timestamp];
+    for representation in &representations {
+        let target_name = representation
+            .native_type
+            .as_deref()
+            .or(representation.canonical_mime_type.as_deref())
+            .unwrap_or_default();
+        let target_name = match target_name {
+            "text/plain;charset=utf-8" => "text/plain",
+            other => other,
+        };
+        if target_name.is_empty() || !x11_writeback_allowed(target_name) {
+            continue;
+        }
+        let value = match &representation.payload {
+            CapturedPayload::Text(text) => text.as_bytes().to_vec(),
+            CapturedPayload::Binary(bytes) => bytes.clone(),
+            CapturedPayload::Files(files) => {
+                let mut text = files.join("\r\n");
+                text.push_str("\r\n");
+                text.into_bytes()
+            }
+        };
+        let target = atom(target_name.as_bytes())?;
+        if values.insert(target, value).is_none() {
+            offered.push(target);
+        }
+        if target_name == "text/plain" && values.get(&utf8).is_none() {
+            values.insert(utf8, values[&target].clone());
+            offered.push(utf8);
+        }
+    }
+    if values.is_empty() {
+        bail!("no X11 writeable representation is available")
+    }
+    loop {
+        match conn.wait_for_event()? {
+            Event::SelectionClear(event) if event.selection == clipboard => break,
+            Event::SelectionRequest(request) if request.selection == clipboard => {
+                let property = if request.property == AtomEnum::NONE.into() {
+                    request.target
+                } else {
+                    request.property
+                };
+                let mut accepted = true;
+                if request.target == targets {
+                    conn.change_property32(
+                        PropMode::REPLACE,
+                        request.requestor,
+                        property,
+                        atom_atom,
+                        &offered,
+                    )?
+                    .check()?;
+                } else if request.target == timestamp {
+                    conn.change_property32(
+                        PropMode::REPLACE,
+                        request.requestor,
+                        property,
+                        integer,
+                        &[CURRENT_TIME],
+                    )?
+                    .check()?;
+                } else if let Some(value) = values.get(&request.target) {
+                    conn.change_property8(
+                        PropMode::REPLACE,
+                        request.requestor,
+                        property,
+                        request.target,
+                        value,
+                    )?
+                    .check()?;
+                } else {
+                    accepted = false;
+                }
+                let response = SelectionNotifyEvent {
+                    response_type: 31,
+                    sequence: 0,
+                    time: request.time,
+                    requestor: request.requestor,
+                    selection: request.selection,
+                    target: request.target,
+                    property: if accepted {
+                        property
+                    } else {
+                        AtomEnum::NONE.into()
+                    },
+                };
+                conn.send_event(false, request.requestor, EventMask::NO_EVENT, response)?
+                    .check()?;
+                conn.flush()?;
+            }
+            _ => {}
+        }
+    }
+    let _ = conn.destroy_window(window);
+    let _ = conn.flush();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn x11_writeback_allowed(target: &str) -> bool {
+    matches!(
+        target,
+        "text/plain"
+            | "UTF8_STRING"
+            | "text/html"
+            | "text/rtf"
+            | "application/rtf"
+            | "text/uri-list"
+            | "image/png"
+    )
 }
 
 #[cfg(target_os = "linux")]

@@ -6,7 +6,9 @@ mod contributions;
 mod foundation;
 mod history;
 
-use clipboard::{capture_coherent, is_self_write_token, ClipboardAdapter, SystemClipboardAdapter};
+use clipboard::{
+    capture_coherent, is_self_write_snapshot, ClipboardAdapter, SystemClipboardAdapter,
+};
 use contracts::{FactoryResetResult, StartupStatus};
 use foundation::{AppRoots, SchemaState};
 use history::{CaptureSettings, HistoryRepository, ListRequest};
@@ -374,7 +376,7 @@ fn main() {
                         Ok(value) => value,
                         Err(_) => continue,
                     };
-                    if token == last_token || is_self_write_token(token) {
+                    if token == last_token {
                         last_token = token;
                         continue;
                     }
@@ -386,6 +388,9 @@ fn main() {
                             continue;
                         }
                     };
+                    if is_self_write_snapshot(&snapshot) {
+                        continue;
+                    }
                     let settings = match monitor_history.settings().await {
                         Ok(value) => value,
                         Err(_) => continue,
