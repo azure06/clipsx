@@ -23,3 +23,39 @@ export type RepresentationContract = {
   capturePriority: number
   lifecycleState: LifecycleState
 }
+export type Tag = { id: string; name: string; color?: string }
+export type ClipSummary = {
+  id: string
+  sourceAppName?: string
+  sourceAppId?: string
+  capturedAt: number
+  updatedAt: number
+  isPinned: boolean
+  isFavorite: boolean
+  note?: string
+  tags: Tag[]
+  safeSummary: string
+  representationCount: number
+}
+export type ClipPage = { items: ClipSummary[]; nextCursor?: string }
+export type RepresentationDetail = {
+  id: string
+  formatKey: string
+  canonicalMimeType?: string
+  nativeType?: string
+  storageKind: StorageKind
+  ordinal: number
+  byteLength: number
+  textValue?: string
+  fileReferences: string[]
+  binaryFileId?: string
+  sha256?: string
+}
+export type ClipDetail = { clip: ClipSummary; representations: RepresentationDetail[] }
+export type CaptureSettings = {
+  maxOrdinaryClips?: number
+  maxAgeDays?: number
+  maxManagedBytes?: number
+  maxRepresentationBytes?: number
+  maxSnapshotBytes?: number
+}

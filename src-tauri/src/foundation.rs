@@ -7,10 +7,13 @@ use std::{
     io::Write,
     path::{Component, Path, PathBuf},
     str::FromStr,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v2";
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaState {
@@ -76,10 +79,15 @@ impl ManagedFileStore {
             .join(category)
             .join(&sha256[..2])
             .join(&sha256);
-        let staging_path = self
-            .root
-            .join("staging")
-            .join(format!("{sha256}.{}.pending", std::process::id()));
+        let staging_path = self.root.join("staging").join(format!(
+            "{sha256}.{}.{}.{}.pending",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)

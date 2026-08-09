@@ -8,3 +8,27 @@
     cursor: not-allowed;
   }
 }
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-slate-800 bg-slate-900/80 shadow-xl;
+  }
+  .button {
+    @apply rounded-md bg-sky-700 px-3 py-2 text-sm font-medium hover:bg-sky-600;
+  }
+  .danger {
+    @apply bg-red-800 hover:bg-red-700;
+  }
+  .tab {
+    @apply rounded-md px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800;
+  }
+  .tab-active {
+    @apply bg-slate-800 text-sky-300;
+  }
+  .clip {
+    @apply block w-full border-b border-slate-800 p-4 text-left hover:bg-slate-800/60;
+  }
+  .tag {
+    @apply rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700;
+  }
+}
