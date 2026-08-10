@@ -7,8 +7,49 @@ ClipsX is a local-first programmable clipboard following
 > chunks, and embeddings are derived. Render and transform previews are
 > ephemeral unless explicitly saved.
 
-Milestones live in [ARCHITECTURE_EXECUTION_PLAN.md](ARCHITECTURE_EXECUTION_PLAN.md)
-and durable decisions in [adr/](adr/).
+Use this document for stable architecture and invariants. Use
+[ARCHITECTURE_EXECUTION_PLAN.md](ARCHITECTURE_EXECUTION_PLAN.md) for milestone
+scope, sequencing, and acceptance criteria.
+
+## Locked decisions
+
+These decisions are intentionally centralized here rather than duplicated in
+separate ADR files.
+
+### Local representation storage
+
+SQLite stores the clip catalog and relationships. Text belongs in dedicated
+representation child rows. Binary clipboard bytes belong in immutable managed
+files; SQLite stores only hash, size, lifecycle state, and a relative path.
+Pre-v2 databases are not migrated or supported.
+
+### Computed renderer policy
+
+Renderer selection is session/UI policy based on available representations,
+facets, installed contributions, and global preferences. No renderer tree or
+per-clip renderer choice is persisted.
+
+### Extension isolation
+
+Community extensions run as sandboxed WASM. They receive explicit bounded
+input and return structured facet, render, or transformation output. They have
+no direct filesystem, network, clipboard, database, shell, environment, or
+React access.
+
+### Provider boundaries
+
+Providers are selected locally and contacted directly by the desktop app. FTS
+works without a provider. Secrets stay in OS secure storage and hosted calls
+require explicit consent. There is no ClipsX model proxy. Text embedding,
+visual embedding, vision description, generation, and OCR are distinct
+host-owned capabilities; community WASM extensions cannot register providers.
+
+### Reconstruction byte contract
+
+Text representations use normalized UTF-8. Office/OLE and unknown native
+formats use byte-exact binary assets. An adapter writes a format only when it
+explicitly supports the captured exact type; it never guesses UTIs, OLE format
+names, or equivalent native identifiers.
 
 ## System context
 

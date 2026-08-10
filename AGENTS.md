@@ -8,10 +8,12 @@ ClipsX is being redesigned as a local-first programmable clipboard:
 Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for
+stable system design, domain boundaries, and architecture invariants.
 [`docs/ARCHITECTURE_EXECUTION_PLAN.md`](docs/ARCHITECTURE_EXECUTION_PLAN.md)
-defines the target architecture and milestones. Read the relevant sections
-before making architectural or persistence changes; it takes precedence over
-assumptions inferred from the in-progress source tree.
+defines milestone scope, sequencing, and acceptance criteria. Read the
+relevant sections before architectural or persistence changes; documentation
+takes precedence over assumptions inferred from the in-progress source tree.
 
 * One capture has independent raw representations, additive semantic facets,
   and rebuildable derived data. Do not reintroduce a single `ClipItem` content
@@ -38,7 +40,7 @@ metadata, or compatibility behavior.
 * Do not guess UTI, OLE, or other native clipboard types.
 * Reconstruct only formats explicitly supported by the platform adapter;
   adapters regenerate platform wrappers when needed.
-* The execution plan's representation byte contract and supported-format
+* The architecture document's representation byte contract and supported-format
   matrix are the capture and reconstruction source of truth, not legacy code.
 * Use `[RECONSTRUCT]`, not `[COPY]`, for shared reconstruction-helper logs.
 
