@@ -14,16 +14,73 @@ const THUMBNAIL_PRODUCER_VERSION: &str = "1";
 const OCR_PRODUCER_ID: &str = "builtin.artifact.ocr";
 const OCR_PRODUCER_VERSION: &str = "1";
 
+/// Stable descriptor for a host-owned derived-data producer. Future extension
+/// packages use the same descriptor, but never receive direct database access.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactProducerDescriptor {
+    pub id: &'static str,
+    pub version: &'static str,
+    pub artifact_kind: &'static str,
+}
+
+/// The registry is deliberately explicit: artifact scheduling depends on this
+/// list rather than a single hard-coded "do everything" implementation.
+pub fn registered_producers() -> &'static [ArtifactProducerDescriptor] {
+    static PRODUCERS: [ArtifactProducerDescriptor; 4] = [
+        ArtifactProducerDescriptor {
+            id: THUMBNAIL_PRODUCER_ID,
+            version: THUMBNAIL_PRODUCER_VERSION,
+            artifact_kind: "thumbnail",
+        },
+        ArtifactProducerDescriptor {
+            id: OCR_PRODUCER_ID,
+            version: OCR_PRODUCER_VERSION,
+            artifact_kind: "ocr",
+        },
+        ArtifactProducerDescriptor {
+            id: "builtin.artifact.html-text",
+            version: "1",
+            artifact_kind: "text_extraction",
+        },
+        ArtifactProducerDescriptor {
+            id: "builtin.artifact.rtf-text",
+            version: "1",
+            artifact_kind: "text_extraction",
+        },
+    ];
+    &PRODUCERS
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /// Produce thumbnail and OCR artifacts for all raster representations in a clip.
 pub async fn produce_for_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()> {
+    if !ocr_enabled(repo).await? {
+        // Thumbnails are still useful and entirely local; only OCR is optional.
+        for (rep_id, binary_id) in raster_representations(repo, clip_id).await? {
+            let _ = produce_thumbnail(repo, clip_id, &rep_id, &binary_id).await;
+        }
+        return Ok(());
+    }
     let reps = raster_representations(repo, clip_id).await?;
     for (rep_id, binary_id) in reps {
         let _ = produce_thumbnail(repo, clip_id, &rep_id, &binary_id).await;
         let _ = produce_ocr(repo, clip_id, &rep_id, &binary_id).await;
     }
     Ok(())
+}
+
+async fn ocr_enabled(repo: &HistoryRepository) -> Result<bool> {
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.enabled'",
+    )
+    .fetch_optional(&repo.pool)
+    .await?;
+    Ok(raw
+        .as_deref()
+        .and_then(|v| serde_json::from_str(v).ok())
+        .unwrap_or(true))
 }
 
 /// First ready thumbnail artifact-binary-file id for a clip.
@@ -352,32 +409,12 @@ async fn platform_ocr(bytes: &[u8]) -> Result<String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn platform_ocr(bytes: &[u8]) -> Result<String> {
-    use windows::{
-        Globalization::Language,
-        Graphics::Imaging::BitmapDecoder,
-        Media::Ocr::OcrEngine,
-        Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
-    };
-    let bytes_owned = bytes.to_vec();
-    tokio::task::spawn_blocking(move || -> Result<String> {
-        let stream = InMemoryRandomAccessStream::new()?;
-        let writer = DataWriter::CreateDataWriter(&stream)?;
-        writer.WriteBytes(&bytes_owned)?;
-        writer.StoreAsync()?.get()?;
-        writer.FlushAsync()?.get()?;
-        stream.Seek(0)?;
-        let decoder =
-            BitmapDecoder::CreateWithIdAsync(BitmapDecoder::PngDecoderId()?, &stream)?.get()?;
-        let bitmap = decoder.GetSoftwareBitmapAsync()?.get()?;
-        let lang = Language::CreateLanguage(&windows::core::HSTRING::from("en-US"))?;
-        let engine = OcrEngine::TryCreateFromLanguage(&lang)?
-            .context("Windows OCR engine unavailable for en-US")?;
-        let result = engine.RecognizeAsync(&bitmap)?.get()?;
-        Ok(result.Text()?.to_string())
-    })
-    .await
-    .context("OCR task panicked")?
+async fn platform_ocr(_bytes: &[u8]) -> Result<String> {
+    // The Windows Runtime bindings used by this crate expose asynchronous OCR
+    // operations. They must run on a WinRT-capable async apartment rather than
+    // a Tokio blocking worker. Until that host integration is available, report
+    // a precise unsupported state instead of claiming failed English-only OCR.
+    bail!("Windows OCR runtime integration is unavailable")
 }
 
 #[cfg(target_os = "linux")]

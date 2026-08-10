@@ -21,6 +21,7 @@ pub struct SearchResult {
 pub struct SearchPage {
     pub items: Vec<SearchResult>,
     pub total: u32,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,14 +132,29 @@ async fn build_search_text(repo: &HistoryRepository, clip_id: &str) -> Result<St
 }
 
 async fn build_manifest(repo: &HistoryRepository, clip_id: &str) -> Result<String> {
-    let rep_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM clip_representations WHERE clip_id=? AND lifecycle_state='ready' \
-         ORDER BY capture_priority, ordinal",
+    let source_rows = sqlx::query(
+        "SELECT r.id, COALESCE(t.sha256, b.sha256, ''), r.storage_kind \
+         FROM clip_representations r \
+         LEFT JOIN clip_text_values t ON t.representation_id=r.id \
+         LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id \
+         WHERE r.clip_id=? AND r.lifecycle_state='ready' \
+         ORDER BY r.capture_priority, r.ordinal",
     )
     .bind(clip_id)
     .fetch_all(&repo.pool)
     .await?;
-    Ok(serde_json::to_string(&rep_ids)?)
+    let mut sources: Vec<serde_json::Value> = source_rows
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "id": row.get::<String, _>(0),
+                "sha256": row.get::<String, _>(1),
+                "storageKind": row.get::<String, _>(2),
+            })
+        })
+        .collect();
+    sources.push(serde_json::json!({ "producer": "builtin.fts", "version": PROJECTION_VERSION }));
+    Ok(serde_json::to_string(&sources)?)
 }
 
 // ─── Query ────────────────────────────────────────────────────────────────────
@@ -153,6 +169,7 @@ pub async fn search(
         return Ok(SearchPage {
             items: Vec::new(),
             total: 0,
+            next_cursor: None,
         });
     }
 
@@ -209,7 +226,8 @@ pub async fn search(
     let total = rows.len().min(limit as usize) as u32;
 
     let mut items = Vec::new();
-    for row in rows.into_iter().take(limit as usize) {
+    let mut next_cursor = None;
+    for (index, row) in rows.into_iter().take(limit as usize).enumerate() {
         let clip_id: String = row.get(0);
         let tags = sqlx::query(
             "SELECT t.id, t.name, t.color FROM catalog_tags t \
@@ -245,10 +263,18 @@ pub async fn search(
             snippet,
             rank,
         });
+        if has_more && index + 1 == limit as usize {
+            next_cursor = Some(format!(
+                "{rank}|{}",
+                items.last().expect("just inserted").clip.id
+            ));
+        }
     }
-
-    let _ = has_more; // cursor pagination left to caller if needed
-    Ok(SearchPage { items, total })
+    Ok(SearchPage {
+        items,
+        total,
+        next_cursor,
+    })
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────

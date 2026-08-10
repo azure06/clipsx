@@ -208,7 +208,8 @@ async fn paste_clip_output(
             return Err(message);
         }
     }
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    // Keep the focus target on this thread: Windows HWND handles are not Send.
+    std::thread::sleep(std::time::Duration::from_millis(150));
     if let Err(error) = paste::simulate_paste(focus_target) {
         let message = error.to_string();
         let _ = app.emit("paste-failed", &message);

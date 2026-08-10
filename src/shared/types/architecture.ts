@@ -137,4 +137,5 @@ export type SearchResult = {
 export type SearchPage = {
   items: SearchResult[]
   total: number
+  nextCursor?: string
 }
