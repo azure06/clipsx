@@ -257,7 +257,11 @@ pub async fn configure(
     .unwrap_or_else(new_id);
     sqlx::query("INSERT OR IGNORE INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
         .bind(&space_id).bind(&descriptor.provider_kind).bind(&descriptor_json).bind(&fingerprint).bind("text").bind(descriptor.dimensions as i64).bind("l2").bind("cosine").bind(now_ms()).execute(&repo.pool).await?;
-    let config = serde_json::json!({"endpoint": endpoint, "model": model, "pendingSpaceId": space_id, "activeSpaceId": null});
+    let previous = get_config(&repo.pool).await?;
+    let active = previous
+        .as_ref()
+        .and_then(|value| value["activeSpaceId"].as_str());
+    let config = serde_json::json!({"endpoint": endpoint, "model": model, "pendingSpaceId": space_id, "activeSpaceId": active});
     put_config(&repo.pool, "search.embedding.provider", &config).await?;
     enqueue_all(repo, &space_id, 1).await?;
     status(repo).await
@@ -450,11 +454,7 @@ pub async fn hybrid_matches(
     let space = config["activeSpaceId"]
         .as_str()
         .context("semantic index is still building")?;
-    let provider = OllamaTextEmbeddingProvider::new(
-        config["endpoint"].as_str().context("missing endpoint")?,
-        config["model"].as_str().context("missing model")?.into(),
-    )
-    .await?;
+    let provider = provider_for_space(repo, space).await?;
     let query_vector = provider.embed_query(query).await?;
     let rows=sqlx::query("SELECT sc.clip_id,se.vector,sc.text_value FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE se.space_id=? ORDER BY sc.clip_id").bind(space).fetch_all(&repo.pool).await?;
     let mut best = std::collections::HashMap::<String, (f64, String)>::new();
@@ -474,6 +474,22 @@ pub async fn hybrid_matches(
     out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out.truncate(limit);
     Ok(out)
+}
+
+async fn provider_for_space(
+    repo: &HistoryRepository,
+    space: &str,
+) -> Result<OllamaTextEmbeddingProvider> {
+    let raw: String =
+        sqlx::query_scalar("SELECT descriptor_json FROM search_embedding_spaces WHERE id=?")
+            .bind(space)
+            .fetch_one(&repo.pool)
+            .await?;
+    let descriptor: EmbeddingProviderDescriptor = serde_json::from_str(&raw)?;
+    if descriptor.provider_kind != "builtin.embedding.ollama" {
+        bail!("active embedding provider is unavailable")
+    }
+    OllamaTextEmbeddingProvider::new(&descriptor.endpoint, descriptor.model).await
 }
 
 fn chunk_text(text: &str) -> Vec<String> {
