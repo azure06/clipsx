@@ -47,6 +47,10 @@ metadata, or compatibility behavior.
 ## Workflow
 
 * Make minimal, focused changes and preserve local conventions.
+* Whenever a change affects the architecture, system design, domain
+  boundaries, persistence model, or architecture invariants, update
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) in the same change so it
+  remains the source of truth.
 * Add dependencies only when necessary and explain why.
 * Run the smallest relevant checks; common commands are `npm run type-check`,
   `npm run lint`, `cargo fmt --all`, `cargo clippy --manifest-path
