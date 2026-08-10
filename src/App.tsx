@@ -12,6 +12,7 @@ import type {
   RendererPreferences,
   SearchPage,
   SearchSettings,
+  ProviderStatus,
   Tag,
   TransformPreferences,
   TransformPreview,
@@ -40,6 +41,8 @@ const App = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchPage | null>(null)
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
+  const [embeddingStatus, setEmbeddingStatus] = useState<ProviderStatus | null>(null)
+  const [ftsOnly, setFtsOnly] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const composing = useRef(false)
@@ -56,6 +59,7 @@ const App = () => {
     )
     void invoke<Tag[]>('list_tags').then(setTags)
     void invoke<SearchSettings>('get_search_settings').then(setSearchSettings)
+    void invoke<ProviderStatus>('get_text_embedding_status').then(setEmbeddingStatus)
   }, [scope, tagFilter])
 
   useEffect(() => {
@@ -67,13 +71,19 @@ const App = () => {
         return
       }
       void invoke<SearchPage>('search_clips', {
-        request: { query: trimmed, scope, tagId: tagFilter, limit: 50 },
+        request: {
+          query: trimmed,
+          scope,
+          tagId: tagFilter,
+          limit: 50,
+          mode: ftsOnly ? 'fts' : undefined,
+        },
       }).then(setSearchResults)
     }, 200)
     return () => {
       if (searchDebounce.current) clearTimeout(searchDebounce.current)
     }
-  }, [searchQuery, scope, tagFilter])
+  }, [searchQuery, scope, tagFilter, ftsOnly])
   useEffect(() => {
     const refresh = () =>
       void invoke<ClipPage>('list_clips', { request: { limit: 50, scope, tagId: tagFilter } }).then(
@@ -208,6 +218,28 @@ const App = () => {
           >
             Storage
           </button>
+          <button
+            className="button"
+            onClick={() => {
+              const endpoint = window.prompt('Ollama endpoint', 'http://localhost:11434')
+              if (!endpoint) return
+              void invoke<{ name: string }[]>('list_ollama_models', { endpoint })
+                .then(models => {
+                  const model = window.prompt(
+                    `Embedding model (installed: ${models.map(item => item.name).join(', ') || 'none'})`
+                  )
+                  if (!model) return
+                  return invoke<ProviderStatus>('configure_text_embedding_provider', {
+                    endpoint,
+                    model,
+                  })
+                })
+                .then(status => status && setEmbeddingStatus(status))
+                .catch(error => setNotice(String(error)))
+            }}
+          >
+            {embeddingStatus?.enabled ? 'Semantic search' : 'Connect Ollama'}
+          </button>
         </div>
       </header>
       {notice && <p className="mb-3 text-sm text-amber-300">{notice}</p>}
@@ -236,6 +268,15 @@ const App = () => {
             }}
           >
             {searchSettings.syntaxMode === 'simple' ? 'Simple' : 'Advanced'}
+          </button>
+        )}
+        {embeddingStatus?.enabled && (
+          <button
+            className={ftsOnly ? 'tag text-xs' : 'tag text-xs text-sky-300'}
+            onClick={() => setFtsOnly(value => !value)}
+            title="Toggle semantic hybrid search for this session"
+          >
+            {ftsOnly ? 'FTS only' : 'Hybrid'}
           </button>
         )}
       </div>
@@ -295,8 +336,7 @@ const App = () => {
                     <p className="mt-1 text-xs text-slate-300 line-clamp-2">{result.snippet}</p>
                   )}
                   <p className="mt-1 text-xs text-slate-400">
-                    {result.clip.sourceAppName ?? 'Unknown app'} ·{' '}
-                    {date(result.clip.capturedAt)}
+                    {result.clip.sourceAppName ?? 'Unknown app'} · {date(result.clip.capturedAt)}
                   </p>
                 </button>
               ))

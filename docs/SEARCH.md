@@ -2,8 +2,9 @@
 
 ## Overview
 
-ClipsX M4 uses SQLite FTS5 for full-text keyword search. Semantic (vector) search is
-disabled in M4 and will be introduced in a later milestone with the Ollama provider.
+ClipsX uses SQLite FTS5 for local keyword search. M4a additionally supports
+optional local Ollama text embeddings through a host-owned provider contract.
+Semantic data is derived and can be cleared without affecting clips.
 
 ## Pipeline
 
@@ -55,7 +56,7 @@ search field. Clicking it updates the setting immediately.
 | Platform | Engine | Notes |
 |----------|--------|-------|
 | macOS | `VNRecognizeTextRequest` (Vision) | accuracy level 1; language-agnostic |
-| Windows | `Windows.Media.Ocr.OcrEngine` | `en-US` language by default |
+| Windows | unavailable in the current WinRT host integration | reports `unsupported` rather than claiming English-only OCR |
 | Linux | `tesseract` CLI | reports `unsupported` if tesseract is not installed |
 
 OCR is attempted for every raster-image representation (`image/*` MIME or
@@ -77,7 +78,7 @@ Thumbnails are served via the `clipsx-artifact://` URI scheme and referenced by
 
 | Command | Description |
 |---------|-------------|
-| `search_clips(request)` | Returns `SearchPage` (items + total). Empty query returns empty page. |
+| `search_clips(request)` | Returns FTS or hybrid `SearchPage`, including an opaque next cursor and a non-blocking provider diagnostic when applicable. |
 | `get_search_settings()` | Returns current `SearchSettings`. |
 | `update_search_settings(settings)` | Persists `syntaxMode` to `config_profile_values`. |
 
@@ -102,8 +103,16 @@ UNIQUE INDEX idx_artifact_jobs_one_active
 search.syntax_mode = '"simple"'  -- or '"advanced"'
 ```
 
-## Embedding Providers (M4 Status)
+## Embedding Providers (M4a)
 
-`DisabledTextEmbeddingProvider` is the only registered provider in M4.
-It produces no vectors and schedules no embedding jobs. FTS is fully functional
-without embeddings. Ollama-backed providers are planned for M4a.
+`TextEmbeddingProvider` is the stable host-owned boundary. `OllamaTextEmbeddingProvider`
+uses only `http(s)` loopback endpoints (`localhost`, `127.0.0.0/8`, or `::1`),
+does not download models, and uses `/api/tags`, `/api/show`, and `/api/embed`
+with `truncate: false`. A disabled provider remains the default.
+
+Each model/provider fingerprint creates a separate embedding space. Documents are
+chunked deterministically (about 512 estimated tokens with structural overlap),
+then indexed as `search_chunks` and `search_embeddings`. Hybrid search ranks FTS
+and the best chunk per clip independently, then combines their rank positions via
+equal-weight reciprocal-rank fusion. The user may choose FTS-only for the current
+session.

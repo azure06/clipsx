@@ -4,6 +4,7 @@ mod artifacts;
 mod clipboard;
 mod contracts;
 mod contributions;
+mod embeddings;
 mod foundation;
 mod history;
 mod paste;
@@ -89,6 +90,8 @@ async fn capture_clipboard(
             tauri::async_runtime::spawn(async move {
                 let _ = artifacts::produce_for_clip(&history_for_artifacts, &artifact_id).await;
                 let _ = search::upsert_projection(&history_for_artifacts, &artifact_id).await;
+                let _ = embeddings::enqueue_clip(&history_for_artifacts, &artifact_id).await;
+                let _ = embeddings::index_pending(&history_for_artifacts).await;
             });
             let _ = app.emit(
                 if duplicate {
@@ -519,6 +522,97 @@ async fn search_clips(
 }
 
 #[tauri::command]
+async fn probe_ollama_endpoint(endpoint: String) -> embeddings::OllamaEndpointStatus {
+    embeddings::probe_endpoint(endpoint).await
+}
+#[tauri::command]
+async fn list_ollama_models(
+    endpoint: String,
+) -> Result<Vec<embeddings::OllamaModelDescriptor>, String> {
+    embeddings::list_models(endpoint)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn probe_ollama_model(
+    endpoint: String,
+    model: String,
+) -> Result<embeddings::EmbeddingProviderDescriptor, String> {
+    embeddings::probe_model(endpoint, model)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn configure_text_embedding_provider(
+    app: tauri::AppHandle,
+    endpoint: String,
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<embeddings::ProviderStatus, String> {
+    let status = embeddings::configure(&state.history, endpoint, model)
+        .await
+        .map_err(|e| e.to_string())?;
+    let history = state.history.clone();
+    let event_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match embeddings::index_pending(&history).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let _ = event_app.emit("embedding-index-progress", ());
+                }
+                Err(error) => {
+                    let _ = event_app.emit("embedding-index-failed", error.to_string());
+                    break;
+                }
+            }
+        }
+        let _ = event_app.emit("embedding-space-changed", ());
+    });
+    let _ = app.emit("embedding-provider-status-changed", ());
+    Ok(status)
+}
+#[tauri::command]
+async fn disable_text_embedding_provider(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    embeddings::disable(&state.history)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("embedding-provider-status-changed", ());
+    Ok(())
+}
+#[tauri::command]
+async fn get_text_embedding_status(
+    state: State<'_, AppState>,
+) -> Result<embeddings::ProviderStatus, String> {
+    embeddings::status(&state.history)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn reindex_text_embeddings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    embeddings::reindex(&state.history)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("embedding-index-progress", ());
+    Ok(())
+}
+#[tauri::command]
+async fn clear_text_embedding_space(
+    space_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    embeddings::clear_space(&state.history, &space_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_search_settings(state: State<'_, AppState>) -> Result<search::SearchSettings, String> {
     search::get_settings(&state.history.pool)
         .await
@@ -585,10 +679,13 @@ fn main() {
             .expect("Failed to open ClipsX history");
             tauri::async_runtime::block_on(contributions::initialize(&history))
                 .expect("Failed to initialize ClipsX facet registry");
+            // Materialize the host-owned artifact registry during startup.
+            let _ = artifacts::registered_producers();
             // Rebuild any stale FTS projections from previous sessions.
             let fts_history = history.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = search::rebuild_stale_projections(&fts_history).await;
+                let _ = embeddings::index_pending(&fts_history).await;
             });
             let redetect_history = history.clone();
             let redetect_app = app.handle().clone();
@@ -659,6 +756,8 @@ fn main() {
                                 }
                                 let _ = artifacts::produce_for_clip(&detection_history, &id).await;
                                 let _ = search::upsert_projection(&detection_history, &id).await;
+                                let _ = embeddings::enqueue_clip(&detection_history, &id).await;
+                                let _ = embeddings::index_pending(&detection_history).await;
                             });
                         }
                         Err(error) => {
@@ -713,7 +812,15 @@ fn main() {
             redetect_history,
             search_clips,
             get_search_settings,
-            update_search_settings
+            update_search_settings,
+            probe_ollama_endpoint,
+            list_ollama_models,
+            probe_ollama_model,
+            configure_text_embedding_provider,
+            disable_text_embedding_provider,
+            get_text_embedding_status,
+            reindex_text_embeddings,
+            clear_text_embedding_space
         ])
         .run(tauri::generate_context!())
         .expect("error while running ClipsX");

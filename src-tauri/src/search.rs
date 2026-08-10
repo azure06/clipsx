@@ -14,6 +14,8 @@ pub struct SearchResult {
     pub clip: ClipSummary,
     pub snippet: Option<String>,
     pub rank: f64,
+    pub fts_match: bool,
+    pub semantic_match: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +24,8 @@ pub struct SearchPage {
     pub items: Vec<SearchResult>,
     pub total: u32,
     pub next_cursor: Option<String>,
+    pub effective_mode: SearchMode,
+    pub provider_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +36,14 @@ pub struct SearchRequest {
     pub tag_id: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
+    pub mode: Option<SearchMode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMode {
+    Fts,
+    Hybrid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +182,8 @@ pub async fn search(
             items: Vec::new(),
             total: 0,
             next_cursor: None,
+            effective_mode: SearchMode::Fts,
+            provider_diagnostic: None,
         });
     }
 
@@ -262,6 +276,8 @@ pub async fn search(
             },
             snippet,
             rank,
+            fts_match: true,
+            semantic_match: None,
         });
         if has_more && index + 1 == limit as usize {
             next_cursor = Some(format!(
@@ -270,10 +286,69 @@ pub async fn search(
             ));
         }
     }
+    let requested_hybrid = match request.mode {
+        Some(SearchMode::Fts) => false,
+        Some(SearchMode::Hybrid) => true,
+        None => crate::embeddings::status(repo)
+            .await
+            .map(|status| status.active_space_id.is_some())
+            .unwrap_or(false),
+    };
+    let mut diagnostic = None;
+    let effective_mode = if requested_hybrid {
+        match crate::embeddings::hybrid_matches(repo, raw, (limit * 4).max(100) as usize).await {
+            Ok(semantic) => {
+                let semantic_scores: std::collections::HashMap<_, _> = semantic
+                    .into_iter()
+                    .map(|(clip_id, score, _)| (clip_id, score))
+                    .collect();
+                for item in &mut items {
+                    item.semantic_match = semantic_scores.get(&item.clip.id).copied();
+                }
+                // Reciprocal-rank fusion uses rank positions, not model-specific scores.
+                let mut semantic_order: Vec<_> = items
+                    .iter()
+                    .filter_map(|item| {
+                        item.semantic_match
+                            .map(|score| (item.clip.id.clone(), score))
+                    })
+                    .collect();
+                semantic_order.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let semantic_rank: std::collections::HashMap<_, _> = semantic_order
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (id, _))| (id, i + 1))
+                    .collect();
+                for (index, item) in items.iter_mut().enumerate() {
+                    let fts = 1.0 / (60.0 + (index + 1) as f64);
+                    let semantic = semantic_rank
+                        .get(&item.clip.id)
+                        .map(|rank| 1.0 / (60.0 + *rank as f64))
+                        .unwrap_or(0.0);
+                    item.rank = fts + semantic;
+                }
+                items.sort_by(|a, b| {
+                    b.rank
+                        .total_cmp(&a.rank)
+                        .then_with(|| b.clip.updated_at.cmp(&a.clip.updated_at))
+                        .then_with(|| a.clip.id.cmp(&b.clip.id))
+                });
+                SearchMode::Hybrid
+            }
+            Err(error) => {
+                diagnostic = Some(error.to_string());
+                SearchMode::Fts
+            }
+        }
+    } else {
+        SearchMode::Fts
+    };
     Ok(SearchPage {
         items,
         total,
         next_cursor,
+        effective_mode,
+        provider_diagnostic: diagnostic,
     })
 }
 

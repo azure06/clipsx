@@ -84,6 +84,7 @@ async fn ocr_enabled(repo: &HistoryRepository) -> Result<bool> {
 }
 
 /// First ready thumbnail artifact-binary-file id for a clip.
+#[allow(dead_code)]
 pub async fn thumbnail_artifact_id(repo: &HistoryRepository, clip_id: &str) -> Option<String> {
     sqlx::query_scalar(
         "SELECT ab.id \

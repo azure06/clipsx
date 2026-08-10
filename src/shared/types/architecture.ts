@@ -126,16 +126,42 @@ export type SearchRequest = {
   tagId?: string
   limit?: number
   cursor?: string
+  mode?: 'fts' | 'hybrid'
 }
 
 export type SearchResult = {
   clip: ClipSummary
   snippet?: string
   rank: number
+  ftsMatch: boolean
+  semanticMatch?: number
 }
 
 export type SearchPage = {
   items: SearchResult[]
   total: number
   nextCursor?: string
+  effectiveMode: 'fts' | 'hybrid'
+  providerDiagnostic?: string
+}
+
+export type OllamaModelDescriptor = { name: string; digest?: string; size?: number }
+export type EmbeddingProviderDescriptor = {
+  providerKind: string
+  providerVersion: string
+  endpoint: string
+  model: string
+  modelDigest: string
+  dimensions: number
+  normalization: string
+  modality: string
+  distanceMetric: string
+}
+export type ProviderStatus = {
+  enabled: boolean
+  activeSpaceId?: string
+  pendingSpaceId?: string
+  diagnostic?: string
+  indexedClips: number
+  pendingJobs: number
 }
