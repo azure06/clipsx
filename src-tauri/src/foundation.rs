@@ -68,7 +68,7 @@ impl ManagedFileStore {
     pub fn stage(&self, category: &str, bytes: &[u8]) -> Result<StagedManagedFile> {
         if !matches!(
             category,
-            "images" | "office" | "pdf" | "svg" | "native" | "binary"
+            "images" | "office" | "pdf" | "svg" | "native" | "binary" | "derived"
         ) {
             bail!("unsupported managed-file category");
         }

@@ -116,3 +116,25 @@ export type OutputPolicy =
   | { kind: 'plain_text'; clipId: string }
   | { kind: 'transformed'; resultId: string }
 export type TransformPreferences = { favoriteTransformerIds: string[] }
+
+export type SyntaxMode = 'simple' | 'advanced'
+export type SearchSettings = { syntaxMode: SyntaxMode }
+
+export type SearchRequest = {
+  query: string
+  scope?: string
+  tagId?: string
+  limit?: number
+  cursor?: string
+}
+
+export type SearchResult = {
+  clip: ClipSummary
+  snippet?: string
+  rank: number
+}
+
+export type SearchPage = {
+  items: SearchResult[]
+  total: number
+}

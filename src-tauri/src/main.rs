@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod artifacts;
 mod clipboard;
 mod contracts;
 mod contributions;
 mod foundation;
 mod history;
 mod paste;
+mod search;
 mod transformers;
 
 use clipboard::{
@@ -81,6 +83,12 @@ async fn capture_clipboard(
                         let _ = event_app.emit("detection-job-failed", error.to_string());
                     }
                 }
+            });
+            let history_for_artifacts = state.history.clone();
+            let artifact_id = id.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = artifacts::produce_for_clip(&history_for_artifacts, &artifact_id).await;
+                let _ = search::upsert_projection(&history_for_artifacts, &artifact_id).await;
             });
             let _ = app.emit(
                 if duplicate {
@@ -257,8 +265,9 @@ async fn save_transform_result(
             .await
             .is_ok()
         {
-            let _ = detect_app.emit("clip-facets-updated", detect_id);
+            let _ = detect_app.emit("clip-facets-updated", detect_id.clone());
         }
+        let _ = search::upsert_projection(&history, &detect_id).await;
     });
     let _ = app.emit("transform-result-saved", &clip_id);
     let _ = app.emit("clip-captured", &clip_id);
@@ -495,8 +504,56 @@ async fn redetect_history(
     Ok(count)
 }
 
+#[tauri::command]
+async fn search_clips(
+    request: search::SearchRequest,
+    state: State<'_, AppState>,
+) -> Result<search::SearchPage, String> {
+    let settings = search::get_settings(&state.history.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    search::search(&state.history, &request, &settings)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_search_settings(state: State<'_, AppState>) -> Result<search::SearchSettings, String> {
+    search::get_settings(&state.history.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_search_settings(
+    settings: search::SearchSettings,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    search::update_settings(&state.history.pool, &settings)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("clipsx-artifact", |context, request| {
+            let id = request.uri().path().trim_start_matches('/');
+            let state = context.app_handle().state::<AppState>();
+            match tauri::async_runtime::block_on(artifacts::artifact_binary(&state.history, id)) {
+                Ok((bytes, mime)) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "private, max-age=31536000, immutable")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .body(bytes)
+                    .unwrap(),
+                Err(_) => tauri::http::Response::builder()
+                    .status(404)
+                    .header("Content-Type", "text/plain")
+                    .body(b"artifact not found".to_vec())
+                    .unwrap(),
+            }
+        })
         .register_uri_scheme_protocol("clipsx-asset", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
             let state = context.app_handle().state::<AppState>();
@@ -527,6 +584,11 @@ fn main() {
             .expect("Failed to open ClipsX history");
             tauri::async_runtime::block_on(contributions::initialize(&history))
                 .expect("Failed to initialize ClipsX facet registry");
+            // Rebuild any stale FTS projections from previous sessions.
+            let fts_history = history.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = search::rebuild_stale_projections(&fts_history).await;
+            });
             let redetect_history = history.clone();
             let redetect_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -586,13 +648,16 @@ fn main() {
                             tauri::async_runtime::spawn(async move {
                                 match contributions::detect_clip(&detection_history, &id).await {
                                     Ok(_) => {
-                                        let _ = detection_app.emit("clip-facets-updated", id);
+                                        let _ =
+                                            detection_app.emit("clip-facets-updated", id.clone());
                                     }
                                     Err(error) => {
                                         let _ = detection_app
                                             .emit("detection-job-failed", error.to_string());
                                     }
                                 }
+                                let _ = artifacts::produce_for_clip(&detection_history, &id).await;
+                                let _ = search::upsert_projection(&detection_history, &id).await;
                             });
                         }
                         Err(error) => {
@@ -644,7 +709,10 @@ fn main() {
             get_renderer_preferences,
             update_renderer_preferences,
             redetect_clip,
-            redetect_history
+            redetect_history,
+            search_clips,
+            get_search_settings,
+            update_search_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running ClipsX");

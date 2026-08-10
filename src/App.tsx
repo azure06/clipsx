@@ -10,6 +10,8 @@ import type {
   ClipViewSet,
   RenderModel,
   RendererPreferences,
+  SearchPage,
+  SearchSettings,
   Tag,
   TransformPreferences,
   TransformPreview,
@@ -35,6 +37,11 @@ const App = () => {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [transformOpen, setTransformOpen] = useState(false)
   const [activeTransform, setActiveTransform] = useState<TransformPreview | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchPage | null>(null)
+  const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const composing = useRef(false)
   const compositionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const load = async () => {
@@ -48,7 +55,25 @@ const App = () => {
       setPage
     )
     void invoke<Tag[]>('list_tags').then(setTags)
+    void invoke<SearchSettings>('get_search_settings').then(setSearchSettings)
   }, [scope, tagFilter])
+
+  useEffect(() => {
+    if (searchDebounce.current) clearTimeout(searchDebounce.current)
+    const trimmed = searchQuery.trim()
+    searchDebounce.current = setTimeout(() => {
+      if (!trimmed) {
+        setSearchResults(null)
+        return
+      }
+      void invoke<SearchPage>('search_clips', {
+        request: { query: trimmed, scope, tagId: tagFilter, limit: 50 },
+      }).then(setSearchResults)
+    }, 200)
+    return () => {
+      if (searchDebounce.current) clearTimeout(searchDebounce.current)
+    }
+  }, [searchQuery, scope, tagFilter])
   useEffect(() => {
     const refresh = () =>
       void invoke<ClipPage>('list_clips', { request: { limit: 50, scope, tagId: tagFilter } }).then(
@@ -98,6 +123,12 @@ const App = () => {
       const typing =
         document.activeElement instanceof HTMLInputElement ||
         document.activeElement instanceof HTMLTextAreaElement
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+        return
+      }
       if (composing.current || typing || hasNativeSelection()) return
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
@@ -180,6 +211,34 @@ const App = () => {
         </div>
       </header>
       {notice && <p className="mb-3 text-sm text-amber-300">{notice}</p>}
+      <div className="mb-3 flex items-center gap-2">
+        <input
+          ref={searchInputRef}
+          className="flex-1 rounded bg-slate-800 px-3 py-1.5 text-sm outline-none ring-1 ring-slate-700 focus:ring-sky-500"
+          type="search"
+          placeholder="Search clips… (⌘F)"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          onKeyDown={e => e.key === 'Escape' && setSearchQuery('')}
+          aria-label="Search clips"
+        />
+        {searchSettings && (
+          <button
+            className="tag text-xs"
+            title={`Syntax: ${searchSettings.syntaxMode}`}
+            onClick={() => {
+              const next: SearchSettings = {
+                syntaxMode: searchSettings.syntaxMode === 'simple' ? 'advanced' : 'simple',
+              }
+              void invoke('update_search_settings', { settings: next }).then(() =>
+                setSearchSettings(next)
+              )
+            }}
+          >
+            {searchSettings.syntaxMode === 'simple' ? 'Simple' : 'Advanced'}
+          </button>
+        )}
+      </div>
       <nav className="mb-4 flex gap-2">
         {scopes.map(([value, label]) => (
           <button
@@ -216,7 +275,33 @@ const App = () => {
       </nav>
       <div className="grid min-h-[70vh] grid-cols-[minmax(18rem,2fr)_minmax(22rem,3fr)] gap-4">
         <section className="panel overflow-auto">
-          {page.items.length === 0 ? (
+          {searchResults !== null ? (
+            searchResults.items.length === 0 ? (
+              <p className="p-6 text-slate-400">No results for "{searchQuery}".</p>
+            ) : (
+              searchResults.items.map(result => (
+                <button
+                  key={result.clip.id}
+                  className="clip"
+                  aria-selected={selected?.clip.id === result.clip.id}
+                  onClick={() => {
+                    void select(result.clip)
+                  }}
+                >
+                  <div className="flex justify-between gap-2">
+                    <strong className="truncate">{result.clip.safeSummary}</strong>
+                  </div>
+                  {result.snippet && result.snippet !== result.clip.safeSummary && (
+                    <p className="mt-1 text-xs text-slate-300 line-clamp-2">{result.snippet}</p>
+                  )}
+                  <p className="mt-1 text-xs text-slate-400">
+                    {result.clip.sourceAppName ?? 'Unknown app'} ·{' '}
+                    {date(result.clip.capturedAt)}
+                  </p>
+                </button>
+              ))
+            )
+          ) : page.items.length === 0 ? (
             <p className="p-6 text-slate-400">No clips yet. Capture your clipboard to begin.</p>
           ) : (
             page.items.map(clip => (
@@ -248,7 +333,7 @@ const App = () => {
               </button>
             ))
           )}
-          {page.nextCursor && (
+          {!searchResults && page.nextCursor && (
             <button
               className="clip text-center text-sky-300"
               onClick={() =>

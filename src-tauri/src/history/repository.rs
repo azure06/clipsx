@@ -16,7 +16,7 @@ pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
 #[derive(Clone)]
 pub struct HistoryRepository {
     pub pool: SqlitePool,
-    managed_root: PathBuf,
+    pub managed_root: PathBuf,
 }
 
 pub fn now_ms() -> i64 {
