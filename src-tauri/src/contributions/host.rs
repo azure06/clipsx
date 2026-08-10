@@ -1,4 +1,4 @@
-//! Contribution host. Built-ins use the same narrow contracts intended for future WASM adapters.
+//! Contribution host for detectors and renderers.
 use crate::{
     contracts::RenderModel,
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},

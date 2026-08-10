@@ -1,4 +1,4 @@
-//! Host-owned transformer contributions. Results are deliberately ephemeral;
+//! Transformer contributions. Results are deliberately ephemeral;
 //! M5 can adapt WASM packages to this same pure input/output boundary.
 use crate::{
     contracts::RenderModel,

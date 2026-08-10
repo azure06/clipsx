@@ -1,3 +1,4 @@
+//! Storage roots, database preparation, managed files, and reset behavior.
 use crate::contracts::{FactoryResetResult, StartupStatus};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -336,7 +337,8 @@ mod tests {
     #[test]
     fn platform_matrix_has_all_supported_platforms() {
         let matrix: serde_json::Value =
-            serde_json::from_str(include_str!("../../docs/platform-format-matrix.json")).unwrap();
+            serde_json::from_str(include_str!("../../../docs/platform-format-matrix.json"))
+                .unwrap();
         let formats = matrix["formats"].as_array().unwrap();
         for platform in ["macos", "windows", "linux_x11"] {
             assert!(formats.iter().any(|entry| entry["platform"] == platform));

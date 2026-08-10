@@ -1,5 +1,4 @@
-//! Provider-neutral, derived text embeddings. Providers are host-owned; this
-//! contract is intentionally the same boundary a future hosted provider uses.
+//! Semantic chunking, indexing, and hybrid vector ranking.
 use crate::history::{new_id, now_ms, sha256, HistoryRepository};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;

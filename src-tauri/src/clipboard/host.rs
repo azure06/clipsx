@@ -1,3 +1,4 @@
+//! Existing coherent capture and platform implementation host.
 use crate::history::{
     capture_fingerprint, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
 };

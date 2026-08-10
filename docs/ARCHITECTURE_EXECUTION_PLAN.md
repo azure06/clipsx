@@ -2,6 +2,9 @@
 
 ## Purpose
 
+The canonical system design, module boundaries, and runtime flows are in
+[ARCHITECTURE.md](ARCHITECTURE.md). This document tracks milestone delivery.
+
 ClipsX will become a local-first programmable clipboard:
 
 `Capture -> Understand -> Render / Transform -> Copy or Paste`

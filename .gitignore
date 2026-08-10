@@ -5,6 +5,7 @@ node_modules/
 # Build outputs
 /dist
 /dist-ssr
+/coverage
 *.local
 
 # Editor directories

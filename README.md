@@ -1,5 +1,9 @@
 # ClipsX - Clipboard Manager
 
+See [Architecture](docs/ARCHITECTURE.md) for the system design and data flows,
+and the [Architecture Execution Plan](docs/ARCHITECTURE_EXECUTION_PLAN.md) for
+delivery milestones.
+
 > **Fast, privacy-first clipboard history with semantic search**
 
 Built with Tauri 2.x + React 19 + Rust + TypeScript

@@ -1,4 +1,5 @@
-//! FTS5-backed search: projection, queries, and settings.
+//! Search projection, FTS queries, and hybrid ranking.
+pub mod semantic;
 use crate::history::{now_ms, ClipSummary, HistoryRepository};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -289,14 +290,16 @@ pub async fn search(
     let requested_hybrid = match request.mode {
         Some(SearchMode::Fts) => false,
         Some(SearchMode::Hybrid) => true,
-        None => crate::embeddings::status(repo)
+        None => crate::search::semantic::status(repo)
             .await
             .map(|status| status.active_space_id.is_some())
             .unwrap_or(false),
     };
     let mut diagnostic = None;
     let effective_mode = if requested_hybrid {
-        match crate::embeddings::hybrid_matches(repo, raw, (limit * 4).max(100) as usize).await {
+        match crate::search::semantic::hybrid_matches(repo, raw, (limit * 4).max(100) as usize)
+            .await
+        {
             Ok(semantic) => {
                 let semantic_scores: std::collections::HashMap<_, _> = semantic
                     .into_iter()

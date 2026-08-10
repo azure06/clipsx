@@ -1,4 +1,4 @@
-//! Artifact producers: thumbnail generation and native OCR.
+//! Artifact scheduling, persistence, and built-in execution host.
 use crate::{
     foundation::ManagedFileStore,
     history::repository::safe_relative,
