@@ -191,6 +191,8 @@ async fn paste_clip_output(
         let _ = app.emit("paste-failed", &message);
         return Err(message);
     }
+    // Capture focus before hiding so we know which application to restore.
+    let focus_target = paste::capture_focus();
     if let Some(window) = app.get_webview_window("main") {
         if let Err(error) = window.hide() {
             let message = error.to_string();
@@ -199,7 +201,7 @@ async fn paste_clip_output(
         }
     }
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    if let Err(error) = paste::simulate_paste() {
+    if let Err(error) = paste::simulate_paste(focus_target) {
         let message = error.to_string();
         let _ = app.emit("paste-failed", &message);
         return Err(message);

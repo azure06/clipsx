@@ -474,12 +474,10 @@ fn x11_owner_token() -> Result<u64> {
     use x11rb::{
         connection::Connection,
         protocol::{
-            xproto::{
-                AtomEnum, ConnectionExt, CreateWindowAux, WindowClass, COPY_DEPTH_FROM_PARENT,
-                CURRENT_TIME,
-            },
+            xproto::{AtomEnum, ConnectionExt, CreateWindowAux, WindowClass},
             Event,
         },
+        COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
     };
     let (conn, screen_index) = x11rb::connect(None)?;
     let atom = conn.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
@@ -538,8 +536,7 @@ fn x11_own_selection(representations: Vec<CapturedRepresentation>) -> Result<()>
     use std::sync::mpsc;
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let result = x11_selection_loop(representations).map_err(|error| error.to_string());
-        let _ = ready_tx.send(result);
+        x11_selection_loop(representations, ready_tx);
     });
     ready_rx
         .recv_timeout(Duration::from_millis(250))
@@ -548,144 +545,161 @@ fn x11_own_selection(representations: Vec<CapturedRepresentation>) -> Result<()>
 }
 
 #[cfg(target_os = "linux")]
-fn x11_selection_loop(representations: Vec<CapturedRepresentation>) -> Result<()> {
+fn x11_selection_loop(
+    representations: Vec<CapturedRepresentation>,
+    ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
+) {
     use x11rb::{
         connection::Connection,
         protocol::{
             xproto::{
                 AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode,
-                SelectionNotifyEvent, WindowClass, COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
+                SelectionNotifyEvent, WindowClass,
             },
             Event,
         },
+        COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
     };
-    let (conn, screen_index) = x11rb::connect(None)?;
-    let atom = |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
-    let clipboard = atom(b"CLIPBOARD")?;
-    let targets = atom(b"TARGETS")?;
-    let timestamp = atom(b"TIMESTAMP")?;
-    let utf8 = atom(b"UTF8_STRING")?;
-    let atom_atom = AtomEnum::ATOM.into();
-    let integer = AtomEnum::INTEGER.into();
-    let window = conn.generate_id()?;
-    let root = conn.setup().roots[screen_index].root;
-    conn.create_window(
-        COPY_DEPTH_FROM_PARENT,
-        window,
-        root,
-        0,
-        0,
-        1,
-        1,
-        0,
-        WindowClass::INPUT_OUTPUT,
-        0,
-        &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
-    )?
-    .check()?;
-    conn.set_selection_owner(window, clipboard, CURRENT_TIME)?
+    let run = || -> Result<()> {
+        let (conn, screen_index) = x11rb::connect(None)?;
+        let atom =
+            |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
+        let clipboard = atom(b"CLIPBOARD")?;
+        let targets = atom(b"TARGETS")?;
+        let timestamp = atom(b"TIMESTAMP")?;
+        let utf8 = atom(b"UTF8_STRING")?;
+        let atom_atom = AtomEnum::ATOM.into();
+        let integer = AtomEnum::INTEGER.into();
+        let window = conn.generate_id()?;
+        let root = conn.setup().roots[screen_index].root;
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+        )?
         .check()?;
-    conn.flush()?;
+        conn.set_selection_owner(window, clipboard, CURRENT_TIME)?
+            .check()?;
+        conn.flush()?;
 
-    let mut values: std::collections::BTreeMap<u32, Vec<u8>> = Default::default();
-    let mut offered = vec![targets, timestamp];
-    for representation in &representations {
-        let target_name = representation
-            .native_type
-            .as_deref()
-            .or(representation.canonical_mime_type.as_deref())
-            .unwrap_or_default();
-        let target_name = match target_name {
-            "text/plain;charset=utf-8" => "text/plain",
-            other => other,
-        };
-        if target_name.is_empty() || !x11_writeback_allowed(target_name) {
-            continue;
-        }
-        let value = match &representation.payload {
-            CapturedPayload::Text(text) => text.as_bytes().to_vec(),
-            CapturedPayload::Binary(bytes) => bytes.clone(),
-            CapturedPayload::Files(files) => {
-                let mut text = files.join("\r\n");
-                text.push_str("\r\n");
-                text.into_bytes()
+        let mut values: std::collections::BTreeMap<u32, Vec<u8>> = Default::default();
+        let mut offered = vec![targets, timestamp];
+        for representation in &representations {
+            let target_name = representation
+                .native_type
+                .as_deref()
+                .or(representation.canonical_mime_type.as_deref())
+                .unwrap_or_default();
+            let target_name = match target_name {
+                "text/plain;charset=utf-8" => "text/plain",
+                other => other,
+            };
+            if target_name.is_empty() || !x11_writeback_allowed(target_name) {
+                continue;
             }
-        };
-        let target = atom(target_name.as_bytes())?;
-        if values.insert(target, value).is_none() {
-            offered.push(target);
-        }
-        if target_name == "text/plain" && values.get(&utf8).is_none() {
-            values.insert(utf8, values[&target].clone());
-            offered.push(utf8);
-        }
-    }
-    if values.is_empty() {
-        bail!("no X11 writeable representation is available")
-    }
-    loop {
-        match conn.wait_for_event()? {
-            Event::SelectionClear(event) if event.selection == clipboard => break,
-            Event::SelectionRequest(request) if request.selection == clipboard => {
-                let property = if request.property == AtomEnum::NONE.into() {
-                    request.target
-                } else {
-                    request.property
-                };
-                let mut accepted = true;
-                if request.target == targets {
-                    conn.change_property32(
-                        PropMode::REPLACE,
-                        request.requestor,
-                        property,
-                        atom_atom,
-                        &offered,
-                    )?
-                    .check()?;
-                } else if request.target == timestamp {
-                    conn.change_property32(
-                        PropMode::REPLACE,
-                        request.requestor,
-                        property,
-                        integer,
-                        &[CURRENT_TIME],
-                    )?
-                    .check()?;
-                } else if let Some(value) = values.get(&request.target) {
-                    conn.change_property8(
-                        PropMode::REPLACE,
-                        request.requestor,
-                        property,
-                        request.target,
-                        value,
-                    )?
-                    .check()?;
-                } else {
-                    accepted = false;
+            let value = match &representation.payload {
+                CapturedPayload::Text(text) => text.as_bytes().to_vec(),
+                CapturedPayload::Binary(bytes) => bytes.clone(),
+                CapturedPayload::Files(files) => {
+                    let mut text = files.join("\r\n");
+                    text.push_str("\r\n");
+                    text.into_bytes()
                 }
-                let response = SelectionNotifyEvent {
-                    response_type: 31,
-                    sequence: 0,
-                    time: request.time,
-                    requestor: request.requestor,
-                    selection: request.selection,
-                    target: request.target,
-                    property: if accepted {
-                        property
-                    } else {
-                        AtomEnum::NONE.into()
-                    },
-                };
-                conn.send_event(false, request.requestor, EventMask::NO_EVENT, response)?
-                    .check()?;
-                conn.flush()?;
+            };
+            let target = atom(target_name.as_bytes())?;
+            if values.insert(target, value).is_none() {
+                offered.push(target);
             }
-            _ => {}
+            if target_name == "text/plain" && values.get(&utf8).is_none() {
+                values.insert(utf8, values[&target].clone());
+                offered.push(utf8);
+            }
         }
+        if values.is_empty() {
+            bail!("no X11 writeable representation is available")
+        }
+
+        // Signal ownership acquired; the caller can now proceed. The loop
+        // below continues serving requests on this background thread until
+        // another owner replaces us (SelectionClear).
+        let _ = ready_tx.send(Ok(()));
+
+        loop {
+            match conn.wait_for_event()? {
+                Event::SelectionClear(event) if event.selection == clipboard => break,
+                Event::SelectionRequest(request) if request.selection == clipboard => {
+                    let property = if request.property == AtomEnum::NONE.into() {
+                        request.target
+                    } else {
+                        request.property
+                    };
+                    let mut accepted = true;
+                    if request.target == targets {
+                        conn.change_property32(
+                            PropMode::REPLACE,
+                            request.requestor,
+                            property,
+                            atom_atom,
+                            &offered,
+                        )?
+                        .check()?;
+                    } else if request.target == timestamp {
+                        conn.change_property32(
+                            PropMode::REPLACE,
+                            request.requestor,
+                            property,
+                            integer,
+                            &[CURRENT_TIME],
+                        )?
+                        .check()?;
+                    } else if let Some(value) = values.get(&request.target) {
+                        conn.change_property8(
+                            PropMode::REPLACE,
+                            request.requestor,
+                            property,
+                            request.target,
+                            value,
+                        )?
+                        .check()?;
+                    } else {
+                        accepted = false;
+                    }
+                    let response = SelectionNotifyEvent {
+                        response_type: 31,
+                        sequence: 0,
+                        time: request.time,
+                        requestor: request.requestor,
+                        selection: request.selection,
+                        target: request.target,
+                        property: if accepted {
+                            property
+                        } else {
+                            AtomEnum::NONE.into()
+                        },
+                    };
+                    conn.send_event(false, request.requestor, EventMask::NO_EVENT, response)?
+                        .check()?;
+                    conn.flush()?;
+                }
+                _ => {}
+            }
+        }
+        let _ = conn.destroy_window(window);
+        let _ = conn.flush();
+        Ok(())
+    };
+    // If setup fails before we signal ready, unblock the caller with the error.
+    if let Err(error) = run() {
+        let _ = ready_tx.send(Err(error.to_string()));
     }
-    let _ = conn.destroy_window(window);
-    let _ = conn.flush();
-    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -717,9 +731,8 @@ fn parse_uri_list(text: &str) -> Option<Vec<String>> {
 fn capture_x11_formats(reps: &mut Vec<CapturedRepresentation>) -> Result<()> {
     use x11rb::{
         connection::Connection,
-        protocol::xproto::{
-            ConnectionExt, CreateWindowAux, EventMask, WindowClass, COPY_DEPTH_FROM_PARENT,
-        },
+        protocol::xproto::{ConnectionExt, CreateWindowAux, EventMask, WindowClass},
+        COPY_DEPTH_FROM_PARENT,
     };
     let (conn, screen) = x11rb::connect(None)?;
     let selection = conn.intern_atom(false, b"CLIPBOARD")?.reply()?.atom;
@@ -822,9 +835,10 @@ fn x11_read_target(
     use x11rb::{
         connection::Connection,
         protocol::{
-            xproto::{AtomEnum, ConnectionExt, CURRENT_TIME},
+            xproto::{AtomEnum, ConnectionExt},
             Event,
         },
+        CURRENT_TIME,
     };
     conn.convert_selection(window, selection, target, property, CURRENT_TIME)?
         .check()?;

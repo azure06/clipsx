@@ -1,144 +1,53 @@
 # AGENTS.md
 
-## Purpose
+## Architecture
 
-This repository uses AI coding agents to assist with development.
-
-Priorities:
-
-1. Correctness
-2. Maintainability
-3. Consistency with the existing codebase
-4. Minimal, focused changes
-
-## Instruction Priority
-
-If instructions conflict, use this order:
-
-1. Direct user request
-2. Repository-specific instruction files (e.g. CLAUDE.md, CODEX.md)
-3. This file
-
-## Project Overview
-
-ClipsX is a Tauri desktop application for clipboard history management on macOS, Windows, and Linux.
-
-### Tech Stack
-
-* Frontend: React, TypeScript, Tailwind CSS, Vite
-* Backend: Rust, Tauri, SQLite, sqlx, tokio
-
-### Project Structure
+ClipsX is being redesigned as a local-first programmable clipboard:
 
 ```text
-src/                    React frontend
-src/features/           Feature-oriented UI modules
-src/shared/             Shared frontend types and utilities
-src-tauri/src/          Rust backend
-src-tauri/src/commands/ Tauri IPC commands
-src-tauri/src/models/   Domain models
-src-tauri/src/repositories/ SQLite persistence
-src-tauri/src/services/ Clipboard and platform logic
-docs/                   Supporting documentation
+Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
-## Before Changing Code
+[`docs/ARCHITECTURE_EXECUTION_PLAN.md`](docs/ARCHITECTURE_EXECUTION_PLAN.md)
+defines the target architecture and milestones. Read the relevant sections
+before making architectural or persistence changes; it takes precedence over
+assumptions inferred from the in-progress source tree.
 
-* Read affected files and surrounding code.
-* Follow existing architecture and conventions.
-* Extend existing patterns before introducing new ones.
-* Avoid unnecessary refactors.
-* Limit changes to the requested scope.
+* One capture has independent raw representations, additive semantic facets,
+  and rebuildable derived data. Do not reintroduce a single `ClipItem` content
+  type or sparse metadata model.
+* Store binary clipboard payloads in managed application files, with metadata
+  and relative paths in SQLite; do not add generic clipboard-payload BLOB or
+  JSON-metadata storage.
+* Renderer selection is UI policy, not persisted clip state.
+* Search indexes, embeddings, previews, OCR, and generation output are
+  rebuildable or versioned derived data, not canonical clip metadata.
+* Use the fresh domain-prefixed schema and documented reset flow. Do not add
+  v1 migrations, compatibility reads/writes, or dual schemas.
 
-## When Requirements Are Unclear
+## Legacy v1
 
-* State assumptions explicitly.
-* Prefer asking for clarification over guessing.
+[`docs/LEGACY_V1_REFERENCE.md`](docs/LEGACY_V1_REFERENCE.md) identifies the
+read-only `archive/v1-pre-m0` branch and tag. It may inform visual behavior,
+keyboard interaction, accessibility, tests, and platform format discovery;
+do not restore v1 schema, IPC payloads, semantic-model services, sparse
+metadata, or compatibility behavior.
 
-## Domain-Specific Rules
+## Clipboard Fidelity
 
-* Do not guess UTI or OLE clipboard types. If a required type is unavailable, skip writing that content.
-* Treat the documented DB-field → clipboard mapping in `src-tauri/src/commands/mod.rs` as the source of truth for clipboard reconstruction.
-* In shared reconstruction helpers, prefer the `[RECONSTRUCT]` log prefix and avoid `[COPY]`.
+* Do not guess UTI, OLE, or other native clipboard types.
+* Reconstruct only formats explicitly supported by the platform adapter;
+  adapters regenerate platform wrappers when needed.
+* The execution plan's representation byte contract and supported-format
+  matrix are the capture and reconstruction source of truth, not legacy code.
+* Use `[RECONSTRUCT]`, not `[COPY]`, for shared reconstruction-helper logs.
 
-## Code Quality
+## Workflow
 
-### Rust
-
-* Follow idiomatic Rust practices.
-* Prefer explicit error handling.
-* Avoid unnecessary cloning and allocations.
-* Keep functions focused and reasonably small.
-
-### TypeScript
-
-* Prefer strict typing.
-* Avoid `any` unless unavoidable.
-* Follow existing project patterns.
-* Favor readability over cleverness.
-
-## Validation
-
-Run the smallest relevant checks for the change.
-
-Common commands:
-
-```bash
-npm run type-check
-npm run lint
-npm run format
-
-cargo fmt --all
-cargo clippy --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-## Testing
-
-When behavior changes:
-
-* Run relevant tests.
-* Add or update tests when appropriate.
-* Prefer targeted validation before full test suites.
-
-## Dependencies
-
-* Do not introduce new dependencies unless necessary.
-* Prefer existing libraries already used by the project.
-* Explain why a new dependency is required.
-
-## Commits
-
-Use conventional commit messages:
-
-```text
-<type>: <short description>
-```
-
-Examples:
-
-```text
-fix: prevent duplicate window initialization
-feat: add semantic search cache
-refactor: simplify embedding pipeline
-```
-
-Do not add AI co-author trailers or agent signatures.
-
-## Security
-
-Never:
-
-* Commit secrets.
-* Hardcode credentials.
-* Log sensitive information.
-* Disable security checks without justification.
-
-## Agent Workflow
-
-1. Inspect relevant files.
-2. Explain the intended approach.
-3. Make the smallest reasonable change.
-4. Run relevant formatting and validation commands.
-5. Summarize exactly what changed.
-6. Report assumptions, limitations, or remaining concerns.
+* Make minimal, focused changes and preserve local conventions.
+* Add dependencies only when necessary and explain why.
+* Run the smallest relevant checks; common commands are `npm run type-check`,
+  `npm run lint`, `cargo fmt --all`, `cargo clippy --manifest-path
+  src-tauri/Cargo.toml`, and `cargo test --manifest-path src-tauri/Cargo.toml`.
+* Use conventional commit messages and do not add AI co-author trailers.
+* Never commit secrets, hardcode credentials, or log sensitive information.

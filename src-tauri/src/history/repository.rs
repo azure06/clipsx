@@ -771,6 +771,8 @@ mod tests {
     #[test]
     fn rejects_unsafe_paths() {
         assert!(!safe_relative("../x"));
+        // Windows drive prefixes are only recognized by std::path on Windows.
+        #[cfg(target_os = "windows")]
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
     }
