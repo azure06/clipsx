@@ -8,12 +8,12 @@ ClipsX is being redesigned as a local-first programmable clipboard:
 Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for
-stable system design, domain boundaries, and architecture invariants.
-[`docs/ARCHITECTURE_EXECUTION_PLAN.md`](docs/ARCHITECTURE_EXECUTION_PLAN.md)
-defines milestone scope, sequencing, and acceptance criteria. Read the
-relevant sections before architectural or persistence changes; documentation
-takes precedence over assumptions inferred from the in-progress source tree.
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for stable
+system design, domain boundaries, and architecture invariants.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) defines milestone scope, sequencing, and
+acceptance criteria. Read the relevant sections before architectural or
+persistence changes; documentation takes precedence over assumptions inferred
+from the in-progress source tree.
 
 * One capture has independent raw representations, additive semantic facets,
   and rebuildable derived data. Do not reintroduce a single `ClipItem` content
@@ -49,7 +49,7 @@ metadata, or compatibility behavior.
 * Make minimal, focused changes and preserve local conventions.
 * Whenever a change affects the architecture, system design, domain
   boundaries, persistence model, or architecture invariants, update
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) in the same change so it
+  the relevant stable architecture document in the same change so it
   remains the source of truth.
 * Add dependencies only when necessary and explain why.
 * Run the smallest relevant checks; common commands are `npm run type-check`,

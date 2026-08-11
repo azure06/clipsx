@@ -1,4 +1,4 @@
-# ClipsX Architecture and Execution Plan
+# ClipsX Roadmap
 
 ## Purpose
 
@@ -14,6 +14,10 @@ local SQLite history is not migrated. The redesign preserves native clipboard
 data, especially images and Office/OLE payloads; it removes only persisted
 parser and renderer state.
 
+
+## Status
+
+**✅ Shipped:** M0–M4a. **🧪 Ready for validation:** M5, including the extension and registry work now in the current change set. **Deferred:** optional local visual search and additional hosted/user-selected providers and generation; their prior scope is preserved below without treating either as a current milestone.
 ## Decisions Locked for This Program
 
 - SQLite is the catalog, relationship, query, and configuration store.
@@ -435,7 +439,7 @@ available only in Developer Mode with a persistent warning.
 
 ## Execution Milestones
 
-### M0 — Foundation and reset
+### ✅ M0 — Foundation and reset
 
 - [ ] Add architecture decision records for storage, renderer policy, WASM,
   providers, and byte-exact versus normalized reconstruction rules.
@@ -457,7 +461,7 @@ available only in Developer Mode with a persistent warning.
 contracts, and reset behavior are approved; fresh setup and reset work
 reliably; legacy databases are rejected with a clear reset instruction.
 
-### M1 — Multi-representation capture
+### ✅ M1 — Multi-representation capture
 
 - [ ] Replace `ClipItem`, `content_type`, `detected_type`, and `metadata`.
 - [ ] Implement the `clip_*` repositories and managed-asset lifecycle.
@@ -476,7 +480,7 @@ reliably; legacy databases are rejected with a clear reset instruction.
 **Exit:** A rich Office capture survives restart with all its raw
 representations intact.
 
-### M2 — Facets and renderer resolution
+### ✅ M2 — Facets and renderer resolution
 
 - [ ] Define built-in facets and extension namespaces.
 - [ ] Implement candidate routing and `content_detection_jobs`.
@@ -488,7 +492,7 @@ representations intact.
 **Exit:** JSON, HTML, Office, and ambiguous number/date content can expose
 multiple views without changing clip storage.
 
-### M3 — Transformer and paste pipeline
+### ✅ M3 — Transformer and paste pipeline
 
 - [ ] Implement JSON, Base64, curl-to-fetch, JSON-to-TypeScript,
   HTML-to-Markdown, JWT, and URL utilities.
@@ -499,7 +503,7 @@ multiple views without changing clip storage.
 
 **Exit:** Previewed, copied, and pasted transformed bytes are identical.
 
-### M4 — Artifacts, FTS, and provider foundation
+### ✅ M4 — Artifacts, FTS, and provider foundation
 
 - [ ] Move OCR, thumbnails, and approved model output into `artifact_*`.
 - [ ] Build/rebuild `search_documents` from approved sources.
@@ -512,11 +516,11 @@ multiple views without changing clip storage.
 **Exit:** FTS, local OCR where available, artifact provenance, and the
 provider/index lifecycle work without any configured model.
 
-### M4a — Ollama text embeddings
+### ✅ M4a — Ollama text embeddings
 
 - [ ] Add loopback Ollama endpoint validation, installed-model discovery,
   explicit model selection, and embedding-capability probing. Treat a
-  non-loopback endpoint as remote and require the M6 consent flow.
+  non-loopback endpoint as remote and require the deferred hosted-provider consent flow.
 - [ ] Add local provider-profile configuration, embedding spaces, consent, and
   resumable reindexing.
 - [ ] Remove hard-wired BGE text-search services, model artifacts, and
@@ -525,7 +529,30 @@ provider/index lifecycle work without any configured model.
 **Exit:** A user can use FTS alone or select an installed Ollama embedding
 model; switching or clearing the profile safely rebuilds the local index.
 
-### M4b — Optional local visual provider
+### 🧪 M5 — WASM extensions and registry
+
+- [ ] Register built-ins through extension contracts.
+- [ ] Validate contracts before freezing Extension API v1.
+- [ ] Implement manifest/package validation and WASM resource limits.
+- [ ] Implement verified registry installation, cache, failure quarantine, and
+  the Extensions UI.
+
+**Exit:** Verified extensions safely detect, render, and transform; invalid
+checksums, traps, and timeouts are rejected.
+
+### Planned M6 — Release validation
+
+- [ ] Remove obsolete legacy schema, parser, asset, and frontend type-routing
+  code.
+- [ ] Document supported formats, reset behavior, providers, extensions, and
+  local-configuration limits.
+- [ ] Run the full test matrix on macOS, Windows, and Linux/X11.
+
+## Deferred capabilities
+
+These capabilities remain documented because they affect the stable provider and data-model boundaries, but they are outside the current M0–M5 validation scope. They are not milestones in the present roadmap.
+
+### Optional local visual search
 
 - [ ] Refactor the existing visual-model implementation into an optional local
   provider package with manual installation, removal, and version reporting.
@@ -541,18 +568,8 @@ model; switching or clearing the profile safely rebuilds the local index.
 **Exit:** Users can opt into local visual search without a mandatory model;
 text and visual spaces remain isolated and independently rebuildable.
 
-### M5 — WASM extensions and registry
 
-- [ ] Register built-ins through extension contracts.
-- [ ] Validate contracts before freezing Extension API v1.
-- [ ] Implement manifest/package validation and WASM resource limits.
-- [ ] Implement verified registry installation, cache, failure quarantine, and
-  the Extensions UI.
-
-**Exit:** Verified extensions safely detect, render, and transform; invalid
-checksums, traps, and timeouts are rejected.
-
-### M6 — Additional user-selected providers and generation
+### Additional providers and generation
 
 - [ ] Add the OpenAI-compatible text-embedding adapter after the Ollama path
   is stable.
@@ -565,14 +582,6 @@ checksums, traps, and timeouts are rejected.
 
 **Exit:** Users can choose disabled, Ollama, or OpenAI-compatible text
 providers and explicitly use generation without silent data transmission.
-
-### M7 — Release validation
-
-- [ ] Remove obsolete legacy schema, parser, asset, and frontend type-routing
-  code.
-- [ ] Document supported formats, reset behavior, providers, extensions, and
-  local-configuration limits.
-- [ ] Run the full test matrix on macOS, Windows, and Linux/X11.
 
 ## Test Plan
 
