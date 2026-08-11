@@ -107,7 +107,7 @@ impl ExtensionRuntime {
         config.max_wasm_stack(2 * 1024 * 1024);
         let engine = Engine::new(&config).map_err(wasmtime_error)?;
         let ticker = engine.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
             loop {
                 interval.tick().await;

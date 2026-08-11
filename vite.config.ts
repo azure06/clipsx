@@ -26,7 +26,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           react: ['react', 'react-dom'],
-          tauri: ['@tauri-apps/api', '@tauri-apps/plugin-shell'],
+          tauri: ['@tauri-apps/api'],
         },
       },
     },

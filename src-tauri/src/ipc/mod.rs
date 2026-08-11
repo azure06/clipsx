@@ -871,6 +871,10 @@ pub(crate) fn run() {
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
                 .expect("Failed to prepare the ClipsX v2 foundation");
+            if schema_state != foundation::SchemaState::Ready {
+                let status = foundation::startup_status(schema_state);
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, status.message).into());
+            }
             let history = tauri::async_runtime::block_on(HistoryRepository::connect(
                 &roots.database(),
                 roots.clipboard_data(),
