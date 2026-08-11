@@ -449,6 +449,24 @@ impl HistoryRepository {
             .await?;
         self.cleanup_orphans().await
     }
+    pub async fn clear_history(&self) -> Result<Vec<String>> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM clip_items WHERE lifecycle_state='ready'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for id in &ids {
+            self.delete(id).await?;
+        }
+        Ok(ids)
+    }
+    pub async fn clips_for_tag(&self, tag_id: &str) -> Result<Vec<String>> {
+        sqlx::query_scalar("SELECT clip_id FROM catalog_clip_tags WHERE tag_id=?")
+            .bind(tag_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(Into::into)
+    }
     pub async fn tags(&self) -> Result<Vec<Tag>> {
         let rows = sqlx::query("SELECT id,name,color FROM catalog_tags ORDER BY name")
             .fetch_all(&self.pool)
@@ -579,6 +597,125 @@ impl HistoryRepository {
             sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(k).bind(v).bind(now_ms()).execute(&self.pool).await?;
         }
         self.enforce_retention(s).await
+    }
+
+    pub async fn app_settings(&self) -> Result<AppSettings> {
+        let mut settings = AppSettings {
+            capture: self.settings().await?,
+            ..AppSettings::default()
+        };
+        for (key, value) in
+            sqlx::query("SELECT key,value_json FROM config_profile_values WHERE key LIKE 'ui.%'")
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+        {
+            match key.as_str() {
+                "ui.theme" => settings.theme = serde_json::from_str(&value)?,
+                "ui.language" => settings.language = serde_json::from_str(&value)?,
+                "ui.activation_mode" => settings.activation_mode = serde_json::from_str(&value)?,
+                "ui.default_output_format" => {
+                    settings.default_output_format = serde_json::from_str(&value)?
+                }
+                "ui.paste_on_enter" => settings.paste_on_enter = serde_json::from_str(&value)?,
+                "ui.hide_on_copy" => settings.hide_on_copy = serde_json::from_str(&value)?,
+                "ui.hide_on_blur" => settings.hide_on_blur = serde_json::from_str(&value)?,
+                "ui.always_on_top" => settings.always_on_top = serde_json::from_str(&value)?,
+                "ui.show_copy_toast" => settings.show_copy_toast = serde_json::from_str(&value)?,
+                "ui.auto_clear_minutes" => {
+                    settings.auto_clear_minutes = serde_json::from_str(&value)?
+                }
+                "ui.clear_on_exit" => settings.clear_on_exit = serde_json::from_str(&value)?,
+                "ui.auto_start" => settings.auto_start = serde_json::from_str(&value)?,
+                _ => {}
+            }
+        }
+        for (key, value) in sqlx::query(
+            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut')",
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+        {
+            match key.as_str() {
+                "capture.filters" => settings.capture_filters = serde_json::from_str(&value)?,
+                "capture.excluded_apps" => settings.excluded_apps = serde_json::from_str(&value)?,
+                "window.global_shortcut" => settings.global_shortcut = serde_json::from_str(&value)?,
+                _ => {}
+            }
+        }
+        Ok(settings)
+    }
+
+    pub async fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        self.update_settings(&settings.capture).await?;
+        for (key, value) in [
+            ("ui.theme", serde_json::to_string(&settings.theme)?),
+            ("ui.language", serde_json::to_string(&settings.language)?),
+            (
+                "ui.activation_mode",
+                serde_json::to_string(&settings.activation_mode)?,
+            ),
+            (
+                "ui.default_output_format",
+                serde_json::to_string(&settings.default_output_format)?,
+            ),
+            (
+                "ui.paste_on_enter",
+                serde_json::to_string(&settings.paste_on_enter)?,
+            ),
+            (
+                "ui.hide_on_copy",
+                serde_json::to_string(&settings.hide_on_copy)?,
+            ),
+            (
+                "ui.hide_on_blur",
+                serde_json::to_string(&settings.hide_on_blur)?,
+            ),
+            (
+                "ui.always_on_top",
+                serde_json::to_string(&settings.always_on_top)?,
+            ),
+            (
+                "ui.show_copy_toast",
+                serde_json::to_string(&settings.show_copy_toast)?,
+            ),
+            (
+                "ui.auto_clear_minutes",
+                serde_json::to_string(&settings.auto_clear_minutes)?,
+            ),
+            (
+                "ui.clear_on_exit",
+                serde_json::to_string(&settings.clear_on_exit)?,
+            ),
+            (
+                "ui.auto_start",
+                serde_json::to_string(&settings.auto_start)?,
+            ),
+        ] {
+            sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+                .bind(key).bind(value).bind(now_ms()).execute(&self.pool).await?;
+        }
+        for (key, value) in [
+            (
+                "capture.filters",
+                serde_json::to_string(&settings.capture_filters)?,
+            ),
+            (
+                "capture.excluded_apps",
+                serde_json::to_string(&settings.excluded_apps)?,
+            ),
+            (
+                "window.global_shortcut",
+                serde_json::to_string(&settings.global_shortcut)?,
+            ),
+        ] {
+            sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+                .bind(key).bind(value).bind(now_ms()).execute(&self.pool).await?;
+        }
+        Ok(())
     }
     async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
         if let Some(max) = s.max_ordinary_clips {

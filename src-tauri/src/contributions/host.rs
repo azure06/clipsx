@@ -35,6 +35,13 @@ pub struct RendererDescriptor {
     pub priority: i32,
     pub trusted_html: bool,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectorDescriptor {
+    pub id: String,
+    pub version: String,
+    pub display_name: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipViewDescriptor {
@@ -482,6 +489,228 @@ impl DetectorContribution for TableDetector {
     }
 }
 
+struct EmailDetector;
+impl DetectorContribution for EmailDetector {
+    fn id(&self) -> &'static str {
+        "core.contact.email"
+    }
+    fn name(&self) -> &'static str {
+        "Email"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        value.len() <= 320 && value.contains('@') && !value.contains(char::is_whitespace)
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        let Some((local, domain)) = value.rsplit_once('@') else {
+            return vec![];
+        };
+        if local.is_empty()
+            || domain.is_empty()
+            || !domain.contains('.')
+            || domain.starts_with('.')
+            || domain.ends_with('.')
+        {
+            return vec![];
+        }
+        vec![DetectedFacet {
+            id: self.id(),
+            name: self.name(),
+            payload: json!({"schemaVersion":1,"address":value,"domain":domain}),
+        }]
+    }
+}
+
+struct ColorDetector;
+impl DetectorContribution for ColorDetector {
+    fn id(&self) -> &'static str {
+        "core.value.color"
+    }
+    fn name(&self) -> &'static str {
+        "Color"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        matches!(value.len(), 4 | 7 | 9) && value.starts_with('#')
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        if value.starts_with('#') && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            vec![DetectedFacet {
+                id: self.id(),
+                name: self.name(),
+                payload: json!({"schemaVersion":1,"hex":value}),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct CodeDetector;
+impl DetectorContribution for CodeDetector {
+    fn id(&self) -> &'static str {
+        "core.text.code"
+    }
+    fn name(&self) -> &'static str {
+        "Code"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        value.contains("function ")
+            || value.contains("const ")
+            || value.contains("let ")
+            || value.contains("def ")
+            || value.contains("class ")
+            || value.contains("=>")
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        let language = if value.contains("def ") || value.contains("import ") {
+            "python"
+        } else if value.contains("function ") || value.contains("const ") || value.contains("=>") {
+            "javascript"
+        } else {
+            "unknown"
+        };
+        vec![DetectedFacet {
+            id: self.id(),
+            name: self.name(),
+            payload: json!({"schemaVersion":1,"language":language}),
+        }]
+    }
+}
+
+struct MathDetector;
+impl DetectorContribution for MathDetector {
+    fn id(&self) -> &'static str {
+        "core.math.expression"
+    }
+    fn name(&self) -> &'static str {
+        "Math expression"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        !value.is_empty()
+            && value.len() <= 256
+            && value
+                .chars()
+                .any(|c| matches!(c, '+' | '-' | '*' | '/' | '=' | '^'))
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        if value.chars().all(|c| {
+            c.is_ascii_digit()
+                || c.is_ascii_whitespace()
+                || matches!(c, '+' | '-' | '*' | '/' | '=' | '^' | '(' | ')' | '.')
+        }) {
+            vec![DetectedFacet {
+                id: self.id(),
+                name: self.name(),
+                payload: json!({"schemaVersion":1,"expression":value}),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct PhoneDetector;
+impl DetectorContribution for PhoneDetector {
+    fn id(&self) -> &'static str {
+        "core.contact.phone"
+    }
+    fn name(&self) -> &'static str {
+        "Phone"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        s.text.trim().len() <= 32
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+        if (7..=15).contains(&digits.len())
+            && value
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '(' | ')' | ' ' | '.'))
+        {
+            vec![DetectedFacet {
+                id: self.id(),
+                name: self.name(),
+                payload: json!({"schemaVersion":1,"display":value,"digits":digits}),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct PathDetector;
+impl DetectorContribution for PathDetector {
+    fn id(&self) -> &'static str {
+        "core.file.path"
+    }
+    fn name(&self) -> &'static str {
+        "Path"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        value.starts_with('/')
+            || value.starts_with("~/")
+            || (value.len() > 3
+                && value.as_bytes()[1] == b':'
+                && matches!(value.as_bytes()[2], b'\\' | b'/'))
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        if self.candidate(s) && !value.contains('\n') {
+            vec![DetectedFacet {
+                id: self.id(),
+                name: self.name(),
+                payload: json!({"schemaVersion":1,"path":value}),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+struct SecretDetector;
+impl DetectorContribution for SecretDetector {
+    fn id(&self) -> &'static str {
+        "core.security.secret"
+    }
+    fn name(&self) -> &'static str {
+        "Potential secret"
+    }
+    fn candidate(&self, s: &TextSource) -> bool {
+        let value = s.text.trim();
+        value.len() >= 20 && value.len() <= 4096
+    }
+    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
+        let value = s.text.trim();
+        let marker = [
+            "api_key", "apikey", "secret", "token", "password", "bearer ",
+        ]
+        .iter()
+        .any(|marker| value.to_ascii_lowercase().contains(marker));
+        let compact = value.chars().filter(|c| !c.is_ascii_whitespace()).count() >= 32
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '=' | '.'));
+        if marker || compact {
+            vec![DetectedFacet {
+                id: self.id(),
+                name: self.name(),
+                payload: json!({"schemaVersion":1,"length":value.len()}),
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
 static JSON: JsonDetector = JsonDetector;
 static URL: UrlDetector = UrlDetector;
 static JWT: JwtDetector = JwtDetector;
@@ -489,8 +718,29 @@ static NUMBER: NumberDetector = NumberDetector;
 static DATE: DateDetector = DateDetector;
 static MARKDOWN: MarkdownDetector = MarkdownDetector;
 static TABLE: TableDetector = TableDetector;
+static EMAIL: EmailDetector = EmailDetector;
+static COLOR: ColorDetector = ColorDetector;
+static CODE: CodeDetector = CodeDetector;
+static MATH: MathDetector = MathDetector;
+static PHONE: PhoneDetector = PhoneDetector;
+static PATH: PathDetector = PathDetector;
+static SECRET: SecretDetector = SecretDetector;
 fn detectors() -> Vec<&'static dyn DetectorContribution> {
-    vec![&JSON, &URL, &JWT, &NUMBER, &DATE, &MARKDOWN, &TABLE]
+    vec![
+        &JSON, &URL, &JWT, &NUMBER, &DATE, &MARKDOWN, &TABLE, &EMAIL, &COLOR, &CODE, &MATH, &PHONE,
+        &PATH, &SECRET,
+    ]
+}
+
+pub fn detector_descriptors() -> Vec<DetectorDescriptor> {
+    detectors()
+        .into_iter()
+        .map(|detector| DetectorDescriptor {
+            id: detector.id().into(),
+            version: detector.version().into(),
+            display_name: detector.name().into(),
+        })
+        .collect()
 }
 
 pub async fn initialize(repo: &HistoryRepository) -> Result<()> {

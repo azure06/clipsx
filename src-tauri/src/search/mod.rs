@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
-const PROJECTION_VERSION: i64 = 1;
+const PROJECTION_VERSION: i64 = 2;
 
 // ─── Domain ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +38,10 @@ pub struct SearchRequest {
     pub limit: Option<u32>,
     pub cursor: Option<String>,
     pub mode: Option<SearchMode>,
+    #[serde(default)]
+    pub representation_families: Vec<String>,
+    #[serde(default)]
+    pub facet_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,7 +127,17 @@ async fn build_search_text(repo: &HistoryRepository, clip_id: &str) -> Result<St
         parts.push(note);
     }
 
-    // 2. Plain-text representations (ordered by capture_priority, ordinal)
+    // 2. User-assigned tags. Tags are searchable intent, not canonical payload.
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM catalog_tags t \
+         JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name",
+    )
+    .bind(clip_id)
+    .fetch_all(&repo.pool)
+    .await?;
+    parts.extend(tags);
+
+    // 3. Text representations (ordered by capture_priority, ordinal)
     let texts: Vec<String> = sqlx::query_scalar(
         "SELECT t.text_value FROM clip_representations r \
          JOIN clip_text_values t ON t.representation_id = r.id \
@@ -136,7 +150,7 @@ async fn build_search_text(repo: &HistoryRepository, clip_id: &str) -> Result<St
     .await?;
     parts.extend(texts);
 
-    // 3. OCR text from artifact (if any)
+    // 4. OCR text from artifact (if any)
     if let Some(ocr) = crate::artifacts::ocr_text(repo, clip_id).await {
         parts.push(ocr);
     }
@@ -178,7 +192,8 @@ pub async fn search(
     settings: &SearchSettings,
 ) -> Result<SearchPage> {
     let raw = request.query.trim();
-    if raw.is_empty() {
+    if raw.is_empty() && request.representation_families.is_empty() && request.facet_ids.is_empty()
+    {
         return Ok(SearchPage {
             items: Vec::new(),
             total: 0,
@@ -188,10 +203,10 @@ pub async fn search(
         });
     }
 
-    let fts_query = match settings.syntax_mode {
+    let fts_query = (!raw.is_empty()).then(|| match settings.syntax_mode {
         SyntaxMode::Simple => to_simple_query(raw),
         SyntaxMode::Advanced => raw.to_string(),
-    };
+    });
 
     let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
     let scope = request.scope.as_deref().unwrap_or("all");
@@ -206,12 +221,14 @@ pub async fn search(
                    JOIN clip_text_values t ON t.representation_id=r.id \
                    WHERE r.clip_id=c.id AND r.lifecycle_state='ready' \
                    ORDER BY r.ordinal LIMIT 1),'Binary or file content'), \
-         fts.rank \
+         CASE WHEN ? THEN fts.rank ELSE 0 END \
          FROM search_documents_fts fts \
          JOIN clip_items c ON c.id = fts.clip_id \
-         WHERE fts.search_text MATCH ? \
-           AND c.lifecycle_state = 'ready'",
+         WHERE c.lifecycle_state = 'ready'",
     );
+    if fts_query.is_some() {
+        sql.push_str(" AND fts.search_text MATCH ?");
+    }
     if scope == "favorites" {
         sql.push_str(" AND c.is_favorite=1");
     } else if scope == "pinned" {
@@ -222,14 +239,57 @@ pub async fn search(
             " AND EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id AND ct.tag_id=?)",
         );
     }
+    if !request.representation_families.is_empty() {
+        sql.push_str(" AND (");
+        for (index, _) in request.representation_families.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" OR ");
+            }
+            sql.push_str(
+                "EXISTS(SELECT 1 FROM clip_representations sr WHERE sr.clip_id=c.id \
+                 AND sr.lifecycle_state='ready' AND \
+                 ((?='text' AND sr.storage_kind='text') OR \
+                  (?='image' AND sr.canonical_mime_type LIKE 'image/%') OR \
+                  (?='files' AND sr.storage_kind='file_list') OR \
+                  (?='html' AND sr.canonical_mime_type='text/html') OR \
+                  (?='rtf' AND sr.canonical_mime_type IN ('text/rtf','application/rtf')) OR \
+                  (?='office' AND (sr.native_type LIKE '%office%' OR sr.native_type LIKE '%word%' OR sr.native_type LIKE '%excel%' OR sr.native_type LIKE '%powerpoint%')) OR \
+                  (?='document' AND sr.canonical_mime_type IN ('application/pdf','image/svg+xml'))))",
+            );
+        }
+        sql.push(')');
+    }
+    if !request.facet_ids.is_empty() {
+        sql.push_str(" AND (");
+        for (index, _) in request.facet_ids.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" OR ");
+            }
+            sql.push_str(
+                "EXISTS(SELECT 1 FROM content_clip_facets sf WHERE sf.clip_id=c.id AND sf.facet_id=?)",
+            );
+        }
+        sql.push(')');
+    }
     if request.cursor.is_some() {
         sql.push_str(" AND (fts.rank > ? OR (fts.rank = ? AND c.id < ?))");
     }
     sql.push_str(" ORDER BY fts.rank, c.id DESC LIMIT ?");
 
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&fts_query);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(fts_query.is_some());
+    if let Some(fts_query) = &fts_query {
+        q = q.bind(fts_query);
+    }
     if let Some(tag) = &request.tag_id {
         q = q.bind(tag);
+    }
+    for family in &request.representation_families {
+        for _ in 0..7 {
+            q = q.bind(family);
+        }
+    }
+    for facet_id in &request.facet_ids {
+        q = q.bind(facet_id);
     }
     if let Some(cursor) = &request.cursor {
         let (rank_s, id) = cursor.split_once('|').context("invalid search cursor")?;
@@ -260,7 +320,9 @@ pub async fn search(
         })
         .collect();
         let rank: f64 = row.get(10);
-        let snippet = build_snippet(&fts_query, row.get::<Option<String>, _>(9).as_deref());
+        let snippet = fts_query
+            .as_deref()
+            .and_then(|query| build_snippet(query, row.get::<Option<String>, _>(9).as_deref()));
         items.push(SearchResult {
             clip: ClipSummary {
                 id: clip_id,

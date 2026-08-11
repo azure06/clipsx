@@ -168,6 +168,37 @@ Renderer choice is computed from ready representations, facets, installed contri
 
 `TransformService` runs a built-in transformer from one representation plus validated parameters, caches exact outputs/preview under a short-lived result ID, and reuses exactly those bytes for preview/copy/paste/save. Save makes a new clip with `clip_transform_provenance`; it never overwrites source. Original output reconstructs every explicitly supported capture, plain output selects supported text, transformed output uses cached result representations; self-write suppression, focus restoration, synthetic paste, and `[RECONSTRUCT]` helper logs apply.
 
+### UI parity and interaction contract
+
+The desktop UI is a product boundary, not a diagnostic surface for backend
+capabilities. The history workspace automatically renders the resolver's first
+view for a selected clip, exposes alternate representation and facet views as
+tabs, and keeps raw representations in an advanced inspector. Selecting a
+renderer never changes clipboard output.
+
+Normal copy and paste reconstruct the original supported representation set.
+Primary-action preferences may select original or plain-text output, but active
+renderer selection may not. Transformations are explicit utilities that produce
+different bytes; preview, copy, paste, and save of a transform reuse the same
+result. Parsed meaning is rebuildable, versioned facet or artifact data, never
+canonical clip metadata.
+
+The archived v1 shell, keyboard behavior, previews, actions, settings, and
+desktop integrations are parity references. Reintroduce them through v2
+contracts, never through `ClipItem`, legacy IPC shapes, or the legacy schema.
+
+The frontend list uses lightweight `ClipSummary` rows. Selecting an item builds
+an ephemeral `ClipPresentation` from `ClipDetail`, `ClipViewSet`, and the chosen
+`RenderModel`; it does not persist a UI-selected content type. The restored v1
+row components are being rewired to this presentation contract incrementally;
+the temporary row adapter is frontend-only and may not cross IPC or persistence.
+This avoids loading every representation for history rows and keeps renderer
+policy outside canonical storage.
+
+Search documents are derived from canonical textual representations, safe
+extractions/artifacts, notes, and tag names. A note or tag mutation refreshes
+the document and queues re-embedding when a text provider is configured.
+
 ## Invariants and code map
 
 Canonical capture commits before detector/artifact/index work; derived data may be cleared/rebuilt. FTS works with providers disabled; hosted calls require explicit consent; secrets stay in OS secure storage and never logs/SQLite. Community code runs only as capability-free M5 WASM components; trusted provider adapters receive explicit immutable inputs.

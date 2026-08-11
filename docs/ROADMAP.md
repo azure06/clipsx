@@ -18,6 +18,27 @@ parser and renderer state.
 ## Status
 
 **✅ Shipped:** M0–M4a. **🧪 Ready for validation:** M5, including the extension and registry work now in the current change set. **Deferred:** optional local visual search and additional hosted/user-selected providers and generation; their prior scope is preserved below without treating either as a current milestone.
+
+## UI parity program
+
+Backend milestones are not complete product milestones until their user-facing
+workflow is available in the desktop application. The parity program restores
+the archived v1 desktop shell, history interaction, automatic rendering,
+previews, contextual actions, settings, desktop integrations, account sign-in,
+provider management, and extension management through v2 contracts.
+
+- Automatic rendering works from the resolver without a transform.
+- Original copy/paste reconstructs supported representations independent of the
+  selected renderer; transforms remain explicit new-byte operations.
+- All supported capture categories are enabled by default. Advanced filters may
+  intentionally discard categories only after a coherent snapshot is read.
+- Vault, entitlement gating, remote sync, visual search, and generation are
+  outside this parity program. Ollama text semantic search is included.
+- Every restored visible behavior needs an automated frontend, integration, or
+  desktop acceptance test before the program is complete.
+
+Current gates are tracked in [UI_PARITY.md](UI_PARITY.md): data/search and
+resolver preview are in progress; desktop account/integration remains pending.
 ## Decisions Locked for This Program
 
 - SQLite is the catalog, relationship, query, and configuration store.

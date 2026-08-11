@@ -10,7 +10,53 @@ use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
 use crate::{artifacts, contributions, foundation, history, output::paste, search};
+use serde::Serialize;
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreUtility {
+    id: String,
+    kind: String,
+    label: String,
+    version: String,
+}
+
+const AUTH_SERVICE: &str = "com.infiniti.clipsx";
+
+fn auth_storage_entry(key: &str) -> Result<keyring::Entry, String> {
+    match key {
+        "sb-clipsx-auth-token" | "sb-clipsx-auth-token-code-verifier" => {
+            keyring::Entry::new(AUTH_SERVICE, key).map_err(|error| error.to_string())
+        }
+        _ => Err("unsupported credential key".to_string()),
+    }
+}
+
+#[tauri::command]
+fn auth_storage_get(key: String) -> Result<Option<String>, String> {
+    match auth_storage_entry(&key)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+fn auth_storage_set(key: String, value: String) -> Result<(), String> {
+    auth_storage_entry(&key)?
+        .set_password(&value)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn auth_storage_remove(key: String) -> Result<(), String> {
+    match auth_storage_entry(&key)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
 
 async fn detect_with_extensions(
     history: &HistoryRepository,
@@ -20,6 +66,60 @@ async fn detect_with_extensions(
     contributions::detect_clip(history, clip_id).await?;
     extensions.detect_clip(history, clip_id).await?;
     Ok(())
+}
+
+async fn refresh_search_for_clip(history: &HistoryRepository, clip_id: &str) -> anyhow::Result<()> {
+    search::upsert_projection(history, clip_id).await?;
+    embeddings::enqueue_clip(history, clip_id).await?;
+    embeddings::index_pending(history).await?;
+    Ok(())
+}
+
+fn source_is_excluded(snapshot: &history::CapturedSnapshot, excluded_apps: &[String]) -> bool {
+    let candidates = [
+        snapshot.source_app_id.as_deref(),
+        snapshot.source_app_name.as_deref(),
+    ];
+    candidates.iter().flatten().any(|candidate| {
+        excluded_apps
+            .iter()
+            .any(|excluded| excluded.eq_ignore_ascii_case(candidate.trim()))
+    })
+}
+
+fn apply_capture_filters(
+    snapshot: &mut history::CapturedSnapshot,
+    filters: &history::CaptureFilters,
+) {
+    snapshot.representations.retain(|representation| {
+        let mime = representation
+            .canonical_mime_type
+            .as_deref()
+            .unwrap_or_default();
+        let native = representation
+            .native_type
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let format = representation.format_key.to_ascii_lowercase();
+        let is_file = matches!(&representation.payload, history::CapturedPayload::Files(_));
+        let is_image = mime.starts_with("image/");
+        let is_rich_text = matches!(mime, "text/html" | "text/rtf" | "application/rtf");
+        let is_document = mime == "application/pdf"
+            || native.contains("office")
+            || native.contains("word")
+            || native.contains("excel")
+            || native.contains("powerpoint")
+            || native.contains("object")
+            || format.contains("office")
+            || format.contains("word")
+            || format.contains("excel")
+            || format.contains("powerpoint");
+        (!is_file || filters.files)
+            && (!is_image || filters.images)
+            && (!is_rich_text || filters.rich_text)
+            && (!is_document || filters.office_and_documents)
+    });
 }
 
 #[tauri::command]
@@ -200,10 +300,23 @@ async fn capture_clipboard(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let settings = state.history.settings().await.map_err(|e| e.to_string())?;
+    let app_settings = state
+        .history
+        .app_settings()
+        .await
+        .map_err(|e| e.to_string())?;
     let mut adapter = SystemClipboardAdapter::new();
-    let snapshot = capture_coherent(&mut adapter).map_err(|e| e.to_string())?;
-    match state.history.capture(snapshot, &settings).await {
+    let mut snapshot = capture_coherent(&mut adapter).map_err(|e| e.to_string())?;
+    if source_is_excluded(&snapshot, &app_settings.excluded_apps) {
+        return Err("Clipboard source is excluded by capture settings".into());
+    }
+    apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+    if snapshot.representations.is_empty() {
+        return Err(
+            "Every representation in this clipboard snapshot is disabled by capture filters".into(),
+        );
+    }
+    match state.history.capture(snapshot, &app_settings.capture).await {
         Ok((id, duplicate)) => {
             let history = state.history.clone();
             let extensions = state.extensions.clone();
@@ -495,6 +608,18 @@ async fn delete_clip(
     Ok(())
 }
 #[tauri::command]
+async fn clear_history(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<u64, String> {
+    let ids = state
+        .history
+        .clear_history()
+        .await
+        .map_err(|e| e.to_string())?;
+    for id in &ids {
+        let _ = app.emit("clip-deleted", id);
+    }
+    Ok(ids.len() as u64)
+}
+#[tauri::command]
 async fn set_clip_pinned(
     app: tauri::AppHandle,
     clip_id: String,
@@ -536,6 +661,9 @@ async fn update_clip_note(
         .note(&clip_id, note)
         .await
         .map_err(|e| e.to_string())?;
+    refresh_search_for_clip(&state.history, &clip_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = app.emit("clip-updated", clip_id);
     Ok(())
 }
@@ -557,11 +685,22 @@ async fn create_tag(
 }
 #[tauri::command]
 async fn delete_tag(tag_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let clips = state
+        .history
+        .clips_for_tag(&tag_id)
+        .await
+        .map_err(|e| e.to_string())?;
     state
         .history
         .delete_tag(&tag_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    for clip_id in clips {
+        refresh_search_for_clip(&state.history, &clip_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 #[tauri::command]
 async fn add_clip_tag(
@@ -573,7 +712,11 @@ async fn add_clip_tag(
         .history
         .tag_clip(&clip_id, &tag_id, true)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    refresh_search_for_clip(&state.history, &clip_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 #[tauri::command]
 async fn remove_clip_tag(
@@ -585,11 +728,57 @@ async fn remove_clip_tag(
         .history
         .tag_clip(&clip_id, &tag_id, false)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    refresh_search_for_clip(&state.history, &clip_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 #[tauri::command]
 async fn get_capture_settings(state: State<'_, AppState>) -> Result<CaptureSettings, String> {
     state.history.settings().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_app_settings(state: State<'_, AppState>) -> Result<history::AppSettings, String> {
+    state
+        .history
+        .app_settings()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_app_settings(
+    settings: history::AppSettings,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<history::AppSettings, String> {
+    state
+        .history
+        .update_app_settings(&settings)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("app-settings-updated", ());
+    state
+        .history
+        .app_settings()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn register_global_shortcut(shortcut: String, app: tauri::AppHandle) -> Result<(), String> {
+    let shortcut = shortcut
+        .parse::<Shortcut>()
+        .map_err(|error| error.to_string())?;
+    let manager = app.global_shortcut();
+    manager
+        .unregister_all()
+        .map_err(|error| error.to_string())?;
+    manager
+        .register(shortcut)
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 async fn update_capture_settings(
@@ -641,6 +830,40 @@ async fn list_renderer_contributions(
     }
     Ok(renderers)
 }
+
+#[tauri::command]
+fn list_core_utilities() -> Vec<CoreUtility> {
+    let mut utilities: Vec<_> = contributions::detector_descriptors()
+        .into_iter()
+        .map(|item| CoreUtility {
+            id: item.id,
+            kind: "Detector".into(),
+            label: item.display_name,
+            version: item.version,
+        })
+        .collect();
+    utilities.extend(
+        contributions::renderers()
+            .into_iter()
+            .map(|item| CoreUtility {
+                id: item.id,
+                kind: "Renderer".into(),
+                label: item.display_name,
+                version: item.version,
+            }),
+    );
+    utilities.extend(
+        transformers::descriptors()
+            .into_iter()
+            .map(|item| CoreUtility {
+                id: item.id,
+                kind: "Transformer".into(),
+                label: item.label,
+                version: item.version,
+            }),
+    );
+    utilities
+}
 #[tauri::command]
 async fn get_renderer_preferences(
     state: State<'_, AppState>,
@@ -670,6 +893,9 @@ async fn redetect_clip(
     detect_with_extensions(&state.history, &state.extensions, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
+    refresh_search_for_clip(&state.history, &clip_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = app.emit("clip-facets-updated", clip_id);
     Ok(())
 }
@@ -693,6 +919,9 @@ async fn redetect_history(
             .map_err(|e| e.to_string())?;
         for clip in page.items {
             detect_with_extensions(&state.history, &state.extensions, &clip.id)
+                .await
+                .map_err(|e| e.to_string())?;
+            refresh_search_for_clip(&state.history, &clip.id)
                 .await
                 .map_err(|e| e.to_string())?;
             count += 1;
@@ -830,6 +1059,18 @@ async fn update_search_settings(
 pub(crate) fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(),
+        )
         .register_uri_scheme_protocol("clipsx-artifact", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
             let state = context.app_handle().state::<AppState>();
@@ -873,13 +1114,18 @@ pub(crate) fn run() {
                 .expect("Failed to prepare the ClipsX v2 foundation");
             if schema_state != foundation::SchemaState::Ready {
                 let status = foundation::startup_status(schema_state);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, status.message).into());
+                return Err(std::io::Error::other(status.message).into());
             }
             let history = tauri::async_runtime::block_on(HistoryRepository::connect(
                 &roots.database(),
                 roots.clipboard_data(),
             ))
             .expect("Failed to open ClipsX history");
+            if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
+                if let Ok(shortcut) = settings.global_shortcut.parse::<Shortcut>() {
+                    let _ = app.global_shortcut().register(shortcut);
+                }
+            }
             let extensions = ExtensionService::new(&roots)
                 .expect("Failed to initialize ClipsX extension storage");
             tauri::async_runtime::block_on(contributions::initialize(&history))
@@ -931,7 +1177,7 @@ pub(crate) fn run() {
                         continue;
                     }
                     last_token = token;
-                    let snapshot = match capture_coherent(&mut adapter) {
+                    let mut snapshot = match capture_coherent(&mut adapter) {
                         Ok(value) => value,
                         Err(error) => {
                             let _ = monitor_app.emit("capture-rejected", error.to_string());
@@ -941,10 +1187,18 @@ pub(crate) fn run() {
                     if is_self_write_snapshot(&snapshot) {
                         continue;
                     }
-                    let settings = match monitor_history.settings().await {
+                    let app_settings = match monitor_history.app_settings().await {
                         Ok(value) => value,
                         Err(_) => continue,
                     };
+                    if source_is_excluded(&snapshot, &app_settings.excluded_apps) {
+                        continue;
+                    }
+                    apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+                    if snapshot.representations.is_empty() {
+                        continue;
+                    }
+                    let settings = app_settings.capture;
                     match monitor_history.capture(snapshot, &settings).await {
                         Ok((id, duplicate)) => {
                             let _ = monitor_app.emit(
@@ -1001,6 +1255,9 @@ pub(crate) fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_startup_status,
+            auth_storage_get,
+            auth_storage_set,
+            auth_storage_remove,
             list_extensions,
             get_extension_registry,
             refresh_extension_registry,
@@ -1025,6 +1282,7 @@ pub(crate) fn run() {
             get_transform_preferences,
             update_transform_preferences,
             delete_clip,
+            clear_history,
             set_clip_pinned,
             set_clip_favorite,
             update_clip_note,
@@ -1034,10 +1292,14 @@ pub(crate) fn run() {
             add_clip_tag,
             remove_clip_tag,
             get_capture_settings,
+            get_app_settings,
+            update_app_settings,
+            register_global_shortcut,
             update_capture_settings,
             get_clip_views,
             render_clip_view,
             list_renderer_contributions,
+            list_core_utilities,
             get_renderer_preferences,
             update_renderer_preferences,
             redetect_clip,

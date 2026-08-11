@@ -254,6 +254,13 @@ fn registry() -> Vec<BuiltinTransformer> {
     ]
 }
 
+pub fn descriptors() -> Vec<TransformerDescriptor> {
+    registry()
+        .into_iter()
+        .map(|transformer| transformer.descriptor())
+        .collect()
+}
+
 pub fn descriptors_for(input: &CapturedRepresentation) -> Vec<TransformerDescriptor> {
     registry()
         .into_iter()

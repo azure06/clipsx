@@ -1,34 +1,142 @@
 @import 'tailwindcss';
+@config '../tailwind.config.js';
+
+@custom-variant dark (&:is(.dark *));
 
 @layer base {
-  button {
+  button,
+  [role='button'],
+  input[type='button'],
+  input[type='submit'],
+  input[type='reset'] {
     cursor: pointer;
   }
-  button:disabled {
+
+  button:disabled,
+  input:disabled,
+  [disabled] {
     cursor: not-allowed;
+  }
+} /* Custom scrollbar - no Tailwind alternative */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgb(209 213 219);
+  /* gray-300 */
+  border-radius: 9999px;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgb(75 85 99);
+  /* gray-600 */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(156 163 175);
+  /* gray-400 */
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(107 114 128);
+  /* gray-500 */
+}
+
+#app-container {
+  /* This mimics the native 'Increase Contrast' border on macOS */
+  /* TODO This should be activated only on macos maybe... */
+  /* border: 1px solid var(--border-color); */
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --border-color: #d1d1d1;
   }
 }
 
-@layer components {
-  .panel {
-    @apply rounded-xl border border-slate-800 bg-slate-900/80 shadow-xl;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --border-color: #3d3d3d;
   }
-  .button {
-    @apply rounded-md bg-sky-700 px-3 py-2 text-sm font-medium hover:bg-sky-600;
-  }
-  .danger {
-    @apply bg-red-800 hover:bg-red-700;
-  }
-  .tab {
-    @apply rounded-md px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800;
-  }
-  .tab-active {
-    @apply bg-slate-800 text-sky-300;
-  }
-  .clip {
-    @apply block w-full border-b border-slate-800 p-4 text-left hover:bg-slate-800/60;
-  }
-  .tag {
-    @apply rounded bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700;
-  }
+}
+
+/* ============================================================
+   tauri-plugin-decorum: Windows overlay titlebar button styles
+   The plugin injects these buttons automatically on Windows.
+   We override them to match the app's dark glassmorphic theme.
+   ============================================================ */
+div[data-tauri-decorum-tb] {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  /* Sit in the top-right corner above everything */
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 9999;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+button.decorum-tb-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px !important;
+  height: 32px !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  cursor: pointer !important;
+  color: rgba(75, 85, 99, 0.85) !important; /* gray-600, good on light */
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+  padding: 0;
+  margin: 0;
+}
+
+.dark button.decorum-tb-btn {
+  color: rgba(156, 163, 175, 0.7) !important; /* gray-400, good on dark */
+}
+
+/* Light mode hover: subtle dark tint */
+button.decorum-tb-btn:hover {
+  background: rgba(0, 0, 0, 0.06) !important;
+  color: #111827 !important;
+}
+
+/* Dark mode hover: subtle light tint */
+.dark button.decorum-tb-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #e5e7eb !important;
+}
+
+button.decorum-tb-btn:active {
+  background: rgba(0, 0, 0, 0.1) !important;
+}
+.dark button.decorum-tb-btn:active {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Close button: red on hover (Standard Windows red) */
+button#decorum-tb-close:hover {
+  background: #e81123 !important;
+  color: #ffffff !important;
+}
+
+button#decorum-tb-close:active {
+  background: #e81123 !important;
+  opacity: 0.8 !important;
+}
+
+/* Scale icons slightly for visual balance */
+button.decorum-tb-btn svg {
+  width: 10px;
+  height: 10px;
 }

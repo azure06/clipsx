@@ -13,6 +13,85 @@ pub struct CaptureSettings {
     #[serde(default, skip_deserializing)]
     pub retention_warning: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureFilters {
+    pub images: bool,
+    pub files: bool,
+    pub rich_text: bool,
+    pub office_and_documents: bool,
+}
+
+impl Default for CaptureFilters {
+    fn default() -> Self {
+        Self {
+            images: true,
+            files: true,
+            rich_text: true,
+            office_and_documents: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivationMode {
+    SingleClickCopy,
+    DoubleClickPrimary,
+    SelectOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultOutputFormat {
+    Original,
+    PlainText,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub theme: String,
+    pub language: String,
+    pub activation_mode: ActivationMode,
+    pub default_output_format: DefaultOutputFormat,
+    pub paste_on_enter: bool,
+    pub hide_on_copy: bool,
+    pub hide_on_blur: bool,
+    pub always_on_top: bool,
+    pub show_copy_toast: bool,
+    pub auto_clear_minutes: Option<u32>,
+    pub clear_on_exit: bool,
+    pub auto_start: bool,
+    pub global_shortcut: String,
+    pub excluded_apps: Vec<String>,
+    pub capture_filters: CaptureFilters,
+    pub capture: CaptureSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: "system".into(),
+            language: "en".into(),
+            activation_mode: ActivationMode::SingleClickCopy,
+            default_output_format: DefaultOutputFormat::Original,
+            paste_on_enter: true,
+            hide_on_copy: false,
+            hide_on_blur: true,
+            always_on_top: false,
+            show_copy_toast: true,
+            auto_clear_minutes: None,
+            clear_on_exit: false,
+            auto_start: false,
+            global_shortcut: "Ctrl+Shift+V".into(),
+            excluded_apps: vec![],
+            capture_filters: CaptureFilters::default(),
+            capture: CaptureSettings::default(),
+        }
+    }
+}
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {

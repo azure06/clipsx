@@ -27,5 +27,15 @@ Recommended reuse boundaries:
 - Do not restore v1 schema, `ClipItem`, sparse metadata, legacy IPC payloads,
   migrations, semantic-model services, or dual-read/write behavior.
 
+Current parity target: reuse every reachable desktop interaction and visual
+behavior through the v2 representation/facet/rendering contracts. The v1 vault
+and entitlement flows are excluded because they were incomplete and do not
+belong to the current delivery. The hard-wired visual model is deferred in
+favor of the v2 provider boundary.
+
+See [UI_PARITY.md](UI_PARITY.md) for the authoritative feature-by-feature
+delivery status. Visual equivalence permits replacing component internals with
+v2 contracts; it never permits reintroducing v1 persistence or IPC.
+
 The archive branch must not be deleted until the v2 replacement has reached
 feature parity for the behavior it documents.

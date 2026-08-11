@@ -1,1 +1,5 @@
-export type * from './architecture'
+export * from './capabilities'
+export * from './clipboard'
+export * from './settings'
+export * from './updater'
+export * from './v2'
