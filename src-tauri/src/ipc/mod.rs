@@ -5,11 +5,22 @@ use crate::clipboard::contract::ClipboardAdapter;
 use crate::clipboard::{capture_coherent, is_self_write_snapshot, SystemClipboardAdapter};
 use crate::contracts::{self, FactoryResetResult, StartupStatus};
 use crate::contributions::transformer as transformers;
+use crate::extensions::ExtensionService;
 use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
 use crate::{artifacts, contributions, foundation, history, output::paste, search};
 use tauri::{Emitter, Manager, State};
+
+async fn detect_with_extensions(
+    history: &HistoryRepository,
+    extensions: &ExtensionService,
+    clip_id: &str,
+) -> anyhow::Result<()> {
+    contributions::detect_clip(history, clip_id).await?;
+    extensions.detect_clip(history, clip_id).await?;
+    Ok(())
+}
 
 #[tauri::command]
 fn get_startup_status(state: State<'_, AppState>) -> StartupStatus {
@@ -27,6 +38,143 @@ fn factory_reset(
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) {
     app.request_restart();
+}
+
+#[tauri::command]
+async fn list_extensions(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::ExtensionSummary>, String> {
+    state
+        .extensions
+        .list(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_extension_registry(
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::RegistryIndex, String> {
+    state
+        .extensions
+        .registry()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn refresh_extension_registry(
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::RegistryIndex, String> {
+    state
+        .extensions
+        .refresh_registry()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn install_registry_extension(
+    package_id: String,
+    version: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::extensions::ExtensionSummary, String> {
+    let installed = state
+        .extensions
+        .install_registry(&state.history, &package_id, &version)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(installed)
+}
+
+#[tauri::command]
+async fn install_local_extension(
+    path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::extensions::ExtensionSummary, String> {
+    let installed = state
+        .extensions
+        .install_local(&state.history, std::path::Path::new(&path))
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(installed)
+}
+
+#[tauri::command]
+async fn set_extension_enabled(
+    package_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_enabled(&state.history, &package_id, enabled)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn recover_extension(
+    package_id: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state
+        .extensions
+        .recover(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .redetect_history(&state.history)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-runtime-state-updated", ());
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn uninstall_extension(
+    package_id: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state
+        .extensions
+        .uninstall(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_extension_developer_mode(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .extensions
+        .developer_mode(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_developer_mode(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_developer_mode(&state.history, enabled)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -58,10 +206,11 @@ async fn capture_clipboard(
     match state.history.capture(snapshot, &settings).await {
         Ok((id, duplicate)) => {
             let history = state.history.clone();
+            let extensions = state.extensions.clone();
             let event_app = app.clone();
             let detect_id = id.clone();
             tauri::async_runtime::spawn(async move {
-                match contributions::detect_clip(&history, &detect_id).await {
+                match detect_with_extensions(&history, &extensions, &detect_id).await {
                     Ok(_) => {
                         let _ = event_app.emit("clip-facets-updated", detect_id);
                     }
@@ -138,11 +287,37 @@ async fn list_transformer_contributions(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<transformers::TransformerDescriptor>, String> {
-    state
+    let mut descriptors = state
         .transforms
         .list(&state.history, &clip_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let detail = state
+        .history
+        .detail(&clip_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    for representation in detail.representations {
+        let (source, _) = state
+            .history
+            .source_representation(&clip_id, &representation.id)
+            .await
+            .map_err(|error| error.to_string())?;
+        for descriptor in state
+            .extensions
+            .transformer_descriptors_for(&state.history, &source)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if !descriptors
+                .iter()
+                .any(|existing| existing.id == descriptor.id)
+            {
+                descriptors.push(descriptor);
+            }
+        }
+    }
+    Ok(descriptors)
 }
 
 #[tauri::command]
@@ -153,6 +328,29 @@ async fn create_transform_preview(
     parameters: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<transformers::TransformPreview, String> {
+    let (source, _) = state
+        .history
+        .source_representation(&clip_id, &source_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some((version, outputs)) = state
+        .extensions
+        .transform(&state.history, &transformer_id, source, parameters.clone())
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return state
+            .transforms
+            .cache_external(
+                clip_id,
+                transformer_id,
+                version,
+                source_id,
+                parameters,
+                outputs,
+            )
+            .map_err(|error| error.to_string());
+    }
     state
         .transforms
         .preview(
@@ -247,10 +445,11 @@ async fn save_transform_result(
         .await
         .map_err(|error| error.to_string())?;
     let history = state.history.clone();
+    let extensions = state.extensions.clone();
     let detect_id = clip_id.clone();
     let detect_app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if contributions::detect_clip(&history, &detect_id)
+        if detect_with_extensions(&history, &extensions, &detect_id)
             .await
             .is_ok()
         {
@@ -409,7 +608,7 @@ async fn get_clip_views(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<contributions::ClipViewSet, String> {
-    contributions::views(&state.history, &clip_id)
+    contributions::views(&state.history, &state.extensions, &clip_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -418,15 +617,29 @@ async fn render_clip_view(
     clip_id: String,
     renderer_id: String,
     source_id: String,
+    facet_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<contracts::RenderModel, String> {
-    contributions::render(&state.history, &clip_id, &renderer_id, &source_id)
-        .await
-        .map_err(|e| e.to_string())
+    contributions::render(
+        &state.history,
+        &state.extensions,
+        &clip_id,
+        &renderer_id,
+        &source_id,
+        facet_id.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 #[tauri::command]
-fn list_renderer_contributions() -> Vec<contributions::RendererDescriptor> {
-    contributions::renderers()
+async fn list_renderer_contributions(
+    state: State<'_, AppState>,
+) -> Result<Vec<contributions::RendererDescriptor>, String> {
+    let mut renderers = contributions::renderers();
+    if let Ok(mut extensions) = state.extensions.renderer_descriptors(&state.history).await {
+        renderers.append(&mut extensions);
+    }
+    Ok(renderers)
 }
 #[tauri::command]
 async fn get_renderer_preferences(
@@ -454,7 +667,7 @@ async fn redetect_clip(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    contributions::detect_clip(&state.history, &clip_id)
+    detect_with_extensions(&state.history, &state.extensions, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
     let _ = app.emit("clip-facets-updated", clip_id);
@@ -479,7 +692,7 @@ async fn redetect_history(
             .await
             .map_err(|e| e.to_string())?;
         for clip in page.items {
-            contributions::detect_clip(&state.history, &clip.id)
+            detect_with_extensions(&state.history, &state.extensions, &clip.id)
                 .await
                 .map_err(|e| e.to_string())?;
             count += 1;
@@ -616,6 +829,7 @@ async fn update_search_settings(
 
 pub(crate) fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("clipsx-artifact", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
             let state = context.app_handle().state::<AppState>();
@@ -662,6 +876,8 @@ pub(crate) fn run() {
                 roots.clipboard_data(),
             ))
             .expect("Failed to open ClipsX history");
+            let extensions = ExtensionService::new(&roots)
+                .expect("Failed to initialize ClipsX extension storage");
             tauri::async_runtime::block_on(contributions::initialize(&history))
                 .expect("Failed to initialize ClipsX facet registry");
             // Materialize the host-owned artifact registry during startup.
@@ -674,6 +890,7 @@ pub(crate) fn run() {
                 let _ = embeddings::index_pending(&fts_history).await;
             });
             let redetect_history = history.clone();
+            let redetect_extensions = extensions.clone();
             let redetect_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match contributions::redetect_outdated(&redetect_history).await {
@@ -686,7 +903,14 @@ pub(crate) fn run() {
                     _ => {}
                 }
             });
+            let extension_history = history.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = redetect_extensions
+                    .redetect_history(&extension_history)
+                    .await;
+            });
             let monitor_history = history.clone();
+            let monitor_extensions = extensions.clone();
             let monitor_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut adapter = SystemClipboardAdapter::new();
@@ -728,9 +952,16 @@ pub(crate) fn run() {
                                 &id,
                             );
                             let detection_history = monitor_history.clone();
+                            let detection_extensions = monitor_extensions.clone();
                             let detection_app = monitor_app.clone();
                             tauri::async_runtime::spawn(async move {
-                                match contributions::detect_clip(&detection_history, &id).await {
+                                match detect_with_extensions(
+                                    &detection_history,
+                                    &detection_extensions,
+                                    &id,
+                                )
+                                .await
+                                {
                                     Ok(_) => {
                                         let _ =
                                             detection_app.emit("clip-facets-updated", id.clone());
@@ -757,6 +988,7 @@ pub(crate) fn run() {
                 schema_state,
                 history,
                 transforms: transformers::TransformService::default(),
+                extensions,
             });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -765,6 +997,16 @@ pub(crate) fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_startup_status,
+            list_extensions,
+            get_extension_registry,
+            refresh_extension_registry,
+            install_registry_extension,
+            install_local_extension,
+            set_extension_enabled,
+            recover_extension,
+            uninstall_extension,
+            get_extension_developer_mode,
+            set_extension_developer_mode,
             factory_reset,
             restart_app,
             list_clips,

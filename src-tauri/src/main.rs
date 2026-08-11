@@ -5,6 +5,7 @@ mod artifacts;
 mod clipboard;
 mod contracts;
 mod contributions;
+mod extensions;
 mod foundation;
 mod history;
 mod ipc;

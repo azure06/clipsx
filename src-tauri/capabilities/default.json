@@ -25,6 +25,7 @@
     "core:window:allow-is-visible",
     "core:window:allow-is-minimized",
     "core:window:allow-unminimize",
-    "core:path:default"
+    "core:path:default",
+    "dialog:allow-open"
   ]
 }

@@ -165,3 +165,26 @@ export type ProviderStatus = {
   indexedClips: number
   pendingJobs: number
 }
+
+export type ExtensionSource = 'registry' | 'developer'
+export type ExtensionRuntimeStatus = 'ready' | 'quarantined' | 'incompatible'
+export type ExtensionSummary = {
+  packageId: string
+  version: string
+  displayName: string
+  description: string
+  source: ExtensionSource
+  enabled: boolean
+  status: ExtensionRuntimeStatus
+}
+export type RegistryPackage = {
+  packageId: string
+  version: string
+  apiVersion: string
+  displayName: string
+  description: string
+  releaseUrl: string
+  sha256: string
+  contributions: string[]
+}
+export type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }

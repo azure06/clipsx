@@ -20,6 +20,7 @@ export const ViewTabs = ({ clipId }: { clipId: string }) => {
         clipId,
         rendererId: view.rendererId,
         sourceId: view.sourceId,
+        facetId: view.facetId,
       }).then(setModel)
   }, [active, clipId, viewSet])
   if (!viewSet || viewSet.views.length === 0) return null

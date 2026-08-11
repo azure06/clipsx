@@ -47,6 +47,9 @@ impl AppRoots {
     pub fn clipboard_data(&self) -> PathBuf {
         self.data.join("clipboard_data")
     }
+    pub fn extensions(&self) -> PathBuf {
+        self.data.join("extensions")
+    }
 }
 
 #[allow(dead_code)]
@@ -205,6 +208,7 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
         roots.database().with_extension("db-wal"),
         roots.database().with_extension("db-shm"),
         roots.clipboard_data(),
+        roots.extensions(),
     ] {
         match remove_owned(&path, &roots.data) {
             Ok(true) => deleted.push(path.display().to_string()),

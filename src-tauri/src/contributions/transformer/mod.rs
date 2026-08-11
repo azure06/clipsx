@@ -287,6 +287,50 @@ impl Default for TransformService {
     }
 }
 impl TransformService {
+    pub fn cache_external(
+        &self,
+        source_clip_id: String,
+        transformer_id: String,
+        transformer_version: String,
+        source_id: String,
+        parameters: Value,
+        outputs: Vec<CapturedRepresentation>,
+    ) -> Result<TransformPreview> {
+        let total: usize = outputs.iter().map(payload_bytes).sum();
+        if outputs.is_empty() || total > MAX_OUTPUT_BYTES {
+            bail!("transform output exceeds 10 MiB")
+        }
+        let result_id = new_id();
+        let preview = TransformPreview {
+            result_id: result_id.clone(),
+            expires_at: crate::history::now_ms() + RESULT_TTL.as_millis() as i64,
+            transformer_id,
+            transformer_version,
+            source_id,
+            outputs: outputs
+                .iter()
+                .map(|item| TransformOutputDescriptor {
+                    canonical_mime_type: item.canonical_mime_type.clone(),
+                    byte_length: payload_bytes(item),
+                })
+                .collect(),
+            model: preview_model(&outputs),
+        };
+        let cached = CachedResult {
+            preview: preview.clone(),
+            source_clip_id,
+            parameter_sha256: sha256(&serde_json::to_vec(&parameters)?),
+            outputs,
+            created: Instant::now(),
+        };
+        let mut cache = self.cache.lock().expect("transform cache poisoned");
+        cache.prune();
+        cache.bytes += total;
+        cache.lru.push_back(result_id.clone());
+        cache.values.insert(result_id, cached);
+        cache.prune();
+        Ok(preview)
+    }
     pub async fn list(
         &self,
         repo: &HistoryRepository,

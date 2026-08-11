@@ -1,6 +1,7 @@
 //! Contribution host for detectors and renderers.
 use crate::{
     contracts::RenderModel,
+    extensions::ExtensionService,
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},
 };
 use anyhow::{bail, Context, Result};
@@ -664,7 +665,11 @@ pub fn renderers() -> Vec<RendererDescriptor> {
         .map(|renderer| renderer.descriptor())
         .collect()
 }
-pub async fn views(repo: &HistoryRepository, clip_id: &str) -> Result<ClipViewSet> {
+pub async fn views(
+    repo: &HistoryRepository,
+    extensions: &ExtensionService,
+    clip_id: &str,
+) -> Result<ClipViewSet> {
     let detail = repo.detail(clip_id).await?;
     let facets = facets(repo, clip_id).await?;
     let mut views = Vec::new();
@@ -756,6 +761,11 @@ pub async fn views(repo: &HistoryRepository, clip_id: &str) -> Result<ClipViewSe
             is_original: false,
         });
     }
+    views.extend(
+        extensions
+            .renderer_views(repo, clip_id, &detail, &facets)
+            .await?,
+    );
     let renderer_preferences = preferences(repo).await?;
     views.sort_by_key(|view| {
         let facet_preference = facets
@@ -785,9 +795,11 @@ pub async fn views(repo: &HistoryRepository, clip_id: &str) -> Result<ClipViewSe
 }
 pub async fn render(
     repo: &HistoryRepository,
+    extensions: &ExtensionService,
     clip_id: &str,
     renderer_id: &str,
     source_id: &str,
+    requested_facet_id: Option<&str>,
 ) -> Result<RenderModel> {
     let detail = repo.detail(clip_id).await?;
     let rep = detail
@@ -796,6 +808,28 @@ pub async fn render(
         .find(|r| r.id == source_id)
         .context("representation not found")?;
     let available_facets = facets(repo, clip_id).await?;
+    if !renderer_id.starts_with("builtin.") {
+        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let facet = available_facets
+            .iter()
+            .find(|facet| {
+                facet.source_representation_id == source_id
+                    && requested_facet_id.is_none_or(|id| id == facet.id)
+            })
+            .cloned();
+        return match extensions.render(repo, renderer_id, source, facet).await {
+            Ok(Some(model)) => Ok(model),
+            Ok(None) => Ok(RenderModel::Error {
+                message: "unknown renderer".into(),
+            }),
+            Err(error) => {
+                eprintln!(
+                    "[RENDER] extension renderer {renderer_id} failed: {error}; using Original"
+                );
+                Ok(original(rep))
+            }
+        };
+    }
     let facet = match renderer_id {
         "builtin.json" => available_facets
             .iter()

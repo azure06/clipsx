@@ -14,6 +14,7 @@ import type {
 } from '../../shared/types'
 import { ClipDetail } from './ClipDetail'
 import { StorageSettings } from '../settings/StorageSettings'
+import { ExtensionsSettings } from '../settings/ExtensionsSettings'
 import { createImeTracker } from '../../shared/keyboard/ime'
 import { hasNativeSelection } from '../../shared/keyboard/selection'
 
@@ -32,6 +33,7 @@ const HistoryPage = () => {
   const [tagFilter, setTagFilter] = useState<string>()
   const [tags, setTags] = useState<Tag[]>([])
   const [settings, setSettings] = useState<CaptureSettings | null>(null)
+  const [extensionsOpen, setExtensionsOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [transformOpen, setTransformOpen] = useState(false)
@@ -199,6 +201,9 @@ const HistoryPage = () => {
             onClick={() => void invoke<CaptureSettings>('get_capture_settings').then(setSettings)}
           >
             Storage
+          </button>
+          <button className="button" onClick={() => setExtensionsOpen(true)}>
+            Extensions
           </button>
           <button
             className="button"
@@ -373,6 +378,7 @@ const HistoryPage = () => {
           }}
         />
       )}
+      {extensionsOpen && <ExtensionsSettings close={() => setExtensionsOpen(false)} />}
     </main>
   )
 }
