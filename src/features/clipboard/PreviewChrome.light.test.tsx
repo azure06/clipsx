@@ -29,7 +29,7 @@ const mockUseActionRegistry = vi.fn<() => MockActionRegistry>()
 
 const clipboardStoreState = {
   clips: [],
-  availableTags: [{ id: 1, name: 'urgent', color: '#ef4444', createdAt: 0 }],
+  availableTags: [{ id: 'tag-urgent', name: 'urgent', color: '#ef4444' }],
   refreshAvailableTags: vi.fn(),
   addClipTag: vi.fn(async () => {}),
   removeClipTag: vi.fn(async () => {}),
@@ -86,8 +86,8 @@ describe('preview chrome light theme styling', () => {
     await user.hover(screen.getByRole('button'))
 
     const tooltip = await screen.findByRole('tooltip', { hidden: true })
-    expect(tooltip.parentElement).toHaveClass('text-gray-900')
-    expect(tooltip.parentElement).toHaveClass('bg-white/95')
+    expect(tooltip).toHaveClass('text-gray-900')
+    expect(tooltip).toHaveClass('bg-white/95')
   })
 
   it('renders tag suggestions with light-safe dropdown classes', async () => {

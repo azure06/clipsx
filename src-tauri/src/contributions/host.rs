@@ -52,16 +52,20 @@ pub struct ClipViewDescriptor {
     pub mime_type: Option<String>,
     pub facet_id: Option<String>,
     pub is_original: bool,
+    pub presentation_kind: String,
+    pub placement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipViewSet {
     pub clip_id: String,
+    pub primary_view_id: String,
+    pub presentation_kind: String,
     pub facets: Vec<FacetDescriptor>,
     pub views: Vec<ClipViewDescriptor>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct RendererPreferences {
     pub by_mime_type: BTreeMap<String, String>,
     pub by_facet_id: BTreeMap<String, String>,
@@ -116,6 +120,9 @@ struct TextRenderer;
 struct HtmlRenderer;
 struct MarkdownRenderer;
 struct ImageRenderer;
+struct RichTextRenderer;
+struct FilesRenderer;
+struct DocumentRenderer;
 struct OfficeRenderer;
 struct JsonRenderer;
 struct TableRenderer;
@@ -186,20 +193,50 @@ impl RendererContribution for ImageRenderer {
         })
     }
 }
+impl RendererContribution for RichTextRenderer {
+    fn descriptor(&self) -> RendererDescriptor {
+        renderer_descriptor("builtin.rich_text", "Rich text", 90, true)
+    }
+    fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        Ok(RenderModel::RichText {
+            sanitized_html: None,
+            plain_text: r.text_value.clone().context("rich text unavailable")?,
+        })
+    }
+}
+impl RendererContribution for FilesRenderer {
+    fn descriptor(&self) -> RendererDescriptor {
+        renderer_descriptor("builtin.files", "Files", 110, false)
+    }
+    fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        Ok(RenderModel::Files {
+            files: r.file_references.clone(),
+        })
+    }
+}
+impl RendererContribution for DocumentRenderer {
+    fn descriptor(&self) -> RendererDescriptor {
+        renderer_descriptor("builtin.document", "Document", 100, false)
+    }
+    fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        Ok(RenderModel::Document {
+            artifact_id: r.binary_file_id.clone().context("document unavailable")?,
+            mime_type: r
+                .canonical_mime_type
+                .clone()
+                .context("document MIME unavailable")?,
+        })
+    }
+}
 impl RendererContribution for OfficeRenderer {
     fn descriptor(&self) -> RendererDescriptor {
         renderer_descriptor("builtin.office", "Office/native", 95, false)
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
-        Ok(RenderModel::KeyValue {
-            entries: vec![
-                ("format".into(), r.format_key.clone()),
-                (
-                    "native type".into(),
-                    r.native_type.clone().unwrap_or_default(),
-                ),
-                ("bytes".into(), r.byte_length.to_string()),
-            ],
+        Ok(RenderModel::Office {
+            format_key: r.format_key.clone(),
+            native_type: r.native_type.clone(),
+            byte_length: r.byte_length,
         })
     }
 }
@@ -229,16 +266,13 @@ impl RendererContribution for KeyValueRenderer {
     fn descriptor(&self) -> RendererDescriptor {
         renderer_descriptor("builtin.key_value", "Details", 70, false)
     }
-    fn render(&self, _: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
-        let payload = &f.context("facet unavailable")?.payload;
-        let entries = match payload {
-            Value::Object(map) => map
-                .iter()
-                .map(|(k, v)| (k.clone(), v.to_string()))
-                .collect(),
-            value => vec![("value".into(), value.to_string())],
-        };
-        Ok(RenderModel::KeyValue { entries })
+    fn render(&self, r: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        let facet = f.context("facet unavailable")?;
+        Ok(RenderModel::Semantic {
+            facet_id: facet.id.clone(),
+            text: r.text_value.clone().unwrap_or_default(),
+            payload: facet.payload.clone(),
+        })
     }
 }
 macro_rules! key_value_renderer {
@@ -252,7 +286,12 @@ macro_rules! key_value_renderer {
                 representation: &RepresentationDetail,
                 facet: Option<&FacetDescriptor>,
             ) -> Result<RenderModel> {
-                KEY_VALUE_RENDERER.render(representation, facet)
+                let facet = facet.context("facet unavailable")?;
+                Ok(RenderModel::Semantic {
+                    facet_id: facet.id.clone(),
+                    text: representation.text_value.clone().unwrap_or_default(),
+                    payload: facet.payload.clone(),
+                })
             }
         }
     };
@@ -266,6 +305,9 @@ static TEXT_RENDERER: TextRenderer = TextRenderer;
 static HTML_RENDERER: HtmlRenderer = HtmlRenderer;
 static MARKDOWN_RENDERER: MarkdownRenderer = MarkdownRenderer;
 static IMAGE_RENDERER: ImageRenderer = ImageRenderer;
+static RICH_TEXT_RENDERER: RichTextRenderer = RichTextRenderer;
+static FILES_RENDERER: FilesRenderer = FilesRenderer;
+static DOCUMENT_RENDERER: DocumentRenderer = DocumentRenderer;
 static OFFICE_RENDERER: OfficeRenderer = OfficeRenderer;
 static JSON_RENDERER: JsonRenderer = JsonRenderer;
 static TABLE_RENDERER: TableRenderer = TableRenderer;
@@ -281,6 +323,9 @@ fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
         &HTML_RENDERER,
         &MARKDOWN_RENDERER,
         &IMAGE_RENDERER,
+        &RICH_TEXT_RENDERER,
+        &FILES_RENDERER,
+        &DOCUMENT_RENDERER,
         &OFFICE_RENDERER,
         &JSON_RENDERER,
         &TABLE_RENDERER,
@@ -922,102 +967,152 @@ pub async fn views(
 ) -> Result<ClipViewSet> {
     let detail = repo.detail(clip_id).await?;
     let facets = facets(repo, clip_id).await?;
-    let mut views = Vec::new();
+    let mut candidates: Vec<(ClipViewDescriptor, i64, i32, i64)> = Vec::new();
+    let mut add_view = |rep: &RepresentationDetail,
+                        renderer_id: &str,
+                        label: &str,
+                        kind: &str,
+                        facet_id: Option<String>,
+                        renderer_priority: i32,
+                        is_original: bool| {
+        let id = facet_id.as_ref().map_or_else(
+            || format!("{}:{}", renderer_id, rep.id),
+            |facet_id| format!("{}:{}:{}", renderer_id, rep.id, facet_id),
+        );
+        candidates.push((
+            ClipViewDescriptor {
+                id,
+                renderer_id: renderer_id.into(),
+                label: label.into(),
+                source_id: rep.id.clone(),
+                mime_type: rep.canonical_mime_type.clone(),
+                facet_id,
+                is_original,
+                presentation_kind: kind.into(),
+                placement: "alternate".into(),
+            },
+            rep.capture_priority,
+            renderer_priority,
+            rep.ordinal,
+        ));
+    };
     for rep in &detail.representations {
-        views.push(ClipViewDescriptor {
-            id: format!("original:{}", rep.id),
-            renderer_id: "builtin.original".into(),
-            label: "Original".into(),
-            source_id: rep.id.clone(),
-            mime_type: rep.canonical_mime_type.clone(),
-            facet_id: None,
-            is_original: true,
-        });
-        if rep.canonical_mime_type.as_deref() == Some("text/html") {
-            views.push(ClipViewDescriptor {
-                id: format!("html:{}", rep.id),
-                renderer_id: "builtin.html".into(),
-                label: "HTML".into(),
-                source_id: rep.id.clone(),
-                mime_type: rep.canonical_mime_type.clone(),
-                facet_id: None,
-                is_original: false,
-            });
-        }
-        if rep.canonical_mime_type.as_deref() == Some("text/plain") {
-            views.push(ClipViewDescriptor {
-                id: format!("text:{}", rep.id),
-                renderer_id: "builtin.text".into(),
-                label: "Text".into(),
-                source_id: rep.id.clone(),
-                mime_type: rep.canonical_mime_type.clone(),
-                facet_id: None,
-                is_original: false,
-            });
-        }
-        if rep
-            .canonical_mime_type
-            .as_deref()
-            .is_some_and(|mime| mime.starts_with("image/"))
-            && rep.binary_file_id.is_some()
-        {
-            views.push(ClipViewDescriptor {
-                id: format!("image:{}", rep.id),
-                renderer_id: "builtin.image".into(),
-                label: "Image".into(),
-                source_id: rep.id.clone(),
-                mime_type: rep.canonical_mime_type.clone(),
-                facet_id: None,
-                is_original: false,
-            });
-        }
-        if rep.native_type.as_deref().is_some_and(|native| {
+        let mime = rep.canonical_mime_type.as_deref().unwrap_or_default();
+        let office = rep.native_type.as_deref().is_some_and(|native| {
             let n = native.to_ascii_lowercase();
             n.contains("office")
                 || n.contains("microsoft")
                 || n.contains("powerpoint")
                 || n.contains("excel")
                 || n.contains("word")
-        }) {
-            views.push(ClipViewDescriptor {
-                id: format!("office:{}", rep.id),
-                renderer_id: "builtin.office".into(),
-                label: "Office/native".into(),
-                source_id: rep.id.clone(),
-                mime_type: rep.canonical_mime_type.clone(),
-                facet_id: None,
-                is_original: false,
-            });
+        });
+        if office {
+            add_view(rep, "builtin.office", "Office", "office", None, 95, false);
+        } else if rep.storage_kind == "file_list" {
+            add_view(rep, "builtin.files", "Files", "files", None, 110, false);
+        } else if mime == "text/html" {
+            add_view(rep, "builtin.html", "Formatted", "html", None, 100, false);
+            add_view(rep, "builtin.original", "Source", "source", None, 20, true);
+        } else if matches!(mime, "text/rtf" | "application/rtf") {
+            add_view(
+                rep,
+                "builtin.rich_text",
+                "Rich text",
+                "rich_text",
+                None,
+                90,
+                false,
+            );
+            add_view(rep, "builtin.original", "Source", "source", None, 20, true);
+        } else if mime == "application/pdf" {
+            add_view(
+                rep,
+                "builtin.document",
+                "Document",
+                "document",
+                None,
+                100,
+                false,
+            );
+        } else if mime.starts_with("image/") && rep.binary_file_id.is_some() {
+            add_view(rep, "builtin.image", "Image", "image", None, 100, false);
+        } else if mime == "text/plain" {
+            add_view(rep, "builtin.text", "Text", "text", None, 50, false);
+        } else {
+            add_view(
+                rep,
+                "builtin.original",
+                "Details",
+                "unsupported",
+                None,
+                0,
+                true,
+            );
         }
     }
     for facet in &facets {
-        let renderer = match facet.id.as_str() {
-            "core.data.json" => "builtin.json",
-            "core.data.table" => "builtin.table",
-            "core.text.markdown" => "builtin.markdown",
-            "core.link.url" => "builtin.url",
-            "core.token.jwt" => "builtin.jwt",
-            "core.value.number" => "builtin.number",
-            "core.time.date" => "builtin.date",
-            _ => "builtin.key_value",
+        let Some(rep) = detail
+            .representations
+            .iter()
+            .find(|rep| rep.id == facet.source_representation_id)
+        else {
+            continue;
         };
-        views.push(ClipViewDescriptor {
-            id: format!("{}:{}", renderer, facet.source_representation_id),
-            renderer_id: renderer.into(),
-            label: facet.display_name.clone(),
-            source_id: facet.source_representation_id.clone(),
-            mime_type: None,
-            facet_id: Some(facet.id.clone()),
-            is_original: false,
-        });
+        let (renderer, kind, priority) = match facet.id.as_str() {
+            "core.security.secret" => ("builtin.key_value", "secret", 200),
+            "core.token.jwt" => ("builtin.jwt", "jwt", 190),
+            "core.link.url" => ("builtin.url", "url", 180),
+            "core.contact.email" => ("builtin.key_value", "email", 170),
+            "core.value.color" => ("builtin.key_value", "color", 160),
+            "core.data.json" => ("builtin.json", "json", 150),
+            "core.data.table" => ("builtin.table", "table", 140),
+            "core.file.path" => ("builtin.key_value", "path", 130),
+            "core.time.date" => (
+                "builtin.date",
+                if facet.payload["interpretation"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("unix_"))
+                {
+                    "timestamp"
+                } else {
+                    "date"
+                },
+                120,
+            ),
+            "core.contact.phone" => ("builtin.key_value", "phone", 100),
+            "core.math.expression" => ("builtin.key_value", "math", 90),
+            "core.text.markdown" => ("builtin.markdown", "markdown", 80),
+            "core.text.code" => ("builtin.key_value", "code", 70),
+            "core.value.number" => ("builtin.number", "number", 60),
+            _ => ("builtin.key_value", "details", 40),
+        };
+        add_view(
+            rep,
+            renderer,
+            &facet.display_name,
+            kind,
+            Some(facet.id.clone()),
+            priority,
+            false,
+        );
     }
-    views.extend(
-        extensions
-            .renderer_views(repo, clip_id, &detail, &facets)
-            .await?,
-    );
+    for view in extensions
+        .renderer_views(repo, clip_id, &detail, &facets)
+        .await?
+    {
+        let rep = detail
+            .representations
+            .iter()
+            .find(|rep| rep.id == view.source_id);
+        candidates.push((
+            view,
+            rep.map_or(i64::MAX, |rep| rep.capture_priority),
+            65,
+            rep.map_or(i64::MAX, |rep| rep.ordinal),
+        ));
+    }
     let renderer_preferences = preferences(repo).await?;
-    views.sort_by_key(|view| {
+    candidates.sort_by_key(|(view, capture_priority, renderer_priority, ordinal)| {
         let facet_preference = facets
             .iter()
             .find(|facet| view.facet_id.as_deref() == Some(facet.id.as_str()))
@@ -1026,19 +1121,35 @@ pub async fn views(
             .mime_type
             .as_ref()
             .and_then(|mime| renderer_preferences.by_mime_type.get(mime));
-        if facet_preference
+        let preferred = facet_preference
             .or(mime_preference)
-            .is_some_and(|id| id == &view.renderer_id)
-        {
-            0
-        } else if view.is_original {
-            2
-        } else {
-            1
-        }
+            .is_some_and(|id| id == &view.renderer_id);
+        (
+            !preferred,
+            *capture_priority,
+            -*renderer_priority,
+            *ordinal,
+            view.id.clone(),
+        )
     });
+    let primary_view_id = candidates
+        .first()
+        .map(|(view, _, _, _)| view.id.clone())
+        .context("clip has no renderable representation")?;
+    let presentation_kind = candidates[0].0.presentation_kind.clone();
+    let views = candidates
+        .into_iter()
+        .map(|(mut view, _, _, _)| {
+            if view.id == primary_view_id {
+                view.placement = "primary".into();
+            }
+            view
+        })
+        .collect();
     Ok(ClipViewSet {
         clip_id: clip_id.into(),
+        primary_view_id,
+        presentation_kind,
         facets,
         views,
     })
@@ -1102,9 +1213,10 @@ pub async fn render(
         "builtin.date" => available_facets
             .iter()
             .find(|f| f.id == "core.time.date" && f.source_representation_id == source_id),
-        "builtin.key_value" => available_facets
-            .iter()
-            .find(|f| f.source_representation_id == source_id),
+        "builtin.key_value" => available_facets.iter().find(|f| {
+            f.source_representation_id == source_id
+                && requested_facet_id.is_none_or(|id| id == f.id)
+        }),
         _ => None,
     };
     if let Some(renderer) = renderer_registry()
@@ -1131,8 +1243,11 @@ fn original(rep: &RepresentationDetail) -> RenderModel {
             language: rep.canonical_mime_type.clone(),
             text: text.clone(),
         },
-        None => RenderModel::Text {
-            text: format!("{} ({} bytes)", rep.format_key, rep.byte_length),
+        None => RenderModel::Unsupported {
+            format_key: rep.format_key.clone(),
+            mime_type: rep.canonical_mime_type.clone(),
+            native_type: rep.native_type.clone(),
+            byte_length: rep.byte_length,
         },
     }
 }
@@ -1221,6 +1336,10 @@ pub async fn update_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::{
+        CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
+    };
+
     fn source(text: &str) -> TextSource {
         TextSource {
             id: "x".into(),
@@ -1278,5 +1397,99 @@ mod tests {
         assert!(NUMBER.detect(&source("NaN")).is_empty());
         assert!(DATE.detect(&source("2026-99-99")).is_empty());
         assert!(TABLE.detect(&source("a,b\nonly-one")).is_empty());
+    }
+
+    async fn resolver_fixture(
+        representations: Vec<CapturedRepresentation>,
+    ) -> (
+        tempfile::TempDir,
+        HistoryRepository,
+        ExtensionService,
+        String,
+    ) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        initialize(&repo).await.unwrap();
+        let extensions = ExtensionService::new(&roots).unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    representations,
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        detect_clip(&repo, &clip_id).await.unwrap();
+        (temp, repo, extensions, clip_id)
+    }
+
+    #[tokio::test]
+    async fn resolver_prefers_higher_capture_priority_html_over_plain_source() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:HTML Format".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: Some("HTML Format".into()),
+                platform: "windows".into(),
+                capture_priority: 10,
+                payload: CapturedPayload::Text("<strong>Example</strong>".into()),
+            },
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()),
+                platform: "windows".into(),
+                capture_priority: 20,
+                payload: CapturedPayload::Text("Example".into()),
+            },
+        ])
+        .await;
+
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        assert_eq!(result.presentation_kind, "html");
+        assert_eq!(
+            result
+                .views
+                .iter()
+                .find(|view| view.id == result.primary_view_id)
+                .unwrap()
+                .placement,
+            "primary"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_keeps_number_and_timestamp_as_additive_views() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
+            format_key: "windows:CF_UNICODETEXT".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: Some("CF_UNICODETEXT".into()),
+            platform: "windows".into(),
+            capture_priority: 10,
+            payload: CapturedPayload::Text("1700000000".into()),
+        }])
+        .await;
+
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        assert_eq!(result.presentation_kind, "timestamp");
+        assert!(result
+            .views
+            .iter()
+            .any(|view| view.facet_id.as_deref() == Some("core.value.number")));
+        assert!(result
+            .views
+            .iter()
+            .any(|view| view.facet_id.as_deref() == Some("core.time.date")));
     }
 }

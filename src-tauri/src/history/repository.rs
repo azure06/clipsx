@@ -238,7 +238,7 @@ impl HistoryRepository {
     pub async fn list(&self, request: ListRequest) -> Result<ClipPage> {
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
-        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.ordinal LIMIT 1),'Binary or file content') FROM clip_items c WHERE c.lifecycle_state='ready'");
+        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
         }
@@ -289,6 +289,8 @@ impl HistoryRepository {
             note: row.get(7),
             representation_count: row.get(8),
             safe_summary: row.get(9),
+            primary_presentation_kind: row.get(10),
+            thumbnail_asset_id: row.get(11),
             tags,
         })
     }
@@ -304,8 +306,8 @@ impl HistoryRepository {
             .collect())
     }
     pub async fn detail(&self, id: &str) -> Result<ClipDetail> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.ordinal LIMIT 1),'Binary or file content') FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
-        let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256 FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
+        let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,r.capture_priority,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256 FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
         let mut representations = Vec::new();
         for r in reps {
             let rep_id: String = r.get(0);
@@ -317,10 +319,11 @@ impl HistoryRepository {
                 native_type: r.get(3),
                 storage_kind: r.get(4),
                 ordinal: r.get(5),
-                byte_length: r.get(6),
-                text_value: r.get(7),
-                binary_file_id: r.get(8),
-                sha256: r.get(9),
+                capture_priority: r.get(6),
+                byte_length: r.get(7),
+                text_value: r.get(8),
+                binary_file_id: r.get(9),
+                sha256: r.get(10),
                 file_references: files,
             });
         }
@@ -614,6 +617,9 @@ impl HistoryRepository {
             match key.as_str() {
                 "ui.theme" => settings.theme = serde_json::from_str(&value)?,
                 "ui.language" => settings.language = serde_json::from_str(&value)?,
+                "ui.language_initialized" => {
+                    settings.language_initialized = serde_json::from_str(&value)?
+                }
                 "ui.activation_mode" => settings.activation_mode = serde_json::from_str(&value)?,
                 "ui.default_output_format" => {
                     settings.default_output_format = serde_json::from_str(&value)?
@@ -654,6 +660,10 @@ impl HistoryRepository {
         for (key, value) in [
             ("ui.theme", serde_json::to_string(&settings.theme)?),
             ("ui.language", serde_json::to_string(&settings.language)?),
+            (
+                "ui.language_initialized",
+                serde_json::to_string(&settings.language_initialized)?,
+            ),
             (
                 "ui.activation_mode",
                 serde_json::to_string(&settings.activation_mode)?,

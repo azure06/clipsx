@@ -37,5 +37,11 @@ See [UI_PARITY.md](UI_PARITY.md) for the authoritative feature-by-feature
 delivery status. Visual equivalence permits replacing component internals with
 v2 contracts; it never permits reintroducing v1 persistence or IPC.
 
+The preview chrome, `ClipActionsToolbar`, presentation specification, and the
+specialized components under `src/features/content/previews` are the concrete
+interaction references. They may be refactored to accept `ClipPresentation`
+and typed `RenderModel` inputs. Their former `ClipItem`, sparse `metadata`,
+Vault action, and generic `open_path` command are explicitly not references.
+
 The archive branch must not be deleted until the v2 replacement has reached
 feature parity for the behavior it documents.

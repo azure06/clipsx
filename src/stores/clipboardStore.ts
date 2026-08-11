@@ -4,33 +4,20 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from './settingsStore'
 import { useUIStore } from './uiStore'
-import type { ClipItem, Tag } from '../shared/types'
-
-type V2Tag = { id: string; name: string; color: string | null }
-type V2Summary = {
-  id: string
-  sourceAppName: string | null
-  capturedAt: number
-  updatedAt: number
-  isPinned: boolean
-  isFavorite: boolean
-  note: string | null
-  tags: V2Tag[]
-  safeSummary: string
-}
+import type { ClipSummary, V2Tag } from '../shared/types/v2'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
   fileReferences: string[]
   binaryFileId: string | null
 }
-type V2Detail = { clip: V2Summary; representations: V2Representation[] }
+type V2Detail = { clip: ClipSummary; representations: V2Representation[] }
 type V2Page<T> = { items: T[]; nextCursor: string | null }
-type V2SearchResult = { clip: V2Summary; snippet: string | null }
+type V2SearchResult = { clip: ClipSummary; snippet: string | null }
 
 type ClipboardState = {
-  clips: ClipItem[]
-  availableTags: Tag[]
+  clips: ClipSummary[]
+  availableTags: V2Tag[]
   loading: boolean
   error: string | null
   hasMore: boolean
@@ -38,22 +25,22 @@ type ClipboardState = {
   mode: 'browse' | 'search'
   searchQuery: string
   activeTab: 'all' | 'favorites' | 'pinned'
-  tagFilter: number | null
+  tagFilter: string | null
 }
 type ClipboardActions = {
   loadMoreClips: (limit?: number) => Promise<void>
-  addNewClip: (clip: ClipItem) => void
-  mergeClipUpdate: (clip: ClipItem) => void
+  addNewClip: (clip: ClipSummary) => void
+  mergeClipUpdate: (clip: ClipSummary) => void
   enterSearchMode: (query: string) => Promise<void>
   exitSearchMode: () => void
   setActiveTab: (tab: 'all' | 'favorites' | 'pinned') => Promise<void>
-  setTagFilter: (tagId: number | null) => Promise<void>
+  setTagFilter: (tagId: string | null) => Promise<void>
   refreshAvailableTags: () => Promise<void>
   updateClipNote: (clipId: string, note: string | null) => Promise<void>
-  addClipTag: (clipId: string, tag: Tag) => Promise<void>
-  removeClipTag: (clipId: string, tagId: number) => Promise<void>
+  addClipTag: (clipId: string, tag: V2Tag) => Promise<void>
+  removeClipTag: (clipId: string, tagId: string) => Promise<void>
   createTagAndAttach: (clipId: string, name: string) => Promise<void>
-  deleteAvailableTag: (tagId: number) => Promise<void>
+  deleteAvailableTag: (tagId: string) => Promise<void>
   deleteClip: (id: string) => Promise<void>
   toggleFavorite: (id: string) => Promise<void>
   togglePin: (id: string) => Promise<void>
@@ -77,105 +64,16 @@ const initialState: ClipboardState = {
   activeTab: 'all',
   tagFilter: null,
 }
-const tagIds = new Map<number, string>()
 let nextCursor: string | null | undefined
 let eventListenerReady = false
 
-const tagNumber = (id: string): number => {
-  let hash = 0
-  for (let i = 0; i < id.length; i += 1) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0
-  const number = Math.abs(hash) || 1
-  tagIds.set(number, id)
-  return number
-}
-const toTag = (tag: V2Tag): Tag => ({
-  id: tagNumber(tag.id),
-  name: tag.name,
-  color: tag.color,
-  createdAt: 0,
-})
-const v2TagId = (id: number): string => tagIds.get(id) ?? String(id)
-
-const detectedType = (representations: V2Representation[]): ClipItem['detectedType'] => {
-  const mimes = representations.map(rep => rep.canonicalMimeType ?? '')
-  if (mimes.some(mime => mime.startsWith('image/'))) return 'image'
-  if (mimes.some(mime => mime === 'text/html')) return 'html'
-  if (mimes.some(mime => mime.includes('rtf'))) return 'rtf'
-  if (mimes.some(mime => mime === 'application/json')) return 'json'
-  if (mimes.some(mime => mime === 'text/csv')) return 'csv'
-  if (representations.some(rep => rep.fileReferences.length > 0)) return 'files'
-  return 'text'
-}
-const toClip = (detail: V2Detail): ClipItem => {
-  const { clip, representations } = detail
-  const text =
-    representations.find(rep => rep.canonicalMimeType === 'text/plain')?.textValue ??
-    representations.find(rep => rep.textValue != null)?.textValue ??
-    clip.safeSummary
-  const html = representations.find(rep => rep.canonicalMimeType === 'text/html')?.textValue ?? null
-  const rtf =
-    representations.find(rep => (rep.canonicalMimeType ?? '').includes('rtf'))?.textValue ?? null
-  const image = representations.find(rep => (rep.canonicalMimeType ?? '').startsWith('image/'))
-  const files = representations.find(rep => rep.fileReferences.length > 0)?.fileReferences ?? []
-  return {
-    id: clip.id,
-    contentType: image ? 'image' : files.length ? 'files' : html ? 'html' : rtf ? 'rtf' : 'text',
-    detectedType: detectedType(representations),
-    contentText: text,
-    contentHtml: html,
-    contentRtf: rtf,
-    svgPath: null,
-    pdfPath: null,
-    imagePath: image?.binaryFileId ? `clipsx-asset://localhost/${image.binaryFileId}` : null,
-    attachmentPath: null,
-    attachmentType: null,
-    filePaths: files.length ? JSON.stringify(files) : null,
-    ocrText: null,
-    indexText: text,
-    primaryTextSource: text ? 'clipboard' : 'none',
-    ocrStatus: 'not_needed',
-    metadata: null,
-    note: clip.note,
-    createdAt: Math.floor(clip.capturedAt / 1000),
-    updatedAt: Math.floor(clip.updatedAt / 1000),
-    appName: clip.sourceAppName,
-    isPinned: clip.isPinned,
-    isFavorite: clip.isFavorite,
-    accessCount: 0,
-    contentHash: null,
-    tags: clip.tags.map(toTag),
-  }
-}
-// List rows deliberately use summaries only. Representation/facet detail is loaded by V2ViewPanel for the selected clip.
-const toSummaryClip = (clip: V2Summary): ClipItem => ({
-  id: clip.id,
-  contentType: 'text',
-  detectedType: 'text',
-  contentText: clip.safeSummary,
-  contentHtml: null,
-  contentRtf: null,
-  svgPath: null,
-  pdfPath: null,
-  imagePath: null,
-  attachmentPath: null,
-  attachmentType: null,
-  filePaths: null,
-  ocrText: null,
-  indexText: clip.safeSummary,
-  primaryTextSource: 'clipboard',
-  ocrStatus: 'not_needed',
-  metadata: null,
-  note: clip.note,
-  createdAt: Math.floor(clip.capturedAt / 1000),
-  updatedAt: Math.floor(clip.updatedAt / 1000),
-  appName: clip.sourceAppName,
-  isPinned: clip.isPinned,
-  isFavorite: clip.isFavorite,
-  accessCount: 0,
-  contentHash: null,
-  tags: clip.tags.map(toTag),
-})
 const scope = (state: ClipboardState) => (state.activeTab === 'all' ? 'all' : state.activeTab)
+const matchesVisibleScope = (state: ClipboardState, clip: ClipSummary) => {
+  if (state.activeTab === 'favorites' && !clip.isFavorite) return false
+  if (state.activeTab === 'pinned' && !clip.isPinned) return false
+  if (state.tagFilter !== null && !clip.tags?.some(tag => tag.id === state.tagFilter)) return false
+  return true
+}
 type ParsedSearch = { query: string; representationFamilies: string[]; facetIds: string[] }
 
 const searchFilters: Record<string, { representationFamily?: string; facetId?: string }> = {
@@ -223,8 +121,8 @@ const parseSearch = (input: string): ParsedSearch => {
 const refreshVisibleClip = async (id: string) => {
   const state = useClipboardStore.getState()
   if (!state.clips.some(clip => clip.id === id)) return
-  const clip = toClip(await invoke<V2Detail>('get_clip_detail', { clipId: id }))
-  state.mergeClipUpdate(clip)
+  const detail = await invoke<V2Detail>('get_clip_detail', { clipId: id })
+  state.mergeClipUpdate(detail.clip)
 }
 const ensureEvents = () => {
   if (eventListenerReady || typeof window === 'undefined') return
@@ -233,7 +131,7 @@ const ensureEvents = () => {
     listen<string>('clip-captured', event => {
       const id = event.payload
       void invoke<V2Detail>('get_clip_detail', { clipId: id })
-        .then(detail => useClipboardStore.getState().addNewClip(toClip(detail)))
+        .then(detail => useClipboardStore.getState().addNewClip(detail.clip))
         .catch(() => undefined)
     }),
     listen<string>('clip-updated', event => {
@@ -247,7 +145,9 @@ const ensureEvents = () => {
         clips: state.clips.filter(clip => clip.id !== event.payload),
       }))
     ),
-  ])
+  ]).catch(() => {
+    eventListenerReady = false
+  })
 }
 
 export const useClipboardStore = create<ClipboardStore>(set => ({
@@ -258,8 +158,8 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     ensureEvents()
     set({ loading: true, error: null })
     try {
-      const tagId = state.tagFilter === null ? null : v2TagId(state.tagFilter)
-      let summaries: V2Summary[]
+      const tagId = state.tagFilter
+      let summaries: ClipSummary[]
       let cursor: string | null
       if (state.mode === 'search') {
         const parsedSearch = parseSearch(state.searchQuery)
@@ -278,13 +178,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         summaries = result.items.map(item => item.clip)
         cursor = result.nextCursor
       } else {
-        const result = await invoke<V2Page<V2Summary>>('list_clips', {
+        const result = await invoke<V2Page<ClipSummary>>('list_clips', {
           request: { scope: scope(state), tagId, limit, cursor: nextCursor ?? null },
         })
         summaries = result.items
         cursor = result.nextCursor
       }
-      const clips = summaries.map(toSummaryClip)
+      const clips = summaries
       nextCursor = cursor
       set(current => ({
         clips: [...current.clips, ...clips],
@@ -299,13 +199,15 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   addNewClip: clip =>
     set(state => ({
       clips:
-        state.mode === 'browse'
+        state.mode === 'browse' && matchesVisibleScope(state, clip)
           ? [clip, ...state.clips.filter(item => item.id !== clip.id)]
           : state.clips,
     })),
   mergeClipUpdate: clip =>
     set(state => ({
-      clips: state.clips.map(item => (item.id === clip.id ? { ...item, ...clip } : item)),
+      clips: state.clips
+        .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
+        .filter(item => matchesVisibleScope(state, item)),
     })),
   resetPagination: () => {
     nextCursor = undefined
@@ -333,7 +235,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
   refreshAvailableTags: async () => {
     try {
-      set({ availableTags: (await invoke<V2Tag[]>('list_tags')).map(toTag) })
+      set({ availableTags: await invoke<V2Tag[]>('list_tags') })
     } catch (error) {
       set({ error: String(error) })
     }
@@ -343,21 +245,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     await refreshVisibleClip(clipId)
   },
   addClipTag: async (clipId, tag) => {
-    await invoke('add_clip_tag', { clipId, tagId: v2TagId(tag.id) })
+    await invoke('add_clip_tag', { clipId, tagId: tag.id })
     await refreshVisibleClip(clipId)
   },
   removeClipTag: async (clipId, tagId) => {
-    await invoke('remove_clip_tag', { clipId, tagId: v2TagId(tagId) })
+    await invoke('remove_clip_tag', { clipId, tagId })
     await refreshVisibleClip(clipId)
   },
   createTagAndAttach: async (clipId, name) => {
     const result = await invoke<V2Tag>('create_tag', { name: name.trim(), color: '#3b82f6' })
-    const tag = toTag(result)
-    set(state => ({ availableTags: [...state.availableTags, tag] }))
-    await useClipboardStore.getState().addClipTag(clipId, tag)
+    set(state => ({ availableTags: [...state.availableTags, result] }))
+    await useClipboardStore.getState().addClipTag(clipId, result)
   },
   deleteAvailableTag: async tagId => {
-    await invoke('delete_tag', { tagId: v2TagId(tagId) })
+    await invoke('delete_tag', { tagId })
     set(state => ({
       availableTags: state.availableTags.filter(tag => tag.id !== tagId),
       clips: state.clips.map(clip => ({
@@ -371,22 +272,56 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set(state => ({ clips: state.clips.filter(clip => clip.id !== id) }))
   },
   toggleFavorite: async id => {
-    const clip = useClipboardStore.getState().clips.find(item => item.id === id)
+    const before = useClipboardStore.getState()
+    const clip = before.clips.find(item => item.id === id)
     if (!clip) return
-    await invoke('set_clip_favorite', { clipId: id, value: !clip.isFavorite })
-    await refreshVisibleClip(id)
+    const value = !clip.isFavorite
+    set(state => ({
+      clips: state.clips
+        .map(item => (item.id === id ? { ...item, isFavorite: value } : item))
+        .filter(item => matchesVisibleScope(state, item)),
+      currentOffset:
+        state.activeTab === 'favorites' && !value
+          ? Math.max(0, state.currentOffset - 1)
+          : state.currentOffset,
+    }))
+    try {
+      await invoke('set_clip_favorite', { clipId: id, value })
+      await refreshVisibleClip(id)
+    } catch (error) {
+      set({ clips: before.clips, error: String(error) })
+      throw error
+    }
   },
   togglePin: async id => {
-    const clip = useClipboardStore.getState().clips.find(item => item.id === id)
+    const before = useClipboardStore.getState()
+    const clip = before.clips.find(item => item.id === id)
     if (!clip) return
-    await invoke('set_clip_pinned', { clipId: id, value: !clip.isPinned })
-    await refreshVisibleClip(id)
+    const value = !clip.isPinned
+    set(state => ({
+      clips: state.clips
+        .map(item => (item.id === id ? { ...item, isPinned: value } : item))
+        .filter(item => matchesVisibleScope(state, item)),
+      currentOffset:
+        state.activeTab === 'pinned' && !value
+          ? Math.max(0, state.currentOffset - 1)
+          : state.currentOffset,
+    }))
+    try {
+      await invoke('set_clip_pinned', { clipId: id, value })
+      await refreshVisibleClip(id)
+    } catch (error) {
+      set({ clips: before.clips, error: String(error) })
+      throw error
+    }
   },
   clearAllClips: async () => {
     await invoke('clear_history')
     set({ clips: [], currentOffset: 0, hasMore: false })
   },
-  copyDerivedText: async text => navigator.clipboard.writeText(text),
+  copyDerivedText: async text => {
+    await invoke('copy_text_value', { text })
+  },
   performPrimaryAction: async (_text, clipId) => {
     const settings = useSettingsStore.getState().settings
     const policy =

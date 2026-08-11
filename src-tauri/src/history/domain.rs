@@ -54,6 +54,7 @@ pub enum DefaultOutputFormat {
 pub struct AppSettings {
     pub theme: String,
     pub language: String,
+    pub language_initialized: bool,
     pub activation_mode: ActivationMode,
     pub default_output_format: DefaultOutputFormat,
     pub paste_on_enter: bool,
@@ -75,6 +76,7 @@ impl Default for AppSettings {
         Self {
             theme: "system".into(),
             language: "en".into(),
+            language_initialized: false,
             activation_mode: ActivationMode::SingleClickCopy,
             default_output_format: DefaultOutputFormat::Original,
             paste_on_enter: true,
@@ -119,6 +121,8 @@ pub struct ClipSummary {
     pub tags: Vec<Tag>,
     pub safe_summary: String,
     pub representation_count: i64,
+    pub primary_presentation_kind: String,
+    pub thumbnail_asset_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,6 +152,7 @@ pub struct RepresentationDetail {
     pub native_type: Option<String>,
     pub storage_kind: String,
     pub ordinal: i64,
+    pub capture_priority: i64,
     pub byte_length: i64,
     pub text_value: Option<String>,
     pub file_references: Vec<String>,

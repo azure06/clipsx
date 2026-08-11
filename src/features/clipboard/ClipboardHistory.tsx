@@ -3,7 +3,8 @@ import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { clipToContent, useActionRegistry } from '../content'
+import { useActionRegistry } from '../content'
+import { summaryToContent } from './summaryPresentation'
 import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 
@@ -326,7 +327,7 @@ export const ClipboardHistory = ({
       }
 
       const selectedClip = clips[selectedIndex]
-      const selectedContent = selectedClip ? clipToContent(selectedClip) : null
+      const selectedContent = selectedClip ? summaryToContent(selectedClip) : null
 
       // Handle primary+1 to primary+9
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
@@ -334,7 +335,7 @@ export const ClipboardHistory = ({
         const index = parseInt(e.key, 10) - 1
         const clip = clips[index]
         if (clip) {
-          void handleAction(clip.contentText ?? '', clip.id)
+          void handleAction(clip.safeSummary, clip.id)
         }
         return
       }
@@ -392,7 +393,7 @@ export const ClipboardHistory = ({
           e.preventDefault()
           const clip = clips[selectedIndex]
           if (clip) {
-            void handleAction(clip.contentText ?? '', clip.id)
+            void handleAction(clip.safeSummary, clip.id)
           }
           break
         }

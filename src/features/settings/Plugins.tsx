@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState } from 'react'
-import { Box, CheckCircle2, Database, Plug, RefreshCw } from 'lucide-react'
+import {
+  Box,
+  CheckCircle2,
+  Database,
+  Download,
+  Plug,
+  RefreshCw,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react'
 
 type CoreUtility = { id: string; kind: string; label: string; version: string }
 type Extension = {
@@ -18,26 +27,41 @@ type ProviderStatus = {
   pendingJobs: number
   diagnostic: string | null
 }
+type RegistryPackage = {
+  packageId: string
+  version: string
+  displayName: string
+  description: string
+  contributions: string[]
+}
+type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }
 
 // Reuses the archived Plugins surface, but its data is now the v2 contribution/provider catalog.
 export const Plugins = () => {
   const [utilities, setUtilities] = useState<CoreUtility[]>([])
   const [extensions, setExtensions] = useState<Extension[]>([])
   const [provider, setProvider] = useState<ProviderStatus | null>(null)
+  const [registry, setRegistry] = useState<RegistryPackage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const load = async () => {
     setBusy(true)
     setError(null)
     try {
-      const [core, installed, status] = await Promise.all([
+      const [core, installed, status, available] = await Promise.all([
         invoke<CoreUtility[]>('list_core_utilities'),
         invoke<Extension[]>('list_extensions'),
         invoke<ProviderStatus>('get_text_embedding_status'),
+        invoke<RegistryIndex>('get_extension_registry').catch(() => ({
+          schemaVersion: 1,
+          packages: [],
+        })),
       ])
       setUtilities(core)
       setExtensions(installed)
       setProvider(status)
+      setRegistry(available.packages)
     } catch (value) {
       setError(String(value))
     } finally {
@@ -48,8 +72,31 @@ export const Plugins = () => {
     void load()
   }, [])
   const setExtension = async (extension: Extension, enabled: boolean) => {
-    await invoke('set_extension_enabled', { packageId: extension.packageId, enabled })
-    await load()
+    setBusyId(extension.packageId)
+    try {
+      await invoke('set_extension_enabled', { packageId: extension.packageId, enabled })
+      await load()
+    } catch (value) {
+      setError(String(value))
+    } finally {
+      setBusyId(null)
+    }
+  }
+  const extensionAction = async (
+    packageId: string,
+    command: string,
+    args: Record<string, unknown> = {}
+  ) => {
+    setBusyId(packageId)
+    setError(null)
+    try {
+      await invoke(command, { packageId, ...args })
+      await load()
+    } catch (value) {
+      setError(String(value))
+    } finally {
+      setBusyId(null)
+    }
   }
   const groups = ['Detector', 'Renderer', 'Transformer']
   return (
@@ -141,15 +188,77 @@ export const Plugins = () => {
                   </div>
                   <button
                     className="rounded border border-slate-300 px-2 py-1 text-xs dark:border-slate-600"
+                    disabled={
+                      busyId === extension.packageId ||
+                      (extension.status !== 'ready' && extension.status !== 'quarantined')
+                    }
                     onClick={() => void setExtension(extension, !extension.enabled)}
                   >
                     {extension.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                  {extension.status === 'quarantined' && (
+                    <button
+                      aria-label={`Recover ${extension.displayName}`}
+                      className="rounded p-1.5 text-amber-500 hover:bg-amber-500/10"
+                      disabled={busyId === extension.packageId}
+                      onClick={() => void extensionAction(extension.packageId, 'recover_extension')}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button
+                    aria-label={`Uninstall ${extension.displayName}`}
+                    className="rounded p-1.5 text-gray-400 hover:bg-red-500/10 hover:text-red-500"
+                    disabled={busyId === extension.packageId}
+                    onClick={() => void extensionAction(extension.packageId, 'uninstall_extension')}
+                  >
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               ))}
             </div>
           )}
         </section>
+        {registry.some(
+          item => !extensions.some(extension => extension.packageId === item.packageId)
+        ) && (
+          <section>
+            <h2 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+              Reviewed registry
+            </h2>
+            <div className="space-y-2">
+              {registry
+                .filter(
+                  item => !extensions.some(extension => extension.packageId === item.packageId)
+                )
+                .map(item => (
+                  <div
+                    className="flex items-center justify-between rounded-lg border border-slate-200/70 px-3 py-2 dark:border-white/10"
+                    key={`${item.packageId}-${item.version}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{item.displayName}</div>
+                      <div className="truncate text-[10px] text-gray-500">
+                        {item.description || item.contributions.join(', ')}
+                      </div>
+                    </div>
+                    <button
+                      aria-label={`Install ${item.displayName}`}
+                      className="rounded p-1.5 text-blue-500 hover:bg-blue-500/10"
+                      disabled={busyId === item.packageId}
+                      onClick={() =>
+                        void extensionAction(item.packageId, 'install_registry_extension', {
+                          version: item.version,
+                        })
+                      }
+                    >
+                      <Download className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </section>
+        )}
         <div className="flex items-center gap-2 text-[10px] text-gray-500">
           <Box className="h-3 w-3" />
           Core utilities are installed application code; extensions run in the WASM sandbox.

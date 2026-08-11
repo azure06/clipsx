@@ -21,7 +21,7 @@ export const TagFilter = () => {
 
   const activeTag = tags.find(tag => tag.id === tagFilter)
 
-  const handleDelete = async (tagId: number) => {
+  const handleDelete = async (tagId: string) => {
     await deleteAvailableTag(tagId)
   }
 

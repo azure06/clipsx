@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, type AppSettings } from '../shared/types'
 type V2Settings = {
   theme: string
   language: string
+  languageInitialized: boolean
   activationMode: 'single_click_copy' | 'double_click_primary' | 'select_only'
   defaultOutputFormat: 'original' | 'plain_text'
   pasteOnEnter: boolean
@@ -33,7 +34,7 @@ const fromV2 = (settings: V2Settings): AppSettings => ({
   ...DEFAULT_SETTINGS,
   theme: settings.theme === 'system' ? 'auto' : (settings.theme as AppSettings['theme']),
   language: settings.language,
-  language_initialized: true,
+  language_initialized: settings.languageInitialized,
   global_shortcut: settings.globalShortcut,
   enable_images: settings.captureFilters.images,
   enable_files: settings.captureFilters.files,
@@ -57,6 +58,7 @@ const fromV2 = (settings: V2Settings): AppSettings => ({
 const toV2 = (settings: AppSettings): V2Settings => ({
   theme: settings.theme === 'auto' ? 'system' : settings.theme,
   language: settings.language,
+  languageInitialized: settings.language_initialized,
   activationMode: settings.item_activation_mode,
   defaultOutputFormat: settings.default_paste_format === 'plain' ? 'plain_text' : 'original',
   pasteOnEnter: settings.paste_on_enter,

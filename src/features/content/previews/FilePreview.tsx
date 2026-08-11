@@ -99,11 +99,11 @@ const getFileIcon = (path: string) => {
   }
 }
 
-const FileItem = ({ file }: { file: FileMetadata }) => {
+const FileItem = ({ file, clipId }: { file: FileMetadata; clipId: string }) => {
   const { t, i18n } = useTranslation()
   const handleOpen = async () => {
     try {
-      await invoke('open_path', { path: file.path })
+      await invoke('open_clip_file', { clipId, path: file.path })
     } catch (error) {
       console.error('Failed to open file:', error)
     }
@@ -198,7 +198,7 @@ const FilePreviewComponent = ({ content }: FilePreviewProps) => {
     <div className="w-full h-full p-4 overflow-y-auto">
       <div className="flex flex-col gap-2">
         {files.map((file, index) => (
-          <FileItem key={`${file.path}-${index}`} file={file} />
+          <FileItem key={`${file.path}-${index}`} file={file} clipId={content.clip.id} />
         ))}
       </div>
     </div>

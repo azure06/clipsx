@@ -44,7 +44,7 @@ describe('content copy routing', () => {
     })
   })
 
-  it('CopyableRow routes preview copies through copy_to_clipboard', async () => {
+  it('CopyableRow routes preview copies through the typed text command', async () => {
     const user = userEvent.setup()
 
     render(<CopyableRow label="Domain" value="example.com" sourceClipId="clip-1" />)
@@ -52,11 +52,7 @@ describe('content copy routing', () => {
     await user.click(screen.getByText('example.com'))
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-        text: 'example.com',
-        plain: true,
-        trackUsage: false,
-      })
+      expect(mockInvoke).toHaveBeenCalledWith('copy_text_value', { text: 'example.com' })
     })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })
@@ -77,11 +73,7 @@ describe('content copy routing', () => {
     await user.click(screen.getByRole('button', { name: /copy result/i }))
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-        text: '4',
-        plain: true,
-        trackUsage: false,
-      })
+      expect(mockInvoke).toHaveBeenCalledWith('copy_text_value', { text: '4' })
     })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })
@@ -100,11 +92,7 @@ describe('content copy routing', () => {
       })
     )
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-      text: 'example.com',
-      plain: true,
-      trackUsage: false,
-    })
+    expect(mockInvoke).toHaveBeenCalledWith('copy_text_value', { text: 'example.com' })
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })
 })

@@ -13,6 +13,7 @@ use crate::{artifacts, contributions, foundation, history, output::paste, search
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,6 +139,148 @@ fn factory_reset(
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) {
     app.request_restart();
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
+    let parsed = url::Url::parse(url.trim()).map_err(|_| "invalid URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only HTTP and HTTPS URLs are supported".into());
+    }
+    app.shell()
+        .open(parsed.as_str(), None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+fn compose_email(address: String, app: tauri::AppHandle) -> Result<(), String> {
+    let address = address.trim();
+    if address.contains(['\r', '\n']) || !address.contains('@') || address.contains(' ') {
+        return Err("invalid email address".into());
+    }
+    app.shell()
+        .open(format!("mailto:{address}"), None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+fn start_phone_action(number: String, message: bool, app: tauri::AppHandle) -> Result<(), String> {
+    let number = number.trim();
+    if number.is_empty()
+        || !number.chars().all(|character| {
+            character.is_ascii_digit() || matches!(character, '+' | '-' | '(' | ')' | ' ' | '.')
+        })
+    {
+        return Err("invalid phone number".into());
+    }
+    let scheme = if message { "sms" } else { "tel" };
+    app.shell()
+        .open(format!("{scheme}:{number}"), None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+async fn open_clip_file(
+    clip_id: String,
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let detail = state
+        .history
+        .detail(&clip_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let allowed = detail.representations.iter().any(|representation| {
+        representation
+            .file_references
+            .iter()
+            .any(|reference| reference == &path)
+    });
+    if !allowed {
+        return Err("file is not part of this clip".into());
+    }
+    app.shell()
+        .open(path, None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+async fn open_detected_path(
+    clip_id: String,
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let allowed = contributions::facets(&state.history, &clip_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|facet| {
+            facet.id == "core.file.path"
+                && facet
+                    .payload
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(path.as_str())
+        });
+    if !allowed {
+        return Err("path is not a validated facet of this clip".into());
+    }
+    app.shell()
+        .open(path, None)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+async fn open_clip_text_in_editor(
+    clip_id: String,
+    extension: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let extension = extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    if extension.is_empty()
+        || extension.len() > 12
+        || !extension
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return Err("invalid editor file extension".into());
+    }
+    let detail = state
+        .history
+        .detail(&clip_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let text = detail
+        .representations
+        .iter()
+        .find(|representation| representation.canonical_mime_type.as_deref() == Some("text/plain"))
+        .and_then(|representation| representation.text_value.as_deref())
+        .or_else(|| {
+            detail
+                .representations
+                .iter()
+                .find_map(|representation| representation.text_value.as_deref())
+        })
+        .ok_or_else(|| "clip has no text representation".to_string())?;
+    let directory = state.roots.data.join("editor_previews");
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join(format!("{clip_id}.{extension}"));
+    std::fs::write(&path, text.as_bytes()).map_err(|error| error.to_string())?;
+    app.shell()
+        .open(path.to_string_lossy(), None)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -484,6 +627,22 @@ async fn copy_clip_output(
 ) -> Result<(), String> {
     copy_policy(policy, &state)
         .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn copy_text_value(text: String) -> Result<(), String> {
+    let representation = history::CapturedRepresentation {
+        format_key: "clipsx:text/plain".into(),
+        canonical_mime_type: Some("text/plain".into()),
+        native_type: None,
+        platform: std::env::consts::OS.into(),
+        capture_priority: 0,
+        payload: history::CapturedPayload::Text(text),
+    };
+    SystemClipboardAdapter::new()
+        .write(&[representation])
+        .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
@@ -1059,6 +1218,7 @@ async fn update_search_settings(
 pub(crate) fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -1270,6 +1430,12 @@ pub(crate) fn run() {
             set_extension_developer_mode,
             factory_reset,
             restart_app,
+            open_external_url,
+            compose_email,
+            start_phone_action,
+            open_clip_file,
+            open_detected_path,
+            open_clip_text_in_editor,
             list_clips,
             get_clip_detail,
             capture_clipboard,
@@ -1277,6 +1443,7 @@ pub(crate) fn run() {
             list_transformer_contributions,
             create_transform_preview,
             copy_clip_output,
+            copy_text_value,
             paste_clip_output,
             save_transform_result,
             get_transform_preferences,

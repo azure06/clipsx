@@ -47,7 +47,7 @@ const URLPreviewComponent = ({ content }: URLPreviewProps) => {
   const menuActions = getPreviewMenuActions(content)
 
   const handleOpen = () => {
-    void invoke('open_path', { path: raw })
+    void invoke('open_external_url', { url: raw })
   }
 
   const isImage = raw.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)

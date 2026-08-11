@@ -6,6 +6,31 @@ import i18n from './i18n'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 
+const v2Settings = (overrides: Record<string, unknown> = {}) => ({
+  theme: 'system',
+  language: 'en',
+  languageInitialized: true,
+  activationMode: 'single_click_copy',
+  defaultOutputFormat: 'original',
+  pasteOnEnter: true,
+  hideOnCopy: false,
+  hideOnBlur: true,
+  alwaysOnTop: false,
+  showCopyToast: true,
+  globalShortcut: 'Ctrl+Shift+V',
+  excludedApps: [],
+  autoClearMinutes: null,
+  clearOnExit: false,
+  autoStart: false,
+  captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
+  capture: {
+    maxOrdinaryClips: 1000,
+    maxAgeDays: null,
+    maxRepresentationBytes: 52_428_800,
+  },
+  ...overrides,
+})
+
 vi.mock('./shared/hooks/useWindowBehavior', () => ({
   useWindowBehavior: vi.fn(),
 }))
@@ -22,10 +47,10 @@ describe('App', () => {
   beforeEach(async () => {
     invokeMock.mockReset()
     invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_settings') {
-        return Promise.resolve({ language: 'en', language_initialized: true })
+      if (command === 'get_app_settings') {
+        return Promise.resolve(v2Settings())
       }
-      if (command === 'update_settings') return Promise.resolve(args?.settings)
+      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
       return Promise.resolve(null)
     })
     useSettingsStore.setState({ settings: null, isLoading: false, error: null })
@@ -48,18 +73,19 @@ describe('App', () => {
       value: ['ja-JP', 'en-US'],
     })
     invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_settings') {
-        return Promise.resolve({ language: 'en', language_initialized: false })
+      if (command === 'get_app_settings') {
+        return Promise.resolve(v2Settings({ languageInitialized: false }))
       }
-      if (command === 'update_settings') return Promise.resolve(args?.settings)
+      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
       return Promise.resolve(null)
     })
 
     render(<App />)
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
     expect(document.documentElement.lang).toBe('ja')
-    expect(invokeMock).toHaveBeenCalledWith('update_settings', {
-      settings: { language: 'ja', language_initialized: true },
+    expect(invokeMock).toHaveBeenCalledWith('update_app_settings', {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      settings: expect.objectContaining({ language: 'ja', languageInitialized: true }),
     })
     expect(invokeMock).toHaveBeenCalledWith('set_tray_labels', {
       labels: { open: 'Clipsを開く', settings: '設定', quit: '終了' },
@@ -68,18 +94,19 @@ describe('App', () => {
 
   it('normalizes an unsupported saved language to English and persists it', async () => {
     invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_settings') {
-        return Promise.resolve({ language: 'de', language_initialized: true })
+      if (command === 'get_app_settings') {
+        return Promise.resolve(v2Settings({ language: 'de' }))
       }
-      if (command === 'update_settings') return Promise.resolve(args?.settings)
+      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
       return Promise.resolve(null)
     })
 
     render(<App />)
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
     expect(document.documentElement.lang).toBe('en')
-    expect(invokeMock).toHaveBeenCalledWith('update_settings', {
-      settings: { language: 'en', language_initialized: true },
+    expect(invokeMock).toHaveBeenCalledWith('update_app_settings', {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      settings: expect.objectContaining({ language: 'en', languageInitialized: true }),
     })
   })
 

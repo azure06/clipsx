@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { Phone, MessageSquare } from 'lucide-react'
 import type { Content } from '../types'
+import { invoke } from '@tauri-apps/api/core'
 import { InlineCTAButton } from './PreviewShell'
 import { previewTheme } from './previewTheme'
 import { useTranslation } from 'react-i18next'
@@ -14,10 +15,10 @@ const PhonePreviewComponent = ({ content }: PhonePreviewProps) => {
   const number = content.text
 
   const handleCall = () => {
-    window.open(`tel:${number}`)
+    void invoke('start_phone_action', { number, message: false })
   }
   const handleSms = () => {
-    window.open(`sms:${number}`)
+    void invoke('start_phone_action', { number, message: true })
   }
 
   return (

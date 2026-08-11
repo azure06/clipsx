@@ -306,90 +306,11 @@ describe('AppLayout search focus ownership', () => {
     noteField.remove()
   })
 
-  it('merges clip-updated events into clipboard store state', async () => {
-    useClipboardStore.setState({
-      clips: [
-        {
-          id: 'clip-1',
-          contentType: 'text',
-          detectedType: 'text',
-          contentText: 'hello',
-          contentHtml: null,
-          contentRtf: null,
-          svgPath: null,
-          pdfPath: null,
-          imagePath: null,
-          attachmentPath: null,
-          attachmentType: null,
-          filePaths: null,
-          ocrText: null,
-          indexText: 'hello',
-          primaryTextSource: 'clipboard',
-          ocrStatus: 'not_needed',
-          metadata: null,
-          note: 'keep me',
-          createdAt: 1,
-          updatedAt: 1,
-          appName: null,
-          isPinned: false,
-          isFavorite: false,
-          accessCount: 0,
-          contentHash: null,
-          hasEmbedding: false,
-          tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
-        },
-      ],
-    })
-
+  it('does not install a duplicate clip invalidation controller in the layout', () => {
     render(<AppLayout />)
 
-    await waitFor(() => {
-      expect(eventHandlers.get('clip-updated')).toHaveLength(1)
-    })
-
-    const clipUpdatedHandlers = eventHandlers.get('clip-updated')
-
-    act(() => {
-      clipUpdatedHandlers?.[0]?.({
-        payload: {
-          id: 'clip-1',
-          contentType: 'text',
-          detectedType: 'text',
-          contentText: 'hello',
-          contentHtml: null,
-          contentRtf: null,
-          svgPath: null,
-          pdfPath: null,
-          imagePath: null,
-          attachmentPath: null,
-          attachmentType: null,
-          filePaths: null,
-          ocrText: null,
-          indexText: 'hello',
-          primaryTextSource: 'clipboard',
-          ocrStatus: 'not_needed',
-          metadata: null,
-          note: null,
-          createdAt: 1,
-          updatedAt: 2,
-          appName: null,
-          isPinned: false,
-          isFavorite: false,
-          accessCount: 0,
-          contentHash: null,
-          hasEmbedding: true,
-        },
-      })
-    })
-
-    await waitFor(() => {
-      expect(useClipboardStore.getState().clips[0]).toMatchObject({
-        id: 'clip-1',
-        hasEmbedding: true,
-        note: 'keep me',
-        tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
-      })
-    })
+    expect(eventHandlers.get('clip-updated')).toBeUndefined()
+    expect(eventHandlers.get('clip-captured')).toBeUndefined()
   })
 
   it('re-fetches text search status when text-search-status-changed fires after startup', async () => {

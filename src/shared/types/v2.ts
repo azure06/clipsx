@@ -12,6 +12,8 @@ export type ClipSummary = {
   tags: V2Tag[]
   safeSummary: string
   representationCount: number
+  primaryPresentationKind: string
+  thumbnailAssetId: string | null
 }
 
 export type RepresentationDetail = {
@@ -21,6 +23,7 @@ export type RepresentationDetail = {
   nativeType: string | null
   storageKind: 'text' | 'binary_asset' | 'file_list'
   ordinal: number
+  capturePriority: number
   byteLength: number
   textValue: string | null
   fileReferences: string[]
@@ -38,9 +41,17 @@ export type ClipViewDescriptor = {
   mimeType: string | null
   facetId: string | null
   isOriginal: boolean
+  presentationKind: string
+  placement: 'primary' | 'alternate' | 'advanced'
 }
 
-export type ClipViewSet = { clipId: string; facets: FacetDescriptor[]; views: ClipViewDescriptor[] }
+export type ClipViewSet = {
+  clipId: string
+  primaryViewId: string
+  presentationKind: string
+  facets: FacetDescriptor[]
+  views: ClipViewDescriptor[]
+}
 export type FacetDescriptor = {
   id: string
   displayName: string
@@ -59,15 +70,21 @@ export type RenderModel =
   | { kind: 'key_value'; entries: [string, string][] }
   | { kind: 'image'; artifactId: string }
   | { kind: 'html'; sanitizedHtml: string }
+  | { kind: 'rich_text'; sanitizedHtml: string | null; plainText: string }
+  | { kind: 'files'; files: string[] }
+  | { kind: 'document'; artifactId: string; mimeType: string }
+  | { kind: 'office'; formatKey: string; nativeType: string | null; byteLength: number }
+  | { kind: 'semantic'; facetId: string; text: string; payload: Record<string, unknown> }
+  | {
+      kind: 'unsupported'
+      formatKey: string
+      mimeType: string | null
+      nativeType: string | null
+      byteLength: number
+    }
   | { kind: 'error'; message: string }
 
 export type ClipPresentation = ClipSummary & {
-  primaryMimeType: string | null
-  primaryKind: 'text' | 'image' | 'files' | 'document' | 'binary'
+  activeView: ClipViewDescriptor
+  model: RenderModel
 }
-
-export const toClipPresentation = (clip: ClipSummary): ClipPresentation => ({
-  ...clip,
-  primaryMimeType: null,
-  primaryKind: 'text',
-})

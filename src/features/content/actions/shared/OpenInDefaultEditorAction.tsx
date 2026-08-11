@@ -44,10 +44,6 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
   placement: 'global_bar' as const,
   shortcut: OPEN_IN_EDITOR_SHORTCUT,
   check: content => {
-    if (content.type === 'image') {
-      return Boolean(content.clip.imagePath)
-    }
-
     return (
       content.type === 'text' ||
       content.type === 'markdown' ||
@@ -59,12 +55,6 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
   },
   execute: async content => {
     try {
-      // If it's an image, we should have a local path already saved
-      if (content.type === 'image' && content.clip.imagePath) {
-        await invoke('open_path', { path: content.clip.imagePath })
-        return
-      }
-
       let extension = 'txt'
 
       if ((content.type === 'code' || content.type === 'markdown') && content.metadata.language) {
@@ -80,8 +70,8 @@ export const useOpenInDefaultEditorAction = (): SmartAction => ({
         extension = LANGUAGE_TO_EXTENSION[lang] || 'txt'
       }
 
-      await invoke('open_text_in_editor', {
-        text: content.text,
+      await invoke('open_clip_text_in_editor', {
+        clipId: content.clip.id,
         extension,
       })
     } catch (error) {

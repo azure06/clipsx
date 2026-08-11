@@ -2,7 +2,7 @@ import { fireEvent, render, screen, cleanup, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClipboardHistory } from './ClipboardHistory'
 import { useClipboardStore, useSettingsStore } from '../../stores'
-import type { ClipItem } from '../../shared/types'
+import type { ClipSummary } from '../../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 
 const { toastMock, performPrimaryActionMock, performCopyMock, loadMoreClipsMock } = vi.hoisted(
@@ -20,34 +20,20 @@ vi.mock('../../shared/contexts/ToastContext', () => ({
   }),
 }))
 
-const makeClip = (): ClipItem => ({
+const makeClip = (): ClipSummary => ({
   id: 'clip-1',
-  contentType: 'text',
-  detectedType: 'text',
-  contentText: 'hello world',
-  contentHtml: null,
-  contentRtf: null,
-  svgPath: null,
-  pdfPath: null,
-  imagePath: null,
-  attachmentPath: null,
-  attachmentType: null,
-  filePaths: null,
-  ocrText: null,
-  indexText: 'hello world',
-  primaryTextSource: 'clipboard',
-  ocrStatus: 'not_needed',
-  metadata: null,
+  sourceAppName: null,
+  sourceAppId: null,
+  capturedAt: 1,
   note: null,
-  createdAt: 1,
   updatedAt: 1,
-  appName: null,
   isPinned: false,
   isFavorite: false,
-  accessCount: 0,
-  contentHash: null,
-  hasEmbedding: false,
   tags: [],
+  safeSummary: 'hello world',
+  representationCount: 1,
+  primaryPresentationKind: 'text',
+  thumbnailAssetId: null,
 })
 
 describe('ClipboardHistory activation modes', () => {

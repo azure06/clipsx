@@ -1,5 +1,6 @@
 import { Phone, MessageSquare } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { invoke } from '@tauri-apps/api/core'
 
 export const useCallPhoneAction = (): SmartAction => ({
   id: 'call-phone',
@@ -9,7 +10,7 @@ export const useCallPhoneAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'phone',
   execute: content => {
-    window.open(`tel:${content.text}`)
+    void invoke('start_phone_action', { number: content.text, message: false })
   },
 })
 
@@ -21,6 +22,6 @@ export const useSmsAction = (): SmartAction => ({
   placement: 'preview_inline',
   check: content => content.type === 'phone',
   execute: content => {
-    window.open(`sms:${content.text}`)
+    void invoke('start_phone_action', { number: content.text, message: true })
   },
 })

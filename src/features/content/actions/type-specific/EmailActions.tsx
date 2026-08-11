@@ -1,5 +1,6 @@
 import { Send, AtSign, Mail } from 'lucide-react'
 import type { SmartAction } from '../../types'
+import { invoke } from '@tauri-apps/api/core'
 import { useClipboardStore } from '../../../../stores/clipboardStore'
 import type { ShortcutDef } from '../../../../shared/keyboard/shortcuts'
 
@@ -18,7 +19,7 @@ export const useSendEmailAction = (): SmartAction => ({
   check: content => content.type === 'email',
   execute: content => {
     const email = content.metadata.email || content.text
-    window.open(`mailto:${email}`, '_blank')
+    void invoke('compose_email', { address: email })
   },
 })
 

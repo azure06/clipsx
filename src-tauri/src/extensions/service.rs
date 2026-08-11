@@ -371,6 +371,8 @@ impl ExtensionService {
                         mime_type: representation.canonical_mime_type.clone(),
                         facet_id: None,
                         is_original: false,
+                        presentation_kind: "extension".into(),
+                        placement: "alternate".into(),
                     });
                 }
                 for facet in facets
@@ -386,6 +388,8 @@ impl ExtensionService {
                             mime_type: representation.canonical_mime_type.clone(),
                             facet_id: Some(facet.id.clone()),
                             is_original: false,
+                            presentation_kind: "extension".into(),
+                            placement: "alternate".into(),
                         });
                     }
                 }

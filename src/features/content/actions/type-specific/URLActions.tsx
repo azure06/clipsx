@@ -19,7 +19,7 @@ export const useOpenURLAction = (): SmartAction => ({
   check: content => content.type === 'url',
   execute: content => {
     const url = content.metadata.url || content.text
-    void invoke('open_path', { path: url })
+    void invoke('open_external_url', { url })
   },
 })
 
@@ -32,8 +32,8 @@ export const useSearchURLAction = (): SmartAction => ({
   check: content => content.type === 'url' && Boolean(content.metadata.domain),
   execute: content => {
     const domain = content.metadata.domain
-    void invoke('open_path', {
-      path: `https://www.google.com/search?q=${encodeURIComponent(domain || '')}`,
+    void invoke('open_external_url', {
+      url: `https://www.google.com/search?q=${encodeURIComponent(domain || '')}`,
     })
   },
 })

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from './clipboardStore'
 import { useSettingsStore } from './settingsStore'
-import type { ClipItem, Tag } from '../shared/types'
+import type { ClipSummary, V2Tag } from '../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../shared/types'
 
 const { mockInvoke, mockHide } = vi.hoisted(() => ({
@@ -37,11 +37,7 @@ describe('useClipboardStore.copyDerivedText', () => {
   it('routes derived copies through the backend plain-text copy command without hiding the window', async () => {
     await useClipboardStore.getState().copyDerivedText('example.com')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-      text: 'example.com',
-      plain: true,
-      trackUsage: false,
-    })
+    expect(mockInvoke).toHaveBeenCalledWith('copy_text_value', { text: 'example.com' })
     expect(mockHide).not.toHaveBeenCalled()
     expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })
@@ -64,11 +60,8 @@ describe('useClipboardStore.performCopy', () => {
 
     await useClipboardStore.getState().performCopy('copied text', 'clip-1')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-      text: 'copied text',
-      clipId: 'clip-1',
-      plain: undefined,
-      trackUsage: true,
+    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
+      policy: { kind: 'original', clipId: 'clip-1' },
     })
     expect(mockHide).toHaveBeenCalledTimes(1)
   })
@@ -76,11 +69,8 @@ describe('useClipboardStore.performCopy', () => {
   it('does not hide the window after explicit copy when hide_on_copy is disabled', async () => {
     await useClipboardStore.getState().performCopy('copied text', 'clip-1')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_to_clipboard', {
-      text: 'copied text',
-      clipId: 'clip-1',
-      plain: undefined,
-      trackUsage: true,
+    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
+      policy: { kind: 'original', clipId: 'clip-1' },
     })
     expect(mockHide).not.toHaveBeenCalled()
   })
@@ -93,112 +83,69 @@ describe('useClipboardStore.mergeClipUpdate', () => {
       clips: [
         {
           id: 'clip-1',
-          contentType: 'text',
-          detectedType: 'text',
-          contentText: 'hello',
-          contentHtml: null,
-          contentRtf: null,
-          svgPath: null,
-          pdfPath: null,
-          imagePath: null,
-          attachmentPath: null,
-          attachmentType: null,
-          filePaths: null,
-          ocrText: null,
-          indexText: 'hello',
-          primaryTextSource: 'clipboard',
-          ocrStatus: 'not_needed',
-          metadata: null,
+          sourceAppName: null,
+          sourceAppId: null,
+          capturedAt: 1,
           note: 'keep me',
-          createdAt: 1,
           updatedAt: 1,
-          appName: null,
           isPinned: false,
           isFavorite: false,
-          accessCount: 0,
-          contentHash: null,
-          hasEmbedding: false,
-          tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
+          tags: [{ id: 'tag-saved', name: 'saved', color: '#fff' }],
+          safeSummary: 'hello',
+          representationCount: 1,
+          primaryPresentationKind: 'text',
+          thumbnailAssetId: null,
         },
       ],
     })
   })
 
-  it('updates existing clip state without dropping local tags or note', () => {
+  it('applies authoritative mutable fields while preserving omitted summary fields', () => {
     useClipboardStore.getState().mergeClipUpdate({
       id: 'clip-1',
-      contentType: 'text',
-      detectedType: 'text',
-      contentText: 'hello',
-      contentHtml: null,
-      contentRtf: null,
-      svgPath: null,
-      pdfPath: null,
-      imagePath: null,
-      attachmentPath: null,
-      attachmentType: null,
-      filePaths: null,
-      ocrText: null,
-      indexText: 'hello',
-      primaryTextSource: 'clipboard',
-      ocrStatus: 'not_needed',
-      metadata: null,
+      sourceAppName: null,
+      sourceAppId: null,
+      capturedAt: 1,
       note: null,
-      createdAt: 1,
       updatedAt: 2,
-      appName: null,
       isPinned: false,
       isFavorite: false,
-      accessCount: 0,
-      contentHash: null,
-      hasEmbedding: true,
+      tags: [{ id: 'tag-saved', name: 'saved', color: '#fff' }],
+      safeSummary: 'hello',
+      representationCount: 1,
+      primaryPresentationKind: 'text',
+      thumbnailAssetId: null,
     })
 
     expect(useClipboardStore.getState().clips[0]).toMatchObject({
       id: 'clip-1',
-      hasEmbedding: true,
-      note: 'keep me',
-      tags: [{ id: 1, name: 'saved', color: '#fff', createdAt: 1 }],
+      note: null,
+      tags: [{ id: 'tag-saved', name: 'saved', color: '#fff' }],
     })
   })
 })
 
-const makeClip = (overrides: Partial<ClipItem> = {}): ClipItem => ({
+const makeClip = (overrides: Partial<ClipSummary> = {}): ClipSummary => ({
   id: 'clip-1',
-  contentType: 'text',
-  detectedType: 'text',
-  contentText: 'hello',
-  contentHtml: null,
-  contentRtf: null,
-  svgPath: null,
-  pdfPath: null,
-  imagePath: null,
-  attachmentPath: null,
-  attachmentType: null,
-  filePaths: null,
-  ocrText: null,
-  indexText: 'hello',
-  primaryTextSource: 'clipboard',
-  ocrStatus: 'not_needed',
-  metadata: null,
+  sourceAppName: null,
+  sourceAppId: null,
+  capturedAt: 1,
   note: null,
-  createdAt: 1,
   updatedAt: 1,
-  appName: null,
   isPinned: false,
   isFavorite: false,
-  accessCount: 0,
-  contentHash: null,
-  hasEmbedding: false,
   tags: [],
+  safeSummary: 'hello',
+  representationCount: 1,
+  primaryPresentationKind: 'text',
+  thumbnailAssetId: null,
   ...overrides,
 })
 
-const workTag: Tag = {
-  id: 7,
+const workTag: V2Tag = {
+  id: 'tag-work',
   name: 'work',
   color: '#fff',
-  createdAt: 1,
 }
 
 describe('useClipboardStore filtered view stability', () => {
@@ -314,56 +261,26 @@ describe('useClipboardStore filtered view stability', () => {
 
     await useClipboardStore.getState().setActiveTab('favorites')
 
-    expect(mockInvoke).toHaveBeenCalledWith('search_objects_paginated', {
-      query: 'hello',
-      filterTypes: [],
-      limit: 50,
-      offset: 0,
-      favoritesOnly: true,
-      pinnedOnly: false,
-      tagFilter: null,
-      useSemanticSearch: true,
-      similarityThreshold: 0.5,
+    expect(mockInvoke).toHaveBeenCalledWith('search_clips', {
+      request: {
+        query: 'hello',
+        representationFamilies: [],
+        facetIds: [],
+        scope: 'favorites',
+        tagId: null,
+        limit: 50,
+        cursor: null,
+        mode: 'hybrid',
+      },
     })
   })
 })
 
-describe('useClipboardStore OCR clip-updated handling', () => {
-  const makeImageClip = (overrides: Partial<ClipItem> = {}): ClipItem => ({
-    id: 'img-1',
-    contentType: 'image',
-    detectedType: 'image',
-    contentText: '[Image: img-1.png]',
-    contentHtml: null,
-    contentRtf: null,
-    svgPath: null,
-    pdfPath: null,
-    imagePath: '/data/images/img-1.png',
-    attachmentPath: null,
-    attachmentType: null,
-    filePaths: null,
-    ocrText: null,
-    indexText: '',
-    primaryTextSource: 'none',
-    ocrStatus: 'pending',
-    metadata: null,
-    note: null,
-    createdAt: 1000,
-    updatedAt: 1000,
-    appName: null,
-    isPinned: false,
-    isFavorite: false,
-    accessCount: 0,
-    contentHash: 'abc',
-    hasEmbedding: false,
-    tags: [],
-    ...overrides,
-  })
-
+describe('useClipboardStore authoritative summary updates', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useClipboardStore.setState({
-      clips: [makeImageClip()],
+      clips: [makeClip({ id: 'img-1', primaryPresentationKind: 'image' })],
       availableTags: [],
       loading: false,
       error: null,
@@ -376,66 +293,18 @@ describe('useClipboardStore OCR clip-updated handling', () => {
     })
   })
 
-  it('merges OCR completion update: ocrStatus done and new text', () => {
-    useClipboardStore.getState().mergeClipUpdate(
-      makeImageClip({
-        ocrStatus: 'done',
-        ocrText: 'extracted text',
-        indexText: 'extracted text',
-        primaryTextSource: 'ocr',
-        contentText: 'extracted text',
-        updatedAt: 2000,
-      })
-    )
-
-    const clip = useClipboardStore.getState().clips[0]!
-    expect(clip.ocrStatus).toBe('done')
-    expect(clip.primaryTextSource).toBe('ocr')
-    expect(clip.indexText).toBe('extracted text')
-  })
-
-  it('merges OCR running status without changing text', () => {
+  it('merges rebuilt search summary text without loading representations into the store', () => {
     useClipboardStore
       .getState()
-      .mergeClipUpdate(makeImageClip({ ocrStatus: 'running', updatedAt: 1500 }))
+      .mergeClipUpdate(
+        makeClip({ id: 'img-1', primaryPresentationKind: 'image', safeSummary: 'extracted text' })
+      )
 
-    const clip = useClipboardStore.getState().clips[0]!
-    expect(clip.ocrStatus).toBe('running')
-    expect(clip.indexText).toBe('')
-    expect(clip.primaryTextSource).toBe('none')
+    expect(useClipboardStore.getState().clips[0]!.safeSummary).toBe('extracted text')
   })
 
-  it('merges OCR failed status', () => {
-    useClipboardStore
-      .getState()
-      .mergeClipUpdate(makeImageClip({ ocrStatus: 'failed', updatedAt: 1500 }))
-
-    const clip = useClipboardStore.getState().clips[0]!
-    expect(clip.ocrStatus).toBe('failed')
-  })
-
-  it('preserves local tags when OCR update arrives without tags', () => {
-    const tag = { id: 3, name: 'screenshot', color: null, createdAt: 1 }
-    useClipboardStore.setState({
-      clips: [makeImageClip({ tags: [tag] })],
-    })
-
-    // Simulate a backend clip-updated payload that omits the tags field
-    // (backend does not populate tags on clip-updated events).
-    const { tags: _omitted, ...clipWithoutTags } = makeImageClip({
-      ocrStatus: 'done',
-      ocrText: 'hi',
-      indexText: 'hi',
-    })
-    useClipboardStore.getState().mergeClipUpdate(clipWithoutTags as ClipItem)
-
-    expect(useClipboardStore.getState().clips[0]!.tags).toEqual([tag])
-  })
-
-  it('ignores clip-updated events for clips not in the current list', () => {
-    useClipboardStore
-      .getState()
-      .mergeClipUpdate(makeImageClip({ id: 'unknown-clip', ocrStatus: 'done' }))
+  it('does not add an update for a clip outside the current list', () => {
+    useClipboardStore.getState().mergeClipUpdate(makeClip({ id: 'unknown-clip' }))
 
     expect(useClipboardStore.getState().clips).toHaveLength(1)
     expect(useClipboardStore.getState().clips[0]!.id).toBe('img-1')

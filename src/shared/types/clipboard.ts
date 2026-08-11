@@ -51,7 +51,7 @@ export type ClipItem = {
 }
 
 export type Tag = {
-  readonly id: number
+  readonly id: string
   readonly name: string
   readonly color: string | null
   readonly createdAt: number

@@ -221,6 +221,8 @@ pub async fn search(
                    JOIN clip_text_values t ON t.representation_id=r.id \
                    WHERE r.clip_id=c.id AND r.lifecycle_state='ready' \
                    ORDER BY r.ordinal LIMIT 1),'Binary or file content'), \
+         COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'), \
+         (SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1), \
          CASE WHEN ? THEN fts.rank ELSE 0 END \
          FROM search_documents_fts fts \
          JOIN clip_items c ON c.id = fts.clip_id \
@@ -319,7 +321,7 @@ pub async fn search(
             color: r.get(2),
         })
         .collect();
-        let rank: f64 = row.get(10);
+        let rank: f64 = row.get(12);
         let snippet = fts_query
             .as_deref()
             .and_then(|query| build_snippet(query, row.get::<Option<String>, _>(9).as_deref()));
@@ -335,6 +337,8 @@ pub async fn search(
                 note: row.get(7),
                 representation_count: row.get(8),
                 safe_summary: row.get(9),
+                primary_presentation_kind: row.get(10),
+                thumbnail_asset_id: row.get(11),
                 tags,
             },
             snippet,

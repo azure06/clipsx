@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ClipboardListItem } from './ClipboardListItem'
-import type { ClipItem } from '../../../shared/types'
+import type { ClipSummary } from '../../../shared/types/v2'
 
 // Mock Tauri API
 vi.mock('@tauri-apps/api/core', () => ({
@@ -37,44 +37,28 @@ vi.mock('../../../shared/keyboard/shortcuts', async importOriginal => {
   }
 })
 
-const createTextClip = (overrides?: Partial<ClipItem>): ClipItem => ({
+const createTextClip = (overrides?: Partial<ClipSummary>): ClipSummary => ({
   id: '1',
-  contentType: 'text',
-  contentText: 'Hello world',
-  contentHtml: null,
-  contentRtf: null,
-  svgPath: null,
-  pdfPath: null,
-  imagePath: null,
-  attachmentPath: null,
-  attachmentType: null,
-  filePaths: null,
-  ocrText: null,
-  indexText: 'hello world',
-  primaryTextSource: 'clipboard' as const,
-  ocrStatus: 'done' as const,
-  detectedType: 'text',
-  metadata: null,
+  sourceAppName: null,
+  sourceAppId: null,
+  capturedAt: 1_000_000,
   note: null,
-  createdAt: 1000,
-  updatedAt: 1000,
-  appName: null,
+  updatedAt: 1_000_000,
   isPinned: false,
   isFavorite: false,
-  accessCount: 0,
-  contentHash: null,
-  hasEmbedding: false,
-  similarityScore: undefined,
+  tags: [],
+  safeSummary: 'Hello world',
+  representationCount: 1,
+  primaryPresentationKind: 'text',
+  thumbnailAssetId: null,
   ...overrides,
 })
 
-const createImageClip = (overrides?: Partial<ClipItem>): ClipItem =>
+const createImageClip = (overrides?: Partial<ClipSummary>): ClipSummary =>
   createTextClip({
-    contentType: 'image',
-    imagePath: '/tmp/image.png',
-    contentText: '[Image: image.png]',
-    detectedType: 'image',
-    ocrStatus: 'pending' as const,
+    primaryPresentationKind: 'image',
+    thumbnailAssetId: 'asset-image',
+    safeSummary: '[Image: image.png]',
     ...overrides,
   })
 
@@ -95,13 +79,13 @@ describe('ClipboardListItem', () => {
       name: /thumbnail/i,
     })
     expect(thumbnail).toBeInTheDocument()
-    expect(thumbnail).toHaveAttribute('src', 'file:///tmp/image.png')
+    expect(thumbnail).toHaveAttribute('src', 'clipsx-asset://localhost/asset-image')
     expect(thumbnail.className).toContain('rounded-full')
     expect(thumbnail.className).toContain('object-cover')
   })
 
   it('should fallback to content icon when image path is missing', () => {
-    const clip = createImageClip({ imagePath: null })
+    const clip = createImageClip({ thumbnailAssetId: null })
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     expect(screen.getByTestId('content-icon')).toBeInTheDocument()
@@ -138,32 +122,5 @@ describe('ClipboardListItem', () => {
 
     const listItem = screen.getByText(/Image:/).closest('div')
     expect(listItem).toHaveClass('gap-3') // spacing is maintained
-  })
-
-  it('should show AI Search Indexed badge when hasEmbedding is true for a text clip', () => {
-    const clip = createTextClip({ hasEmbedding: true })
-    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
-
-    expect(screen.getByTestId('sparkles-icon').closest('span')).toHaveAttribute(
-      'title',
-      'AI Search Indexed'
-    )
-  })
-
-  it('should show AI Search Indexed badge when hasEmbedding is true for an image-only clip', () => {
-    const clip = createImageClip({ hasEmbedding: true })
-    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
-
-    expect(screen.getByTestId('sparkles-icon').closest('span')).toHaveAttribute(
-      'title',
-      'AI Search Indexed'
-    )
-  })
-
-  it('should not show sparkle badge when hasEmbedding is false', () => {
-    const clip = createTextClip({ hasEmbedding: false })
-    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
-
-    expect(screen.queryByTestId('sparkles-icon')).not.toBeInTheDocument()
   })
 })

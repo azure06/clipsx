@@ -1,12 +1,13 @@
 import { memo } from 'react'
-import type { ClipItem, Tag } from '../../../shared/types'
+import type { ClipSummary } from '../../../shared/types/v2'
 import { formatTimestamp } from '../../../shared/types'
-import { Star, Sparkles, Pin, Hash } from 'lucide-react'
-import { ContentIcon, clipToContent } from '../../content'
+import { Star, Pin, Hash } from 'lucide-react'
+import { ContentIcon } from '../../content'
+import { summaryToContent } from '../summaryPresentation'
 import { useTranslation } from 'react-i18next'
 
 type ClipboardGridItemProps = {
-  readonly clip: ClipItem & { readonly tags?: Tag[] }
+  readonly clip: ClipSummary
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
   readonly onDoubleClick?: (text: string, id: string) => void
@@ -23,26 +24,25 @@ const ClipboardGridItemComponent = ({
   index,
 }: ClipboardGridItemProps) => {
   const { t, i18n } = useTranslation()
-  const timestamp = formatTimestamp(clip.createdAt, i18n.resolvedLanguage)
+  const timestamp = formatTimestamp(Math.floor(clip.capturedAt / 1000), i18n.resolvedLanguage)
 
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
   const tags = clip.tags ?? []
-  const hasAttributes =
-    isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || Boolean(clip.hasEmbedding)
+  const hasAttributes = isPinned || isFavorite || tags.length > 0 || Boolean(clip.note)
 
   const handleClick = () => {
     if (onSelect) {
-      onSelect(clip.contentText ?? '', clip.id)
+      onSelect(clip.safeSummary, clip.id)
     } else {
-      onCopy(clip.contentText ?? '', clip.id)
+      onCopy(clip.safeSummary, clip.id)
     }
   }
 
   return (
     <div
       onClick={handleClick}
-      onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
+      onDoubleClick={() => onDoubleClick?.(clip.safeSummary, clip.id)}
       data-clip-index={index}
       className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${
         isSelected
@@ -59,7 +59,7 @@ const ClipboardGridItemComponent = ({
 
       {/* Content Preview */}
       <div className="p-2.5 pb-0 flex items-center justify-center aspect-square">
-        <ContentIcon content={clipToContent(clip)} size="lg" />
+        <ContentIcon content={summaryToContent(clip)} size="lg" />
       </div>
 
       {/* Bottom section with metadata and attributes */}
@@ -77,50 +77,6 @@ const ClipboardGridItemComponent = ({
             {isFavorite && (
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[9px] font-medium">
                 <Star className="h-2 w-2 fill-current" strokeWidth={2.5} />
-              </span>
-            )}
-
-            {clip.hasEmbedding && (
-              <span
-                title={t('clipboard.aiIndexed')}
-                className="inline-flex relative items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-indigo-100/50 dark:bg-indigo-900/20 text-[9px] font-medium border border-indigo-200/50 dark:border-indigo-500/20"
-              >
-                <svg width="0" height="0" className="absolute">
-                  <linearGradient
-                    id={`sparkle-grad-grid-${clip.id}`}
-                    x1="0%"
-                    y1="0%"
-                    x2="100%"
-                    y2="100%"
-                  >
-                    <stop stopColor="#3b82f6" offset="0%" />
-                    <stop stopColor="#8b5cf6" offset="50%" />
-                    <stop stopColor="#ec4899" offset="100%" />
-                  </linearGradient>
-                </svg>
-                <Sparkles
-                  className="h-2.5 w-2.5"
-                  strokeWidth={2.5}
-                  style={{ stroke: `url(#sparkle-grad-grid-${clip.id})` }}
-                />
-              </span>
-            )}
-
-            {typeof clip.similarityScore === 'number' && clip.similarityScore > 0 && (
-              <span
-                title={t('clipboard.semanticScore', {
-                  score: Math.round(clip.similarityScore * 100),
-                })}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold"
-                style={{
-                  background:
-                    'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
-                  borderColor: 'rgba(236,72,153,0.2)',
-                  borderWidth: '1px',
-                  color: '#ec4899',
-                }}
-              >
-                {t('clipboard.match', { score: Math.round(clip.similarityScore * 100) })}
               </span>
             )}
 
@@ -146,10 +102,9 @@ const ClipboardGridItemComponent = ({
           </div>
         )}
 
-        {/* Timestamp and access count */}
+        {/* Timestamp */}
         <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-500">
           <span className="font-medium">{timestamp}</span>
-          {clip.accessCount > 0 && <span>{t('clipboard.used', { count: clip.accessCount })}</span>}
         </div>
       </div>
     </div>

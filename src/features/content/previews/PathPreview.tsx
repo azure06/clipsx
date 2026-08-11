@@ -28,7 +28,7 @@ const PathPreviewComponent = ({ content }: PathPreviewProps) => {
 
   const handleOpen = async () => {
     try {
-      await invoke('open_path', { path: raw })
+      await invoke('open_detected_path', { clipId: content.clip.id, path: raw })
     } catch (error) {
       console.error('Failed to open path:', error)
     }

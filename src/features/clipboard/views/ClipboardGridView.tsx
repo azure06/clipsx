@@ -1,8 +1,8 @@
-import type { ClipItem } from '../../../shared/types'
+import type { ClipSummary } from '../../../shared/types/v2'
 import { ClipboardGridItem } from '../components'
 
 type ClipboardGridViewProps = {
-  readonly clips: ClipItem[]
+  readonly clips: ClipSummary[]
   readonly onCopy: (text: string, clipId: string) => void
   readonly onSelect?: (text: string, clipId: string) => void
   readonly onDoubleClick?: (text: string, clipId: string) => void

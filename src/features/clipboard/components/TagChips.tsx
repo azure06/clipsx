@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
-import type { Tag } from '../../../shared/types'
+import type { V2Tag } from '../../../shared/types/v2'
 import { useClipboardStore } from '../../../stores/clipboardStore'
 import { previewTheme } from '../../content/previews/previewTheme'
 import { useTranslation } from 'react-i18next'
 
 interface TagChipsProps {
   clipId: string
-  tags: Tag[]
+  tags: V2Tag[]
 }
 
 export const TagChips = ({ clipId, tags }: TagChipsProps) => {
@@ -33,11 +33,11 @@ export const TagChips = ({ clipId, tags }: TagChipsProps) => {
     }
   }, [isEditing])
 
-  const handleRemove = async (tagId: number) => {
+  const handleRemove = async (tagId: string) => {
     await removeClipTag(clipId, tagId)
   }
 
-  const handleAdd = async (tag: Tag) => {
+  const handleAdd = async (tag: V2Tag) => {
     if (tags.some(existingTag => existingTag.id === tag.id)) return
     await addClipTag(clipId, tag)
     setInputValue('')

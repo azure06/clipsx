@@ -4,6 +4,7 @@ import type { Content } from '../types'
 import { CopyableRow } from './PreviewShell'
 import { previewTheme } from './previewTheme'
 import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
 
 type EmailPreviewProps = {
   readonly content: Content
@@ -16,7 +17,7 @@ const EmailPreviewComponent = ({ content }: EmailPreviewProps) => {
   const gravatarUrl = `https://www.gravatar.com/avatar/${email.toLowerCase()}?d=mp&s=120`
 
   const handleSend = () => {
-    window.open(`mailto:${email}`, '_blank')
+    void invoke('compose_email', { address: email })
   }
 
   return (

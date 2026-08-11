@@ -190,10 +190,26 @@ contracts, never through `ClipItem`, legacy IPC shapes, or the legacy schema.
 The frontend list uses lightweight `ClipSummary` rows. Selecting an item builds
 an ephemeral `ClipPresentation` from `ClipDetail`, `ClipViewSet`, and the chosen
 `RenderModel`; it does not persist a UI-selected content type. The restored v1
-row components are being rewired to this presentation contract incrementally;
-the temporary row adapter is frontend-only and may not cross IPC or persistence.
+row components consume `ClipSummary` directly. Summary rows expose only the
+canonical `primaryPresentationKind` and optional `thumbnailAssetId` needed by
+the history chrome; no `ClipItem` adapter or facet payload crosses this path.
 This avoids loading every representation for history rows and keeps renderer
 policy outside canonical storage.
+
+`ClipViewSet.primaryViewId` is the authoritative default. Each view declares a
+stable `presentationKind` and `placement` (`primary`, `alternate`, or
+`advanced`); React never infers behavior from a translated label. Resolver
+preferences apply only when the requested renderer is actually available.
+Otherwise candidates are ordered by the platform adapter's capture priority,
+renderer priority, representation ordinal, and the archived semantic priority
+for facets over plain text. MIME/native identity always remains adapter-owned.
+
+A Source view is a useful human-readable alternate for formats such as HTML or
+RTF. The complete representation inventory is a separate advanced inspector;
+binary payloads and Base64 are never ordinary view tabs. Typed render models
+carry only the bounded data needed by restored specialized previews. A failed
+renderer falls back to the canonical representation without affecting output
+policy.
 
 Search documents are derived from canonical textual representations, safe
 extractions/artifacts, notes, and tag names. A note or tag mutation refreshes

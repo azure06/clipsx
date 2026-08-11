@@ -6,6 +6,31 @@ const { mockInvoke } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
 }))
 
+const v2Settings = (overrides: Record<string, unknown> = {}) => ({
+  theme: 'system',
+  language: 'en',
+  languageInitialized: true,
+  activationMode: 'single_click_copy',
+  defaultOutputFormat: 'original',
+  pasteOnEnter: true,
+  hideOnCopy: false,
+  hideOnBlur: true,
+  alwaysOnTop: false,
+  showCopyToast: true,
+  globalShortcut: 'Ctrl+Shift+V',
+  excludedApps: [],
+  autoClearMinutes: null,
+  clearOnExit: false,
+  autoStart: false,
+  captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
+  capture: {
+    maxOrdinaryClips: 1000,
+    maxAgeDays: null,
+    maxRepresentationBytes: 52_428_800,
+  },
+  ...overrides,
+})
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: mockInvoke,
 }))
@@ -22,26 +47,26 @@ describe('useSettingsStore', () => {
   })
 
   it('loads settings from the backend', async () => {
-    mockInvoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, auto_start: true })
+    mockInvoke.mockResolvedValueOnce(v2Settings({ autoStart: true }))
 
     await useSettingsStore.getState().loadSettings()
 
-    expect(mockInvoke).toHaveBeenCalledWith('get_settings')
+    expect(mockInvoke).toHaveBeenCalledWith('get_app_settings')
     expect(useSettingsStore.getState().settings?.auto_start).toBe(true)
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
 
   it('merges partial updates and persists the full payload', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, show_copy_toast: true } })
-    mockInvoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, show_copy_toast: false })
+    mockInvoke.mockResolvedValueOnce(v2Settings({ showCopyToast: false }))
 
     await useSettingsStore.getState().updateSettings({ show_copy_toast: false })
 
-    expect(mockInvoke).toHaveBeenCalledWith('update_settings', {
+    expect(mockInvoke).toHaveBeenCalledWith('update_app_settings', {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       settings: expect.objectContaining({
-        show_copy_toast: false,
-        theme: DEFAULT_SETTINGS.theme,
+        showCopyToast: false,
+        theme: 'system',
       }),
     })
     expect(useSettingsStore.getState().settings?.show_copy_toast).toBe(false)
@@ -60,11 +85,17 @@ describe('useSettingsStore', () => {
   })
 
   it('resets settings through backend defaults', async () => {
-    mockInvoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, global_shortcut: 'Ctrl+Shift+V' })
+    mockInvoke.mockResolvedValueOnce(v2Settings())
 
     await useSettingsStore.getState().resetSettings()
 
-    expect(mockInvoke).toHaveBeenCalledWith('reset_settings')
+    expect(mockInvoke).toHaveBeenCalledWith('update_app_settings', {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      settings: expect.objectContaining({
+        globalShortcut: DEFAULT_SETTINGS.global_shortcut,
+        activationMode: 'single_click_copy',
+      }),
+    })
     expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClipboardHistory } from './ClipboardHistory'
 import { ClipActions } from './ClipActions'
 import { useClipboardStore, useSettingsStore } from '../../stores'
-import type { ClipItem } from '../../shared/types'
+import type { ClipSummary } from '../../shared/types/v2'
 import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 import { usePinAction } from '../content/actions/shared/PinAction'
@@ -45,34 +45,20 @@ vi.mock('./components', () => ({
   ClipboardListItem: () => null,
 }))
 
-const makeClip = (id = 'clip-1'): ClipItem => ({
+const makeClip = (id = 'clip-1'): ClipSummary => ({
   id,
-  contentType: 'text',
-  detectedType: 'text',
-  contentText: 'hello world',
-  contentHtml: null,
-  contentRtf: null,
-  svgPath: null,
-  pdfPath: null,
-  imagePath: null,
-  attachmentPath: null,
-  attachmentType: null,
-  filePaths: null,
-  ocrText: null,
-  indexText: 'hello world',
-  primaryTextSource: 'clipboard',
-  ocrStatus: 'not_needed',
-  metadata: null,
+  sourceAppName: null,
+  sourceAppId: null,
+  capturedAt: 1,
   note: null,
-  createdAt: 1,
   updatedAt: 1,
-  appName: null,
   isPinned: false,
   isFavorite: false,
-  accessCount: 0,
-  contentHash: null,
-  hasEmbedding: false,
   tags: [],
+  safeSummary: 'hello world',
+  representationCount: 1,
+  primaryPresentationKind: 'text',
+  thumbnailAssetId: null,
 })
 
 const setNavigatorPlatform = (platform: string) => {
@@ -173,8 +159,8 @@ describe('ClipboardHistory keyboard shortcuts', () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
-        'open_text_in_editor',
-        expect.objectContaining({ text: 'hello world', extension: 'txt' })
+        'open_clip_text_in_editor',
+        expect.objectContaining({ clipId: 'clip-1', extension: 'txt' })
       )
     })
 

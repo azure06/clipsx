@@ -65,6 +65,33 @@ pub enum RenderModel {
     Html {
         sanitized_html: String,
     },
+    RichText {
+        sanitized_html: Option<String>,
+        plain_text: String,
+    },
+    Files {
+        files: Vec<String>,
+    },
+    Document {
+        artifact_id: String,
+        mime_type: String,
+    },
+    Office {
+        format_key: String,
+        native_type: Option<String>,
+        byte_length: i64,
+    },
+    Semantic {
+        facet_id: String,
+        text: String,
+        payload: serde_json::Value,
+    },
+    Unsupported {
+        format_key: String,
+        mime_type: Option<String>,
+        native_type: Option<String>,
+        byte_length: i64,
+    },
     Error {
         message: String,
     },

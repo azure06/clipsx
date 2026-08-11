@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import type { ClipItem } from '../../shared/types'
 import type { ShortcutDef } from '../../shared/keyboard/shortcuts'
 
 // Content type detection from backend
@@ -70,7 +69,19 @@ export type Content = {
   readonly type: ContentType
   readonly text: string
   readonly metadata: ContentMetadata
-  readonly clip: ClipItem
+  readonly clip: PresentationClip
+}
+
+export type PresentationClip = {
+  readonly [key: string]: unknown
+  readonly id: string
+  readonly isFavorite: boolean
+  readonly isPinned: boolean
+  readonly imagePath?: string | null
+  readonly contentHtml?: string | null
+  readonly ocrText?: string | null
+  readonly ocrStatus?: 'not_needed' | 'pending' | 'running' | 'done' | 'failed'
+  readonly appName?: string | null
 }
 
 // Smart action definition

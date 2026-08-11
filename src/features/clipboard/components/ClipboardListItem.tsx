@@ -1,23 +1,13 @@
 import { memo } from 'react'
-import { convertFileSrc } from '@tauri-apps/api/core'
-import type { ClipItem, Tag } from '../../../shared/types'
-import { formatClipPreview } from '../../../shared/types'
-import {
-  Star,
-  Sparkles,
-  Pin,
-  Hash,
-  MessageSquare,
-  Command,
-  CornerDownLeft,
-  ScanText,
-} from 'lucide-react'
-import { ContentIcon, clipToContent } from '../../content'
+import type { ClipSummary } from '../../../shared/types/v2'
+import { Star, Pin, Hash, MessageSquare, Command, CornerDownLeft } from 'lucide-react'
+import { ContentIcon } from '../../content'
+import { summaryToContent } from '../summaryPresentation'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 
 type ClipboardListItemProps = {
-  readonly clip: ClipItem & { readonly tags?: Tag[] }
+  readonly clip: ClipSummary
   readonly onCopy: (text: string, id: string) => void
   readonly onSelect?: (text: string, id: string) => void
   readonly onDoubleClick?: (text: string, id: string) => void
@@ -36,25 +26,19 @@ const ClipboardListItemComponent = ({
   const { t } = useTranslation()
   const platform = getPlatform()
   const isMac = platform === 'macos'
-  const preview = formatClipPreview(clip, 100)
+  const preview =
+    clip.safeSummary.length > 100 ? `${clip.safeSummary.slice(0, 100)}...` : clip.safeSummary
 
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
-  const ocrPending = clip.ocrStatus === 'pending' || clip.ocrStatus === 'running'
-  const hasAttributes =
-    isPinned ||
-    isFavorite ||
-    tags.length > 0 ||
-    Boolean(clip.note) ||
-    Boolean(clip.hasEmbedding) ||
-    ocrPending
+  const hasAttributes = isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || false
 
   const handleClick = () => {
     if (onSelect) {
-      onSelect(clip.contentText ?? '', clip.id)
+      onSelect(clip.safeSummary, clip.id)
     } else {
-      onCopy(clip.contentText ?? '', clip.id)
+      onCopy(clip.safeSummary, clip.id)
     }
   }
 
@@ -62,7 +46,7 @@ const ClipboardListItemComponent = ({
     <>
       <div
         onClick={handleClick}
-        onDoubleClick={() => clip.contentText && onDoubleClick?.(clip.contentText, clip.id)}
+        onDoubleClick={() => onDoubleClick?.(clip.safeSummary, clip.id)}
         data-clip-index={index}
         className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${
           isSelected
@@ -79,13 +63,9 @@ const ClipboardListItemComponent = ({
 
         {/* Type icon or thumbnail */}
         <div className="shrink-0">
-          {clip.contentType === 'image' && clip.imagePath ? (
+          {clip.primaryPresentationKind === 'image' && clip.thumbnailAssetId ? (
             <img
-              src={
-                clip.imagePath.startsWith('clipsx-asset://')
-                  ? clip.imagePath
-                  : convertFileSrc(clip.imagePath)
-              }
+              src={`clipsx-asset://localhost/${clip.thumbnailAssetId}`}
               alt={t('clipboard.thumbnail')}
               className="h-6 w-6 rounded-full object-cover ring-2 ring-gray-200/50 dark:ring-gray-700/50 shadow-sm"
               onError={e => {
@@ -95,7 +75,7 @@ const ClipboardListItemComponent = ({
             />
           ) : (
             <div className="text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
-              <ContentIcon content={clipToContent(clip)} size="sm" />
+              <ContentIcon content={summaryToContent(clip)} size="sm" />
             </div>
           )}
         </div>
@@ -108,23 +88,6 @@ const ClipboardListItemComponent = ({
           >
             {preview}
           </span>
-
-          {typeof clip.similarityScore === 'number' && clip.similarityScore > 0 && (
-            <div
-              className="flex items-center gap-0.5 px-1.5 py-px rounded border text-[10px] font-bold shadow-sm whitespace-nowrap shrink-0 ml-1"
-              style={{
-                background: 'linear-gradient(to right, rgba(139,92,246,0.1), rgba(236,72,153,0.1))',
-                borderColor: 'rgba(236,72,153,0.2)',
-                color: '#ec4899', // Pinkish text to match gradient
-              }}
-              title={t('clipboard.semanticScore', {
-                score: Math.round(clip.similarityScore * 100),
-              })}
-            >
-              <Sparkles className="h-2.5 w-2.5 inline mr-0.5" strokeWidth={3} />
-              {Math.round(clip.similarityScore * 100)}%
-            </div>
-          )}
         </div>
 
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
@@ -139,39 +102,6 @@ const ClipboardListItemComponent = ({
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
               {clip.note && (
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
-              )}
-              {ocrPending && (
-                <span
-                  title={
-                    clip.ocrStatus === 'running'
-                      ? t('clipboard.ocrRunning')
-                      : t('clipboard.ocrQueued')
-                  }
-                >
-                  <ScanText className="h-3 w-3 text-sky-400 animate-pulse" strokeWidth={2.5} />
-                </span>
-              )}
-              {clip.hasEmbedding && (
-                <span title={t('clipboard.aiIndexed')}>
-                  <svg width="0" height="0" className="absolute">
-                    <linearGradient
-                      id={`sparkle-grad-${clip.id}`}
-                      x1="0%"
-                      y1="0%"
-                      x2="100%"
-                      y2="100%"
-                    >
-                      <stop stopColor="#3b82f6" offset="0%" />
-                      <stop stopColor="#8b5cf6" offset="50%" />
-                      <stop stopColor="#ec4899" offset="100%" />
-                    </linearGradient>
-                  </svg>
-                  <Sparkles
-                    className="h-3.5 w-3.5"
-                    strokeWidth={2.5}
-                    style={{ stroke: `url(#sparkle-grad-${clip.id})` }}
-                  />
-                </span>
               )}
             </div>
           )}
