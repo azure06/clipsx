@@ -8,7 +8,10 @@ export const ImagePreview = memo(({ content }: { content: Content }) => {
   const { t } = useTranslation()
   const clip = content.clip
   const src = useMemo(() => {
-    if (clip.imagePath) return clip.imagePath.startsWith('clipsx-asset://') ? clip.imagePath : convertFileSrc(clip.imagePath)
+    if (clip.imagePath)
+      return clip.imagePath.startsWith('clipsx-asset://')
+        ? clip.imagePath
+        : convertFileSrc(clip.imagePath)
     if (content.metadata.url) return content.metadata.url
     if (content.text.startsWith('data:image')) return content.text
     return null

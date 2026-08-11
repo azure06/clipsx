@@ -81,7 +81,11 @@ const ClipboardListItemComponent = ({
         <div className="shrink-0">
           {clip.contentType === 'image' && clip.imagePath ? (
             <img
-              src={clip.imagePath.startsWith('clipsx-asset://') ? clip.imagePath : convertFileSrc(clip.imagePath)}
+              src={
+                clip.imagePath.startsWith('clipsx-asset://')
+                  ? clip.imagePath
+                  : convertFileSrc(clip.imagePath)
+              }
               alt={t('clipboard.thumbnail')}
               className="h-6 w-6 rounded-full object-cover ring-2 ring-gray-200/50 dark:ring-gray-700/50 shadow-sm"
               onError={e => {
