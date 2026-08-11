@@ -1,9 +1,4 @@
--- M5: installed extension packages and their runtime state. These tables store
--- package metadata only; extension bytes remain in the app-owned extension root.
-DROP TABLE IF EXISTS extension_contribution_runtime_state;
-DROP TABLE IF EXISTS extension_runtime_state;
-DROP TABLE IF EXISTS extension_installs;
-
+-- Package metadata only; extension bytes remain in the app-owned extension root.
 CREATE TABLE extension_installs (
     id TEXT PRIMARY KEY NOT NULL,
     package_id TEXT NOT NULL UNIQUE,
@@ -34,5 +29,7 @@ CREATE TABLE extension_contribution_runtime_state (
     PRIMARY KEY (extension_id, contribution_id)
 );
 
-CREATE INDEX idx_extension_installs_enabled ON extension_installs(enabled, package_id);
-CREATE INDEX idx_extension_contribution_runtime_state_extension ON extension_contribution_runtime_state(extension_id);
+CREATE INDEX idx_extension_installs_enabled
+    ON extension_installs(enabled, package_id);
+CREATE INDEX idx_extension_contribution_runtime_state_extension
+    ON extension_contribution_runtime_state(extension_id);

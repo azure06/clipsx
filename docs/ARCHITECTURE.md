@@ -260,7 +260,7 @@ erDiagram
 
 `clip_items`, representations, and typed children are canonical. Text is normalized UTF-8, file lists are ordered external references, binary bytes are immutable managed files; facets/artifacts/search preserve source and producer/version provenance, while job tables record resumable work rather than content. Tags, notes, pins/favorites, and transform provenance are durable; an unsaved transform is in-memory, but a saved transform makes a new linked canonical clip.
 
-`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. The physical schema is `001_architecture_baseline.sql` through `008_m4a_chunk_embeddings.sql`; extension tables exist but are unused until M5.
+`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. The fresh physical schema is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history.
 
 ## Files and database tables
 
