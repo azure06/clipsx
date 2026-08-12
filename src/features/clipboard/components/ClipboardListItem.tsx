@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
-import { Star, Pin, Hash, MessageSquare, Command, CornerDownLeft } from 'lucide-react'
+import { Command, CornerDownLeft, Hash, MessageSquare, Pin, Sparkles, Star } from 'lucide-react'
 import { ContentIcon } from '../../content'
 import { summaryToContent } from '../summaryPresentation'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
@@ -32,7 +32,9 @@ const ClipboardListItemComponent = ({
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
-  const hasAttributes = isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || false
+  const score = clip.similarityScore ?? 0
+  const hasScore = score > 0
+  const hasAttributes = isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || hasScore
 
   const handleClick = () => {
     if (onSelect) {
@@ -102,6 +104,12 @@ const ClipboardListItemComponent = ({
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
               {clip.note && (
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
+              )}
+              {hasScore && (
+                <span className="flex items-center gap-0.5 rounded-full border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-pink-500 dark:border-pink-500/30 dark:text-pink-400">
+                  <Sparkles className="h-2 w-2" strokeWidth={2.5} />
+                  {Math.round(score * 100)}%
+                </span>
               )}
             </div>
           )}

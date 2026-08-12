@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
   AtSign,
+  Check,
+  Copy,
   ExternalLink,
   FileQuestion,
   FileText,
@@ -28,20 +30,70 @@ const TextBlock = ({ children }: { children: string }) => (
   </pre>
 )
 
+const CopyableRow = ({ label, value }: { label: string; value: string }) => {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div
+      className="group flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1 hover:bg-slate-100/60 dark:hover:bg-white/5"
+      onClick={() => {
+        void navigator.clipboard.writeText(value)
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+        {label}
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-xs text-gray-700 dark:text-gray-300">
+        <span className="truncate">{value}</span>
+        {copied ? (
+          <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+        ) : (
+          <Copy className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-40" />
+        )}
+      </span>
+    </div>
+  )
+}
+
+const LANG_CHIP_COLOR: Record<string, string> = {
+  javascript: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300',
+  typescript: 'bg-blue-500/20 text-blue-700 dark:text-blue-300',
+  python: 'bg-teal-500/20 text-teal-700 dark:text-teal-300',
+  rust: 'bg-orange-500/20 text-orange-700 dark:text-orange-300',
+  go: 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300',
+  java: 'bg-red-500/20 text-red-700 dark:text-red-300',
+  json: 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
+  html: 'bg-orange-400/20 text-orange-700 dark:text-orange-300',
+  css: 'bg-violet-500/20 text-violet-700 dark:text-violet-300',
+  shell: 'bg-slate-500/20 text-slate-700 dark:text-slate-300',
+  bash: 'bg-slate-500/20 text-slate-700 dark:text-slate-300',
+  sql: 'bg-sky-500/20 text-sky-700 dark:text-sky-300',
+}
+
 const CodeView = ({ language, text }: { language: string | null; text: string }) => {
   const lines = text.split('\n')
+  const chipColor =
+    LANG_CHIP_COLOR[language?.toLowerCase() ?? ''] ?? 'bg-violet-500/15 text-violet-400'
+  const words = text.trim().split(/\s+/).length
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-slate-200 px-4 py-2 text-xs text-gray-500 dark:border-white/10">
-        {language ?? 'text'} · {lines.length} lines
+      <div className="flex items-center gap-2 border-b border-white/10 bg-slate-900/80 px-4 py-2">
+        {language && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${chipColor}`}>
+            {language}
+          </span>
+        )}
+        <span className="text-[10px] text-slate-400">{lines.length} lines</span>
+        <span className="text-[10px] text-slate-500">{words} words</span>
       </div>
-      <div className="flex min-h-0 flex-1 overflow-auto bg-white/60 font-mono text-sm dark:bg-black/30">
-        <div className="select-none border-r border-slate-200 px-2 py-4 text-right text-gray-400 dark:border-white/10">
+      <div className="flex min-h-0 flex-1 overflow-auto bg-slate-950/90 font-mono text-sm">
+        <div className="select-none border-r border-white/5 px-3 py-4 text-right text-slate-600">
           {lines.slice(0, 500).map((_, index) => (
             <div key={index}>{index + 1}</div>
           ))}
         </div>
-        <pre className="p-4">
+        <pre className="p-4 text-gray-300">
           <code>{text}</code>
         </pre>
       </div>
@@ -212,21 +264,45 @@ const SemanticView = ({
   const [revealed, setRevealed] = useState(false)
   if (kind === 'url') {
     const href = semanticScalar(model.payload, 'href') ?? model.text
+    const scheme = semanticScalar(model.payload, 'scheme')
     const host = semanticScalar(model.payload, 'host')
+    const path = semanticScalar(model.payload, 'path')
+    const fragment = semanticScalar(model.payload, 'fragment')
+    const query = model.payload['query']
+    const queryEntries =
+      query && typeof query === 'object' && !Array.isArray(query)
+        ? Object.entries(query as Record<string, unknown>).map(([k, v]) => [k, String(v)] as const)
+        : []
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <ExternalLink className="h-10 w-10 text-blue-500" />
-        <a
-          className="max-w-full break-all text-lg text-blue-600 underline"
-          href={href}
-          onClick={event => {
-            event.preventDefault()
-            void invoke('open_external_url', { url: href })
-          }}
-        >
-          {href}
-        </a>
-        {host && <span className="text-sm text-gray-500">{host}</span>}
+      <div className="flex h-full flex-col gap-0 overflow-auto">
+        <div className="flex items-start gap-4 border-b border-slate-200/60 bg-linear-to-r from-blue-500/5 to-cyan-500/5 p-5 dark:border-white/5">
+          <ExternalLink className="mt-0.5 h-6 w-6 shrink-0 text-blue-500" />
+          <div className="min-w-0 flex-1">
+            <a
+              className="break-all text-sm font-medium text-blue-600 underline dark:text-blue-400"
+              href={href}
+              onClick={event => {
+                event.preventDefault()
+                void invoke('open_external_url', { url: href })
+              }}
+            >
+              {href}
+            </a>
+            {host && <div className="mt-0.5 text-xs text-gray-500">{host}</div>}
+          </div>
+        </div>
+        <div className="p-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            URL Structure
+          </div>
+          {scheme && <CopyableRow label="Protocol" value={scheme} />}
+          {host && <CopyableRow label="Domain" value={host} />}
+          {path && path !== '/' && <CopyableRow label="Path" value={path} />}
+          {fragment && <CopyableRow label="Fragment" value={fragment} />}
+          {queryEntries.map(([k, v]) => (
+            <CopyableRow key={k} label={k} value={v} />
+          ))}
+        </div>
       </div>
     )
   }

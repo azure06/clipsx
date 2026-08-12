@@ -4,17 +4,20 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Heart,
   Mail,
   Phone,
   Pin,
   SquareArrowOutUpRight,
+  Star,
   Trash2,
   type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
+import { formatShortcut, getPlatform, type ShortcutDef } from '../../shared/keyboard/shortcuts'
+
+const platform = getPlatform()
 
 export interface PresentationActionContext {
   onDelete: (id: string) => void
@@ -27,6 +30,8 @@ type ToolbarAction = {
   label: string
   icon: LucideIcon
   active?: boolean
+  shortcut?: ShortcutDef
+  separator?: boolean
   run: () => Promise<void> | void
 }
 
@@ -72,6 +77,7 @@ export const ClipActionsToolbar = ({
         id: 'copy',
         label: copied ? 'Copied!' : 'Copy',
         icon: copied ? Check : Copy,
+        shortcut: { modifiers: ['primary'], key: 'C' },
         run: async () => {
           await performCopy('', presentation.id)
           setCopied(true)
@@ -121,8 +127,10 @@ export const ClipActionsToolbar = ({
       {
         id: 'favorite',
         label: 'Favorite',
-        icon: Heart,
+        icon: Star,
         active: presentation.isFavorite,
+        shortcut: { modifiers: ['primary'], key: 'F' },
+        separator: true,
         run: () => context.onToggleFavorite(presentation.id),
       },
       {
@@ -130,6 +138,7 @@ export const ClipActionsToolbar = ({
         label: 'Pin',
         icon: Pin,
         active: presentation.isPinned,
+        shortcut: { modifiers: ['primary'], key: 'P' },
         run: () => context.onTogglePin(presentation.id),
       },
       { id: 'delete', label: 'Delete', icon: Trash2, run: () => context.onDelete(presentation.id) }
@@ -141,7 +150,15 @@ export const ClipActionsToolbar = ({
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
         {actions.map(action => (
-          <ActionButton action={action} key={action.id} />
+          <>
+            {action.separator && (
+              <div
+                key={`sep-${action.id}`}
+                className="mx-0.5 h-3.5 w-px bg-slate-300/60 dark:bg-white/10"
+              />
+            )}
+            <ActionButton action={action} key={action.id} />
+          </>
         ))}
       </div>
     </Tooltip.Provider>
@@ -150,23 +167,31 @@ export const ClipActionsToolbar = ({
 
 const ActionButton = ({ action }: { action: ToolbarAction }) => {
   const Icon = action.icon
+  const shortcutLabel = action.shortcut ? formatShortcut(action.shortcut, platform) : null
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <button
           aria-label={action.label}
-          className={`rounded-md p-1.5 transition-colors ${action.active ? 'bg-blue-500/10 text-blue-500' : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'}`}
+          className={`rounded-md p-1.5 transition-colors ${action.active ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400' : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'}`}
           onClick={() => void action.run()}
         >
-          <Icon className="h-4 w-4" />
+          <Icon
+            className={`h-4 w-4 ${action.id === 'favorite' && action.active ? 'fill-amber-500' : ''}`}
+          />
         </button>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+          className="z-100 flex items-center gap-1.5 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
           sideOffset={5}
         >
           {action.label}
+          {shortcutLabel && (
+            <span className="rounded border border-gray-300/60 px-1 font-mono text-gray-400 dark:border-white/20">
+              {shortcutLabel}
+            </span>
+          )}
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>

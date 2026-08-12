@@ -13,7 +13,7 @@ type V2Representation = {
 }
 type V2Detail = { clip: ClipSummary; representations: V2Representation[] }
 type V2Page<T> = { items: T[]; nextCursor: string | null }
-type V2SearchResult = { clip: ClipSummary; snippet: string | null }
+type V2SearchResult = { clip: ClipSummary; snippet: string | null; rank: number }
 
 type ClipboardState = {
   clips: ClipSummary[]
@@ -175,7 +175,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
             mode: useUIStore.getState().isSemanticActive ? 'hybrid' : 'fts',
           },
         })
-        summaries = result.items.map(item => item.clip)
+        summaries = result.items.map(item => ({ ...item.clip, similarityScore: item.rank }))
         cursor = result.nextCursor
       } else {
         const result = await invoke<V2Page<ClipSummary>>('list_clips', {

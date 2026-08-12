@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScanText } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { presentationTextStats } from './presentationModel'
@@ -7,6 +8,30 @@ import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
 import { V2ViewPanel } from './V2ViewPanel'
 import { useClipboardStore } from '../../stores/clipboardStore'
+
+const KIND_COLOR: Record<string, string> = {
+  url: 'bg-green-500',
+  code: 'bg-violet-500',
+  path: 'bg-amber-500',
+  email: 'bg-pink-500',
+  phone: 'bg-emerald-500',
+  color: 'bg-orange-400',
+  json: 'bg-teal-500',
+  table: 'bg-cyan-500',
+  markdown: 'bg-sky-500',
+  image: 'bg-rose-500',
+  jwt: 'bg-purple-500',
+  secret: 'bg-red-500',
+  math: 'bg-indigo-500',
+  date: 'bg-yellow-500',
+  timestamp: 'bg-yellow-500',
+  html: 'bg-orange-500',
+  rich_text: 'bg-orange-400',
+  files: 'bg-slate-500',
+  office: 'bg-blue-600',
+  document: 'bg-blue-500',
+  text: 'bg-gray-400',
+}
 
 export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const { t, i18n } = useTranslation()
@@ -31,16 +56,18 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
     (value: ClipPresentation | null) => setPresentation(value),
     []
   )
-  const typeLabel = currentPresentation?.activeView.presentationKind ?? 'text'
+  const typeLabel = currentPresentation?.activeView.presentationKind ?? clip.primaryPresentationKind
+  const typeDotColor = KIND_COLOR[typeLabel] ?? 'bg-blue-500'
   const sourceLabel = currentPresentation?.sourceAppName ?? clip.sourceAppName
   const stats = currentPresentation ? presentationTextStats(currentPresentation) : null
+  const ocr = currentPresentation?.model.kind === 'image' ? currentPresentation.model.ocr : null
 
   return (
     <div className="flex flex-col h-full rounded-2xl overflow-hidden my-0.5 mr-2 bg-slate-100/25 dark:bg-slate-100/5 backdrop-blur-xl border border-slate-200/70 dark:border-white/5">
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100/10 dark:border-slate-100/5 shrink-0 bg-slate-100/40 dark:bg-slate-100/5">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/10">
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            <span className={`h-1.5 w-1.5 rounded-full ${typeDotColor}`} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
               {typeLabel.replaceAll('_', ' ')}
             </span>
@@ -68,6 +95,18 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
           {stats && <span>{t('clipboard.characters', { count: stats.characters })}</span>}
           {stats && <span>{t('clipboard.lines', { count: stats.lines })}</span>}
           {stats?.language && <span>{stats.language}</span>}
+          {(ocr?.state === 'pending' || ocr?.state === 'running') && (
+            <span className="flex items-center gap-1 text-sky-500">
+              <ScanText className="h-3 w-3 animate-pulse" />
+              OCR {ocr.state}…
+            </span>
+          )}
+          {ocr?.state === 'failed' && (
+            <span className="text-red-500">OCR failed</span>
+          )}
+          {ocr?.state === 'ready' && ocr.text.trim() && (
+            <span className="text-emerald-600 dark:text-emerald-400">OCR</span>
+          )}
         </div>
         {sourceLabel && (
           <span>
