@@ -186,6 +186,17 @@
     "sourceNote": "メモ"
   },
   "preview": {
+    "revealSecret": "秘密を表示",
+    "hideSecret": "秘密を隠す",
+    "searchDomain": "{{domain}} を検索",
+    "secretKinds": {
+      "awsAccessKey": "AWSアクセスキー",
+      "githubToken": "GitHubトークン",
+      "stripeKey": "Stripeキー",
+      "privateKey": "秘密鍵",
+      "credentialAssignment": "認証情報",
+      "genericToken": "汎用トークン"
+    },
     "moreActions": "その他の操作",
     "emptyCsv": "CSVは空です",
     "emailAddress": "メールアドレス",

@@ -50,7 +50,9 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
             {rep.capturePriority}
           </div>
           {rep.textValue !== null && (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap">{rep.textValue}</pre>
+            <pre className="custom-scrollbar mt-2 max-h-40 overflow-auto whitespace-pre-wrap">
+              {rep.textValue}
+            </pre>
           )}
           {rep.fileReferences.map(file => (
             <div className="mt-1 break-all" key={file}>
@@ -230,7 +232,7 @@ export const V2ViewPanel = ({
     )
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-auto custom-scrollbar">
+      <div className="min-h-0 flex-1 overflow-hidden">
         <RenderModelView
           presentation={presentation}
           retryingOcr={retryingOcr}

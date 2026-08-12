@@ -25,10 +25,14 @@ export const TransformBar = ({
   useEffect(() => {
     setPreview(null)
     setError(null)
-    void invoke<Transformer[]>('list_transformer_contributions', { clipId })
+    void invoke<Transformer[]>('list_transformer_contributions', {
+      clipId,
+      sourceId,
+      presentationKind: basePresentation.activeView.presentationKind,
+    })
       .then(setItems)
       .catch(() => setItems([]))
-  }, [clipId])
+  }, [basePresentation.activeView.presentationKind, clipId, sourceId])
 
   if (items.length === 0) return null
 
@@ -135,7 +139,7 @@ export const TransformBar = ({
               </button>
             </div>
           </div>
-          <div className="max-h-48 overflow-auto border-t border-slate-100/60 dark:border-white/5">
+          <div className="custom-scrollbar max-h-48 overflow-auto border-t border-slate-100/60 dark:border-white/5">
             <RenderModelView presentation={previewPresentation} />
           </div>
         </div>

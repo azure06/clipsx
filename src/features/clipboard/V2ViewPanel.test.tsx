@@ -10,7 +10,6 @@ const { invokeMock, listenMock, unlistenMock } = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
-vi.mock('./TransformMenu', () => ({ TransformMenu: () => <button>Transforms</button> }))
 
 const summary = {
   id: 'clip-1',

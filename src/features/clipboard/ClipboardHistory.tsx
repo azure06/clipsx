@@ -3,10 +3,9 @@ import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { useActionRegistry } from '../content'
-import { summaryToContent } from './summaryPresentation'
 import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -57,18 +56,6 @@ export const ClipboardHistory = ({
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
   const settings = useSettingsStore(state => state.settings)
   const { toast } = useToast()
-  const { getActionsForContent } = useActionRegistry({
-    onDelete: id => {
-      void deleteClip(id)
-    },
-    onToggleFavorite: id => {
-      void toggleFavorite(id)
-    },
-    onTogglePin: id => {
-      void togglePin(id)
-    },
-  })
-
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Derived index — used only for display highlighting and scroll anchoring.
   // Computing it each render is intentional: the ID is the stable identity;
@@ -329,7 +316,6 @@ export const ClipboardHistory = ({
 
       const currentIndex = selectedId != null ? clips.findIndex(c => c.id === selectedId) : -1
       const selectedClip = currentIndex >= 0 ? clips[currentIndex] : null
-      const selectedContent = selectedClip ? summaryToContent(selectedClip) : null
 
       // Handle primary+1 to primary+9
       if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
@@ -342,21 +328,33 @@ export const ClipboardHistory = ({
         return
       }
 
-      if (selectedContent) {
-        const shortcutAction = getActionsForContent(selectedContent).find(action => {
-          if (!action.shortcut || action.id === 'delete') return false
-          if (action.shortcut.modifiers.length === 0) return false
-          return matchShortcut(e, action.shortcut, platform)
-        })
-
-        if (shortcutAction) {
-          if (shortcutAction.id === 'copy' && hasNativeCopySelection()) {
-            return
-          }
-          e.preventDefault()
-          void shortcutAction.execute(selectedContent)
-          return
-        }
+      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'C' }, platform)) {
+        if (hasNativeCopySelection()) return
+        e.preventDefault()
+        void handleExplicitCopy(selectedClip.safeSummary, selectedClip.id)
+        return
+      }
+      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'F' }, platform)) {
+        e.preventDefault()
+        void toggleFavorite(selectedClip.id)
+        return
+      }
+      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'P' }, platform)) {
+        e.preventDefault()
+        void togglePin(selectedClip.id)
+        return
+      }
+      if (
+        selectedClip &&
+        matchShortcut(e, { modifiers: ['primary', 'shift'], key: 'O' }, platform)
+      ) {
+        e.preventDefault()
+        const extension =
+          ({ json: 'json', markdown: 'md', table: 'csv', code: 'txt' } as Record<string, string>)[
+            selectedClip.primaryPresentationKind
+          ] ?? 'txt'
+        void invoke('open_clip_text_in_editor', { clipId: selectedClip.id, extension })
+        return
       }
 
       const maxIndex = clips.length - 1
@@ -436,7 +434,9 @@ export const ClipboardHistory = ({
     scrollSelectedIntoView,
     handleAction,
     handleDelete,
-    getActionsForContent,
+    handleExplicitCopy,
+    toggleFavorite,
+    togglePin,
     selectBoundaryClip,
   ])
 

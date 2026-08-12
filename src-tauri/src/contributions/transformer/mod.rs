@@ -90,6 +90,48 @@ impl BuiltinTransformer {
             _ => bail!("transformer requires text input"),
         }
     }
+
+    fn accepts_for(&self, input: &CapturedRepresentation, presentation_kind: Option<&str>) -> bool {
+        if !self.accepts(input) {
+            return false;
+        }
+        let text = match &input.payload {
+            CapturedPayload::Text(text) => text.trim(),
+            _ => return self.id == "builtin.transform.base64.encode",
+        };
+        match self.id {
+            "builtin.transform.json.pretty"
+            | "builtin.transform.json.minify"
+            | "builtin.transform.json.to_typescript"
+            | "builtin.transform.json.to_csv" => {
+                presentation_kind == Some("json") && serde_json::from_str::<Value>(text).is_ok()
+            }
+            "builtin.transform.html.to_markdown" => {
+                matches!(presentation_kind, Some("html" | "rich_text"))
+            }
+            "builtin.transform.jwt.decode" => presentation_kind == Some("jwt"),
+            "builtin.transform.url.encode"
+            | "builtin.transform.url.decode"
+            | "builtin.transform.url.normalize"
+            | "builtin.transform.url.query_to_json" => presentation_kind == Some("url"),
+            "builtin.transform.csv.to_json" | "builtin.transform.csv.to_markdown" => {
+                matches!(presentation_kind, Some("csv" | "table"))
+            }
+            "builtin.transform.curl.to_fetch" => {
+                presentation_kind == Some("code") && text.starts_with("curl ")
+            }
+            "builtin.transform.base64.decode" => {
+                text.starts_with("data:")
+                    || (text.len() >= 8
+                        && text.len() % 4 == 0
+                        && text
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')))
+            }
+            "builtin.transform.base64.encode" => true,
+            _ => false,
+        }
+    }
 }
 impl TransformerContribution for BuiltinTransformer {
     fn descriptor(&self) -> TransformerDescriptor {
@@ -132,6 +174,7 @@ impl TransformerContribution for BuiltinTransformer {
             "builtin.transform.url.normalize" => url_normalize(Self::text(input)?),
             "builtin.transform.url.query_to_json" => url_query_to_json(Self::text(input)?),
             "builtin.transform.csv.to_json" => csv_to_json(Self::text(input)?),
+            "builtin.transform.csv.to_markdown" => csv_to_markdown(Self::text(input)?),
             "builtin.transform.json.to_csv" => json_to_csv(Self::text(input)?),
             _ => bail!("unknown transformer contribution"),
         }
@@ -260,6 +303,12 @@ fn registry() -> Vec<BuiltinTransformer> {
             accepts_binary: false,
         },
         BuiltinTransformer {
+            id: "builtin.transform.csv.to_markdown",
+            label: "CSV to Markdown",
+            schema: no_parameters.clone(),
+            accepts_binary: false,
+        },
+        BuiltinTransformer {
             id: "builtin.transform.json.to_csv",
             label: "JSON to CSV",
             schema: no_parameters,
@@ -275,10 +324,13 @@ pub fn descriptors() -> Vec<TransformerDescriptor> {
         .collect()
 }
 
-pub fn descriptors_for(input: &CapturedRepresentation) -> Vec<TransformerDescriptor> {
+pub fn descriptors_for(
+    input: &CapturedRepresentation,
+    presentation_kind: Option<&str>,
+) -> Vec<TransformerDescriptor> {
     registry()
         .into_iter()
-        .filter(|transformer| transformer.accepts(input))
+        .filter(|transformer| transformer.accepts_for(input, presentation_kind))
         .map(|transformer| transformer.descriptor())
         .collect()
 }
@@ -352,25 +404,15 @@ impl TransformService {
         cache.prune();
         Ok(preview)
     }
-    pub async fn list(
+    pub async fn list_source(
         &self,
         repo: &HistoryRepository,
         clip_id: &str,
+        source_id: &str,
+        presentation_kind: &str,
     ) -> Result<Vec<TransformerDescriptor>> {
-        let detail = repo.detail(clip_id).await?;
-        let mut ids = std::collections::BTreeSet::new();
-        let mut descriptors = Vec::new();
-        for representation in detail.representations {
-            let (source, _) = repo
-                .source_representation(clip_id, &representation.id)
-                .await?;
-            for descriptor in descriptors_for(&source) {
-                if ids.insert(descriptor.id.clone()) {
-                    descriptors.push(descriptor);
-                }
-            }
-        }
-        Ok(descriptors)
+        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        Ok(descriptors_for(&source, Some(presentation_kind)))
     }
     pub async fn preview(
         &self,
@@ -945,8 +987,11 @@ fn csv_to_json(input: &str) -> Result<Vec<CapturedRepresentation>> {
         bail!("CSV input is empty");
     }
     let first_line = lines[0];
-    let delimiter =
-        if first_line.matches('\t').count() > first_line.matches(',').count() { '\t' } else { ',' };
+    let delimiter = if first_line.matches('\t').count() > first_line.matches(',').count() {
+        '\t'
+    } else {
+        ','
+    };
     let headers = csv_parse_row(first_line, delimiter);
     let mut records = Vec::new();
     for line in &lines[1..] {
@@ -967,6 +1012,42 @@ fn csv_to_json(input: &str) -> Result<Vec<CapturedRepresentation>> {
         "application/json",
         &serde_json::to_string_pretty(&Value::Array(records))?,
     ))
+}
+fn csv_to_markdown(input: &str) -> Result<Vec<CapturedRepresentation>> {
+    let lines: Vec<&str> = input
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        bail!("CSV input is empty");
+    }
+    let delimiter = if lines[0].matches('\t').count() > lines[0].matches(',').count() {
+        '\t'
+    } else {
+        ','
+    };
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .map(|line| csv_parse_row(line, delimiter))
+        .collect();
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let markdown_row = |row: &[String]| {
+        format!(
+            "| {} |",
+            (0..width)
+                .map(|index| row
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_default()
+                    .replace('|', "\\|"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
+    };
+    let mut output = vec![markdown_row(&rows[0])];
+    output.push(format!("| {} |", vec!["---"; width].join(" | ")));
+    output.extend(rows[1..].iter().map(|row| markdown_row(row)));
+    Ok(text_output("text/markdown", &output.join("\n")))
 }
 fn json_to_csv(input: &str) -> Result<Vec<CapturedRepresentation>> {
     let value: Value = serde_json::from_str(input).context("invalid JSON")?;
@@ -989,7 +1070,13 @@ fn json_to_csv(input: &str) -> Result<Vec<CapturedRepresentation>> {
         bail!("JSON array must contain objects");
     }
     let mut lines = Vec::new();
-    lines.push(headers.iter().map(|h| csv_quote_field(h)).collect::<Vec<_>>().join(","));
+    lines.push(
+        headers
+            .iter()
+            .map(|h| csv_quote_field(h))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
     for item in array {
         let obj = item.as_object();
         let row: Vec<String> = headers
@@ -1011,6 +1098,17 @@ fn json_to_csv(input: &str) -> Result<Vec<CapturedRepresentation>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn text_input(value: &str, mime: &str) -> CapturedRepresentation {
+        CapturedRepresentation {
+            format_key: format!("test:{mime}"),
+            canonical_mime_type: Some(mime.into()),
+            native_type: None,
+            platform: "test".into(),
+            capture_priority: 1,
+            payload: CapturedPayload::Text(value.into()),
+        }
+    }
     #[test]
     fn json_format_is_deterministic() {
         let a = json_transform("{\"b\":2,\"a\":1}", true).unwrap();
@@ -1026,5 +1124,25 @@ mod tests {
     #[test]
     fn jwt_is_not_a_verifier() {
         assert!(jwt_decode("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.").is_ok());
+    }
+
+    #[test]
+    fn transformer_discovery_is_presentation_specific() {
+        let json = text_input("{\"answer\":42}", "application/json");
+        let ids = descriptors_for(&json, Some("json"))
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"builtin.transform.json.pretty".into()));
+        assert!(!ids.contains(&"builtin.transform.csv.to_json".into()));
+        assert!(!ids.contains(&"builtin.transform.jwt.decode".into()));
+    }
+
+    #[test]
+    fn csv_to_markdown_preserves_table_shape_and_escapes_pipes() {
+        let output = csv_to_markdown("name,note\nAda,one|two").unwrap();
+        assert!(
+            matches!(&output[0].payload, CapturedPayload::Text(value) if value == "| name | note |\n| --- | --- |\n| Ada | one\\|two |")
+        );
     }
 }

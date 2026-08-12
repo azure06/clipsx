@@ -29,6 +29,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import mermaid from 'mermaid'
+import { useTranslation } from 'react-i18next'
 import {
   useState,
   useEffect,
@@ -123,6 +124,28 @@ const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
 ]
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'])
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v'])
+const SCROLL_AREA = 'custom-scrollbar h-full min-h-0 overflow-auto overscroll-contain'
+const SECRET_KIND_KEYS = {
+  aws_access_key: 'preview.secretKinds.awsAccessKey',
+  github_token: 'preview.secretKinds.githubToken',
+  stripe_key: 'preview.secretKinds.stripeKey',
+  private_key: 'preview.secretKinds.privateKey',
+  credential_assignment: 'preview.secretKinds.credentialAssignment',
+  generic_token: 'preview.secretKinds.genericToken',
+} as const
+
+const iframeDocument = (html: string, theme: 'light' | 'dark', richText = false) => {
+  const dark = theme === 'dark'
+  const style = `<style data-clipsx-preview-theme>html{color-scheme:${theme}}html,body{${
+    richText ? 'margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;' : ''
+  }background:${dark ? '#0f172a' : '#ffffff'};color:${dark ? '#f1f5f9' : '#111827'}}a{color:#3b82f6}*{scrollbar-width:thin;scrollbar-color:${
+    dark ? '#475569' : '#cbd5e1'
+  } transparent}*::-webkit-scrollbar{width:8px;height:8px}*::-webkit-scrollbar-track{background:transparent}*::-webkit-scrollbar-thumb{background:${
+    dark ? '#475569' : '#cbd5e1'
+  };border-radius:9999px}</style>`
+  return html.includes('</head>') ? html.replace('</head>', `${style}</head>`) : `${style}${html}`
+}
 
 const getFileIcon = (name: string): LucideIcon => {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
@@ -133,9 +156,7 @@ const getFileIcon = (name: string): LucideIcon => {
 }
 
 const TextBlock = ({ children }: { children: string }) => (
-  <pre className="h-full overflow-auto whitespace-pre-wrap p-4 text-sm leading-relaxed">
-    {children}
-  </pre>
+  <pre className={`${SCROLL_AREA} whitespace-pre-wrap p-4 text-sm leading-relaxed`}>{children}</pre>
 )
 
 const CopyableRow = ({ label, value }: { label: string; value: string }) => {
@@ -195,7 +216,7 @@ const CodeView = ({ language, text }: { language: string | null; text: string })
         <span className="text-[10px] text-slate-400">{lines.length} lines</span>
         <span className="text-[10px] text-slate-500">{words} words</span>
       </div>
-      <div className="flex min-h-0 flex-1 overflow-auto bg-slate-950/90 font-mono text-sm">
+      <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto overscroll-contain bg-slate-950/90 font-mono text-sm">
         <div className="select-none border-r border-white/5 px-3 py-4 text-right text-slate-600">
           {lines.slice(0, 500).map((_, index) => (
             <div key={index}>{index + 1}</div>
@@ -222,7 +243,7 @@ const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) =
         {columns.length} cols
       </span>
     </div>
-    <div className="flex-1 overflow-auto custom-scrollbar">
+    <div className="custom-scrollbar flex-1 overflow-auto overscroll-contain">
       <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
         <thead className="sticky top-0 z-10">
           <tr>
@@ -305,10 +326,10 @@ const ImageView = ({
   retrying: boolean
   onRetryOcr: () => void
 }) => (
-  <div className="flex h-full min-h-0 flex-col">
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-100/40 p-6 dark:bg-black/20">
+  <div className={`${SCROLL_AREA} flex flex-col`}>
+    <div className="flex min-h-56 shrink-0 items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20">
       <img
-        className="max-h-full max-w-full rounded object-contain"
+        className="max-h-80 max-w-full rounded object-contain"
         src={assetUrl(model.assetId)}
         alt="Clipboard image"
       />
@@ -334,7 +355,7 @@ const ImageView = ({
       )}
       {model.ocr.state === 'ready' &&
         (model.ocr.text.trim() ? (
-          <TextBlock>{model.ocr.text}</TextBlock>
+          <pre className="whitespace-pre-wrap pt-2 text-sm leading-relaxed">{model.ocr.text}</pre>
         ) : (
           <span>No text found.</span>
         ))}
@@ -444,7 +465,10 @@ const SemanticView = ({
   kind: string
   clipId: string
 }) => {
-  const [revealed, setRevealed] = useState(false)
+  const [revealedSecretId, setRevealedSecretId] = useState<string | null>(null)
+  const { t } = useTranslation()
+  const secretId = `${clipId}:${model.facetId}:${model.text}`
+  const revealed = revealedSecretId === secretId
 
   if (kind === 'url') {
     const href = semanticScalar(model.payload, 'href') ?? model.text
@@ -461,26 +485,25 @@ const SemanticView = ({
     const path = rawPath && rawPath !== '/' ? rawPath : null
     const fragment = parsed?.hash ? parsed.hash.slice(1) : null
     const queryEntries: [string, string][] = parsed ? [...parsed.searchParams.entries()] : []
-    const urlExt = (href.split('?')[0] ?? '').split('.').pop()?.toLowerCase() ?? ''
+    const urlExt = (parsed?.pathname ?? href).split('.').pop()?.toLowerCase() ?? ''
     const isImageUrl = IMAGE_EXTS.has(urlExt)
+    const isVideoUrl = VIDEO_EXTS.has(urlExt)
     return (
-      <div className="flex h-full flex-col gap-0 overflow-auto">
-        <div className="flex items-start gap-4 border-b border-slate-200/60 bg-linear-to-r from-blue-500/5 to-cyan-500/5 p-5 dark:border-white/5">
-          <ExternalLink className="mt-0.5 h-6 w-6 shrink-0 text-blue-500" />
-          <div className="min-w-0 flex-1">
-            <a
-              className="break-all text-sm font-medium text-blue-600 underline dark:text-blue-400"
-              href={href}
-              onClick={event => {
-                event.preventDefault()
-                void invoke('open_external_url', { url: href })
-              }}
-            >
-              {href}
-            </a>
-            {host && <div className="mt-0.5 text-xs text-gray-500">{host}</div>}
+      <div className={`${SCROLL_AREA} flex flex-col gap-4 p-4`}>
+        <button
+          className="group rounded-xl border border-blue-500/20 bg-linear-to-br from-blue-500/10 to-cyan-500/10 p-4 text-left transition-all hover:border-blue-400/40 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)]"
+          onClick={() => void invoke('open_external_url', { url: href })}
+        >
+          <div className="flex items-start gap-3">
+            <ExternalLink className="mt-0.5 h-5 w-5 shrink-0 text-blue-500" />
+            <div className="min-w-0 flex-1">
+              <div className="break-all text-sm font-medium text-gray-800 dark:text-gray-100">
+                {href}
+              </div>
+              {host && <div className="mt-0.5 text-xs text-gray-500">{host}</div>}
+            </div>
           </div>
-        </div>
+        </button>
         {isImageUrl && (
           <div className="border-b border-slate-200/60 p-3 dark:border-white/5">
             <img
@@ -494,6 +517,11 @@ const SemanticView = ({
             />
           </div>
         )}
+        {isVideoUrl && (
+          <div className="overflow-hidden rounded-lg bg-slate-100/60 dark:bg-black/20">
+            <video className="max-h-64 w-full object-contain" controls src={href} />
+          </div>
+        )}
         <div className="p-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
             URL Structure
@@ -505,6 +533,18 @@ const SemanticView = ({
           {queryEntries.map(([k, v]) => (
             <CopyableRow key={k} label={`?${k}`} value={v} />
           ))}
+          {host && (
+            <button
+              className="mt-3 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+              onClick={() =>
+                void invoke('open_external_url', {
+                  url: `https://www.google.com/search?q=${encodeURIComponent(host)}`,
+                })
+              }
+            >
+              {t('preview.searchDomain', { domain: host })}
+            </button>
+          )}
         </div>
       </div>
     )
@@ -517,7 +557,7 @@ const SemanticView = ({
     const domain = atIdx >= 0 ? address.slice(atIdx + 1) : null
     const gravatarUrl = `https://www.gravatar.com/avatar/${address.toLowerCase().trim()}?d=mp&s=80`
     return (
-      <div className="flex h-full flex-col overflow-auto">
+      <div className={`${SCROLL_AREA} flex flex-col`}>
         <div
           className="group flex cursor-pointer items-center gap-3 border-b border-slate-200/60 p-5 transition-colors hover:bg-amber-500/5 dark:border-white/5"
           onClick={() => void invoke('compose_email', { address })}
@@ -566,7 +606,7 @@ const SemanticView = ({
     const hasAlpha = safeHex?.length === 9
     const colorValue = safeHex ?? model.text
     return (
-      <div className="flex h-full flex-col overflow-auto">
+      <div className={`${SCROLL_AREA} flex flex-col`}>
         {/* Full-width swatch */}
         <div className="relative border-b border-slate-200/60 dark:border-white/5">
           {hasAlpha && (
@@ -638,7 +678,7 @@ const SemanticView = ({
     const filename = parts[parts.length - 1] ?? ''
     const dir = parts.length > 1 ? parts.slice(0, -1).join(separator) + separator : separator
     return (
-      <div className="flex h-full flex-col overflow-auto">
+      <div className={`${SCROLL_AREA} flex flex-col`}>
         <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
           <FolderOpen className="h-8 w-8 shrink-0 text-amber-500" />
           <code className="min-w-0 break-all text-sm">{path}</code>
@@ -668,7 +708,7 @@ const SemanticView = ({
     const alg = header && typeof header['alg'] === 'string' ? header['alg'] : null
     const typ = header && typeof header['typ'] === 'string' ? header['typ'] : null
     return (
-      <div className="h-full overflow-auto">
+      <div className={SCROLL_AREA}>
         <div className="flex items-center gap-2 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
           <div className="rounded-lg bg-yellow-500/20 p-2 text-yellow-400 ring-1 ring-yellow-500/30">
             <KeyRound className="h-4 w-4" />
@@ -704,21 +744,29 @@ const SemanticView = ({
   if (kind === 'secret') {
     const secretKind =
       semanticScalar(model.payload, 'kind') ?? semanticScalar(model.payload, 'format') ?? 'secret'
+    const secretKindKey = SECRET_KIND_KEYS[secretKind as keyof typeof SECRET_KIND_KEYS]
+    const secretKindLabel = secretKindKey ? t(secretKindKey) : secretKind.replaceAll('_', ' ')
     return (
-      <div className="flex h-full flex-col overflow-auto">
-        <div className="flex flex-col items-center gap-3 border-b border-slate-200/60 bg-red-500/5 p-5 dark:border-white/5">
+      <div className={`${SCROLL_AREA} p-4`}>
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-red-500/20 bg-linear-to-br from-red-500/10 to-rose-500/10 p-5">
           <div className="rounded-full bg-red-500/20 p-3 text-red-400 ring-1 ring-red-500/30">
             <ShieldAlert className="h-6 w-6" />
           </div>
           <span className="text-sm font-semibold text-red-700 dark:text-red-300">
-            Sensitive content detected
+            {t('preview.sensitiveDetected')}
           </span>
           <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
-            {secretKind}
+            {secretKindLabel}
           </span>
+          <p className="max-w-xs text-center text-xs text-gray-500 dark:text-gray-400">
+            {t('preview.sensitiveDescription')}
+          </p>
         </div>
-        <div className="flex flex-col items-center gap-3 p-4">
-          <code className="max-w-full break-all rounded-lg bg-slate-100 p-3 font-mono text-sm dark:bg-slate-900">
+        <div className="mt-4 rounded-lg bg-slate-100/70 p-3 dark:bg-black/20">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+            {t('preview.value')}
+          </span>
+          <code className="block max-w-full select-none break-all font-mono text-sm text-gray-700 dark:text-gray-300">
             {revealed
               ? model.text
               : model.text.length > 12
@@ -726,10 +774,11 @@ const SemanticView = ({
                 : '•'.repeat(model.text.length)}
           </code>
           <button
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
-            onClick={() => setRevealed(v => !v)}
+            aria-label={revealed ? t('preview.hideSecret') : t('preview.revealSecret')}
+            className="mt-3 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-white/70 dark:border-white/10 dark:hover:bg-white/5"
+            onClick={() => setRevealedSecretId(value => (value === secretId ? null : secretId))}
           >
-            {revealed ? 'Hide' : 'Reveal'}
+            {revealed ? t('preview.hideSecret') : t('preview.revealSecret')}
           </button>
         </div>
       </div>
@@ -750,7 +799,7 @@ const SemanticView = ({
     const valid = !isNaN(parsed.getTime())
     const DateIcon = kind === 'date' ? CalendarDays : Clock
     return (
-      <div className="flex h-full flex-col overflow-auto">
+      <div className={`${SCROLL_AREA} flex flex-col`}>
         <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
           <DateIcon className="h-7 w-7 shrink-0 text-yellow-500" />
           <code className="min-w-0 break-all text-sm">{raw}</code>
@@ -775,7 +824,7 @@ const SemanticView = ({
     return []
   })
   return (
-    <div className="h-full overflow-auto">
+    <div className={SCROLL_AREA}>
       <div className="border-b border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:border-white/10">
         {kind}
       </div>
@@ -948,7 +997,7 @@ const MarkdownView = ({ markdown }: { markdown: string }) => {
   )
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-4 custom-scrollbar">
+    <div className={`${SCROLL_AREA} px-4 py-4`}>
       <div className="space-y-4">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
           {markdown}
@@ -978,7 +1027,7 @@ const JsonView = ({ value }: { value: unknown }) => {
           </span>
         )}
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="custom-scrollbar flex-1 overflow-auto overscroll-contain">
         <pre className="p-4 font-mono text-sm text-emerald-800 dark:text-emerald-300 whitespace-pre-wrap break-words">
           {jsonText}
         </pre>
@@ -997,6 +1046,7 @@ export const RenderModelView = ({
   onRetryOcr?: () => void
 }) => {
   const model = presentation.model
+  const appliedTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
   switch (model.kind) {
     case 'text':
       return <TextBlock>{model.text}</TextBlock>
@@ -1010,9 +1060,17 @@ export const RenderModelView = ({
       if (presentation.activeView.presentationKind === 'json') {
         return <JsonView value={model.value} />
       }
-      return <div className="p-4 font-mono text-sm">{TreeNode({ value: model.value })}</div>
+      return (
+        <div className={`${SCROLL_AREA} p-4 font-mono text-sm`}>
+          {TreeNode({ value: model.value })}
+        </div>
+      )
     case 'key_value':
-      return <KeyValueView entries={model.entries} />
+      return (
+        <div className={SCROLL_AREA}>
+          <KeyValueView entries={model.entries} />
+        </div>
+      )
     case 'image':
       return <ImageView model={model} retrying={retryingOcr} onRetryOcr={onRetryOcr} />
     case 'html':
@@ -1020,7 +1078,7 @@ export const RenderModelView = ({
         <iframe
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
-          srcDoc={model.sanitizedHtml}
+          srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme)}
           title="HTML preview"
         />
       ) : (
@@ -1033,14 +1091,18 @@ export const RenderModelView = ({
         <iframe
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
-          srcDoc={`<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;background:#ffffff;color:#111827}@media(prefers-color-scheme:dark){html,body{background:#0f172a;color:#f1f5f9}}a{color:#3b82f6}</style>${model.sanitizedHtml}`}
+          srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme, true)}
           title="Rich text preview"
         />
       ) : (
         <TextBlock>{model.plainText}</TextBlock>
       )
     case 'files':
-      return <FilesView {...model} />
+      return (
+        <div className={SCROLL_AREA}>
+          <FilesView {...model} />
+        </div>
+      )
     case 'document':
       return (
         <object

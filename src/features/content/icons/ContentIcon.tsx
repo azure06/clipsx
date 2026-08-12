@@ -15,10 +15,8 @@ import {
   Files,
   Presentation,
 } from 'lucide-react'
-import type { Content } from '../types'
-
 type ContentIconProps = {
-  readonly content: Content
+  readonly presentationKind: string
   readonly size?: 'sm' | 'md' | 'lg'
 }
 
@@ -34,35 +32,13 @@ const iconSizes = {
   lg: 20,
 }
 
-const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
+const ContentIconComponent = ({ presentationKind, size = 'md' }: ContentIconProps) => {
   const iconSize = iconSizes[size]
   const containerSize = sizeClasses[size]
 
-  // Special case: Color type shows actual color
-  if (content.type === 'color') {
-    const colorValue = content.metadata.hex || content.metadata.value || content.text
-    return (
-      <div
-        className={`${containerSize} rounded-full ring-2 ring-white/20 shadow-sm transition-transform duration-200 hover:scale-110`}
-        style={{ backgroundColor: colorValue }}
-      />
-    )
-  }
-
   // Icon mapping
   const getIcon = () => {
-    if (content.type === 'office') {
-      switch (content.metadata.office_kind) {
-        case 'spreadsheet':
-          return <FileSpreadsheet size={iconSize} strokeWidth={2.5} />
-        case 'slides':
-          return <Presentation size={iconSize} strokeWidth={2.5} />
-        default:
-          return <FileText size={iconSize} strokeWidth={2.5} />
-      }
-    }
-
-    switch (content.type) {
+    switch (presentationKind) {
       case 'url':
         return <Link2 size={iconSize} strokeWidth={2.5} />
       case 'email':
@@ -87,6 +63,10 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
         return <ImageIcon size={iconSize} strokeWidth={2.5} />
       case 'files':
         return <Files size={iconSize} strokeWidth={2.5} />
+      case 'table':
+        return <FileSpreadsheet size={iconSize} strokeWidth={2.5} />
+      case 'office':
+        return <Presentation size={iconSize} strokeWidth={2.5} />
       default:
         return <FileText size={iconSize} strokeWidth={2.5} />
     }
@@ -94,18 +74,7 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
 
   // Color mapping
   const getColorClasses = () => {
-    if (content.type === 'office') {
-      switch (content.metadata.office_kind) {
-        case 'spreadsheet':
-          return 'bg-lime-500/20 text-lime-400 ring-lime-500/30'
-        case 'slides':
-          return 'bg-orange-500/20 text-orange-400 ring-orange-500/30'
-        default:
-          return 'bg-blue-500/20 text-blue-400 ring-blue-500/30'
-      }
-    }
-
-    switch (content.type) {
+    switch (presentationKind) {
       case 'url':
         return 'bg-blue-500/20 text-blue-400 ring-blue-500/30'
       case 'email':
@@ -130,6 +99,10 @@ const ContentIconComponent = ({ content, size = 'md' }: ContentIconProps) => {
         return 'bg-pink-500/20 text-pink-400 ring-pink-500/30'
       case 'files':
         return 'bg-blue-600/20 text-blue-400 ring-blue-600/30'
+      case 'table':
+        return 'bg-lime-500/20 text-lime-400 ring-lime-500/30'
+      case 'office':
+        return 'bg-orange-500/20 text-orange-400 ring-orange-500/30'
       default:
         return 'bg-slate-500/20 text-gray-400 ring-gray-500/30'
     }

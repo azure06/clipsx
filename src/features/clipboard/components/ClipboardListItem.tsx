@@ -10,8 +10,7 @@ import {
   Sparkles,
   Star,
 } from 'lucide-react'
-import { ContentIcon } from '../../content'
-import { summaryToContent } from '../summaryPresentation'
+import { ContentIcon } from '../../content/icons'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 
@@ -94,7 +93,7 @@ const ClipboardListItemComponent = ({
             />
           ) : (
             <div className="text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
-              <ContentIcon content={summaryToContent(clip)} size="sm" />
+              <ContentIcon presentationKind={clip.primaryPresentationKind} size="sm" />
             </div>
           )}
         </div>

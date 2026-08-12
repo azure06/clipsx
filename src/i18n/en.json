@@ -249,6 +249,17 @@
     "payloadNotDecoded": "Payload content is not decoded in this view.",
     "sensitiveDetected": "Sensitive Content Detected",
     "sensitiveDescription": "This clip contains potentially sensitive data. The content is masked for safety.",
+    "revealSecret": "Reveal secret",
+    "hideSecret": "Hide secret",
+    "searchDomain": "Search {{domain}}",
+    "secretKinds": {
+      "awsAccessKey": "AWS access key",
+      "githubToken": "GitHub token",
+      "stripeKey": "Stripe key",
+      "privateKey": "Private key",
+      "credentialAssignment": "Credential",
+      "genericToken": "Generic token"
+    },
     "value": "Value",
     "urlPreview": "URL Preview",
     "urlStructure": "URL Structure",

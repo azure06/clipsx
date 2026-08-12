@@ -21,11 +21,10 @@ vi.mock('lucide-react', () => ({
 }))
 
 // Mock ContentIcon
-vi.mock('../../content', () => ({
-  ContentIcon: ({ content }: { content: { type: string } }) => (
-    <div data-testid="content-icon">{content.type}</div>
+vi.mock('../../content/icons', () => ({
+  ContentIcon: ({ presentationKind }: { presentationKind: string }) => (
+    <div data-testid="content-icon">{presentationKind}</div>
   ),
-  clipToContent: (clip: { contentType: string }) => ({ type: clip.contentType }),
 }))
 
 // Mock keyboard shortcuts

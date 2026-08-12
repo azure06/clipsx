@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import type { V2Tag } from '../../../shared/types/v2'
 import { useClipboardStore } from '../../../stores/clipboardStore'
-import { previewTheme } from '../../content/previews/previewTheme'
 import { useTranslation } from 'react-i18next'
 
 interface TagChipsProps {
@@ -114,9 +113,7 @@ export const TagChips = ({ clipId, tags }: TagChipsProps) => {
             className="text-[10px] px-2 py-0.5 rounded-md border border-blue-400/40 bg-blue-500/10 text-gray-700 dark:text-gray-200 placeholder-gray-400 outline-none w-24"
           />
           {filteredSuggestions.length > 0 && inputValue && (
-            <div
-              className={`absolute left-0 top-full mt-1 z-50 rounded-lg shadow-lg overflow-hidden min-w-32 ${previewTheme.surfaceElevated}`}
-            >
+            <div className="absolute left-0 top-full z-50 mt-1 min-w-32 overflow-hidden rounded-lg border border-slate-200/80 bg-white/95 shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/95">
               {filteredSuggestions.slice(0, 6).map(tag => (
                 <button
                   key={tag.id}

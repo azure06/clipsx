@@ -745,6 +745,9 @@ impl DetectorContribution for SecretDetector {
     fn id(&self) -> &'static str {
         "core.security.secret"
     }
+    fn version(&self) -> &'static str {
+        "2"
+    }
     fn name(&self) -> &'static str {
         "Secret"
     }
@@ -754,25 +757,83 @@ impl DetectorContribution for SecretDetector {
     }
     fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
         let value = s.text.trim();
-        let marker = [
-            "api_key", "apikey", "secret", "token", "password", "bearer ",
-        ]
-        .iter()
-        .any(|marker| value.to_ascii_lowercase().contains(marker));
-        let compact = value.chars().filter(|c| !c.is_ascii_whitespace()).count() >= 32
-            && value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '=' | '.'));
-        if marker || compact {
+        if let Some((kind, warning)) = classify_secret(value) {
             vec![DetectedFacet {
                 id: self.id(),
                 name: self.name(),
-                payload: json!({"schemaVersion":1,"length":value.len()}),
+                payload: json!({"schemaVersion":2,"kind":kind,"warning":warning,"length":value.len()}),
             }]
         } else {
             vec![]
         }
     }
+}
+
+fn classify_secret(value: &str) -> Option<(&'static str, &'static str)> {
+    if value.starts_with("-----BEGIN ") && value.contains("PRIVATE KEY-----") {
+        return Some(("private_key", "privateKey"));
+    }
+    if value.len() == 20
+        && value.starts_with("AKIA")
+        && value[4..]
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
+    {
+        return Some(("aws_access_key", "awsAccessKey"));
+    }
+    if value.starts_with("ghp_")
+        && value.len() >= 36
+        && value[4..].chars().all(|ch| ch.is_ascii_alphanumeric())
+    {
+        return Some(("github_token", "githubToken"));
+    }
+    if ["sk_live_", "sk_test_", "rk_live_", "rk_test_"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
+        && value.len() >= 20
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Some(("stripe_key", "stripeKey"));
+    }
+
+    let lower = value.to_ascii_lowercase();
+    let credential_assignment = value.split_once(['=', ':']).is_some_and(|(key, secret)| {
+        ["api_key", "apikey", "secret", "token", "password", "bearer"]
+            .iter()
+            .any(|marker| key.trim().to_ascii_lowercase().contains(marker))
+            && secret.trim().len() >= 16
+            && !secret.trim().chars().any(char::is_whitespace)
+    }) || lower
+        .strip_prefix("bearer ")
+        .is_some_and(|secret| secret.len() >= 16 && !secret.chars().any(char::is_whitespace));
+    if credential_assignment {
+        return Some(("credential_assignment", "credentialAssignment"));
+    }
+
+    let uuid_like = value.len() == 36
+        && value.matches('-').count() == 4
+        && value.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-');
+    let structured = url::Url::parse(value).is_ok()
+        || value.contains('@')
+        || value.contains('/')
+        || value.contains('\\')
+        || value.matches('.').count() == 2
+        || uuid_like;
+    let opaque = (32..=512).contains(&value.len())
+        && !structured
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '=' | '+'))
+        && value.chars().any(|ch| ch.is_ascii_alphabetic())
+        && value.chars().any(|ch| ch.is_ascii_digit())
+        && value
+            .chars()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            >= 12;
+    opaque.then_some(("generic_token", "genericToken"))
 }
 
 static JSON: JsonDetector = JsonDetector;
@@ -1297,6 +1358,7 @@ fn original(rep: &RepresentationDetail) -> RenderModel {
     }
 }
 /// Deliberately small allowlist: no links, remote resources, forms, scripts, styles, or attributes.
+#[allow(dead_code)] // Kept as the host-owned sanitization boundary and covered by regression tests.
 pub fn sanitize_html(input: &str) -> String {
     let mut out = String::new();
     let mut rest = input;
@@ -1429,6 +1491,44 @@ mod tests {
             mime: Some("text/plain".into()),
             format: "windows:text/plain".into(),
             text: text.into(),
+        }
+    }
+
+    #[test]
+    fn secret_detector_names_precise_credentials() {
+        for (value, kind) in [
+            ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
+            ("ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github_token"),
+            ("sk_test_0123456789abcdefghijklmnop", "stripe_key"),
+            (
+                "-----BEGIN PRIVATE KEY-----\nvalue\n-----END PRIVATE KEY-----",
+                "private_key",
+            ),
+        ] {
+            let facets = SECRET.detect(&source(value));
+            assert_eq!(facets[0].payload["kind"], kind);
+            assert_eq!(facets[0].payload["schemaVersion"], 2);
+        }
+    }
+
+    #[test]
+    fn secret_detector_keeps_generic_detection_conservative() {
+        assert!(SECRET
+            .detect(&source("api_key=Abcdefghijklmnop123456"))
+            .first()
+            .is_some_and(|facet| facet.payload["kind"] == "credential_assignment"));
+        assert!(SECRET
+            .detect(&source("aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY"))
+            .first()
+            .is_some_and(|facet| facet.payload["kind"] == "generic_token"));
+        for value in [
+            "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.signature",
+            "https://example.com/a/long/path/that/is/not/a/secret",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "this is ordinary prose that happens to be longer than thirty two characters",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+        ] {
+            assert!(SECRET.detect(&source(value)).is_empty(), "{value}");
         }
     }
     #[test]

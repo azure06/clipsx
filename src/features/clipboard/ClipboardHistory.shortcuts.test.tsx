@@ -1,12 +1,10 @@
 import { act, render, waitFor, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ClipboardHistory } from './ClipboardHistory'
-import { ClipActions } from './ClipActions'
 import { useClipboardStore, useSettingsStore } from '../../stores'
 import type { ClipSummary } from '../../shared/types/v2'
 import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
-import { usePinAction } from '../content/actions/shared/PinAction'
 
 const {
   invokeMock,
@@ -338,24 +336,6 @@ describe('ClipboardHistory keyboard shortcuts', () => {
 
   it('formats pin shortcut for action surfaces', () => {
     setNavigatorPlatform('MacIntel')
-    const action = usePinAction()
-
-    expect(formatShortcut(action.shortcut, 'macos')).toBe('⌘P')
-  })
-
-  it('renders pin shortcut in action cards', () => {
-    setNavigatorPlatform('MacIntel')
-    render(
-      <ClipActions
-        content={{
-          type: 'text',
-          text: 'hello world',
-          metadata: {},
-          clip: makeClip(),
-        }}
-      />
-    )
-
-    expect(document.body.textContent).toContain('⌘P')
+    expect(formatShortcut({ modifiers: ['primary'], key: 'P' }, 'macos')).toBe('⌘P')
   })
 })

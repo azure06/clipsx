@@ -2,8 +2,7 @@ import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
 import { formatTimestamp } from '../../../shared/types'
 import { Star, Pin, Hash } from 'lucide-react'
-import { ContentIcon } from '../../content'
-import { summaryToContent } from '../summaryPresentation'
+import { ContentIcon } from '../../content/icons'
 import { useTranslation } from 'react-i18next'
 
 type ClipboardGridItemProps = {
@@ -59,7 +58,7 @@ const ClipboardGridItemComponent = ({
 
       {/* Content Preview */}
       <div className="p-2.5 pb-0 flex items-center justify-center aspect-square">
-        <ContentIcon content={summaryToContent(clip)} size="lg" />
+        <ContentIcon presentationKind={clip.primaryPresentationKind} size="lg" />
       </div>
 
       {/* Bottom section with metadata and attributes */}

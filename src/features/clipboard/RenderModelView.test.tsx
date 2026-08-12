@@ -1,12 +1,16 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
 import { renderModelText } from './presentationModel'
+import { invoke } from '@tauri-apps/api/core'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
-const presentation = (model: RenderModel, presentationKind = model.kind): ClipPresentation => ({
+const presentation = (
+  model: RenderModel,
+  presentationKind: string = model.kind
+): ClipPresentation => ({
   id: 'clip-1',
   sourceAppName: 'Editor',
   sourceAppId: null,
@@ -34,7 +38,10 @@ const presentation = (model: RenderModel, presentationKind = model.kind): ClipPr
   model,
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 describe('RenderModelView', () => {
   const fixtures: Array<[RenderModel, string]> = [
@@ -102,8 +109,9 @@ describe('RenderModelView', () => {
       />
     )
     const html = screen.getByTitle('HTML preview')
-    expect(html).toHaveAttribute('sandbox', '')
-    expect(html).toHaveAttribute('srcdoc', '<p>safe</p>')
+    expect(html).toHaveAttribute('sandbox', 'allow-same-origin')
+    expect(html.getAttribute('srcdoc')).toContain('data-clipsx-preview-theme')
+    expect(html.getAttribute('srcdoc')).toContain('<p>safe</p>')
     rerender(
       <RenderModelView
         presentation={presentation({
@@ -113,7 +121,75 @@ describe('RenderModelView', () => {
         })}
       />
     )
-    expect(screen.getByTitle('Rich text preview')).toHaveAttribute('sandbox', '')
+    expect(screen.getByTitle('Rich text preview')).toHaveAttribute('sandbox', 'allow-same-origin')
+  })
+
+  it('uses the shared themed scroll owner for semantic previews', () => {
+    const { container } = render(
+      <RenderModelView
+        presentation={presentation(
+          {
+            kind: 'semantic',
+            facetId: 'core.link.url',
+            text: 'https://example.com',
+            payload: { host: 'example.com' },
+          },
+          'url'
+        )}
+      />
+    )
+    expect(container.firstElementChild).toHaveClass('custom-scrollbar', 'overscroll-contain')
+  })
+
+  it('keeps secrets out of the DOM until reveal and resets for a different clip', async () => {
+    const firstSecret = 'sk_test_0123456789abcdefghijklmnop'
+    const secretModel: RenderModel = {
+      kind: 'semantic',
+      facetId: 'core.security.secret',
+      text: firstSecret,
+      payload: { kind: 'stripe_key' },
+    }
+    const { rerender } = render(
+      <RenderModelView presentation={presentation(secretModel, 'secret')} />
+    )
+    expect(screen.queryByText(firstSecret)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /reveal secret/i }))
+    expect(screen.getByText(firstSecret)).toBeInTheDocument()
+    const next = presentation(
+      { ...secretModel, text: 'ghp_0123456789abcdefghijklmnopqrstuvwxyz' },
+      'secret'
+    )
+    next.id = 'clip-2'
+    rerender(<RenderModelView presentation={next} />)
+    await waitFor(() =>
+      expect(
+        screen.queryByText(next.model.kind === 'semantic' ? next.model.text : '')
+      ).not.toBeInTheDocument()
+    )
+  })
+
+  it('restores URL video and domain-search actions', () => {
+    render(
+      <RenderModelView
+        presentation={presentation(
+          {
+            kind: 'semantic',
+            facetId: 'core.link.url',
+            text: 'https://media.example.com/demo.mp4',
+            payload: { host: 'media.example.com' },
+          },
+          'url'
+        )}
+      />
+    )
+    expect(document.querySelector('video')).toHaveAttribute(
+      'src',
+      'https://media.example.com/demo.mp4'
+    )
+    fireEvent.click(screen.getByRole('button', { name: /search media\.example\.com/i }))
+    expect(invoke).toHaveBeenCalledWith('open_external_url', {
+      url: 'https://www.google.com/search?q=media.example.com',
+    })
   })
 
   it('shows every OCR terminal state without fabricating OCR text', () => {

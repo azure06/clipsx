@@ -718,36 +718,31 @@ async fn copy_policy(policy: transformers::OutputPolicy, state: &AppState) -> an
 #[tauri::command]
 async fn list_transformer_contributions(
     clip_id: String,
+    source_id: String,
+    presentation_kind: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<transformers::TransformerDescriptor>, String> {
     let mut descriptors = state
         .transforms
-        .list(&state.history, &clip_id)
+        .list_source(&state.history, &clip_id, &source_id, &presentation_kind)
         .await
         .map_err(|error| error.to_string())?;
-    let detail = state
+    let (source, _) = state
         .history
-        .detail(&clip_id)
+        .source_representation(&clip_id, &source_id)
         .await
         .map_err(|error| error.to_string())?;
-    for representation in detail.representations {
-        let (source, _) = state
-            .history
-            .source_representation(&clip_id, &representation.id)
-            .await
-            .map_err(|error| error.to_string())?;
-        for descriptor in state
-            .extensions
-            .transformer_descriptors_for(&state.history, &source)
-            .await
-            .map_err(|error| error.to_string())?
+    for descriptor in state
+        .extensions
+        .transformer_descriptors_for(&state.history, &source)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        if !descriptors
+            .iter()
+            .any(|existing| existing.id == descriptor.id)
         {
-            if !descriptors
-                .iter()
-                .any(|existing| existing.id == descriptor.id)
-            {
-                descriptors.push(descriptor);
-            }
+            descriptors.push(descriptor);
         }
     }
     Ok(descriptors)
