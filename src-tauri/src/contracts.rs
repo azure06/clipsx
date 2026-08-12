@@ -37,7 +37,11 @@ pub struct RepresentationContract {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum RenderModel {
     Text {
         text: String,
@@ -60,7 +64,8 @@ pub enum RenderModel {
         entries: Vec<(String, String)>,
     },
     Image {
-        artifact_id: String,
+        asset_id: String,
+        ocr: OcrPresentation,
     },
     Html {
         sanitized_html: String,
@@ -70,10 +75,10 @@ pub enum RenderModel {
         plain_text: String,
     },
     Files {
-        files: Vec<String>,
+        entries: Vec<FilePresentation>,
     },
     Document {
-        artifact_id: String,
+        asset_id: String,
         mime_type: String,
     },
     Office {
@@ -95,6 +100,24 @@ pub enum RenderModel {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum OcrPresentation {
+    Disabled,
+    Pending,
+    Running,
+    Ready { text: String },
+    Unsupported,
+    Failed { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePresentation {
+    pub path: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,4 +147,175 @@ pub struct FactoryResetResult {
     pub deleted: Vec<String>,
     pub failures: Vec<String>,
     pub restart_required: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_model_wire_contract_is_camel_case_and_lossless() {
+        use serde_json::json;
+
+        let cases = [
+            (
+                RenderModel::Text {
+                    text: "text".into(),
+                },
+                json!({"kind": "text", "text": "text"}),
+            ),
+            (
+                RenderModel::Code {
+                    language: Some("rust".into()),
+                    text: "code".into(),
+                },
+                json!({"kind": "code", "language": "rust", "text": "code"}),
+            ),
+            (
+                RenderModel::Markdown {
+                    markdown: "# title".into(),
+                },
+                json!({"kind": "markdown", "markdown": "# title"}),
+            ),
+            (
+                RenderModel::Table {
+                    columns: vec!["A".into()],
+                    rows: vec![vec!["1".into()]],
+                },
+                json!({"kind": "table", "columns": ["A"], "rows": [["1"]]}),
+            ),
+            (
+                RenderModel::Tree {
+                    value: json!({"a": 1}),
+                },
+                json!({"kind": "tree", "value": {"a": 1}}),
+            ),
+            (
+                RenderModel::KeyValue {
+                    entries: vec![("a".into(), "1".into())],
+                },
+                json!({"kind": "key_value", "entries": [["a", "1"]]}),
+            ),
+            (
+                RenderModel::Image {
+                    asset_id: "asset-1".into(),
+                    ocr: OcrPresentation::Ready {
+                        text: String::new(),
+                    },
+                },
+                json!({"kind": "image", "assetId": "asset-1", "ocr": {"state": "ready", "text": ""}}),
+            ),
+            (
+                RenderModel::Html {
+                    sanitized_html: "<p>safe</p>".into(),
+                },
+                json!({"kind": "html", "sanitizedHtml": "<p>safe</p>"}),
+            ),
+            (
+                RenderModel::RichText {
+                    sanitized_html: Some("<p>safe</p>".into()),
+                    plain_text: "safe".into(),
+                },
+                json!({"kind": "rich_text", "sanitizedHtml": "<p>safe</p>", "plainText": "safe"}),
+            ),
+            (
+                RenderModel::Files {
+                    entries: vec![FilePresentation {
+                        path: "C:\\missing\\report.txt".into(),
+                        name: "report.txt".into(),
+                    }],
+                },
+                json!({"kind": "files", "entries": [{"path": "C:\\missing\\report.txt", "name": "report.txt"}]}),
+            ),
+            (
+                RenderModel::Document {
+                    asset_id: "asset-2".into(),
+                    mime_type: "application/pdf".into(),
+                },
+                json!({"kind": "document", "assetId": "asset-2", "mimeType": "application/pdf"}),
+            ),
+            (
+                RenderModel::Office {
+                    format_key: "windows:office".into(),
+                    native_type: Some("Office".into()),
+                    byte_length: 12,
+                },
+                json!({"kind": "office", "formatKey": "windows:office", "nativeType": "Office", "byteLength": 12}),
+            ),
+            (
+                RenderModel::Semantic {
+                    facet_id: "core.link.url".into(),
+                    text: "https://example.com".into(),
+                    payload: json!({"host": "example.com"}),
+                },
+                json!({"kind": "semantic", "facetId": "core.link.url", "text": "https://example.com", "payload": {"host": "example.com"}}),
+            ),
+            (
+                RenderModel::Unsupported {
+                    format_key: "native:x".into(),
+                    mime_type: None,
+                    native_type: Some("x".into()),
+                    byte_length: 3,
+                },
+                json!({"kind": "unsupported", "formatKey": "native:x", "mimeType": null, "nativeType": "x", "byteLength": 3}),
+            ),
+            (
+                RenderModel::Error {
+                    message: "failed".into(),
+                },
+                json!({"kind": "error", "message": "failed"}),
+            ),
+        ];
+
+        for (model, expected) in cases {
+            assert_eq!(serde_json::to_value(model).unwrap(), expected);
+        }
+
+        let files = serde_json::to_value(RenderModel::Files {
+            entries: vec![FilePresentation {
+                path: "C:\\missing\\report.txt".into(),
+                name: "report.txt".into(),
+            }],
+        })
+        .unwrap();
+        assert!(files["entries"][0].get("size").is_none());
+        assert!(files["entries"][0].get("created").is_none());
+        assert!(files["entries"][0].get("modified").is_none());
+    }
+
+    #[test]
+    fn every_ocr_state_has_a_stable_tag() {
+        let states = [
+            OcrPresentation::Disabled,
+            OcrPresentation::Pending,
+            OcrPresentation::Running,
+            OcrPresentation::Ready {
+                text: "text".into(),
+            },
+            OcrPresentation::Unsupported,
+            OcrPresentation::Failed {
+                message: "failed".into(),
+            },
+        ];
+        let tags: Vec<_> = states
+            .into_iter()
+            .map(|state| {
+                serde_json::to_value(state).unwrap()["state"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            tags,
+            [
+                "disabled",
+                "pending",
+                "running",
+                "ready",
+                "unsupported",
+                "failed"
+            ]
+        );
+    }
 }

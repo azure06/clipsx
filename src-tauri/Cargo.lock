@@ -650,6 +650,7 @@ dependencies = [
  "keyring",
  "objc",
  "reqwest 0.12.28",
+ "rtf-parser",
  "semver",
  "serde",
  "serde_json",
@@ -4312,6 +4313,15 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rtf-parser"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c3147b4eb521eae5e29b781bdc30ab98bbaed784bfcb8376cda60ba4b2e0e3d"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

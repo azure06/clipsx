@@ -1,185 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
-import { Database, FileQuestion, RotateCw, X } from 'lucide-react'
+import { listen } from '@tauri-apps/api/event'
+import { Database, RotateCw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { ContentPreview, type Content, type ContentType } from '../content'
-import type {
-  ClipDetail,
-  ClipPresentation,
-  ClipViewDescriptor,
-  ClipViewSet,
-  RenderModel,
-} from '../../shared/types/v2'
+import type { ClipDetail, ClipPresentation, ClipViewSet, RenderModel } from '../../shared/types/v2'
 import { TransformMenu } from './TransformMenu'
+import { RenderModelView } from './RenderModelView'
 
-const assetUrl = (id: string) => `clipsx-asset://localhost/${id}`
-
-const contentType = (view: ClipViewDescriptor, model: RenderModel): ContentType => {
-  if (model.kind === 'tree') return 'json'
-  if (model.kind === 'table') return 'csv'
-  if (model.kind === 'markdown') return 'markdown'
-  if (model.kind === 'code') return 'code'
-  const kind = view.presentationKind === 'number' ? 'text' : view.presentationKind
-  return (
-    [
-      'url',
-      'email',
-      'color',
-      'code',
-      'math',
-      'phone',
-      'date',
-      'timestamp',
-      'path',
-      'jwt',
-      'secret',
-      'image',
-      'files',
-      'office',
-      'text',
-    ] as string[]
-  ).includes(kind)
-    ? (kind as ContentType)
-    : 'text'
-}
-
-const modelText = (model: RenderModel): string => {
-  switch (model.kind) {
-    case 'text':
-    case 'code':
-      return model.text
-    case 'markdown':
-      return model.markdown
-    case 'tree':
-      return JSON.stringify(model.value, null, 2)
-    case 'table':
-      return [model.columns, ...model.rows].map(row => row.join('\t')).join('\n')
-    case 'semantic':
-      return model.text
-    case 'rich_text':
-      return model.plainText
-    case 'office':
-      return model.nativeType ?? model.formatKey
-    case 'files':
-      return model.files.join('\n')
-    default:
-      return ''
-  }
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const presentationToContent = (presentation: ClipPresentation): Content => {
-  const { activeView: view, model } = presentation
-  const payload = model.kind === 'semantic' ? model.payload : {}
-  const kind = contentType(view, model)
-  const files =
-    model.kind === 'files'
-      ? model.files.map(path => ({
-          path,
-          name: path.split(/[\\/]/).pop() ?? path,
-          size: 0,
-          created: 0,
-          modified: 0,
-        }))
-      : undefined
-  return {
-    type: kind,
-    text: modelText(model),
-    metadata: {
-      ...payload,
-      files,
-      language:
-        model.kind === 'code'
-          ? (model.language ?? undefined)
-          : typeof payload['language'] === 'string'
-            ? payload['language']
-            : undefined,
-      url: typeof payload['href'] === 'string' ? payload['href'] : undefined,
-      domain:
-        typeof payload['host'] === 'string'
-          ? payload['host']
-          : typeof payload['domain'] === 'string'
-            ? payload['domain']
-            : undefined,
-      email: typeof payload['address'] === 'string' ? payload['address'] : undefined,
-      hex: typeof payload['hex'] === 'string' ? payload['hex'] : undefined,
-      value:
-        payload['value'] == null
-          ? undefined
-          : typeof payload['value'] === 'object'
-            ? JSON.stringify(payload['value'])
-            : String(payload['value'] as string | number | boolean),
-      unit:
-        typeof payload['interpretation'] === 'string' &&
-        payload['interpretation'].includes('milliseconds')
-          ? 'milliseconds'
-          : undefined,
-      format: typeof payload['interpretation'] === 'string' ? payload['interpretation'] : undefined,
-      source_app: presentation.sourceAppName ?? undefined,
-    },
-    clip: {
-      id: presentation.id,
-      isFavorite: presentation.isFavorite,
-      isPinned: presentation.isPinned,
-      imagePath: model.kind === 'image' ? assetUrl(model.artifactId) : null,
-      contentHtml: model.kind === 'html' ? model.sanitizedHtml : null,
-      ocrStatus: 'not_needed',
-      appName: presentation.sourceAppName,
-    },
-  }
-}
-
-const RenderedView = ({ presentation }: { presentation: ClipPresentation }) => {
-  const { model } = presentation
-  if (model.kind === 'html') {
-    return (
-      <iframe
-        className="h-full min-h-56 w-full bg-white"
-        sandbox=""
-        srcDoc={model.sanitizedHtml}
-        title="HTML preview"
-      />
-    )
-  }
-  if (model.kind === 'rich_text') {
-    return model.sanitizedHtml ? (
-      <iframe
-        className="h-full min-h-56 w-full bg-white"
-        sandbox=""
-        srcDoc={model.sanitizedHtml}
-        title="Rich text preview"
-      />
-    ) : (
-      <pre className="h-full overflow-auto whitespace-pre-wrap p-4 text-sm">{model.plainText}</pre>
-    )
-  }
-  if (model.kind === 'document') {
-    return (
-      <object
-        className="h-full w-full bg-white"
-        data={assetUrl(model.artifactId)}
-        type={model.mimeType}
-      >
-        <p className="p-4 text-sm">Document preview unavailable.</p>
-      </object>
-    )
-  }
-  if (model.kind === 'unsupported') {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <FileQuestion className="h-9 w-9 text-gray-400" />
-        <div className="text-sm font-medium">Unsupported preview</div>
-        <div className="max-w-md text-xs text-gray-500">
-          {model.mimeType ?? model.nativeType ?? model.formatKey} ·{' '}
-          {model.byteLength.toLocaleString()} bytes
-        </div>
-        <p className="text-xs text-gray-400">
-          The original captured representation remains available for copy and paste.
-        </p>
-      </div>
-    )
-  }
-  return <ContentPreview content={presentationToContent(presentation)} />
-}
+type ArtifactUpdate = { clipId: string; sourceId: string }
 
 const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => void }) => (
   <div className="absolute inset-0 z-20 flex flex-col bg-white/95 backdrop-blur-xl dark:bg-slate-950/95">
@@ -237,6 +64,8 @@ export const V2ViewPanel = ({
   const [inspecting, setInspecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
+  const [renderRevision, setRenderRevision] = useState(0)
+  const [retryingOcr, setRetryingOcr] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -260,6 +89,23 @@ export const V2ViewPanel = ({
     () => viewSet?.views.find(item => item.id === active) ?? null,
     [active, viewSet]
   )
+
+  useEffect(() => {
+    let disposed = false
+    let stop: (() => void) | undefined
+    void listen<ArtifactUpdate>('clip-artifacts-updated', event => {
+      if (event.payload.clipId !== clipId || event.payload.sourceId !== view?.sourceId) return
+      setModel(null)
+      setRenderRevision(value => value + 1)
+    }).then(unlisten => {
+      if (disposed) unlisten()
+      else stop = unlisten
+    })
+    return () => {
+      disposed = true
+      stop?.()
+    }
+  }, [clipId, view?.sourceId])
   useEffect(() => {
     let alive = true
     if (!view) return
@@ -292,7 +138,7 @@ export const V2ViewPanel = ({
     return () => {
       alive = false
     }
-  }, [clipId, view, viewSet])
+  }, [clipId, renderRevision, view, viewSet])
 
   const presentation = useMemo<ClipPresentation | null>(
     () => (detail && view && model ? { ...detail.clip, activeView: view, model } : null),
@@ -300,6 +146,20 @@ export const V2ViewPanel = ({
   )
   useEffect(() => onPresentation?.(presentation), [onPresentation, presentation])
   const visibleViews = viewSet?.views.filter(item => item.placement !== 'advanced') ?? []
+  const retryOcr = async () => {
+    if (!presentation || presentation.model.kind !== 'image') return
+    setRetryingOcr(true)
+    try {
+      await invoke('retry_clip_ocr', {
+        clipId,
+        sourceId: presentation.activeView.sourceId,
+      })
+    } catch (value) {
+      setError(String(value))
+    } finally {
+      setRetryingOcr(false)
+    }
+  }
 
   if (error)
     return (
@@ -356,7 +216,11 @@ export const V2ViewPanel = ({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto custom-scrollbar">
-        <RenderedView presentation={presentation} />
+        <RenderModelView
+          presentation={presentation}
+          retryingOcr={retryingOcr}
+          onRetryOcr={() => void retryOcr()}
+        />
       </div>
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}
     </div>

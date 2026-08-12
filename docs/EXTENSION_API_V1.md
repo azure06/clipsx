@@ -3,8 +3,9 @@
 **Delivery status:** the package format, runtime isolation, validation,
 resource limits, quarantine, service, and registry backend are implemented.
 The end-user registry/developer installation workflow, diagnostics, recovery,
-and complete renderer/transformer presentation paths remain partial and are
-scheduled for recovery milestone R6. See [ROADMAP.md](ROADMAP.md) and
+and transformer workflow remain partial and are scheduled for recovery
+milestone R6. Extension renderer output now uses the exhaustive typed host
+presentation boundary and retains host fallback. See [ROADMAP.md](ROADMAP.md) and
 [UI_PARITY.md](UI_PARITY.md). This page defines the stable API contract; it is
 not a claim of complete product delivery.
 

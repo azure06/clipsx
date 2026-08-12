@@ -36,6 +36,37 @@ struct CoreUtility {
     version: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactUpdate {
+    clip_id: String,
+    source_id: String,
+}
+
+async fn emit_clip_artifact_updates(
+    app: &tauri::AppHandle,
+    repo: &HistoryRepository,
+    clip_id: &str,
+) {
+    let Ok(detail) = repo.detail(clip_id).await else {
+        return;
+    };
+    for representation in detail.representations.iter().filter(|representation| {
+        representation
+            .canonical_mime_type
+            .as_deref()
+            .is_some_and(|mime| mime.starts_with("image/"))
+    }) {
+        let _ = app.emit(
+            "clip-artifacts-updated",
+            ArtifactUpdate {
+                clip_id: clip_id.to_string(),
+                source_id: representation.id.clone(),
+            },
+        );
+    }
+}
+
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
 const LOCAL_AUTH_CALLBACK_EVENT: &str = "auth-callback-url";
 const LOCAL_AUTH_CALLBACK_PATH: &str = "/auth/desktop/callback";
@@ -622,8 +653,11 @@ async fn capture_clipboard(
             });
             let history_for_artifacts = state.history.clone();
             let artifact_id = id.clone();
+            let artifact_app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = artifacts::produce_for_clip(&history_for_artifacts, &artifact_id).await;
+                emit_clip_artifact_updates(&artifact_app, &history_for_artifacts, &artifact_id)
+                    .await;
                 let _ = search::upsert_projection(&history_for_artifacts, &artifact_id).await;
                 let _ = embeddings::enqueue_clip(&history_for_artifacts, &artifact_id).await;
                 let _ = embeddings::index_pending(&history_for_artifacts).await;
@@ -1123,6 +1157,23 @@ async fn render_clip_view(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn retry_clip_ocr(
+    app: tauri::AppHandle,
+    clip_id: String,
+    source_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    artifacts::retry_ocr(&state.history, &clip_id, &source_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit(
+        "clip-artifacts-updated",
+        ArtifactUpdate { clip_id, source_id },
+    );
+    Ok(())
 }
 #[tauri::command]
 async fn list_renderer_contributions(
@@ -1648,6 +1699,12 @@ pub(crate) fn run() {
                                     }
                                     let _ =
                                         artifacts::produce_for_clip(&detection_history, &id).await;
+                                    emit_clip_artifact_updates(
+                                        &detection_app,
+                                        &detection_history,
+                                        &id,
+                                    )
+                                    .await;
                                     let _ =
                                         search::upsert_projection(&detection_history, &id).await;
                                     let _ = embeddings::enqueue_clip(&detection_history, &id).await;
@@ -1728,6 +1785,7 @@ pub(crate) fn run() {
             update_capture_settings,
             get_clip_views,
             render_clip_view,
+            retry_clip_ocr,
             list_renderer_contributions,
             list_core_utilities,
             get_renderer_preferences,

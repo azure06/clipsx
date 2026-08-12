@@ -1,6 +1,6 @@
 //! Contribution host for detectors and renderers.
 use crate::{
-    contracts::RenderModel,
+    contracts::{FilePresentation, OcrPresentation, RenderModel},
     extensions::ExtensionService,
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},
 };
@@ -189,7 +189,8 @@ impl RendererContribution for ImageRenderer {
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
         Ok(RenderModel::Image {
-            artifact_id: r.binary_file_id.clone().context("image unavailable")?,
+            asset_id: r.binary_file_id.clone().context("image unavailable")?,
+            ocr: OcrPresentation::Pending,
         })
     }
 }
@@ -198,9 +199,11 @@ impl RendererContribution for RichTextRenderer {
         renderer_descriptor("builtin.rich_text", "Rich text", 90, true)
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        let source = r.text_value.as_deref().context("rich text unavailable")?;
+        let (sanitized_html, plain_text) = render_rtf(source);
         Ok(RenderModel::RichText {
-            sanitized_html: None,
-            plain_text: r.text_value.clone().context("rich text unavailable")?,
+            sanitized_html,
+            plain_text,
         })
     }
 }
@@ -210,7 +213,19 @@ impl RendererContribution for FilesRenderer {
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
         Ok(RenderModel::Files {
-            files: r.file_references.clone(),
+            entries: r
+                .file_references
+                .iter()
+                .map(|path| FilePresentation {
+                    path: path.clone(),
+                    name: path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(path)
+                        .to_string(),
+                })
+                .collect(),
         })
     }
 }
@@ -220,7 +235,7 @@ impl RendererContribution for DocumentRenderer {
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
         Ok(RenderModel::Document {
-            artifact_id: r.binary_file_id.clone().context("document unavailable")?,
+            asset_id: r.binary_file_id.clone().context("document unavailable")?,
             mime_type: r
                 .canonical_mime_type
                 .clone()
@@ -966,6 +981,16 @@ pub async fn views(
     clip_id: &str,
 ) -> Result<ClipViewSet> {
     let detail = repo.detail(clip_id).await?;
+    let has_office_representation = detail.representations.iter().any(|rep| {
+        rep.native_type.as_deref().is_some_and(|native| {
+            let native = native.to_ascii_lowercase();
+            native.contains("office")
+                || native.contains("microsoft")
+                || native.contains("powerpoint")
+                || native.contains("excel")
+                || native.contains("word")
+        })
+    });
     let facets = facets(repo, clip_id).await?;
     let mut candidates: Vec<(ClipViewDescriptor, i64, i32, i64)> = Vec::new();
     let mut add_view = |rep: &RepresentationDetail,
@@ -1124,8 +1149,19 @@ pub async fn views(
         let preferred = facet_preference
             .or(mime_preference)
             .is_some_and(|id| id == &view.renderer_id);
+        let office_utility_rank = if has_office_representation {
+            match view.presentation_kind.as_str() {
+                "table" | "html" => 0,
+                "document" | "image" => 1,
+                "office" => 3,
+                _ => 2,
+            }
+        } else {
+            0
+        };
         (
             !preferred,
+            office_utility_rank,
             *capture_priority,
             -*renderer_priority,
             *ordinal,
@@ -1224,7 +1260,12 @@ pub async fn render(
         .find(|renderer| renderer.descriptor().id == renderer_id)
     {
         return match renderer.render(rep, facet) {
-            Ok(model) => Ok(model),
+            Ok(mut model) => {
+                if let RenderModel::Image { ocr, .. } = &mut model {
+                    *ocr = crate::artifacts::ocr_presentation(repo, source_id).await?;
+                }
+                Ok(model)
+            }
             Err(error) => {
                 // Rendering is derived UI state. A failed rich renderer must
                 // never block access to canonical original content.
@@ -1307,6 +1348,44 @@ pub fn sanitize_html(input: &str) -> String {
     }
     out
 }
+
+const MAX_RTF_PRESENTATION_BYTES: usize = 1024 * 1024;
+
+fn render_rtf(source: &str) -> (Option<String>, String) {
+    let lower = source.to_ascii_lowercase();
+    if source.len() > MAX_RTF_PRESENTATION_BYTES
+        || ["\\bin", "\\object", "\\objdata", "\\field", "\\pict"]
+            .iter()
+            .any(|control| lower.contains(control))
+    {
+        return (None, source.to_string());
+    }
+    let parsed = std::panic::catch_unwind(|| rtf_parser::RtfDocument::try_from(source));
+    let Ok(Ok(document)) = parsed else {
+        return (None, source.to_string());
+    };
+    let plain_text = document.get_text();
+    let mut html = String::from("<p>");
+    for block in document.body {
+        let mut value = html_escape(&block.text).replace('\n', "<br>");
+        let painter = block.painter;
+        for (active, tag) in [
+            (painter.bold, "strong"),
+            (painter.italic, "em"),
+            (painter.underline, "u"),
+            (painter.strike, "s"),
+            (painter.superscript, "sup"),
+            (painter.subscript, "sub"),
+        ] {
+            if active {
+                value = format!("<{tag}>{value}</{tag}>");
+            }
+        }
+        html.push_str(&value);
+    }
+    html.push_str("</p>");
+    (Some(html), plain_text)
+}
 fn html_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -1351,9 +1430,62 @@ mod tests {
     #[test]
     fn sanitizes_active_html() {
         let safe = sanitize_html(
-            "<p onclick=x>Hi <img src=x><script>x</script><strong>there</strong></p>",
+            "<form action=https://example.com><p onclick=x style=color:red>Hi <img src=https://example.com/x><script>x</script><style>y</style><strong>there</strong></p></form>",
         );
-        assert_eq!(safe, "<p>Hi x<strong>there</strong></p>");
+        assert_eq!(safe, "<p>Hi xy<strong>there</strong></p>");
+        assert!(!safe.contains("http"));
+        assert!(!safe.contains("onclick"));
+        assert!(!safe.contains("style="));
+    }
+    #[test]
+    fn rtf_rendering_is_bounded_and_emits_only_safe_formatting() {
+        let (html, text) = render_rtf(r#"{\rtf1\ansi Hello {\b bold} {\i italic}.}"#);
+        let html = html.expect("valid RTF should render");
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<em>italic</em>"));
+        assert!(!html.contains("style="));
+        assert!(!html.contains("href="));
+        assert!(text.contains("Hello"));
+
+        let (unicode_html, unicode_text) = render_rtf(r#"{\rtf1\ansi Unicode 雪}"#);
+        assert!(unicode_html.unwrap().contains('雪'));
+        assert!(unicode_text.contains('雪'));
+
+        assert!(render_rtf(r#"{\rtf1\bin12 unsafe}"#).0.is_none());
+        assert!(render_rtf(r#"{\rtf1{\object\objdata unsafe}}"#).0.is_none());
+        assert!(
+            render_rtf(r#"{\rtf1{\field{\*\fldinst HYPERLINK "javascript:alert(1)"}}}"#)
+                .0
+                .is_none()
+        );
+        assert!(render_rtf(r#"{\rtf1{\pict\pngblip unsafe}}"#).0.is_none());
+        assert!(render_rtf(&"x".repeat(MAX_RTF_PRESENTATION_BYTES + 1))
+            .0
+            .is_none());
+        assert!(render_rtf("not rtf").0.is_none());
+    }
+
+    #[test]
+    fn files_renderer_keeps_order_without_fabricating_metadata() {
+        let detail = RepresentationDetail {
+            id: "rep".into(),
+            format_key: "windows:CF_HDROP".into(),
+            canonical_mime_type: None,
+            native_type: Some("CF_HDROP".into()),
+            storage_kind: "file_list".into(),
+            ordinal: 0,
+            capture_priority: 1,
+            byte_length: 0,
+            text_value: None,
+            file_references: vec!["C:\\missing\\first.txt".into(), "/tmp/second.txt".into()],
+            binary_file_id: None,
+            sha256: None,
+        };
+        let RenderModel::Files { entries } = FILES_RENDERER.render(&detail, None).unwrap() else {
+            panic!("expected files model")
+        };
+        assert_eq!(entries[0].name, "first.txt");
+        assert_eq!(entries[1].name, "second.txt");
     }
     #[test]
     fn candidate_routing_keeps_scalar_json_out_of_json_detector() {
@@ -1467,6 +1599,84 @@ mod tests {
                 .placement,
             "primary"
         );
+    }
+
+    #[tokio::test]
+    async fn resolver_prefers_formatted_alternate_over_opaque_office_native() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:Office".into(),
+                canonical_mime_type: None,
+                native_type: Some("Microsoft Office Native".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Binary(vec![1, 2, 3]),
+            },
+            CapturedRepresentation {
+                format_key: "windows:HTML Format".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: Some("HTML Format".into()),
+                platform: "windows".into(),
+                capture_priority: 20,
+                payload: CapturedPayload::Text("<table><tr><td>Useful</td></tr></table>".into()),
+            },
+        ])
+        .await;
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        let primary = result
+            .views
+            .iter()
+            .find(|view| view.id == result.primary_view_id)
+            .unwrap();
+        assert_eq!(primary.renderer_id, "builtin.html");
+        assert!(result
+            .views
+            .iter()
+            .any(|view| view.renderer_id == "builtin.office"));
+    }
+
+    #[tokio::test]
+    async fn resolver_honors_user_preference_before_office_utility_order() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:Office".into(),
+                canonical_mime_type: None,
+                native_type: Some("Microsoft Office Native".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Binary(vec![1, 2, 3]),
+            },
+            CapturedRepresentation {
+                format_key: "windows:HTML Format".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: Some("HTML Format".into()),
+                platform: "windows".into(),
+                capture_priority: 10,
+                payload: CapturedPayload::Text("<p>Formatted</p>".into()),
+            },
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()),
+                platform: "windows".into(),
+                capture_priority: 20,
+                payload: CapturedPayload::Text("Preferred text".into()),
+            },
+        ])
+        .await;
+        let mut preferences = RendererPreferences::default();
+        preferences
+            .by_mime_type
+            .insert("text/plain".into(), "builtin.text".into());
+        update_preferences(&repo, &preferences).await.unwrap();
+
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        let primary = result
+            .views
+            .iter()
+            .find(|view| view.id == result.primary_view_id)
+            .unwrap();
+        assert_eq!(primary.renderer_id, "builtin.text");
     }
 
     #[tokio::test]

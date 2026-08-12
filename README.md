@@ -14,7 +14,9 @@ The V2 data and service foundation is implemented: multi-representation capture,
 
 Desktop Boundary Recovery is also implemented. Startup reset, IPC drift detection, tray/window behavior, deep links, single instance, autostart, updater, filesystem access, OAuth callback wiring, and Windows window controls now use V2 host boundaries. These integrations still need interactive validation on every supported platform.
 
-The next milestone is the typed presentation boundary. The current `RenderModel` to legacy `Content` bridge loses structured table data, OCR state, file metadata, and rich Office/RTF relationships.
+Typed Presentation Boundary Recovery is verified by automated Rust and React tests. Every `RenderModel` now renders through one exhaustive typed dispatcher; structured tables/trees/key-value data, safe HTML/RTF, Office alternates, ordered file references, and the full OCR lifecycle stay intact without legacy `Content` conversion or fabricated metadata.
+
+The next milestone is R3 clipboard fidelity and output validation across capture, persistence, restart, reconstruction, and real target-application paste.
 
 See [Documentation](docs/README.md) for the authoritative current state and execution order.
 

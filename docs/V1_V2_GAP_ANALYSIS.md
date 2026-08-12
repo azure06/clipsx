@@ -1,6 +1,6 @@
 # ClipsX V1 → V2 Gap Analysis and Recovery Plan
 
-**Status:** Reconciled baseline; R0 verified, R1 implemented with desktop validation pending, R2 next  
+**Status:** Reconciled baseline; R0 and R2 verified automated, R1 implemented with desktop validation pending, R3 next
 **Date:** 2026-08-12  
 **V1 reference:** `archive/v1-pre-m0` (`d9f1392`, tag `v1-pre-m0-reference`)
 
@@ -17,6 +17,13 @@ Desktop Boundary Recovery was implemented on 2026-08-12:
 
 These paths pass automated checks but still require the documented Windows/macOS/Linux desktop smoke gates before their parity status becomes final.
 
+Typed Presentation Boundary Recovery was also completed on 2026-08-12:
+
+- Rust and TypeScript share a lossless camelCase `RenderModel` wire contract and exhaustive OCR-state union.
+- One exhaustive React dispatcher renders every model directly; the detailed preview no longer depends on legacy `Content` conversion.
+- Tables, trees, key/value data, file references, semantic payloads, Office alternates, safe HTML/RTF, and OCR lifecycle state have model/component fixtures.
+- Copy remains clip-ID/output-policy based and is independent of the selected renderer.
+
 ## Scope and conclusion
 
 ClipsX V2 is a substantial architectural implementation, not an empty rewrite. Its canonical history model, multi-representation capture, managed binary storage, derived facets/artifacts, renderer resolver, output policies, transformations, search projection, Ollama provider layer, retention, and extension runtime are real and generally aligned with the intended architecture.
@@ -25,7 +32,7 @@ The main gap is at the application boundary:
 
 - The previously identified frontend/Rust command drift is now guarded and resolved.
 - Desktop lifecycle integrations are implemented and await cross-platform smoke validation.
-- The V2 renderer contract is converted back into the old preview shape through a lossy adapter.
+- The typed presentation boundary is recovered and guarded by exhaustive model fixtures.
 - Several settings are persisted but have no runtime effect.
 - OCR, semantic search, transforms, and extensions have backend layers without complete user workflows.
 - Platform reconstruction is insufficiently verified for a clipboard-fidelity product.
@@ -33,7 +40,7 @@ The main gap is at the application boundary:
 
 The current state is therefore:
 
-> Strong V2 foundation + recovered application boundary + incomplete typed presentation and native validation.
+> Strong V2 foundation + recovered application and presentation boundaries + native clipboard validation next.
 
 This document is a behavioral baseline. It does not recommend restoring the V1 schema, `ClipItem`, legacy IPC, migrations, or the old hard-wired semantic model.
 
@@ -58,16 +65,16 @@ This document is a behavioral baseline. It does not recommend restoring the V1 s
 | Clipboard monitoring | Multi-format monitoring, exclusions and limits | Filters, source-app exclusions, dedupe, self-write suppression and retention | Mostly parity | Add platform fixture and restart-fidelity validation. |
 | Copy/output selection | Copy current clip/content | Original/plain/transformed output policies are renderer-independent | C / improved | Preserve the V2 policy model. |
 | Quick paste | Windows/macOS target-app paste | Windows/macOS/Linux paths exist; macOS permission UX is missing | B / A | Restore permission diagnosis and target-focus tests. |
-| Renderer selection | Content type selected a specialized preview | Resolver selects views per representation/facet; selection is ephemeral | C / improved foundation | Complete the presentation boundary. |
+| Renderer selection | Content type selected a specialized preview | Resolver selects views per representation/facet; selection is ephemeral and output-policy independent | C / improved | Preserve the typed boundary. |
 | Alternate views/raw data | Not a central V1 abstraction | Representation tabs, extension fallback and raw inspector | D | Preserve and harden. |
-| Specialized previews | URL, email, color, JSON, Markdown, code, date, path, JWT, etc. | Most old components remain reachable through V2 conversion | B | Add lossless typed presentation coverage. |
-| Table/CSV | Structured rows and delimiter-aware actions | Table rows are flattened to tab-separated text | A / B | Add a native table presentation path. |
-| Rich text/RTF | Formatted preview and text fallback | Raw RTF is presented as plain text | A / B | Implement safe RTF-derived presentation/artifact handling. |
-| HTML | Formatted preview | Safe renderer exists but has a restrictive allowlist | B | Expand policy deliberately; never restore unsafe raw HTML injection. |
-| Office/native formats | Best HTML/text/SVG/image view plus native handling | Native representation is retained, but native renderer mainly shows format/size | A / B | Fix resolver ordering and Office presentation. |
-| Images/OCR | Image preview plus OCR state/text | Image preview works; UI hardcodes `ocrStatus: not_needed` | A / B | Surface OCR lifecycle and results. |
+| Specialized previews | URL, email, color, JSON, Markdown, code, date, path, JWT, etc. | Typed models and validated semantic payloads drive direct specialized presentations | Parity automated | Preserve; finish transform-specific actions in R5. |
+| Table/CSV | Structured rows and delimiter-aware actions | Structured columns/cells render directly | Presentation parity | Finish delimiter-aware transform actions in R5. |
+| Rich text/RTF | Formatted preview and text fallback | Bounded guarded RTF parsing emits a minimal safe tag set with escaped fallback | Parity automated | Preserve security fixtures. |
+| HTML | Formatted preview | Host-sanitized HTML renders in a sandboxed iframe | Parity automated | Preserve sanitizer and sandbox fixtures. |
+| Office/native formats | Best HTML/text/SVG/image view plus native handling | Useful alternates are ranked ahead of opaque detail while exact identity remains available | Presentation parity | Prove native reconstruction in R3. |
+| Images/OCR | Image preview plus OCR state/text | Full typed OCR lifecycle, empty success, safe failure, retry, and targeted refresh | Presentation parity | Finish platform runtime coverage in R4/R7. |
 | OCR runtime | Automatic image/Office OCR | macOS/Linux artifact pipeline; Windows unavailable | B | Complete Windows support or narrow the documented matrix. |
-| Files | File list with stat/media metadata and open actions | Paths/opening exist; UI fabricates zero metadata | A / B | Supply typed metadata or stop displaying false values. |
+| Files | File list with stat/media metadata and open actions | Ordered path/name references and recoverable open failures; unavailable metadata is omitted | Presentation parity | Prove native ordered reconstruction in R3. |
 | Action toolbar | Copy, favorite, pin, delete, editor and content actions | Base toolbar retained; copy uses V2 output policy | Mostly parity | Add per-content integration tests. Vault remains excluded. |
 | Preview-local menus | URL/code/CSV and other contextual operations | Retained through action registry | Mostly parity | Preserve as preview-local actions. |
 | Transformations | Content-specific derived-copy actions | Typed transformers, cache, copy/paste/save and provenance exist | B + D | Complete preview, parameters, source selection and error states. |
@@ -92,9 +99,9 @@ The Tauri builder now registers the V2-required single-instance, deep-link, auto
 
 The previously missing tray-label, show-window, updater-info and local-auth commands are registered. The obsolete text-search status call was migrated to the V2 embedding status contract. A Rust test scans production TypeScript sources and fails when a literal application-owned command is absent from `generate_handler!`.
 
-### Presentation bridge
+### Typed presentation boundary
 
-`RenderModel` is translated into the legacy `Content` interface in [src/features/clipboard/V2ViewPanel.tsx:70](../src/features/clipboard/V2ViewPanel.tsx#L70). This preserves many existing components cheaply, but loses table structure, OCR state, file metadata and richer Office/native relationships. The bridge should not become the permanent universal presentation contract.
+The detailed V2 preview passes `RenderModel` directly to one exhaustive React dispatcher. Structured values remain structured, semantic payloads are validated at specialization boundaries, OCR and file-reference state are explicit, and HTML/RTF stay inside the documented safety boundary. Unrelated legacy `Content` consumers remain isolated until their own migration is justified.
 
 ### Transform preview
 
@@ -113,15 +120,9 @@ the R1 validation gate. The remaining lost behavior is:
 
 - macOS Accessibility permission explanation and recovery for paste.
 - Runtime periodic auto-clear behavior.
-- OCR state/result/failure UI.
-- File size/date/media metadata presentation.
-- Proper RTF and rich Office presentation.
-- Structured table/CSV preview.
-- Correct selection of useful Office alternates over opaque native detail.
 
 ## B. Partial migrations
 
-- V2 renderer output to specialized React presentation.
 - Exact clipboard reconstruction across restart and platforms.
 - OCR platform coverage.
 - Ollama configuration, status, semantic activation and recovery.
@@ -177,9 +178,9 @@ React command strings and Rust's `generate_handler!` list previously drifted ind
 
 Tray, single-instance, deep links, autostart, updater and window behavior are implemented as thin V2 host integrations. Their remaining risk is native/plugin behavior in installed builds, tracked by R1 and [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md).
 
-### The presentation contract is narrower than the retained preview contract
+### The presentation contract is now explicit and exhaustive
 
-The V1-shaped `Content` adapter accounts for table, OCR, file metadata, Office and rich-text regressions. Adding fabricated fields to that adapter would perpetuate the problem.
+The V1-shaped `Content` adapter was removed from the detailed V2 preview. Rust/TypeScript contract fixtures and an exhaustive React dispatcher now prevent silent table, OCR, file, Office, and rich-text degradation.
 
 ### Backend implementation is being counted as product delivery
 
@@ -195,7 +196,7 @@ Earlier milestone language treated substantial backend code as product delivery.
 
 ## Documentation decisions applied
 
-1. Shell and specialized presentation status are separated: desktop integration is implemented with native validation pending, while the presentation path remains partial.
+1. Shell and specialized presentation status are separated: desktop integration is implemented with native validation pending, while typed presentation is verified automated.
 2. Note and tag mutations are documented as refreshing search projection and embedding work.
 3. Tag names are documented as part of the FTS projection and tags remain available as SQL filters.
 4. OCR status is platform-specific; Windows OCR is unavailable until implemented or explicitly removed from the release baseline.
@@ -203,19 +204,16 @@ Earlier milestone language treated substantial backend code as product delivery.
 6. M0–M5 are historical backend-foundation requirements. R0–R7 and the parity matrix determine product delivery.
 7. The normative platform matrix remains unchanged until an adapter contract changes; current limitations and the evidence plan live in [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md).
 
-## Exact next work: R2 typed presentation boundary
+## Exact next work: R3 clipboard fidelity and output
 
-Implement these slices in order and keep the legacy bridge only as a temporary fallback:
+1. Build executable native fixtures from [platform-format-matrix.json](platform-format-matrix.json).
+2. Prove supported representations survive capture, managed-file persistence, process restart, and reconstruction byte-for-byte where required.
+3. Verify ordered multi-file capture/reconstruction and supported Office/native wrapper regeneration without guessed native identifiers.
+4. Test Original and Plain Text copy independently of every active view; keep transformed-byte equivalence in R5.
+5. Validate target-app focus restoration, synthetic paste, permissions, self-write suppression, and recoverable diagnostics on Windows, macOS, and Linux/X11.
+6. Restore the macOS Accessibility diagnosis/recovery workflow and document any platform limitations found by fixtures.
 
-1. Render every `RenderModel` variant directly in React with fixture coverage.
-2. Preserve structured table cells and delimiter-aware table actions.
-3. Carry real file metadata and ordered multi-file information without fabricated values.
-4. Surface image/OCR lifecycle, extracted text, unsupported state, and failures.
-5. Define safe HTML and RTF-derived presentation, then preserve Office alternate relationships and resolver ordering.
-6. Move specialized previews onto typed `ClipPresentation` inputs and remove migrated branches from the lossy `Content` conversion.
-7. Verify original/plain/transformed output remains independent of the selected renderer.
-
-R2 exits only when its rows in [UI_PARITY.md](UI_PARITY.md) are verified; R3 platform fidelity follows.
+R3 exits only when its native fixture and installed-desktop gates pass; backend reconstruction code alone is insufficient.
 
 ## Dependency-aware recovery plan
 
@@ -235,13 +233,13 @@ R2 exits only when its rows in [UI_PARITY.md](UI_PARITY.md) are verified; R3 pla
 
 **Validation:** Windows/macOS/Linux smoke tests for launch, second launch, shortcut toggle, blur, close, tray reopen/quit, updater status, autostart, file dialog, deep link and reset from an incompatible-schema fixture.
 
-### Phase 2 — Complete the typed presentation boundary
+### Phase 2 — Complete the typed presentation boundary (verified automated)
 
-**Change:** Implement direct typed React presentations for text, tree, table, image, file list, rich text, Office/native, artifacts and unsupported binary. Retain useful V1 components behind lossless adapters. Carry OCR state, file metadata, table cells and representation relationships explicitly. Define safe HTML/RTF policy.
+**Change:** Direct typed React presentations now cover text, tree, table, image, file list, rich text, Office/native, semantic and unsupported models. OCR state, ordered file references, table cells and representation relationships are explicit; unavailable file metadata is omitted. HTML/RTF follow bounded sanitizer/parser policies.
 
 **Dependencies:** Phase 0; Phase 1 improves desktop validation.
 
-**Validation:** Render-model fixtures and component tests for CSV, RTF, HTML, Office bundles, images with OCR, multi-file lists and unsupported binary. Assert no fabricated zero metadata and no unsafe markup execution.
+**Validation:** Rust wire/security/resolver tests and React table-driven fixtures cover RTF, HTML, Office bundles, OCR lifecycle/retry/events, multi-file lists, semantic fallback, unsupported binary, extension fallback, raw inspection, sandboxing, and renderer-independent Copy policy.
 
 ### Phase 3 — Prove clipboard fidelity and output behavior
 
@@ -253,7 +251,7 @@ R2 exits only when its rows in [UI_PARITY.md](UI_PARITY.md) are verified; R3 pla
 
 ### Phase 4 — Finish search, OCR and settings workflows
 
-**Change:** Complete Ollama configuration, probe, enable/disable, progress, reindex/clear and degraded-state UI on the existing V2 embedding status path; decide semantic-only recall policy; surface OCR lifecycle; complete or narrow Windows OCR; implement periodic auto-clear; validate clear-on-exit, import/export, autostart and updater in installed builds; confirm defaults.
+**Change:** Complete Ollama configuration, probe, enable/disable, progress, reindex/clear and degraded-state UI on the existing V2 embedding status path; decide semantic-only recall policy; validate the typed OCR lifecycle against supported platform runtimes and complete or narrow Windows OCR; implement periodic auto-clear; validate clear-on-exit, import/export, autostart and updater in installed builds; confirm defaults.
 
 **Dependencies:** Phases 1–3.
 

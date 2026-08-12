@@ -9,9 +9,9 @@ This is the authoritative user-facing delivery gate for the archived V1 experien
 | IPC and incompatible-schema startup | Verified | None; preserve contract/reset tests. |
 | Desktop host integration | Implemented — validation pending | Installed Windows/macOS/Linux smoke matrix. |
 | History/catalog interaction | Verified | Desktop focus/accessibility regression pass. |
-| Typed presentation and specialized previews | Partial — **next milestone** | Replace lossy legacy-content bridge and repair structured models. |
+| Typed presentation and specialized previews | Verified automated | Installed desktop visual/accessibility validation remains in R7. |
 | Clipboard reconstruction and paste | Partial | Native fixtures across restart and real target-app paste tests. |
-| Search/OCR/settings workflows | Partial | Provider/OCR lifecycle UI and remaining runtime settings. |
+| Search/OCR/settings workflows | Partial | Provider configuration, platform OCR coverage, and remaining runtime settings. |
 | Transformations and contextual actions | Partial | Exact preview rendering, parameters, source resolution and error states. |
 | Extension product workflow | Partial | Developer install, registry lifecycle, diagnostics and end-to-end contribution tests. |
 | Release readiness | Missing | Complete all required desktop/platform gates. |
@@ -37,24 +37,23 @@ This is the authoritative user-facing delivery gate for the archived V1 experien
 
 ## Rendering and specialized previews
 
-The contribution resolver, alternate-view tabs, extension fallback, and raw inspector are implemented. The selected `RenderModel` is still converted to the legacy `Content` shape in React, which makes this area partial.
+The contribution resolver, alternate-view tabs, extension fallback, and raw inspector feed one exhaustive typed `RenderModel` dispatcher. The detailed V2 preview no longer converts models to the legacy `Content` shape.
 
 | Presentation | Current state | Status | Required result |
 |---|---|---|---|
-| Plain text and code | Basic content and language mapping work | Implemented — validation pending | Typed component fixtures and editor/copy action checks. |
-| Markdown | Retained preview, safe raw HTML behavior and Mermaid tests | Verified for retained component; V2 integration pending | Direct typed model integration. |
-| JSON/tree/key-value | Tree is stringified back into legacy text | Partial | Render structured values directly without losing scalar/object identity. |
-| Table/CSV | Rows are flattened to tab text and delimiter metadata is lost | Partial | Direct columns/rows model; correct CSV/TSV actions and empty/large states. |
-| HTML | Sanitized model exists; allowlist removes much useful formatting | Partial | Explicit safe allowlist, formatted/source views and security tests. |
-| RTF/rich text | Raw RTF currently falls back to plain text | Missing parity | Versioned extraction/sanitization plus useful plain source fallback. |
-| Image | Managed asset preview works | Partial | Carry OCR state/result/error/retry and verify loading/failure states. |
-| Files | Validated host open works; UI fabricates zero size/timestamps | Partial | Typed file metadata or omission of unavailable fields; ordered multi-file view. |
-| Office/native | Native identity is retained but useful alternates can be outranked | Partial | Best formatted primary view with HTML/text/PDF/SVG/image alternates. |
-| URL, email, color, phone and path | Additive facets reach retained specialized controls | Implemented — validation pending | Typed facet payload and host-action tests. |
-| JWT, date, timestamp, math and secret | Additive facets reach retained previews | Implemented — validation pending | Ambiguous-facet and redaction/copy tests. |
-| Unsupported binary | Metadata fallback and original output exist; no automatic Base64 | Implemented — validation pending | Unsupported-format and reconstruction tests. |
+| Plain text, code, and Markdown | Direct typed models with language-aware code and safe Markdown | Verified automated | Installed visual/editor smoke. |
+| JSON/tree/key-value | Structured values render recursively without string conversion | Verified automated | Installed accessibility smoke. |
+| Table/CSV | Columns and cells render directly; no tab-joined reconstruction | Verified automated | Large-table desktop performance smoke; delimiter transforms remain R5. |
+| HTML | Rust-sanitized markup renders in a sandboxed iframe | Verified automated | Installed visual smoke. |
+| RTF/rich text | Bounded guarded parsing emits only safe structural tags, with escaped fallback | Verified automated | Installed visual smoke. |
+| Image | Managed asset preview carries disabled/pending/running/ready/unsupported/failed OCR and retry | Verified automated | Platform OCR validation remains R4/R7. |
+| Files | Ordered path/name references render without filesystem stat or invented metadata | Verified automated | Native ordered-file reconstruction remains R3. |
+| Office/native | Exact identity/length remain visible and useful alternates outrank opaque detail | Verified automated | Native Office fixture validation remains R3. |
+| URL, email, color, phone and path | Typed semantic payload validation with specialized controls and generic fallback | Verified automated | Installed host-action smoke. |
+| JWT, date, timestamp, math and secret | Typed semantic payloads render without fabricated values | Verified automated | Installed redaction/accessibility smoke. |
+| Unsupported binary | Typed metadata fallback and original output exist; no automatic Base64 | Verified automated | Reconstruction remains R3. |
 
-R2 is complete only when every `RenderModel` variant has a direct, bounded React presentation; no successful model is forced through fabricated legacy metadata.
+R2 meets its automated exit gate: every `RenderModel` variant has a direct, bounded React presentation and no successful model is forced through fabricated legacy metadata.
 
 ## Copy, paste, actions, and transformations
 
@@ -63,8 +62,8 @@ R2 is complete only when every `RenderModel` variant has a direct, bounded React
 | Copy Original | Explicit output policy reconstructs supported representation set | Implemented — validation pending | Capture/restart/reconstruct fixtures by platform. |
 | Copy Plain Text | Explicit renderer-independent policy | Implemented — validation pending | Multi-representation selection fixtures. |
 | Quick paste | Windows/macOS/Linux implementation exists | Partial | Target focus/paste tests; macOS Accessibility recovery UX. |
-| `ClipActionsToolbar` base actions | Copy, pin, favorite and delete use V2 store/output paths | Implemented — validation pending | Per-action integration tests with selected alternate renderer. |
-| Preview-local contextual actions | Retained URL/code/CSV/etc. registry | Partial | Validate each action against typed presentation inputs. |
+| `ClipActionsToolbar` base actions | Copy, pin, favorite and delete use typed presentation context; copy remains clip-ID/output-policy based | Verified automated | Installed interaction smoke. |
+| Preview-local contextual actions | Typed editor and validated semantic URL/email/phone/path actions are direct; transform-oriented CSV/code actions remain | Partial | Finish transform/context actions in R5. |
 | Transform discovery and execution | Built-in descriptors and service exist | Implemented backend | Source-aware UI integration required. |
 | Transform preview | Result model is returned but not displayed | Missing workflow | Render the exact cached model before Copy/Paste/Save. |
 | Transform parameters | UI always submits `{}` | Missing workflow | Schema-driven controls, validation and defaults. |
@@ -82,7 +81,7 @@ R2 is complete only when every `RenderModel` variant has a direct, bounded React
 | Ollama configuration/reindex/recovery UI | Only partial status/catalog exposure | Partial | Endpoint/model selection, probe, enable/disable, progress, reindex, clear and diagnostics. |
 | Semantic-only recall | Hybrid fusion is limited to FTS candidates | Intentional current limitation | Do not claim semantic recall beyond the FTS candidate page; product decision required before changing. |
 | OCR backend | macOS/Linux paths exist; Windows runtime is unavailable | Partial | Per-platform contract and fixture validation. |
-| OCR UI | State/result/error is discarded by the presentation bridge | Missing parity | Expose pending/running/done/failed/unsupported and retry. |
+| OCR UI | Typed lifecycle, empty-success, safe failure, retry, and targeted artifact-event refresh | Verified automated | Validate supported/unsupported platform runtimes in R4/R7. |
 | Capture filters and retention | Persisted and applied | Verified backend | Settings restart and managed-byte retention tests. |
 | `auto_clear_minutes` | Persisted only | Missing parity | Runtime timer clears the OS clipboard with safe cancellation/reset semantics. |
 | `clear_on_exit` | Applied on explicit tray Quit | Implemented — validation pending | Desktop exit test; closing to tray must not clear. |

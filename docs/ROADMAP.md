@@ -21,8 +21,9 @@ M0–M5 describe the implemented V2 backend foundations and their original accep
 
 - **Verified:** R0 IPC/startup recovery through automated tests.
 - **Implemented — validation pending:** R1 desktop host integration.
-- **Next:** R2 typed presentation boundary.
-- **Blocked behind R2:** R3 clipboard fidelity, R4 search/OCR/settings, R5 transformations, R6 extension workflow, and R7 release validation.
+- **Verified automated:** R2 typed presentation boundary.
+- **Next:** R3 clipboard fidelity and output.
+- **Blocked behind R3:** R4 search/OCR/settings, R5 transformations, R6 extension workflow, and R7 release validation.
 - **Deferred/excluded:** Vault/entitlements/sync, visual semantic search, hosted providers, vision, and generation.
 
 ## UI parity program
@@ -44,9 +45,9 @@ provider management, and extension management through v2 contracts.
   desktop acceptance test before the program is complete.
 
 Current gates are tracked in [UI_PARITY.md](UI_PARITY.md). Desktop host wiring
-is implemented but awaits installed-platform validation; the presentation,
-clipboard-fidelity, provider/OCR/settings, transform, and extension workflows
-remain partial.
+is implemented but awaits installed-platform validation. The typed presentation
+boundary passes its automated acceptance suite; clipboard fidelity,
+provider/OCR/settings, transform, and extension workflows remain partial.
 
 ## Recovery milestones
 
@@ -57,21 +58,20 @@ bypassing the contracts established by an earlier one.
 |---|---|---|
 | **R0 — IPC and startup boundary** | Verified | Every production frontend `invoke` has a Rust handler; legacy/unsupported schemas reach exact-confirmation reset without normal `AppState`. |
 | **R1 — Desktop host integration** | Implemented — validation pending | Tray, close-to-tray, shortcut toggle, single instance, deep links, OAuth callback, autostart, updater, filesystem access and Windows decorum work in installed builds on all platforms. |
-| **R2 — Typed presentation boundary** | **Next** | Every `RenderModel` renders directly and losslessly; table, RTF, HTML, Office, files and OCR states meet the parity matrix. |
-| **R3 — Clipboard fidelity and output** | Pending; depends on R2 | Supported native fixtures survive capture, persistence, restart and reconstruction; paste/focus/permission behavior passes the platform matrix. |
+| **R2 — Typed presentation boundary** | **Verified automated** | Every `RenderModel` renders directly and losslessly; table, RTF, HTML, Office, files and OCR states pass model and component fixtures. |
+| **R3 — Clipboard fidelity and output** | **Next** | Supported native fixtures survive capture, persistence, restart and reconstruction; paste/focus/permission behavior passes the platform matrix. |
 | **R4 — Search, OCR and settings workflows** | Pending; depends on R2/R3 | Ollama and OCR lifecycles are usable from UI; remaining settings have real runtime effects; defaults are decided. |
 | **R5 — Transformations and contextual actions** | Pending; depends on R2/R3 | Exact preview is visible; parameters and source selection are correct; Copy/Paste/Save reuse identical cached bytes. |
 | **R6 — Extension product workflow** | Pending; depends on R2/R5 | Registry and developer installation, diagnostics, quarantine/recovery and contribution output work end to end. |
 | **R7 — Release validation** | Pending; depends on R1–R6 | Installed Windows/macOS/Linux builds pass [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) and [RELEASE.md](RELEASE.md). |
 
-### R2 implementation contract
+### R2 delivered contract
 
-R2 must replace the universal `RenderModel -> legacy Content` conversion with
-typed React presentations. Working archived components may be retained behind
-lossless adapters, but no adapter may fabricate OCR status, file sizes,
-timestamps, delimiter metadata, or Office relationships.
+R2 replaced the universal `RenderModel -> legacy Content` conversion with
+typed React presentations. No presentation adapter fabricates OCR status, file
+sizes, timestamps, delimiter metadata, or Office relationships.
 
-Required R2 slices, in order:
+Delivered R2 slices:
 
 1. Define frontend presentation props for every `RenderModel` variant and a
    single exhaustive dispatcher.
@@ -498,8 +498,10 @@ Community extensions run in WASM. They receive explicit input and have no
 direct access to clipboard history, SQLite, filesystem, network, shell,
 environment, React components, or arbitrary frontend code.
 
-Renderers return `text`, `code`, `markdown`, `table`, `tree`, `key/value`,
-`image`, or `error`. ClipsX renders those models with owned React components.
+Renderers return the exhaustive host `RenderModel` union: text, code, Markdown,
+table, tree, key/value, image/OCR, HTML, rich text, files, document, Office,
+semantic, unsupported, or error. ClipsX renders those models with owned React
+components.
 
 The reviewed GitHub registry publishes package ID/version, release URL,
 SHA-256, compatibility, permissions, and contribution metadata. Normal
@@ -554,7 +556,7 @@ reliably; legacy databases are rejected with a clear reset instruction.
 **Exit:** A rich Office capture survives restart with all its raw
 representations intact.
 
-### M2 — Facets and renderer resolution: resolver implemented; presentation partial
+### M2 — Facets and renderer resolution: resolver and presentation verified automated
 
 - [ ] Define built-in facets and extension namespaces.
 - [ ] Implement candidate routing and `content_detection_jobs`.

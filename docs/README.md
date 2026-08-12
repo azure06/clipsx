@@ -35,7 +35,8 @@ Backend code existing by itself is never enough for **Verified** user-facing sta
 
 - Recovery R0, IPC/startup boundary: **Verified** by automated tests.
 - Recovery R1, desktop host integration: **Implemented — validation pending**.
-- Recovery R2, typed presentation boundary: **Next**.
-- Recovery R3–R7: blocked in dependency order behind R2, as described in the roadmap.
+- Recovery R2, typed presentation boundary: **Verified automated**.
+- Recovery R3, clipboard fidelity and output: **Next**.
+- Recovery R4–R7: blocked in dependency order behind R3, as described in the roadmap.
 
 When implementation changes architecture or a status gate, update the owning document in the same change. Avoid copying detailed status into `ARCHITECTURE.md`; link to the parity matrix or roadmap instead.

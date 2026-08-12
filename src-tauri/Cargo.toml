@@ -51,6 +51,7 @@ semver = "1.0"
 toml = "0.8"
 wasmtime = { version = "47.0.3", default-features = false, features = ["async", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+rtf-parser = { version = "0.4.3", default-features = false }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"

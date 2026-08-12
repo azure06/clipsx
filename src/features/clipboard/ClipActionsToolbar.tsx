@@ -1,80 +1,172 @@
-import { useActionRegistry } from '../content'
-import type { Content, SmartAction, ActionContext } from '../content'
+import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { formatShortcut } from '../../shared/keyboard/shortcuts'
-import { previewTheme } from '../content/previews/previewTheme'
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  Heart,
+  Mail,
+  Phone,
+  Pin,
+  SquareArrowOutUpRight,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
+import { useMemo, useState } from 'react'
+import type { ClipPresentation } from '../../shared/types/v2'
+import { useClipboardStore } from '../../stores/clipboardStore'
 
-interface ClipActionsToolbarProps {
-  content: Content
-  context?: ActionContext
+export interface PresentationActionContext {
+  onDelete: (id: string) => void
+  onTogglePin: (id: string) => void
+  onToggleFavorite: (id: string) => void
 }
 
-export const ClipActionsToolbar = ({ content, context }: ClipActionsToolbarProps) => {
-  const { getActionGroups } = useActionRegistry(context)
+type ToolbarAction = {
+  id: string
+  label: string
+  icon: LucideIcon
+  active?: boolean
+  run: () => Promise<void> | void
+}
 
-  if (!content) return null
+const scalar = (value: unknown): string | null =>
+  typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value)
+    : null
 
-  const { standard, smart, meta } = getActionGroups(content)
+const editorExtension = (presentation: ClipPresentation): string | null => {
+  const { model } = presentation
+  if (model.kind === 'code') {
+    const language = model.language?.toLowerCase()
+    return (
+      (
+        { javascript: 'js', typescript: 'ts', python: 'py', rust: 'rs', json: 'json' } as Record<
+          string,
+          string
+        >
+      )[language ?? ''] ??
+      language ??
+      'txt'
+    )
+  }
+  if (model.kind === 'markdown') return 'md'
+  if (model.kind === 'tree') return 'json'
+  if (model.kind === 'table') return 'csv'
+  if (['text', 'rich_text', 'semantic'].includes(model.kind)) return 'txt'
+  return null
+}
 
-  const hasAnyActions = standard.length > 0 || smart.length > 0 || meta.length > 0
-  if (!hasAnyActions) return null
+export const ClipActionsToolbar = ({
+  presentation,
+  context,
+}: {
+  presentation: ClipPresentation
+  context: PresentationActionContext
+}) => {
+  const [copied, setCopied] = useState(false)
+  const performCopy = useClipboardStore(state => state.performCopy)
+  const actions = useMemo<ToolbarAction[]>(() => {
+    const values: ToolbarAction[] = [
+      {
+        id: 'copy',
+        label: copied ? 'Copied!' : 'Copy',
+        icon: copied ? Check : Copy,
+        run: async () => {
+          await performCopy('', presentation.id)
+          setCopied(true)
+          window.setTimeout(() => setCopied(false), 2000)
+        },
+      },
+    ]
+    const extension = editorExtension(presentation)
+    if (extension) {
+      values.push({
+        id: 'open-editor',
+        label: 'Open in Editor',
+        icon: SquareArrowOutUpRight,
+        run: () => invoke('open_clip_text_in_editor', { clipId: presentation.id, extension }),
+      })
+    }
+    if (presentation.model.kind === 'semantic') {
+      const semantic = presentation.model
+      const payload = semantic.payload
+      const kind = presentation.activeView.presentationKind
+      if (kind === 'url') {
+        const url = scalar(payload['href']) ?? semantic.text
+        values.push({
+          id: 'open-url',
+          label: 'Open Link',
+          icon: ExternalLink,
+          run: () => invoke('open_external_url', { url }),
+        })
+      } else if (kind === 'email') {
+        const address = scalar(payload['address']) ?? semantic.text
+        values.push({
+          id: 'compose-email',
+          label: 'Compose Email',
+          icon: Mail,
+          run: () => invoke('compose_email', { address }),
+        })
+      } else if (kind === 'phone') {
+        values.push({
+          id: 'call-phone',
+          label: 'Call',
+          icon: Phone,
+          run: () => invoke('start_phone_action', { number: semantic.text, message: false }),
+        })
+      }
+    }
+    values.push(
+      {
+        id: 'favorite',
+        label: 'Favorite',
+        icon: Heart,
+        active: presentation.isFavorite,
+        run: () => context.onToggleFavorite(presentation.id),
+      },
+      {
+        id: 'pin',
+        label: 'Pin',
+        icon: Pin,
+        active: presentation.isPinned,
+        run: () => context.onTogglePin(presentation.id),
+      },
+      { id: 'delete', label: 'Delete', icon: Trash2, run: () => context.onDelete(presentation.id) }
+    )
+    return values
+  }, [context, copied, performCopy, presentation])
 
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
-        {standard.map(action => (
-          <ActionIconButton key={action.id} action={action} content={content} />
-        ))}
-
-        {standard.length > 0 && smart.length > 0 && (
-          <div className="w-px h-3 bg-slate-300/70 dark:bg-slate-100/10 mx-1" />
-        )}
-
-        {smart.map(action => (
-          <ActionIconButton key={action.id} action={action} content={content} />
-        ))}
-
-        {(standard.length > 0 || smart.length > 0) && meta.length > 0 && (
-          <div className="w-px h-3 bg-slate-300/70 dark:bg-slate-100/10 mx-1" />
-        )}
-
-        {meta.map(action => (
-          <ActionIconButton key={action.id} action={action} content={content} />
+        {actions.map(action => (
+          <ActionButton action={action} key={action.id} />
         ))}
       </div>
     </Tooltip.Provider>
   )
 }
 
-const ActionIconButton = ({ action, content }: { action: SmartAction; content: Content }) => {
-  const isActive = action.isActive?.(content)
-  const shortcutLabel = formatShortcut(action.shortcut)
-
+const ActionButton = ({ action }: { action: ToolbarAction }) => {
+  const Icon = action.icon
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <button
-          onClick={() => void action.execute(content)}
           aria-label={action.label}
-          className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500/50 ${
-            isActive
-              ? 'text-blue-400 bg-blue-500/10 hover:bg-blue-500/20'
-              : 'text-gray-500 hover:text-gray-900 hover:bg-slate-200/60 dark:text-gray-400 dark:hover:text-white dark:hover:bg-slate-100/10'
-          }`}
+          className={`rounded-md p-1.5 transition-colors ${action.active ? 'bg-blue-500/10 text-blue-500' : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'}`}
+          onClick={() => void action.run()}
         >
-          <div className="w-4 h-4">{action.icon}</div>
+          <Icon className="h-4 w-4" />
         </button>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          className={`z-100 px-2 py-1 text-[10px] rounded shadow-lg animate-in fade-in-0 zoom-in-95 ${previewTheme.surfaceElevated} ${previewTheme.textPrimary}`}
+          className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
           sideOffset={5}
         >
           {action.label}
-          {shortcutLabel && (
-            <span className={`ml-1.5 ${previewTheme.textMuted}`}>{shortcutLabel}</span>
-          )}
-          <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>

@@ -64,7 +64,7 @@ Open issues and gates:
 - Restore explicit Accessibility permission diagnosis/recovery for synthetic paste.
 - Verify exact captured UTI writeback only for adapter-supported identifiers.
 - Verify shortcut toggle, tray behavior, installed deep links, OAuth callback, autostart, updater, close-to-tray, and frontmost-app paste restoration.
-- Verify the native OCR artifact lifecycle and UI status once R2 exposes it.
+- Verify the typed OCR lifecycle, retry, and targeted refresh against the native runtime; R2 exposes and tests the UI contract.
 
 ## Linux/X11
 

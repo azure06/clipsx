@@ -77,11 +77,11 @@ export type RenderModel =
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'tree'; value: unknown }
   | { kind: 'key_value'; entries: [string, string][] }
-  | { kind: 'image'; artifactId: string }
+  | { kind: 'image'; assetId: string; ocr: OcrPresentation }
   | { kind: 'html'; sanitizedHtml: string }
   | { kind: 'rich_text'; sanitizedHtml: string | null; plainText: string }
-  | { kind: 'files'; files: string[] }
-  | { kind: 'document'; artifactId: string; mimeType: string }
+  | { kind: 'files'; entries: FilePresentation[] }
+  | { kind: 'document'; assetId: string; mimeType: string }
   | { kind: 'office'; formatKey: string; nativeType: string | null; byteLength: number }
   | { kind: 'semantic'; facetId: string; text: string; payload: Record<string, unknown> }
   | {
@@ -92,6 +92,16 @@ export type RenderModel =
       byteLength: number
     }
   | { kind: 'error'; message: string }
+
+export type OcrPresentation =
+  | { state: 'disabled' }
+  | { state: 'pending' }
+  | { state: 'running' }
+  | { state: 'ready'; text: string }
+  | { state: 'unsupported' }
+  | { state: 'failed'; message: string }
+
+export type FilePresentation = { path: string; name: string }
 
 export type ClipPresentation = ClipSummary & {
   activeView: ClipViewDescriptor

@@ -208,10 +208,30 @@ for facets over plain text. MIME/native identity always remains adapter-owned.
 
 A Source view is a useful human-readable alternate for formats such as HTML or
 RTF. The complete representation inventory is a separate advanced inspector;
-binary payloads and Base64 are never ordinary view tabs. Typed render models
-carry only the bounded data needed by restored specialized previews. A failed
-renderer falls back to the canonical representation without affecting output
-policy.
+binary payloads and Base64 are never ordinary view tabs. One exhaustive React
+dispatcher consumes the bounded `RenderModel` union directly. Tables, trees,
+key/value data, semantic payloads, and file references remain structured;
+semantic previews validate their payload before specialization and fall back to
+generic details when malformed. A failed renderer falls back to the canonical
+representation without affecting output policy.
+
+Image presentation references a canonical managed `assetId` and carries a
+discriminated OCR state: disabled, pending, running, ready (including empty
+text), unsupported, or failed with a safe diagnostic. Artifact completion and
+retry emit `clip-artifacts-updated` with clip and source IDs so the active model
+can refresh without reloading canonical clip data. File presentation preserves
+ordered path/name references only; it does not stat external files or invent
+size or timestamp metadata.
+
+HTML is sanitized in the host and displayed in a sandboxed iframe. RTF input is
+bounded to 1 MiB, rejects binary/object/field/image control groups, and is
+parsed behind a failure boundary; its
+derived HTML contains escaped text and only `p`, `br`, `strong`, `em`, `u`,
+`s`, `sup`, and `sub`, otherwise falling back to escaped extracted/source text.
+For Office/native snapshots, a valid user preference wins first, followed by
+useful table/HTML, PDF/SVG/image, plain-text, and opaque Office detail classes,
+while capture priority is retained within each class and every representation
+remains available as an alternate and to Original output.
 
 Search documents are derived from canonical textual representations, safe
 extractions/artifacts, notes, and tag names. A note or tag mutation refreshes

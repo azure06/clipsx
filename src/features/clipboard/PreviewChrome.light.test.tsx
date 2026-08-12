@@ -1,32 +1,8 @@
-import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
-import type { ActionContext } from '../content'
-
-const actionExecute = vi.fn()
-type MockActionGroups = {
-  standard: Array<{
-    id: string
-    label: string
-    icon: ReactElement
-    category: 'core'
-    placement: 'global_bar'
-    check: () => true
-    execute: typeof actionExecute
-  }>
-  smart: []
-  meta: []
-}
-
-type MockActionRegistry = {
-  getActionGroups: (_content: unknown) => MockActionGroups
-}
-
-const mockUseActionRegistry = vi.fn<() => MockActionRegistry>()
-
 const clipboardStoreState = {
   clips: [],
   availableTags: [{ id: 'tag-urgent', name: 'urgent', color: '#ef4444' }],
@@ -34,11 +10,8 @@ const clipboardStoreState = {
   addClipTag: vi.fn(async () => {}),
   removeClipTag: vi.fn(async () => {}),
   createTagAndAttach: vi.fn(async () => {}),
+  performCopy: vi.fn(async () => {}),
 }
-
-vi.mock('../content', () => ({
-  useActionRegistry: (_context?: ActionContext): MockActionRegistry => mockUseActionRegistry(),
-}))
 
 vi.mock('../../stores/clipboardStore', () => ({
   useClipboardStore: (selector: (state: typeof clipboardStoreState) => unknown) =>
@@ -49,24 +22,55 @@ describe('preview chrome light theme styling', () => {
   beforeEach(() => {
     document.documentElement.className = 'light'
     vi.clearAllMocks()
+  })
 
-    mockUseActionRegistry.mockReturnValue({
-      getActionGroups: () => ({
-        standard: [
-          {
-            id: 'favorite',
-            label: 'Favorite',
-            icon: <span data-testid="favorite-icon">F</span>,
-            category: 'core',
-            placement: 'global_bar',
-            check: () => true,
-            execute: actionExecute,
+  it('copies by clip id independently of the active renderer', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ClipActionsToolbar
+        presentation={{
+          id: 'clip-1',
+          sourceAppName: null,
+          sourceAppId: null,
+          capturedAt: 1,
+          updatedAt: 1,
+          isPinned: false,
+          isFavorite: false,
+          note: null,
+          tags: [],
+          safeSummary: 'sample',
+          representationCount: 2,
+          primaryPresentationKind: 'table',
+          thumbnailAssetId: null,
+          activeView: {
+            id: 'alternate-table',
+            rendererId: 'builtin.table',
+            label: 'Table',
+            sourceId: 'rep-table',
+            mimeType: 'text/csv',
+            facetId: null,
+            isOriginal: false,
+            presentationKind: 'table',
+            placement: 'alternate',
           },
-        ],
-        smart: [],
-        meta: [],
-      }),
-    })
+          model: {
+            kind: 'table',
+            columns: ['A'],
+            rows: [['rendered value']],
+          },
+        }}
+        context={{
+          onDelete: vi.fn(),
+          onTogglePin: vi.fn(),
+          onToggleFavorite: vi.fn(),
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Copy' }))
+
+    expect(clipboardStoreState.performCopy).toHaveBeenCalledWith('', 'clip-1')
   })
 
   it('renders toolbar tooltips with light-safe popover classes', async () => {
@@ -74,16 +78,38 @@ describe('preview chrome light theme styling', () => {
 
     render(
       <ClipActionsToolbar
-        content={{
-          type: 'text',
-          text: 'sample',
-          metadata: {},
-          clip: { id: 'clip-1' } as never,
+        presentation={{
+          id: 'clip-1',
+          sourceAppName: null,
+          sourceAppId: null,
+          capturedAt: 1,
+          updatedAt: 1,
+          isPinned: false,
+          isFavorite: false,
+          note: null,
+          tags: [],
+          safeSummary: 'sample',
+          representationCount: 1,
+          primaryPresentationKind: 'text',
+          thumbnailAssetId: null,
+          activeView: {
+            id: 'view',
+            rendererId: 'builtin.text',
+            label: 'Text',
+            sourceId: 'rep',
+            mimeType: 'text/plain',
+            facetId: null,
+            isOriginal: false,
+            presentationKind: 'text',
+            placement: 'primary',
+          },
+          model: { kind: 'text', text: 'sample' },
         }}
+        context={{ onDelete: vi.fn(), onTogglePin: vi.fn(), onToggleFavorite: vi.fn() }}
       />
     )
 
-    await user.hover(screen.getByRole('button'))
+    await user.hover(screen.getByRole('button', { name: 'Copy' }))
 
     const tooltip = await screen.findByRole('tooltip', { hidden: true })
     expect(tooltip).toHaveClass('text-gray-900')
