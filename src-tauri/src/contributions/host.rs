@@ -742,7 +742,7 @@ impl DetectorContribution for SecretDetector {
         "core.security.secret"
     }
     fn name(&self) -> &'static str {
-        "Potential secret"
+        "Secret"
     }
     fn candidate(&self, s: &TextSource) -> bool {
         let value = s.text.trim();

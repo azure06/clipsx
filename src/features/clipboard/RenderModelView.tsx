@@ -2,6 +2,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import {
   Archive,
   AtSign,
+  Braces,
   Calculator,
   CalendarDays,
   Check,
@@ -403,7 +404,9 @@ const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }>
         {result && result !== model.text && (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4">
             <span className="text-[10px] uppercase tracking-widest text-gray-500">= result</span>
-            <code className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">{result}</code>
+            <code className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">
+              {result}
+            </code>
             <button
               className="flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
               onClick={handleCopy}
@@ -690,9 +693,7 @@ const SemanticView = ({
 
   if (kind === 'secret') {
     const secretKind =
-      semanticScalar(model.payload, 'kind') ??
-      semanticScalar(model.payload, 'format') ??
-      'secret'
+      semanticScalar(model.payload, 'kind') ?? semanticScalar(model.payload, 'format') ?? 'secret'
     return (
       <div className="flex h-full flex-col overflow-auto">
         <div className="flex flex-col items-center gap-3 border-b border-slate-200/60 bg-red-500/5 p-5 dark:border-white/5">
@@ -773,6 +774,35 @@ const SemanticView = ({
   )
 }
 
+const JsonView = ({ value }: { value: unknown }) => {
+  const jsonText = JSON.stringify(value, null, 2)
+  const keyCount = Array.isArray(value)
+    ? (value as unknown[]).length
+    : value !== null && typeof value === 'object'
+      ? Object.keys(value as Record<string, unknown>).length
+      : null
+  const label = Array.isArray(value) ? 'items' : 'keys'
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-white/10">
+        <div className="rounded-lg bg-emerald-500/20 p-1 text-emerald-500">
+          <Braces className="h-3.5 w-3.5" />
+        </div>
+        {keyCount !== null && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
+            {keyCount} {label}
+          </span>
+        )}
+      </div>
+      <div className="flex-1 overflow-auto">
+        <pre className="p-4 font-mono text-sm text-emerald-800 dark:text-emerald-300 whitespace-pre-wrap break-words">
+          {jsonText}
+        </pre>
+      </div>
+    </div>
+  )
+}
+
 export const RenderModelView = ({
   presentation,
   retryingOcr = false,
@@ -799,6 +829,9 @@ export const RenderModelView = ({
     case 'table':
       return <TableView {...model} />
     case 'tree':
+      if (presentation.activeView.presentationKind === 'json') {
+        return <JsonView value={model.value} />
+      }
       return <div className="p-4 font-mono text-sm">{TreeNode({ value: model.value })}</div>
     case 'key_value':
       return <KeyValueView entries={model.entries} />

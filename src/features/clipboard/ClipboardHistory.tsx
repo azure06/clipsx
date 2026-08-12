@@ -377,14 +377,20 @@ export const ClipboardHistory = ({
           e.preventDefault()
           const prevIdx = Math.max(0, currentIndex > 0 ? currentIndex - 1 : 0)
           const prevClip = clips[prevIdx]
-          if (prevClip) { setSelectedId(prevClip.id); scrollSelectedIntoView(prevIdx) }
+          if (prevClip) {
+            setSelectedId(prevClip.id)
+            scrollSelectedIntoView(prevIdx)
+          }
           break
         }
         case 'ArrowDown': {
           e.preventDefault()
           const nextIdx = Math.min(maxIndex, currentIndex >= 0 ? currentIndex + 1 : 0)
           const nextClip = clips[nextIdx]
-          if (nextClip) { setSelectedId(nextClip.id); scrollSelectedIntoView(nextIdx) }
+          if (nextClip) {
+            setSelectedId(nextClip.id)
+            scrollSelectedIntoView(nextIdx)
+          }
           break
         }
         case 'Enter': {
@@ -407,7 +413,8 @@ export const ClipboardHistory = ({
             void handleDelete(selectedClip.id)
             // Move selection to the next clip (or previous if at end)
             const afterDeleteIdx = Math.min(currentIndex, maxIndex - 1)
-            const afterDeleteClip = clips[afterDeleteIdx === currentIndex ? afterDeleteIdx + 1 : afterDeleteIdx]
+            const afterDeleteClip =
+              clips[afterDeleteIdx === currentIndex ? afterDeleteIdx + 1 : afterDeleteIdx]
             setSelectedId(afterDeleteClip?.id ?? clips[0]?.id ?? null)
           }
           break

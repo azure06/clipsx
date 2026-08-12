@@ -33,11 +33,7 @@ export const CopyableRow = ({ label, value, mono = false }: CopyableRowProps) =>
         aria-label={`Copy ${label}`}
         className="shrink-0 rounded p-1 text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200/60 dark:hover:bg-white/10 hover:text-gray-700 dark:hover:text-gray-300 transition-all"
       >
-        {copied ? (
-          <Check className="h-3 w-3 text-emerald-500" />
-        ) : (
-          <Copy className="h-3 w-3" />
-        )}
+        {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
       </button>
     </div>
   )

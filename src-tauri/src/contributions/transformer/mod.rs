@@ -131,6 +131,8 @@ impl TransformerContribution for BuiltinTransformer {
             )),
             "builtin.transform.url.normalize" => url_normalize(Self::text(input)?),
             "builtin.transform.url.query_to_json" => url_query_to_json(Self::text(input)?),
+            "builtin.transform.csv.to_json" => csv_to_json(Self::text(input)?),
+            "builtin.transform.json.to_csv" => json_to_csv(Self::text(input)?),
             _ => bail!("unknown transformer contribution"),
         }
     }
@@ -248,6 +250,18 @@ fn registry() -> Vec<BuiltinTransformer> {
         BuiltinTransformer {
             id: "builtin.transform.url.query_to_json",
             label: "URL query to JSON",
+            schema: no_parameters.clone(),
+            accepts_binary: false,
+        },
+        BuiltinTransformer {
+            id: "builtin.transform.csv.to_json",
+            label: "CSV to JSON",
+            schema: no_parameters.clone(),
+            accepts_binary: false,
+        },
+        BuiltinTransformer {
+            id: "builtin.transform.json.to_csv",
+            label: "JSON to CSV",
             schema: no_parameters,
             accepts_binary: false,
         },
@@ -888,6 +902,110 @@ fn url_query_to_json(input: &str) -> Result<Vec<CapturedRepresentation>> {
     }
     let output = serde_json::to_string_pretty(&Value::Object(map))?;
     Ok(text_output("application/json", &output))
+}
+
+fn csv_parse_row(row: &str, delimiter: char) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut chars = row.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(ch);
+            }
+        } else if ch == '"' {
+            in_quotes = true;
+        } else if ch == delimiter {
+            fields.push(std::mem::take(&mut field));
+        } else {
+            field.push(ch);
+        }
+    }
+    fields.push(field);
+    fields
+}
+fn csv_quote_field(field: &str) -> String {
+    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+fn csv_to_json(input: &str) -> Result<Vec<CapturedRepresentation>> {
+    let lines: Vec<&str> = input.lines().collect();
+    if lines.is_empty() {
+        bail!("CSV input is empty");
+    }
+    let first_line = lines[0];
+    let delimiter =
+        if first_line.matches('\t').count() > first_line.matches(',').count() { '\t' } else { ',' };
+    let headers = csv_parse_row(first_line, delimiter);
+    let mut records = Vec::new();
+    for line in &lines[1..] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let fields = csv_parse_row(line, delimiter);
+        let mut obj = serde_json::Map::new();
+        for (i, header) in headers.iter().enumerate() {
+            obj.insert(
+                header.clone(),
+                Value::String(fields.get(i).cloned().unwrap_or_default()),
+            );
+        }
+        records.push(Value::Object(obj));
+    }
+    Ok(text_output(
+        "application/json",
+        &serde_json::to_string_pretty(&Value::Array(records))?,
+    ))
+}
+fn json_to_csv(input: &str) -> Result<Vec<CapturedRepresentation>> {
+    let value: Value = serde_json::from_str(input).context("invalid JSON")?;
+    let array = value.as_array().context("JSON must be a top-level array")?;
+    if array.is_empty() {
+        return Ok(text_output("text/csv", ""));
+    }
+    let mut headers: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in array {
+        if let Some(obj) = item.as_object() {
+            for key in obj.keys() {
+                if seen.insert(key.clone()) {
+                    headers.push(key.clone());
+                }
+            }
+        }
+    }
+    if headers.is_empty() {
+        bail!("JSON array must contain objects");
+    }
+    let mut lines = Vec::new();
+    lines.push(headers.iter().map(|h| csv_quote_field(h)).collect::<Vec<_>>().join(","));
+    for item in array {
+        let obj = item.as_object();
+        let row: Vec<String> = headers
+            .iter()
+            .map(|key| {
+                let s = match obj.and_then(|o| o.get(key)) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Null) | None => String::new(),
+                    Some(v) => v.to_string(),
+                };
+                csv_quote_field(&s)
+            })
+            .collect();
+        lines.push(row.join(","));
+    }
+    Ok(text_output("text/csv", &lines.join("\n")))
 }
 
 #[cfg(test)]

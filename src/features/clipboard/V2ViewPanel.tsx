@@ -176,7 +176,12 @@ export const V2ViewPanel = ({
       return
     }
     const visible = viewSet.views.filter(item => item.placement !== 'advanced')
-    onTabControls?.({ views: visible, activeId: active, onTabChange: handleTabChange, onShowInspector: handleShowInspector })
+    onTabControls?.({
+      views: visible,
+      activeId: active,
+      onTabChange: handleTabChange,
+      onShowInspector: handleShowInspector,
+    })
   }, [viewSet, active, onTabControls, handleTabChange, handleShowInspector])
 
   // Clear controls when unmounted
