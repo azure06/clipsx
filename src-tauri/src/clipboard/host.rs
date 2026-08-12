@@ -102,10 +102,11 @@ impl ClipboardAdapter for SystemClipboardAdapter {
                         payload: CapturedPayload::Files(files),
                     });
                 }
+                let (format_key, native_type) = plain_text_identity();
                 reps.push(CapturedRepresentation {
-                    format_key: format!("{}:text/plain", platform_name()),
+                    format_key: format_key.into(),
                     canonical_mime_type: Some("text/plain".into()),
-                    native_type: None,
+                    native_type: Some(native_type.into()),
                     platform: platform_name().into(),
                     capture_priority: 100,
                     payload: CapturedPayload::Text(text),
@@ -122,23 +123,26 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         }
         #[cfg(target_os = "linux")]
         capture_x11_formats(&mut reps)?;
-        if let Ok(image) = clipboard.get_image() {
-            reps.push(CapturedRepresentation {
-                format_key: format!("{}:image/png", platform_name()),
-                canonical_mime_type: Some("image/png".into()),
-                native_type: Some(
-                    if cfg!(target_os = "windows") {
-                        "normalized:DIB"
-                    } else {
-                        "normalized:image"
-                    }
-                    .into(),
-                ),
-                platform: platform_name().into(),
-                capture_priority: 200,
-                payload: CapturedPayload::Binary(encode_png(image)?),
-            });
+        let has_native_image = reps.iter().any(|representation| {
+            representation
+                .canonical_mime_type
+                .as_deref()
+                .is_some_and(|mime| matches!(mime, "image/png" | "image/jpeg" | "image/tiff"))
+        });
+        if !has_native_image {
+            if let Ok(image) = clipboard.get_image() {
+                let (format_key, native_type) = normalized_image_identity();
+                reps.push(CapturedRepresentation {
+                    format_key,
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type,
+                    platform: platform_name().into(),
+                    capture_priority: 200,
+                    payload: CapturedPayload::Binary(encode_png(image)?),
+                });
+            }
         }
+        deduplicate_representation_formats(&mut reps);
         if reps.is_empty() {
             bail!("clipboard has no supported representations")
         }
@@ -203,6 +207,74 @@ fn platform_name() -> &'static str {
     } else {
         "linux_x11"
     }
+}
+fn plain_text_identity() -> (&'static str, &'static str) {
+    if cfg!(target_os = "macos") {
+        ("macos:public.utf8-plain-text", "public.utf8-plain-text")
+    } else if cfg!(target_os = "windows") {
+        ("windows:CF_UNICODETEXT", "CF_UNICODETEXT")
+    } else {
+        ("linux_x11:UTF8_STRING", "UTF8_STRING")
+    }
+}
+fn deduplicate_representation_formats(representations: &mut Vec<CapturedRepresentation>) {
+    let mut deduplicated: Vec<CapturedRepresentation> = Vec::with_capacity(representations.len());
+    for representation in representations.drain(..) {
+        if let Some(existing) = deduplicated
+            .iter_mut()
+            .find(|existing| existing.format_key == representation.format_key)
+        {
+            if representation.capture_priority < existing.capture_priority {
+                *existing = representation;
+            }
+        } else {
+            deduplicated.push(representation);
+        }
+    }
+    *representations = deduplicated;
+}
+#[cfg(target_os = "windows")]
+fn normalized_image_identity() -> (String, Option<String>) {
+    use windows::Win32::System::DataExchange::IsClipboardFormatAvailable;
+    let (png, dib_v5, dib) = unsafe {
+        (
+            IsClipboardFormatAvailable(register_windows_format("PNG")).is_ok(),
+            IsClipboardFormatAvailable(17).is_ok(),
+            IsClipboardFormatAvailable(8).is_ok(),
+        )
+    };
+    windows_normalized_image_identity_for(png, dib_v5, dib)
+}
+#[cfg(target_os = "windows")]
+fn windows_normalized_image_identity_for(
+    png: bool,
+    dib_v5: bool,
+    dib: bool,
+) -> (String, Option<String>) {
+    let native = if png {
+        Some("PNG")
+    } else if dib_v5 {
+        Some("CF_DIBV5")
+    } else if dib {
+        Some("CF_DIB")
+    } else {
+        None
+    };
+    (
+        native.map_or_else(
+            || "windows:normalized:image/png".into(),
+            |native| format!("windows:{native}"),
+        ),
+        native.map(str::to_string),
+    )
+}
+#[cfg(target_os = "macos")]
+fn normalized_image_identity() -> (String, Option<String>) {
+    ("macos:normalized:image/png".into(), None)
+}
+#[cfg(target_os = "linux")]
+fn normalized_image_identity() -> (String, Option<String>) {
+    ("linux_x11:normalized:image/png".into(), None)
 }
 fn encode_png(image: ImageData<'_>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -367,12 +439,29 @@ unsafe fn write_macos_formats(reps: &[CapturedRepresentation]) -> Result<()> {
             continue;
         }
         let ty: id = NSString::alloc(nil).init_str(native);
+        if let CapturedPayload::Files(files) = &rep.payload {
+            let urls: id = msg_send![class!(NSMutableArray), arrayWithCapacity:files.len()];
+            for file in files {
+                let value = NSString::alloc(nil).init_str(file);
+                let url: id = if file.starts_with("file://") {
+                    msg_send![class!(NSURL), URLWithString:value]
+                } else {
+                    msg_send![class!(NSURL), fileURLWithPath:value]
+                };
+                if url != nil {
+                    let _: () = msg_send![urls, addObject:url];
+                }
+            }
+            let success: bool = msg_send![pb, writeObjects:urls];
+            if success {
+                written += 1;
+            }
+            continue;
+        }
         let bytes = match &rep.payload {
             CapturedPayload::Text(value) => value.as_bytes(),
             CapturedPayload::Binary(value) => value.as_slice(),
-            CapturedPayload::Files(files) => {
-                files.first().map(String::as_bytes).unwrap_or_default()
-            }
+            CapturedPayload::Files(_) => unreachable!(),
         };
         let data: id = msg_send![class!(NSData),dataWithBytes:bytes.as_ptr() length:bytes.len()];
         let success: bool = msg_send![pb,setData:data forType:ty];
@@ -391,6 +480,37 @@ unsafe fn capture_macos_formats(reps: &mut Vec<CapturedRepresentation>) -> Resul
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
     let pb: id = msg_send![class!(NSPasteboard), generalPasteboard];
+    let url_classes: id = msg_send![class!(NSArray), arrayWithObject:class!(NSURL)];
+    let urls: id = msg_send![pb, readObjectsForClasses:url_classes options:nil];
+    if urls != nil {
+        let count: usize = msg_send![urls, count];
+        let mut files = Vec::with_capacity(count);
+        for index in 0..count {
+            let url: id = msg_send![urls, objectAtIndex:index];
+            let is_file: bool = msg_send![url, isFileURL];
+            if !is_file {
+                continue;
+            }
+            let path: id = msg_send![url, path];
+            if path == nil {
+                continue;
+            }
+            let ptr: *const std::ffi::c_char = msg_send![path, UTF8String];
+            if !ptr.is_null() {
+                files.push(std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned());
+            }
+        }
+        if !files.is_empty() {
+            reps.push(CapturedRepresentation {
+                format_key: "macos:public.file-url".into(),
+                canonical_mime_type: None,
+                native_type: Some("public.file-url".into()),
+                platform: "macos".into(),
+                capture_priority: 10,
+                payload: CapturedPayload::Files(files),
+            });
+        }
+    }
     let types: id = msg_send![pb, types];
     if types == nil {
         return Ok(());
@@ -924,7 +1044,7 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
         if !files.is_empty() {
             reps.push(CapturedRepresentation {
                 format_key: "windows:CF_HDROP".into(),
-                canonical_mime_type: Some("text/uri-list".into()),
+                canonical_mime_type: None,
                 native_type: Some("CF_HDROP".into()),
                 platform: "windows".into(),
                 capture_priority: 5,
@@ -946,11 +1066,7 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
         let name = String::from_utf16_lossy(&name_buf[..len as usize]);
         let supported_name = matches!(
             name.as_str(),
-            "HTML Format"
-                | "Rich Text Format"
-                | "PNG"
-                | "Portable Document Format"
-                | "image/svg+xml"
+            "HTML Format" | "Rich Text Format" | "Portable Document Format" | "image/svg+xml"
         ) || {
             let value = name.to_ascii_lowercase();
             value.contains("office")
@@ -988,9 +1104,7 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
                 CapturedPayload::Text(String::from_utf8_lossy(trimmed).into_owned()),
             )
         } else {
-            let mime = if lower == "png" {
-                Some("image/png".into())
-            } else if lower.contains("svg") {
+            let mime = if lower.contains("svg") {
                 Some("image/svg+xml".into())
             } else if lower.contains("pdf") {
                 Some("application/pdf".into())
@@ -1017,17 +1131,30 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
 #[cfg(target_os = "windows")]
 fn parse_windows_html(bytes: &[u8]) -> String {
     let raw = String::from_utf8_lossy(bytes);
-    let mut start = 0;
-    let mut end = raw.len();
+    let mut start_html = None;
+    let mut end_html = None;
+    let mut start_fragment = None;
+    let mut end_fragment = None;
     for line in raw.lines().take(15) {
         if let Some(v) = line.strip_prefix("StartHTML:") {
-            start = v.trim().parse().unwrap_or(0)
+            start_html = v.trim().parse().ok()
         }
         if let Some(v) = line.strip_prefix("EndHTML:") {
-            end = v.trim().parse().unwrap_or(raw.len())
+            end_html = v.trim().parse().ok()
+        }
+        if let Some(v) = line.strip_prefix("StartFragment:") {
+            start_fragment = v.trim().parse().ok()
+        }
+        if let Some(v) = line.strip_prefix("EndFragment:") {
+            end_fragment = v.trim().parse().ok()
         }
     }
-    raw.get(start..end).unwrap_or(&raw).to_string()
+    start_fragment
+        .zip(end_fragment)
+        .or_else(|| start_html.zip(end_html))
+        .and_then(|(start, end)| raw.get(start..end))
+        .unwrap_or(&raw)
+        .to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -1052,8 +1179,7 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
             CapturedPayload::Text(value)
                 if rep.canonical_mime_type.as_deref() == Some("text/plain") =>
             {
-                let mut bytes: Vec<u8> = value.encode_utf16().flat_map(u16::to_le_bytes).collect();
-                bytes.extend_from_slice(&[0, 0]);
+                let bytes = windows_unicode_text_bytes(value);
                 if set_windows_format(13, &bytes) {
                     written += 1
                 }
@@ -1063,7 +1189,7 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
             {
                 let wrapped = windows_html_wrapper(value);
                 let format = register_windows_format("HTML Format");
-                if set_windows_format(format, wrapped.as_bytes()) {
+                if set_windows_format(format, &windows_registered_text_bytes(&wrapped)) {
                     written += 1
                 }
             }
@@ -1071,21 +1197,12 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                 if rep.canonical_mime_type.as_deref() == Some("text/rtf") =>
             {
                 let format = register_windows_format("Rich Text Format");
-                if set_windows_format(format, value.as_bytes()) {
+                if set_windows_format(format, &windows_registered_text_bytes(value)) {
                     written += 1
                 }
             }
             CapturedPayload::Files(files) => {
-                let mut bytes = vec![0u8; 20];
-                bytes[0..4].copy_from_slice(&20u32.to_le_bytes());
-                bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
-                for file in files {
-                    for unit in file.encode_utf16() {
-                        bytes.extend_from_slice(&unit.to_le_bytes())
-                    }
-                    bytes.extend_from_slice(&[0, 0]);
-                }
-                bytes.extend_from_slice(&[0, 0]);
+                let bytes = windows_hdrop_bytes(files);
                 if set_windows_format(15, &bytes) {
                     written += 1
                 }
@@ -1115,6 +1232,34 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
         bail!("no supported representation remained for reconstruction")
     }
     Ok(())
+}
+#[cfg(target_os = "windows")]
+fn windows_unicode_text_bytes(value: &str) -> Vec<u8> {
+    value
+        .encode_utf16()
+        .chain(Some(0))
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+#[cfg(target_os = "windows")]
+fn windows_registered_text_bytes(value: &str) -> Vec<u8> {
+    let mut bytes = value.as_bytes().to_vec();
+    bytes.push(0);
+    bytes
+}
+#[cfg(target_os = "windows")]
+fn windows_hdrop_bytes(files: &[String]) -> Vec<u8> {
+    let mut bytes = vec![0u8; 20];
+    bytes[0..4].copy_from_slice(&20u32.to_le_bytes());
+    bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
+    for file in files {
+        for unit in file.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes())
+        }
+        bytes.extend_from_slice(&[0, 0]);
+    }
+    bytes.extend_from_slice(&[0, 0]);
+    bytes
 }
 #[cfg(target_os = "windows")]
 unsafe fn register_windows_format(name: &str) -> u32 {
@@ -1239,10 +1384,59 @@ mod tests {
         };
         assert!(!is_self_write_snapshot(&changed));
     }
+    #[test]
+    fn plain_text_identity_matches_platform_matrix() {
+        let (format_key, native_type) = plain_text_identity();
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                (format_key, native_type),
+                ("windows:CF_UNICODETEXT", "CF_UNICODETEXT")
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                (format_key, native_type),
+                ("macos:public.utf8-plain-text", "public.utf8-plain-text")
+            );
+        } else {
+            assert_eq!(
+                (format_key, native_type),
+                ("linux_x11:UTF8_STRING", "UTF8_STRING")
+            );
+        }
+    }
+    #[test]
+    fn duplicate_native_formats_keep_the_highest_capture_priority() {
+        let mut representations = vec![
+            CapturedRepresentation {
+                format_key: "macos:public.utf8-plain-text".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("public.utf8-plain-text".into()),
+                platform: "macos".into(),
+                capture_priority: 100,
+                payload: CapturedPayload::Text("generic".into()),
+            },
+            CapturedRepresentation {
+                format_key: "macos:public.utf8-plain-text".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("public.utf8-plain-text".into()),
+                platform: "macos".into(),
+                capture_priority: 20,
+                payload: CapturedPayload::Text("native".into()),
+            },
+        ];
+        deduplicate_representation_formats(&mut representations);
+        assert_eq!(representations.len(), 1);
+        assert_eq!(representations[0].capture_priority, 20);
+        assert!(matches!(
+            &representations[0].payload,
+            CapturedPayload::Text(value) if value == "native"
+        ));
+    }
     #[cfg(target_os = "windows")]
     #[test]
     fn html_wrapper_offsets_select_the_fragment() {
-        let wrapped = windows_html_wrapper("<b>hello</b>");
+        let fragment = "<b>hello 雪</b>";
+        let wrapped = windows_html_wrapper(fragment);
         let bytes = wrapped.as_bytes();
         let field = |name: &str| {
             wrapped
@@ -1254,9 +1448,66 @@ mod tests {
         };
         let start = field("StartFragment:");
         let end = field("EndFragment:");
+        assert_eq!(std::str::from_utf8(&bytes[start..end]).unwrap(), fragment);
+        assert_eq!(parse_windows_html(bytes), fragment);
+        assert_eq!(parse_windows_html(fragment.as_bytes()), fragment);
+        let terminated = windows_registered_text_bytes(&wrapped);
+        assert_eq!(terminated.last(), Some(&0));
         assert_eq!(
-            std::str::from_utf8(&bytes[start..end]).unwrap(),
-            "<b>hello</b>"
+            parse_windows_html(&terminated[..terminated.len() - 1]),
+            fragment
+        );
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_text_and_file_list_codecs_preserve_unicode_and_order() {
+        let text = windows_unicode_text_bytes("hello 雪");
+        let units: Vec<u16> = text
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(
+            String::from_utf16(&units[..units.len() - 1]).unwrap(),
+            "hello 雪"
+        );
+        assert_eq!(units.last(), Some(&0));
+
+        let files = vec![
+            r"C:\first\雪.txt".to_string(),
+            r"D:\second\report.rtf".to_string(),
+        ];
+        let encoded = windows_hdrop_bytes(&files);
+        assert_eq!(u32::from_le_bytes(encoded[0..4].try_into().unwrap()), 20);
+        assert_eq!(u32::from_le_bytes(encoded[16..20].try_into().unwrap()), 1);
+        let units: Vec<u16> = encoded[20..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        let decoded: Vec<String> = units
+            .split(|unit| *unit == 0)
+            .take_while(|value| !value.is_empty())
+            .map(|value| String::from_utf16(value).unwrap())
+            .collect();
+        assert_eq!(decoded, files);
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn normalized_windows_images_keep_observed_identity_without_guessing() {
+        assert_eq!(
+            windows_normalized_image_identity_for(true, true, true),
+            ("windows:PNG".into(), Some("PNG".into()))
+        );
+        assert_eq!(
+            windows_normalized_image_identity_for(false, true, true),
+            ("windows:CF_DIBV5".into(), Some("CF_DIBV5".into()))
+        );
+        assert_eq!(
+            windows_normalized_image_identity_for(false, false, true),
+            ("windows:CF_DIB".into(), Some("CF_DIB".into()))
+        );
+        assert_eq!(
+            windows_normalized_image_identity_for(false, false, false),
+            ("windows:normalized:image/png".into(), None)
         );
     }
     #[cfg(target_os = "windows")]

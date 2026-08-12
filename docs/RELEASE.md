@@ -48,6 +48,27 @@ The revision must also pass command-registration drift, schema/reset,
 managed-file recovery, render-model, artifact/OCR, extension-sandbox, and output
 policy tests.
 
+## Current M1 automated evidence
+
+The repository includes an executable capture → SQLite/managed files → process
+restart → reconstruction harness. It currently proves:
+
+- ordered Windows `CF_UNICODETEXT`, HTML Format, Rich Text Format, and
+  `CF_HDROP` representations survive restart with their contract identities;
+- PNG, PDF, SVG, and supported opaque Office/native bytes survive managed-file
+  storage and restart byte for byte;
+- CF_HTML fragment offsets, UTF-16 text, registered-text termination, and
+  ordered Unicode `CF_HDROP` encoding are correct;
+- Original and Plain Text output do not change when renderer preferences do;
+- reconstructed self-writes are suppressed only when token and fingerprint
+  both match; and
+- normalized Windows images retain an observed PNG/`CF_DIBV5`/`CF_DIB`
+  identity, while an unavailable identity is not guessed.
+
+This evidence does not replace the installed native sequence below. A Windows
+development host cannot certify macOS pasteboard APIs, Linux/X11 ownership,
+real target focus/paste behavior, permissions, packaging, or signing.
+
 ## Shared native clipboard sequence
 
 Run this sequence for every supported format on every advertised platform:

@@ -24,18 +24,19 @@ policies already defined by the architecture.
 
 ## Remaining V1 → V2 gap ledger
 
-This ledger was reconciled against source, tests, and the former parity/gap
-documents at commit `f941d4e` (`feat: add structured render model
-presentation`, 2026-08-12). It lists only unresolved differences; completed
-parity belongs in Git history rather than the active roadmap.
+This ledger is reconciled against the source and tests in the same revision.
+The earlier `f941d4e` presentation-boundary audit remains represented, and the
+newer native-fidelity work is reflected below. It lists only unresolved
+differences; completed parity belongs in Git history rather than the active
+roadmap.
 
-| V1 capability or product expectation     | V2 baseline at `f941d4e`                                                                                                                                                    | Remaining gap                                                                                                                                     | Owner |
+| V1 capability or product expectation     | Current V2 baseline                                                                                                                                                         | Remaining gap                                                                                                                                     | Owner |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | Desktop shell and keyboard interaction   | Shell, history interaction, tray/window commands, shortcuts, deep links, autostart, updater, OAuth callback, and Windows controls are wired and covered by automated tests. | Installed visual, focus, IME, accessibility, lifecycle, and plugin validation on every platform.                                                  | M1/M5 |
-| Clipboard monitoring and preservation    | Multi-representation capture, exclusions, limits, deduplication, retention, managed files, and self-write suppression exist.                                                | Native fixtures must prove coherent capture, restart persistence, ordering, and exact reconstruction.                                             | M1    |
-| Original and Plain Text output           | Output policies are explicit and independent of renderer selection.                                                                                                         | Prove native bytes/types and target-application behavior after restart with every active view.                                                    | M1    |
+| Clipboard monitoring and preservation    | Multi-representation capture, exclusions, limits, deduplication, retention, managed files, self-write suppression, and restart fidelity fixtures exist.                      | Installed native fixtures must prove coherent platform capture and exact reconstruction.                                                          | M1    |
+| Original and Plain Text output           | Output policies are explicit, renderer-independent, and covered through repository restart.                                                                                 | Prove native clipboard types and target-application behavior in installed builds.                                                                 | M1    |
 | Quick paste                              | Windows, macOS, and Linux/X11 paths exist.                                                                                                                                  | Real target focus/paste tests and macOS Accessibility diagnosis/recovery are missing.                                                             | M1    |
-| Office/native and file-list handling     | Exact identities, useful Office alternates, and ordered path/name references reach typed presentation.                                                                      | Prove supported wrapper regeneration, native writeback, ordered file capture/reconstruction, and restart fidelity.                                | M1    |
+| Office/native and file-list handling     | Exact identities, useful Office alternates, ordered references, Windows codecs, and managed-file restart fidelity are covered automatically.                                | Prove platform wrapper regeneration, native writeback, and ordered file behavior in installed builds.                                             | M1    |
 | Desktop previews and specialized actions | Every host `RenderModel` renders directly through the typed presentation boundary.                                                                                          | Installed visual/accessibility smoke and remaining transform-oriented CSV/code actions.                                                           | M1/M3 |
 | OCR                                      | Typed lifecycle/retry UI exists; macOS and Linux artifact paths exist; unavailable runtimes report unsupported.                                                             | Validate native runtimes, document Linux dependency recovery, and implement Windows OCR or exclude it from claims.                                | M2    |
 | Semantic search                          | FTS, Ollama spaces/jobs, hybrid scoring, status, and fallback exist.                                                                                                        | Complete configuration/reindex/recovery UI and decide whether semantic-only recall beyond FTS candidates is required.                             | M2    |
@@ -80,17 +81,13 @@ parity belongs in Git history rather than the active roadmap.
 Prove that canonical representations survive the complete native lifecycle on
 Windows, macOS, and Linux/X11.
 
-### Work
+### Remaining work
 
-- Build executable fixtures from `platform-format-matrix.json` for text, HTML,
+- Run the native fixture sequence in [RELEASE.md](RELEASE.md) for text, HTML,
   RTF, raster images, PDF, SVG, ordered file lists, Office/native formats, and
-  unsupported inputs.
-- Test capture → managed files/SQLite → process restart → reconstruction for
-  every supported representation, including required byte-exact cases.
-- Verify platform wrapper regeneration and exact native identifier writeback.
-- Prove ordered multi-file capture and reconstruction, especially macOS file
-  URLs and Windows `CF_HDROP`.
-- Test Original and Plain Text copy with every alternate renderer selected.
+  unsupported inputs on every advertised platform.
+- Verify platform wrapper regeneration and exact native identifier writeback
+  in installed builds, including macOS ordered file URLs.
 - Validate focus restoration, synthetic paste, permission failures, self-write
   suppression, and recoverable diagnostics in real target applications.
 - Add macOS Accessibility diagnosis and recovery for quick paste.
