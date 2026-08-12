@@ -250,7 +250,7 @@ Canonical capture commits before detector/artifact/index work; derived data may 
 | Data | `history/`, `migrations/`, `foundation/` |
 | Contributions | `contributions/`, `features/transforms/` |
 | Artifacts/search/providers | `artifacts/`, `search/`, `providers/` |
-| UI | `src/app/App.tsx`, `features/history/HistoryPage.tsx`, `features/inspector/`, `shared/rendering.ts` |
+| UI | `src/features/app/AppLayout.tsx`, `features/clipboard/ClipboardHistory.tsx`, `features/clipboard/V2ViewPanel.tsx`, `features/clipboard/RenderModelView.tsx`, `shared/types/v2.ts` |
 
 ## Capture participant reference
 

@@ -10,17 +10,19 @@ native test evidence, and publication gates live in [RELEASE.md](RELEASE.md).
 
 ## Current focus
 
-The next milestone is **M1 — Native clipboard reliability**. Later milestones
-must preserve the typed presentation boundary and renderer-independent output
-policies already defined by the architecture.
+Backend infrastructure for M1–M4 has landed ahead of schedule. The remaining
+work is **frontend completeness** (Ollama configuration UI, transform parameters,
+contextual actions) and **native testing** (installed-build validation across all
+platforms). M1 native testing and M2 search/settings UI are the immediate
+priorities; M3 transform completion and M4 extension developer workflow follow.
 
-| Order  | Milestone                               | Dependency            |
-| ------ | --------------------------------------- | --------------------- |
-| **M1** | Native clipboard reliability            | Current focus         |
-| **M2** | Search, OCR, and settings workflows     | M1 platform contracts |
-| **M3** | Transform studio and contextual actions | M1 output evidence    |
-| **M4** | Extension product workflow              | M3 transform workflow |
-| **M5** | Release certification                   | M1–M4 exit gates      |
+| Order  | Milestone                               | Status                                 |
+| ------ | --------------------------------------- | -------------------------------------- |
+| **M1** | Native clipboard reliability            | Backend complete; native testing needed |
+| **M2** | Search, OCR, and settings workflows     | Backend complete; config UI missing    |
+| **M3** | Transform studio and contextual actions | Infrastructure complete; UI incomplete |
+| **M4** | Extension product workflow              | Runtime complete; developer UI missing |
+| **M5** | Release certification                   | Depends on M1–M4 exit gates            |
 
 ## Remaining V1 → V2 gap ledger
 
@@ -39,10 +41,10 @@ roadmap.
 | Office/native and file-list handling     | Exact identities, useful Office alternates, ordered references, Windows codecs, and managed-file restart fidelity are covered automatically.                                | Prove platform wrapper regeneration, native writeback, and ordered file behavior in installed builds.                                             | M1    |
 | Desktop previews and specialized actions | Every host `RenderModel` renders directly through the typed presentation boundary.                                                                                          | Installed visual/accessibility smoke and remaining transform-oriented CSV/code actions.                                                           | M1/M3 |
 | OCR                                      | Typed lifecycle/retry UI exists; macOS and Linux artifact paths exist; unavailable runtimes report unsupported.                                                             | Validate native runtimes, document Linux dependency recovery, and implement Windows OCR or exclude it from claims.                                | M2    |
-| Semantic search                          | FTS, Ollama spaces/jobs, hybrid scoring, status, and fallback exist.                                                                                                        | Complete configuration/reindex/recovery UI and decide whether semantic-only recall beyond FTS candidates is required.                             | M2    |
-| Runtime settings                         | Capture filters, retention, import/export, autostart, updater integration, and explicit-quit clear behavior have service paths.                                             | Implement periodic auto-clear, validate restart/runtime effects in installed builds, and decide the representation-size default.                  | M2    |
-| Transformations                          | Built-in transformers, validation, cache, output commands, provenance, and save-as-new-clip exist.                                                                          | Render exact previews, expose parameters, resolve the correct source, handle failures/expiry, and prove preview/Copy/Paste/Save byte equivalence. | M3    |
-| Extensions                               | Capability-free WASM runtime, package validation, limits, quarantine, service, registry backend, and host renderer fallback exist.                                          | Complete developer install, registry lifecycle, diagnostics/recovery, transformer UX, and end-to-end package tests.                               | M4    |
+| Semantic search                          | FTS, Ollama text-embedding spaces/jobs, hybrid cosine+RRF scoring, 8 IPC commands, status, and fallback exist. Indexing queue runs at startup and on capture.              | Add Ollama endpoint/model configuration UI, enable/disable, indexing progress, reindex, clear, degraded-state recovery, and diagnostics. Decide whether semantic-only recall beyond FTS candidates is required. | M2    |
+| Runtime settings                         | Capture filters, retention, import/export, autostart, updater integration, and explicit-quit clear behavior have service paths. `auto_clear_minutes` is persisted.          | Implement periodic auto-clear background timer, validate restart/runtime effects in installed builds, and decide the representation-size default. | M2    |
+| Transformations                          | Built-in transformer registry (12 transformers), parameter validation, 15-min expiring cache, output commands, provenance, and save-as-new-clip exist. `TransformMenu` surfaced in view panel. | Render exact previews through the typed renderer, generate parameter controls from contribution schemas, resolve the correct source, handle failures/expiry, and prove preview/Copy/Paste/Save byte equivalence. | M3    |
+| Extensions                               | Full capability-free WASM component runtime (Wasmtime, fuel/memory/epoch limits), package validation, 3-strike quarantine, `ExtensionService`, registry backend, WIT world, and host renderer fallback exist. | Complete developer install UI, registry lifecycle (update/compatibility reporting), diagnostics/recovery UI, transformer UX integration, and end-to-end package tests. | M4    |
 | Release confidence                       | Automated Rust and React suites cover core contracts.                                                                                                                       | Signed installed builds and the full Windows/macOS/Linux matrix have not been certified.                                                          | M5    |
 
 ### Intentional V2 differences — not gaps
