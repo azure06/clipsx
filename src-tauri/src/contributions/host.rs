@@ -168,8 +168,12 @@ impl RendererContribution for HtmlRenderer {
         renderer_descriptor("builtin.html", "HTML", 100, true)
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        // Clipboard HTML from apps like VSCode uses <div>/<span style="..."> for syntax
+        // highlighting. Sanitisation strips those tags entirely, leaving unstyled plain text.
+        // The iframe renders with sandbox="allow-same-origin" (no allow-scripts), so no JS
+        // can execute — it is safe to pass the raw HTML here.
         Ok(RenderModel::Html {
-            sanitized_html: sanitize_html(r.text_value.as_deref().context("HTML unavailable")?),
+            sanitized_html: r.text_value.clone().context("HTML unavailable")?,
         })
     }
 }
