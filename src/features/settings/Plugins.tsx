@@ -251,10 +251,14 @@ export const Plugins = () => {
             </span>
           </div>
           <p className="mt-2 text-[10px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            Each time you copy something, <strong className="text-gray-700 dark:text-gray-300">Detectors</strong> scan it and
+            Each time you copy something,{' '}
+            <strong className="text-gray-700 dark:text-gray-300">Detectors</strong> scan it and
             attach typed tags called <em>facets</em> (URL, email, color, secret…).{' '}
-            <strong className="text-gray-700 dark:text-gray-300">Renderers</strong> turn those facets into rich previews.{' '}
-            <strong className="text-gray-700 dark:text-gray-300">Transformers</strong> let you convert content on-demand — JSON↔CSV, Base64, curl→fetch, and more. Extensions can add new contributions of any type.
+            <strong className="text-gray-700 dark:text-gray-300">Renderers</strong> turn those
+            facets into rich previews.{' '}
+            <strong className="text-gray-700 dark:text-gray-300">Transformers</strong> let you
+            convert content on-demand — JSON↔CSV, Base64, curl→fetch, and more. Extensions can add
+            new contributions of any type.
           </p>
         </div>
 
@@ -441,9 +445,7 @@ export const Plugins = () => {
                           {c}
                         </span>
                       ))}
-                      {item.description && (
-                        <span className="truncate">{item.description}</span>
-                      )}
+                      {item.description && <span className="truncate">{item.description}</span>}
                     </div>
                   </div>
                   <Button
@@ -483,7 +485,8 @@ export const Plugins = () => {
 
         <div className="flex items-center gap-2 text-[10px] text-gray-500">
           <Box className="h-3 w-3 shrink-0" />
-          Core contributions are built-in app code. Extensions run isolated in a WASM sandbox with no filesystem or network access.
+          Core contributions are built-in app code. Extensions run isolated in a WASM sandbox with
+          no filesystem or network access.
         </div>
       </div>
     </div>

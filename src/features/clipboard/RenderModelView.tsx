@@ -238,7 +238,10 @@ const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) =
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-white/5">
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex} className="transition-colors hover:bg-slate-50 dark:hover:bg-white/5">
+            <tr
+              key={rowIndex}
+              className="transition-colors hover:bg-slate-50 dark:hover:bg-white/5"
+            >
               {columns.map((_, columnIndex) => (
                 <td className="px-3 py-2 text-gray-700 dark:text-gray-300" key={columnIndex}>
                   {row[columnIndex] ?? ''}
@@ -858,7 +861,9 @@ const MarkdownView = ({ markdown }: { markdown: string }) => {
         </h2>
       ),
       h3: ({ children }: ComponentPropsWithoutRef<'h3'>) => (
-        <h3 className="mt-4 text-base font-semibold text-gray-900 dark:text-gray-100">{children}</h3>
+        <h3 className="mt-4 text-base font-semibold text-gray-900 dark:text-gray-100">
+          {children}
+        </h3>
       ),
       p: ({ children }: ComponentPropsWithoutRef<'p'>) => (
         <p className="text-sm leading-7 text-gray-800 dark:text-gray-200">{children}</p>
