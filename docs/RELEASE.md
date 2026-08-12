@@ -1,28 +1,30 @@
-# Release readiness
+# Release and platform validation
 
-**Current state:** blocked until recovery milestone R7. Backend availability is
-not sufficient for release; the reachable desktop workflows in
-[UI_PARITY.md](UI_PARITY.md) and the native evidence in
-[PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) are the release gates.
+This document is the release gate for ClipsX. A release is ready only when the
+automated preflight, native clipboard matrix, installed-desktop workflows, and
+packaging requirements below pass for every advertised platform.
+
+The normative capture and reconstruction contract is
+[platform-format-matrix.json](platform-format-matrix.json). Update that file
+only when an adapter's supported-format contract changes.
 
 ## Release scope
 
-- Build Windows, macOS, and Linux artifacts from the same reviewed revision.
-- Preserve the V2 fresh-schema/reset policy. Do not add V1 migrations or
-  compatibility reads for release convenience.
-- Ship only platform capabilities that meet their documented validation gate.
-  In particular, Windows OCR is currently unavailable and must be implemented
-  or explicitly excluded from the advertised baseline.
-- Keep visual search, hosted/OpenAI-compatible providers, generation, Vault,
-  entitlements, and remote sync out of the release claim.
+- Build Windows, macOS, and Linux/X11 artifacts from one reviewed revision.
+- Preserve the fresh V2 schema and explicit reset flow; do not add V1 migrations
+  or compatibility reads for release convenience.
+- Advertise only capabilities demonstrated in installed builds.
+- Treat Windows OCR as unsupported until it is implemented and validated.
+- Do not imply Wayland, hosted providers, visual search, generation, Vault, or
+  remote sync support unless a later roadmap milestone explicitly delivers it.
 
 ## Required configuration and secrets
 
+- `VITE_SUPABASE_URL`
 - `TAURI_UPDATER_PUBLIC_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-- Any release-time CSP/updater endpoint values required by the generated Tauri
-  configuration
+- Release-time CSP and updater endpoint values required by Tauri configuration
 
 Secrets belong in CI or the platform signing environment. Never commit them,
 print them in logs, or store them in application SQLite.
@@ -42,56 +44,134 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
 ```
 
-The release revision must also pass the frontend-invoke/Rust-handler contract
-test, schema/reset tests, managed-file recovery tests, and representative
-render-model/output fixtures.
+The revision must also pass command-registration drift, schema/reset,
+managed-file recovery, render-model, artifact/OCR, extension-sandbox, and output
+policy tests.
 
-## Platform artifacts and signing
+## Shared native clipboard sequence
 
-- **Windows:** build and sign the installer/executable with the approved
-  certificate. Verify SmartScreen metadata, installer upgrade/uninstall, tray,
-  global shortcut, decorum controls, autostart, deep links, and updater.
+Run this sequence for every supported format on every advertised platform:
+
+1. Place a fixture on the native clipboard with all expected alternates.
+2. Capture one coherent snapshot and inspect representation identity, order,
+   storage kind, byte contract, and source application.
+3. Restart ClipsX and reload the clip from SQLite and managed files.
+4. Reconstruct with Original and inspect native clipboard types and bytes or
+   ordered references.
+5. Exercise Plain Text independently of the selected renderer.
+6. Verify self-write suppression prevents an accidental duplicate.
+7. Paste into a real target application and verify focus restoration,
+   permissions, diagnostics, and content fidelity.
+
+Unsupported fixtures must follow the matrix's declared skip/reject behavior.
+Tests must never infer native identifiers.
+
+## Windows matrix
+
+Required fixtures:
+
+- `CF_UNICODETEXT`
+- HTML Format wrapper and fragment offsets
+- Rich Text Format
+- ordered `CF_HDROP`
+- PNG and normalized `CF_DIB`
+- registered PDF and SVG
+- supported Office/native registered formats with useful alternates
+
+Installed-build checks:
+
+- exact registered-format writeback and wrapper regeneration;
+- target focus and synthetic paste in representative applications;
+- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
+  updater, deep links, OAuth callback, and file dialogs;
+- minimize, maximize, close, and snap behavior for the frameless window;
+- explicit unsupported OCR state unless Windows OCR has been delivered.
+
+## macOS matrix
+
+Required fixtures:
+
+- `public.utf8-plain-text`
+- `public.html`
+- `public.rtf`
+- ordered `public.file-url`
+- PNG, JPEG, and TIFF
+- PDF and SVG
+- supported Microsoft/native UTIs with useful alternates
+
+Installed-build checks:
+
+- ordered multi-file capture and reconstruction;
+- writeback only for explicitly supported captured UTIs;
+- frontmost-application restoration and Accessibility permission
+  diagnosis/recovery;
+- native OCR lifecycle and retry;
+- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
+  updater, installed deep links, OAuth callback, and file dialogs.
+
+## Linux/X11 matrix
+
+Required fixtures:
+
+- `UTF8_STRING`
+- `text/html`
+- `text/rtf` and `application/rtf`
+- `image/png`
+- `text/uri-list`
+
+Installed-build checks:
+
+- reconstructed X11 selection ownership for the consumer read window;
+- XTest quick paste and focus restoration on supported desktop environments;
+- OCR runtime detection and recovery when Tesseract is absent;
+- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
+  updater, deep links, and file dialogs in published `.deb` and AppImage builds.
+
+Wayland is not covered by this matrix.
+
+## Shared desktop and recovery checks
+
+- First launch and incompatible-schema reset.
+- Incorrect reset confirmation changes nothing.
+- Partial reset failure remains visible and does not restart automatically.
+- Missing updater configuration produces an unavailable state, not a startup
+  failure.
+- Invalid OAuth callbacks are rejected; the development loopback listener is
+  path-bounded and expires.
+- Capture exclusions, deduplication, retention, and self-write suppression.
+- Original and Plain Text Copy/Paste with alternate renderers selected.
+- Search configuration and degraded-state recovery.
+- OCR disabled, queued, running, empty-success, success, unsupported, failure,
+  and retry states.
+- Settings restart behavior, import/export, autostart, periodic auto-clear, and
+  explicit-quit clear-on-exit.
+- Extension install/use/failure/quarantine/recovery/uninstall.
+- A renderer, transformer, provider, extension, or OCR failure leaves canonical
+  representations usable.
+- Accessibility and keyboard-only operation for history, previews, actions,
+  settings, transforms, and extensions.
+
+## Packaging and signing
+
+- **Windows:** sign installers and executables with the approved certificate;
+  verify install, upgrade, uninstall, metadata, and updater behavior.
 - **macOS:** sign with the release Developer ID, notarize, staple, and verify on
-  a clean machine. Ad-hoc signing is not a public-release gate. Verify
-  Accessibility guidance and paste recovery.
-- **Linux:** verify the supported X11 packages and desktop integration for each
-  published format. Wayland support must not be implied unless separately
-  implemented and tested.
+  a clean machine. Ad-hoc signing is not a release gate.
+- **Linux:** verify dependencies and desktop integration for each published
+  package format.
 
-Record artifact hashes, signing/notarization results, and the exact source
-revision with the release.
+Record artifact hashes, signing/notarization results, source revision, OS
+version, desktop/session type, package version, fixture, expected result, actual
+result, and retained diagnostics.
 
-## Installed-build acceptance
+## Publication sign-off
 
-Run the shared capture → persistence → restart → reconstruction fixtures from
-[PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md), plus:
-
-- first launch and incompatible-schema reset;
-- second-instance activation and installed deep-link routing;
-- shortcut show/hide, close-to-tray, tray reopen, explicit quit, and
-  `clear_on_exit`;
-- clipboard capture exclusions, deduplication, self-write suppression, and
-  original/plain/transformed Copy and Paste;
-- representative text, HTML, RTF, image, file-list, Office/native, and
-  unsupported-format behavior;
-- search, settings import/export, autostart, account callback, extension
-  lifecycle, and failure/recovery states;
-- updater unavailable/no-update/update-available/install/restart paths.
-
-Each result must name the OS version, desktop/session type, package version,
-fixture, expected behavior, actual behavior, and retained diagnostic evidence.
-
-## Documentation sign-off
-
-Before publishing:
-
-- update [ROADMAP.md](ROADMAP.md) recovery statuses from evidence;
-- update [UI_PARITY.md](UI_PARITY.md) row statuses and blockers;
-- update [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) with the tested matrix;
-- update [platform-format-matrix.json](platform-format-matrix.json) only when
-  the implemented adapter contract changes;
-- make release notes describe verified behavior, known limitations, data reset
+- Every milestone required by [ROADMAP.md](ROADMAP.md) has met its exit gate.
+- Automated preflight ran against the exact release revision.
+- Installed artifacts passed the applicable matrices above.
+- Release notes state verified behavior, known limitations, fresh-schema/reset
   implications, and updater compatibility.
-
-A release is ready only when R7 is verified and no required row remains
-`Missing`, `Partial`, or `Implemented — validation pending`.
+- Platform capability claims match `platform-format-matrix.json` and recorded
+  evidence.
+- No secrets, credentials, private clipboard contents, or sensitive logs are
+  present in the repository or release artifacts.

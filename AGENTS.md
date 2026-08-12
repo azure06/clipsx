@@ -29,11 +29,11 @@ from the in-progress source tree.
 
 ## Legacy v1
 
-[`docs/LEGACY_V1_REFERENCE.md`](docs/LEGACY_V1_REFERENCE.md) identifies the
-read-only `archive/v1-pre-m0` branch and tag. It may inform visual behavior,
-keyboard interaction, accessibility, tests, and platform format discovery;
-do not restore v1 schema, IPC payloads, semantic-model services, sparse
-metadata, or compatibility behavior.
+The [roadmap's legacy reference policy](docs/ROADMAP.md#legacy-v1-reference)
+identifies the read-only `archive/v1-pre-m0` branch and tag. It may inform
+visual behavior, keyboard interaction, accessibility, tests, and platform
+format discovery; do not restore V1 schema, IPC payloads, semantic-model
+services, sparse metadata, or compatibility behavior.
 
 ## Clipboard Fidelity
 

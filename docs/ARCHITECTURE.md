@@ -1,10 +1,12 @@
 # ClipsX Architecture
-This is the newcomer-friendly, stable architecture reference for ClipsX. It combines the primer, runtime architecture, data model, extension boundary, and search behavior; [ROADMAP.md](ROADMAP.md) separately tracks milestones, locked decisions, validation, and delivery status.
+This is the newcomer-friendly, stable architecture reference for ClipsX. It combines the primer, runtime architecture, data model, extension boundary, and search behavior; [ROADMAP.md](ROADMAP.md) separately tracks unfinished milestones and acceptance criteria.
 ## Start here: ClipsX in plain English
 
 ClipsX is a local-first programmable clipboard: `Capture -> Understand -> Render / Transform -> Copy or Paste`. A clip is one coherent clipboard snapshot, not one content type. It can preserve several raw **representations**—for example plain text, HTML, PNG, and an exact Office format—and later gain semantic **facets** such as JSON or timestamp meaning.
 
-This document defines stable boundaries, not delivery status. See [ROADMAP.md](ROADMAP.md) for recovery sequencing, [UI_PARITY.md](UI_PARITY.md) for user-facing status, and [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) for native desktop evidence.
+This document defines stable boundaries, not delivery status. See
+[ROADMAP.md](ROADMAP.md) for unfinished work and acceptance criteria, and
+[RELEASE.md](RELEASE.md) for native desktop evidence and publication gates.
 
 ## Read in this order
 
@@ -16,11 +18,11 @@ These documents separate stable behavior from delivery planning. Begin here, the
 | Canonical data, derived data, persistence | [data model](#data-model-preserve-first-derive-later) |
 | Built-ins and community extensions | [extensions](#extensions-contributions-without-privilege) |
 | FTS, embeddings, providers, limitations | [search](#search-keyword-first-semantic-when-opted-in) |
-| Decisions, recovery milestones, validation | [ROADMAP.md](ROADMAP.md) |
+| Unfinished milestones and acceptance criteria | [ROADMAP.md](ROADMAP.md) |
 
 ## Four pillars
 
-Architecture gives React and Rust distinct responsibilities. The data model preserves raw inputs and makes indexes rebuildable; extensions add understanding and views without privilege; search reads derived projections. The roadmap tells you which of those boundaries are running.
+Architecture gives React and Rust distinct responsibilities. The data model preserves raw inputs and makes indexes rebuildable; extensions add understanding and views without privilege; search reads derived projections. The roadmap tracks the remaining product work on top of those boundaries.
 
 ## Glossary
 
@@ -46,7 +48,7 @@ Architecture gives React and Rust distinct responsibilities. The data model pres
 - Platform adapters alone interpret native clipboard types; never guess UTI, OLE, or equivalent identifiers. Renderer selection is UI policy, not clip state.
 - Use the fresh domain-prefixed schema and reset flow. Do not add v1 migrations, compatibility reads/writes, or dual schemas.
 
-[platform-format-matrix.json](platform-format-matrix.json) defines supported capture/reconstruction. The read-only `archive/v1-pre-m0` branch/tag can inform visual behavior, keyboard interaction, accessibility, and platform discovery, but never v2 schema, IPC, semantic models, sparse metadata, or compatibility behavior; see [LEGACY_V1_REFERENCE.md](LEGACY_V1_REFERENCE.md).
+[platform-format-matrix.json](platform-format-matrix.json) defines supported capture/reconstruction. The read-only `archive/v1-pre-m0` branch/tag can inform visual behavior, keyboard interaction, accessibility, and platform discovery, but never V2 schema, IPC, semantic models, sparse metadata, or compatibility behavior; see the [legacy reference policy](ROADMAP.md#legacy-v1-reference).
 
 
 ---

@@ -3,11 +3,10 @@
 **Delivery status:** the package format, runtime isolation, validation,
 resource limits, quarantine, service, and registry backend are implemented.
 The end-user registry/developer installation workflow, diagnostics, recovery,
-and transformer workflow remain partial and are scheduled for recovery
-milestone R6. Extension renderer output now uses the exhaustive typed host
-presentation boundary and retains host fallback. See [ROADMAP.md](ROADMAP.md) and
-[UI_PARITY.md](UI_PARITY.md). This page defines the stable API contract; it is
-not a claim of complete product delivery.
+and transformer workflow are tracked by the extension milestone in
+[ROADMAP.md](ROADMAP.md). Extension renderer output uses the exhaustive typed
+host presentation boundary and retains host fallback. This page defines the
+stable API contract; release evidence is governed by [RELEASE.md](RELEASE.md).
 
 ClipsX extensions are checksum-pinned `.clipsx` packages containing a
 `clipsx-extension.toml` manifest and `component.wasm` WebAssembly Component.
