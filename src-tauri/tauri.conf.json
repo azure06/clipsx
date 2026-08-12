@@ -58,13 +58,13 @@
         "alwaysOnTop": false,
         "decorations": false,
         "transparent": true,
-        "shadow": false,
+        "shadow": true,
         "acceptFirstMouse": true,
         "skipTaskbar": false,
         "visible": false,
         "focus": true,
         "windowEffects": {
-          "effects": ["sidebar", "acrylic", "hudWindow"]
+          "effects": ["acrylic", "underWindowBackground"]
         }
       }
     ],

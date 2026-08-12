@@ -4,14 +4,9 @@ import { useWindowBehavior } from './useWindowBehavior'
 import { useSettingsStore } from '../../stores'
 import { DEFAULT_SETTINGS } from '../types'
 
-const { enableModernWindowStyleMock, hideMock, focusChangeHandlers } = vi.hoisted(() => ({
-  enableModernWindowStyleMock: vi.fn().mockResolvedValue(undefined),
+const { hideMock, focusChangeHandlers } = vi.hoisted(() => ({
   hideMock: vi.fn().mockResolvedValue(undefined),
   focusChangeHandlers: [] as Array<(event: { payload: boolean }) => void>,
-}))
-
-vi.mock('@cloudworxx/tauri-plugin-mac-rounded-corners', () => ({
-  enableModernWindowStyle: enableModernWindowStyleMock,
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -57,7 +52,6 @@ describe('useWindowBehavior', () => {
     render(<HookHarness />)
 
     await waitFor(() => {
-      expect(enableModernWindowStyleMock).toHaveBeenCalledTimes(1)
       expect(focusChangeHandlers).toHaveLength(1)
     })
 

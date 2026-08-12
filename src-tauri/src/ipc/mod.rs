@@ -3,6 +3,7 @@
 use crate::app::{
     host,
     state::{AppState, HostState, StartupState},
+    window_chrome,
 };
 use crate::clipboard::contract::ClipboardAdapter;
 use crate::clipboard::{capture_coherent, is_self_write_snapshot, SystemClipboardAdapter};
@@ -23,9 +24,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
 };
-
-#[cfg(target_os = "windows")]
-use tauri_plugin_decorum::WebviewWindowExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1524,6 +1522,10 @@ pub(crate) fn run() {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 
+            if let Some(window) = app.get_webview_window("main") {
+                window_chrome::configure(&window)?;
+            }
+
             let open_item = MenuItem::with_id(app, "open", "Open Clips", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -1569,11 +1571,6 @@ pub(crate) fn run() {
             app.deep_link().on_open_url(move |_| {
                 let _ = host::show_main_window(&deep_link_app);
             });
-
-            #[cfg(target_os = "windows")]
-            if let Some(window) = app.get_webview_window("main") {
-                window.create_overlay_titlebar()?;
-            }
 
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
@@ -1898,6 +1895,21 @@ mod tests {
         assert!(
             missing.is_empty(),
             "frontend invokes commands missing from generate_handler!: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn main_window_config_preserves_native_rounded_translucent_chrome() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        let window = &config["app"]["windows"][0];
+
+        assert_eq!(window["label"], "main");
+        assert_eq!(window["transparent"], true);
+        assert_eq!(window["shadow"], true);
+        assert_eq!(
+            window["windowEffects"]["effects"],
+            serde_json::json!(["acrylic", "underWindowBackground"])
         );
     }
 

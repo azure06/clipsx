@@ -1,29 +1,10 @@
 import { useEffect } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from '../../stores'
-import { enableModernWindowStyle } from '@cloudworxx/tauri-plugin-mac-rounded-corners'
 
 export const useWindowBehavior = () => {
   const settings = useSettingsStore(state => state.settings)
   const alwaysOnTop = settings?.always_on_top
-
-  // Enable rounded corners on macOS
-  useEffect(() => {
-    const setupRoundedCorners = async () => {
-      try {
-        await enableModernWindowStyle({
-          cornerRadius: 12,
-          offsetX: -6,
-          offsetY: 0,
-        })
-      } catch (error) {
-        // Plugin is macOS-only, silently fail on other platforms
-        console.debug('Rounded corners not available:', error)
-      }
-    }
-
-    void setupRoundedCorners()
-  }, [])
 
   useEffect(() => {
     // Track whether the mouse cursor is inside the window.
