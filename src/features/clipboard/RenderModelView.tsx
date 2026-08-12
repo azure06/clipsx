@@ -1,14 +1,22 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
+  Archive,
   AtSign,
+  Calculator,
   Check,
+  Clock,
+  Code2,
   Copy,
   ExternalLink,
+  File,
   FileQuestion,
   FileText,
+  Film,
   FolderOpen,
+  Image,
   ImageOff,
   KeyRound,
+  Music,
   Palette,
   Phone,
   RotateCw,
@@ -22,6 +30,52 @@ const assetUrl = (id: string) => `clipsx-asset://localhost/${id}`
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
+}
+
+// ── Color utilities ────────────────────────────────────────────────────────
+const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+  const clean = hex.replace('#', '')
+  const c = clean.length === 3
+    ? clean.split('').map(ch => ch + ch).join('')
+    : clean.slice(0, 6)
+  if (c.length !== 6) return null
+  const n = parseInt(c, 16)
+  if (isNaN(n)) return null
+  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff }
+}
+
+const rgbToHsl = (r: number, g: number, b: number): { h: number; s: number; l: number } => {
+  const rn = r / 255, gn = g / 255, bn = b / 255
+  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn)
+  const l = (max + min) / 2
+  if (max === min) return { h: 0, s: 0, l: Math.round(l * 100) }
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h = 0
+  if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
+  else if (max === gn) h = ((bn - rn) / d + 2) / 6
+  else h = ((rn - gn) / d + 4) / 6
+  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) }
+}
+
+// ── File-type icon dispatch ────────────────────────────────────────────────
+type LucideIcon = typeof File
+const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
+  { exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'], icon: Image },
+  { exts: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], icon: Film },
+  { exts: ['mp3', 'aac', 'wav', 'flac', 'm4a', 'ogg'], icon: Music },
+  { exts: ['zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar', 'tgz'], icon: Archive },
+  { exts: ['pdf'], icon: FileText },
+  { exts: ['js', 'ts', 'jsx', 'tsx', 'rs', 'py', 'go', 'java', 'c', 'cpp', 'cs', 'rb', 'php', 'swift', 'kt', 'sh', 'bash', 'zsh', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'css', 'scss'], icon: Code2 },
+  { exts: ['txt', 'md', 'rtf', 'doc', 'docx', 'odt'], icon: FileText },
+]
+
+const getFileIcon = (name: string): LucideIcon => {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  for (const { exts, icon } of FILE_ICONS) {
+    if (exts.includes(ext)) return icon
+  }
+  return File
 }
 
 const TextBlock = ({ children }: { children: string }) => (
@@ -102,36 +156,46 @@ const CodeView = ({ language, text }: { language: string | null; text: string })
 }
 
 const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) => (
-  <div className="h-full overflow-auto p-4">
-    <table className="min-w-full border-collapse text-left text-sm">
-      <thead>
-        <tr>
-          {columns.map((column, index) => (
-            <th
-              className="border border-slate-300 bg-slate-100 px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
-              key={`${index}:${column}`}
-            >
-              {column}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, rowIndex) => (
-          <tr key={rowIndex}>
-            {columns.map((_, columnIndex) => (
-              <td
-                className="border border-slate-200 px-3 py-2 align-top dark:border-slate-800"
-                key={columnIndex}
+  <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-white/10">
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
+        {rows.length} rows
+      </span>
+      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
+        {columns.length} cols
+      </span>
+    </div>
+    <div className="flex-1 overflow-auto">
+      <table className="min-w-full border-collapse text-left text-sm">
+        <thead className="sticky top-0 z-10">
+          <tr>
+            {columns.map((column, index) => (
+              <th
+                className="border border-slate-300 bg-slate-100/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-800/95"
+                key={`${index}:${column}`}
               >
-                {row[columnIndex] ?? ''}
-              </td>
+                {column}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
-    {rows.length === 0 && <p className="py-6 text-center text-sm text-gray-500">No rows</p>}
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {columns.map((_, columnIndex) => (
+                <td
+                  className="border border-slate-200 px-3 py-2 align-top dark:border-slate-800"
+                  key={columnIndex}
+                >
+                  {row[columnIndex] ?? ''}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && <p className="py-6 text-center text-sm text-gray-500">No rows</p>}
+    </div>
   </div>
 )
 
@@ -223,25 +287,29 @@ const ImageView = ({
 
 const FilesView = ({ entries }: Extract<RenderModel, { kind: 'files' }>) => (
   <ul className="space-y-2 p-4">
-    {entries.map((entry, index) => (
-      <li
-        className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700"
-        key={`${index}:${entry.path}`}
-      >
-        <FileText className="h-5 w-5 shrink-0 text-gray-400" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{entry.name}</div>
-          <div className="break-all text-xs text-gray-500">{entry.path}</div>
-        </div>
-        <button
-          aria-label={`Open ${entry.name}`}
-          className="rounded p-2 hover:bg-slate-100 dark:hover:bg-white/10"
-          onClick={() => void invoke('open_clip_file', { path: entry.path })}
+    {entries.map((entry, index) => {
+      const Icon = getFileIcon(entry.name)
+      return (
+        <li
+          className="flex items-center gap-3 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 dark:border-slate-700/60 dark:bg-slate-100/5"
+          key={`${index}:${entry.path}`}
         >
-          <FolderOpen className="h-4 w-4" />
-        </button>
-      </li>
-    ))}
+          <Icon className="h-5 w-5 shrink-0 text-gray-400" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">{entry.name}</div>
+            <div className="break-all text-xs text-gray-500">{entry.path}</div>
+          </div>
+          <button
+            aria-label={`Open ${entry.name}`}
+            title="Open in Finder"
+            className="rounded p-2 text-gray-400 hover:bg-slate-100 hover:text-gray-700 dark:hover:bg-white/10 transition-colors"
+            onClick={() => void invoke('open_clip_file', { path: entry.path })}
+          >
+            <FolderOpen className="h-4 w-4" />
+          </button>
+        </li>
+      )
+    })}
   </ul>
 )
 
@@ -328,17 +396,34 @@ const SemanticView = ({
   if (kind === 'color') {
     const hex = semanticScalar(model.payload, 'hex')
     const safeHex = hex && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex) ? hex : null
+    const rgb = safeHex ? hexToRgb(safeHex) : null
+    const hsl = rgb ? rgbToHsl(rgb.r, rgb.g, rgb.b) : null
+    const rgbStr = rgb ? `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})` : null
+    const hslStr = hsl ? `hsl(${hsl.h}°, ${hsl.s}%, ${hsl.l}%)` : null
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
-        <Palette className="h-8 w-8 text-gray-400" />
-        {safeHex && (
-          <div
-            aria-label={`Color ${safeHex}`}
-            className="h-32 w-32 rounded-2xl border shadow-inner"
-            style={{ backgroundColor: safeHex }}
-          />
+      <div className="flex h-full flex-col overflow-auto">
+        <div className="flex items-center gap-4 border-b border-slate-200/60 p-5 dark:border-white/5">
+          {safeHex ? (
+            <div
+              aria-label={`Color ${safeHex}`}
+              className="h-16 w-16 shrink-0 rounded-2xl border border-black/10 shadow-inner dark:border-white/10"
+              style={{ backgroundColor: safeHex }}
+            />
+          ) : (
+            <Palette className="h-10 w-10 text-gray-400" />
+          )}
+          <code className="text-lg font-semibold">{safeHex ?? model.text}</code>
+        </div>
+        {(safeHex || rgbStr || hslStr) && (
+          <div className="p-2">
+            <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+              Formats
+            </div>
+            {safeHex && <CopyableRow label="HEX" value={safeHex.toUpperCase()} />}
+            {rgbStr && <CopyableRow label="RGB" value={rgbStr} />}
+            {hslStr && <CopyableRow label="HSL" value={hslStr} />}
+          </div>
         )}
-        <code className="text-lg">{safeHex ?? model.text}</code>
       </div>
     )
   }
@@ -359,16 +444,32 @@ const SemanticView = ({
   }
   if (kind === 'path') {
     const path = semanticScalar(model.payload, 'path') ?? model.text
+    const separator = path.includes('/') ? '/' : '\\'
+    const parts = path.split(separator)
+    const filename = parts.at(-1) ?? ''
+    const dir = parts.length > 1 ? parts.slice(0, -1).join(separator) + separator : separator
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
-        <FolderOpen className="h-10 w-10 text-amber-500" />
-        <code className="max-w-full break-all">{path}</code>
-        <button
-          className="rounded border px-3 py-1 text-sm"
-          onClick={() => void invoke('open_detected_path', { clipId, path })}
-        >
-          Open
-        </button>
+      <div className="flex h-full flex-col overflow-auto">
+        <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
+          <FolderOpen className="h-8 w-8 shrink-0 text-amber-500" />
+          <code className="min-w-0 break-all text-sm">{path}</code>
+        </div>
+        <div className="p-2">
+          <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            Components
+          </div>
+          <CopyableRow label="Full path" value={path} />
+          <CopyableRow label="Directory" value={dir} />
+          {filename && <CopyableRow label="File name" value={filename} />}
+        </div>
+        <div className="px-3 pt-1">
+          <button
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5 transition-colors"
+            onClick={() => void invoke('open_detected_path', { clipId, path })}
+          >
+            Open in Finder
+          </button>
+        </div>
       </div>
     )
   }
@@ -400,6 +501,46 @@ const SemanticView = ({
   }
   if (kind === 'code') {
     return <CodeView language={semanticScalar(model.payload, 'language')} text={model.text} />
+  }
+  if (kind === 'math') {
+    const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+        <Calculator className="h-8 w-8 text-indigo-400" />
+        <code className="rounded-xl bg-slate-100/60 px-4 py-2 text-lg dark:bg-slate-100/10">
+          {model.text}
+        </code>
+        {result && result !== model.text && (
+          <div className="text-sm text-gray-500">
+            ={' '}
+            <code className="text-xl font-bold text-gray-800 dark:text-gray-200">{result}</code>
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (kind === 'date' || kind === 'timestamp') {
+    const raw = model.text
+    const parsed = new Date(raw)
+    const valid = !isNaN(parsed.getTime())
+    return (
+      <div className="flex h-full flex-col overflow-auto">
+        <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
+          <Clock className="h-7 w-7 shrink-0 text-yellow-500" />
+          <code className="min-w-0 break-all text-sm">{raw}</code>
+        </div>
+        {valid && (
+          <div className="p-2">
+            <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+              Formats
+            </div>
+            <CopyableRow label="Local" value={parsed.toLocaleString()} />
+            <CopyableRow label="ISO 8601" value={parsed.toISOString()} />
+            <CopyableRow label="Unix epoch" value={String(Math.floor(parsed.getTime() / 1000))} />
+          </div>
+        )}
+      </div>
+    )
   }
   const entries = Object.entries(model.payload).flatMap(([key, value]) => {
     if (value === null || ['string', 'number', 'boolean'].includes(typeof value))

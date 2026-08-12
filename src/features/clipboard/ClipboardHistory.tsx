@@ -69,7 +69,11 @@ export const ClipboardHistory = ({
     },
   })
 
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Derived index — used only for display highlighting and scroll anchoring.
+  // Computing it each render is intentional: the ID is the stable identity;
+  // the index is a display artefact that changes whenever the list reorders.
+  const selectedIndex = selectedId != null ? clips.findIndex(c => c.id === selectedId) : -1
 
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -213,16 +217,12 @@ export const ClipboardHistory = ({
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
     (text: string, clipId: string) => {
-      const index = clips.findIndex(c => c.id === clipId)
-      if (index !== -1) {
-        setSelectedIndex(index)
-      }
-
+      setSelectedId(clipId)
       if (itemActivationMode === 'single_click_copy') {
         void handleAction(text, clipId)
       }
     },
-    [clips, handleAction, itemActivationMode]
+    [handleAction, itemActivationMode]
   )
 
   const onDoubleClickHandler = useCallback(
@@ -240,14 +240,14 @@ export const ClipboardHistory = ({
     [handleExplicitCopy]
   )
 
-  // Reset selection when clips change
+  // Auto-select first clip on initial load; re-anchor if selected clip was deleted
   useEffect(() => {
-    if (clips.length > 0 && selectedIndex >= clips.length) {
-      setTimeout(() => setSelectedIndex(0), 0) // Reset if out of bounds
-    } else if (clips.length > 0 && selectedIndex === -1) {
-      setTimeout(() => setSelectedIndex(0), 0)
+    if (clips.length === 0) return
+    if (selectedId == null || !clips.some(c => c.id === selectedId)) {
+      setSelectedId(clips[0]?.id ?? null)
     }
-  }, [clips.length, selectedIndex])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clips])
 
   // Auto-scroll selected item into view
   const scrollSelectedIntoView = useCallback((index: number) => {
@@ -278,11 +278,12 @@ export const ClipboardHistory = ({
         }
       }
 
-      const boundaryIndex =
-        boundary === 'newest' ? 0 : useClipboardStore.getState().clips.length - 1
+      const boundaryClips = useClipboardStore.getState().clips
+      const boundaryIndex = boundary === 'newest' ? 0 : boundaryClips.length - 1
       if (boundaryIndex < 0) return
 
-      setSelectedIndex(boundaryIndex)
+      const boundaryClip = boundaryClips[boundaryIndex]
+      if (boundaryClip) setSelectedId(boundaryClip.id)
       requestAnimationFrame(() => scrollSelectedIntoView(boundaryIndex))
     },
     [scrollSelectedIntoView]
@@ -326,7 +327,8 @@ export const ClipboardHistory = ({
         }
       }
 
-      const selectedClip = clips[selectedIndex]
+      const currentIndex = selectedId != null ? clips.findIndex(c => c.id === selectedId) : -1
+      const selectedClip = currentIndex >= 0 ? clips[currentIndex] : null
       const selectedContent = selectedClip ? summaryToContent(selectedClip) : null
 
       // Handle primary+1 to primary+9
@@ -373,27 +375,22 @@ export const ClipboardHistory = ({
         }
         case 'ArrowUp': {
           e.preventDefault()
-          setSelectedIndex(prev => {
-            const next = Math.max(0, prev - 1)
-            scrollSelectedIntoView(next)
-            return next
-          })
+          const prevIdx = Math.max(0, currentIndex > 0 ? currentIndex - 1 : 0)
+          const prevClip = clips[prevIdx]
+          if (prevClip) { setSelectedId(prevClip.id); scrollSelectedIntoView(prevIdx) }
           break
         }
         case 'ArrowDown': {
           e.preventDefault()
-          setSelectedIndex(prev => {
-            const next = Math.min(maxIndex, prev + 1)
-            scrollSelectedIntoView(next)
-            return next
-          })
+          const nextIdx = Math.min(maxIndex, currentIndex >= 0 ? currentIndex + 1 : 0)
+          const nextClip = clips[nextIdx]
+          if (nextClip) { setSelectedId(nextClip.id); scrollSelectedIntoView(nextIdx) }
           break
         }
         case 'Enter': {
           e.preventDefault()
-          const clip = clips[selectedIndex]
-          if (clip) {
-            void handleAction(clip.safeSummary, clip.id)
+          if (selectedClip) {
+            void handleAction(selectedClip.safeSummary, selectedClip.id)
           }
           break
         }
@@ -406,11 +403,12 @@ export const ClipboardHistory = ({
             break
           }
           e.preventDefault()
-          const clip = clips[selectedIndex]
-          if (clip) {
-            void handleDelete(clip.id)
-            // Adjust index if we deleted the last item
-            setSelectedIndex(prev => Math.min(prev, maxIndex - 1))
+          if (selectedClip) {
+            void handleDelete(selectedClip.id)
+            // Move selection to the next clip (or previous if at end)
+            const afterDeleteIdx = Math.min(currentIndex, maxIndex - 1)
+            const afterDeleteClip = clips[afterDeleteIdx === currentIndex ? afterDeleteIdx + 1 : afterDeleteIdx]
+            setSelectedId(afterDeleteClip?.id ?? clips[0]?.id ?? null)
           }
           break
         }
@@ -427,7 +425,7 @@ export const ClipboardHistory = ({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
     clips,
-    selectedIndex,
+    selectedId,
     scrollSelectedIntoView,
     handleAction,
     handleDelete,
@@ -435,21 +433,10 @@ export const ClipboardHistory = ({
     selectBoundaryClip,
   ])
 
-  // ADDED: Notify parent of selection change for preview
+  // Notify parent of selection change for preview
   useEffect(() => {
-    if (onPreviewItem) {
-      if (clips.length > 0 && selectedIndex >= 0) {
-        const selectedClip = clips[selectedIndex]
-        if (selectedClip) {
-          onPreviewItem(selectedClip.id)
-        } else {
-          onPreviewItem(null) // If index is out of bounds
-        }
-      } else {
-        onPreviewItem(null)
-      }
-    }
-  }, [selectedIndex, clips, onPreviewItem])
+    onPreviewItem?.(selectedId)
+  }, [selectedId, onPreviewItem])
 
   // Infinite scroll trigger element
   const infiniteScrollTrigger = (

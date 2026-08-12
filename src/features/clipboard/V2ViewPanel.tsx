@@ -1,12 +1,25 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Database, RotateCw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import type { ClipDetail, ClipPresentation, ClipViewSet, RenderModel } from '../../shared/types/v2'
-import { TransformMenu } from './TransformMenu'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type {
+  ClipDetail,
+  ClipPresentation,
+  ClipViewDescriptor,
+  ClipViewSet,
+  RenderModel,
+} from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
+import { TransformBar } from './TransformBar'
 
 type ArtifactUpdate = { clipId: string; sourceId: string }
+
+export type ViewTabControls = {
+  views: ClipViewDescriptor[]
+  activeId: string
+  onTabChange: (id: string) => void
+  onShowInspector: () => void
+}
 
 const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => void }) => (
   <div className="absolute inset-0 z-20 flex flex-col bg-white/95 backdrop-blur-xl dark:bg-slate-950/95">
@@ -53,9 +66,11 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
 export const V2ViewPanel = ({
   clipId,
   onPresentation,
+  onTabControls,
 }: {
   clipId: string
   onPresentation?: (presentation: ClipPresentation | null) => void
+  onTabControls?: (info: ViewTabControls | null) => void
 }) => {
   const [detail, setDetail] = useState<ClipDetail | null>(null)
   const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
@@ -106,6 +121,7 @@ export const V2ViewPanel = ({
       stop?.()
     }
   }, [clipId, view?.sourceId])
+
   useEffect(() => {
     let alive = true
     if (!view) return
@@ -145,7 +161,27 @@ export const V2ViewPanel = ({
     [detail, model, view]
   )
   useEffect(() => onPresentation?.(presentation), [onPresentation, presentation])
-  const visibleViews = viewSet?.views.filter(item => item.placement !== 'advanced') ?? []
+
+  const handleTabChange = useCallback((id: string) => {
+    setModel(null)
+    setActive(id)
+  }, [])
+
+  const handleShowInspector = useCallback(() => setInspecting(true), [])
+
+  // Lift tab controls to parent so it can render them in its unified header row
+  useEffect(() => {
+    if (!viewSet || !active) {
+      onTabControls?.(null)
+      return
+    }
+    const visible = viewSet.views.filter(item => item.placement !== 'advanced')
+    onTabControls?.({ views: visible, activeId: active, onTabChange: handleTabChange, onShowInspector: handleShowInspector })
+  }, [viewSet, active, onTabControls, handleTabChange, handleShowInspector])
+
+  // Clear controls when unmounted
+  useEffect(() => () => onTabControls?.(null), [onTabControls])
+
   const retryOcr = async () => {
     if (!presentation || presentation.model.kind !== 'image') return
     setRetryingOcr(true)
@@ -189,32 +225,6 @@ export const V2ViewPanel = ({
     )
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center border-b border-slate-200 px-3 py-2 dark:border-white/10">
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-          {visibleViews.length > 1 &&
-            visibleViews.map(item => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setModel(null)
-                  setActive(item.id)
-                }}
-                className={`rounded-md px-2 py-1 text-xs ${active === item.id ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300' : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'}`}
-              >
-                {item.label}
-              </button>
-            ))}
-        </div>
-        <TransformMenu clipId={clipId} sourceId={presentation.activeView.sourceId} />
-        <button
-          aria-label="Open representation inspector"
-          title="Representations"
-          className="ml-2 rounded-md p-1.5 text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10"
-          onClick={() => setInspecting(true)}
-        >
-          <Database className="h-4 w-4" />
-        </button>
-      </div>
       <div className="min-h-0 flex-1 overflow-auto custom-scrollbar">
         <RenderModelView
           presentation={presentation}
@@ -222,6 +232,11 @@ export const V2ViewPanel = ({
           onRetryOcr={() => void retryOcr()}
         />
       </div>
+      <TransformBar
+        clipId={clipId}
+        sourceId={presentation.activeView.sourceId}
+        basePresentation={presentation}
+      />
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}
     </div>
   )
