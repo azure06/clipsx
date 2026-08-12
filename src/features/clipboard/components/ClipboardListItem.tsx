@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
-import { Command, CornerDownLeft, Hash, MessageSquare, Pin, Sparkles, Star } from 'lucide-react'
+import { Command, CornerDownLeft, Hash, MessageSquare, Pin, ScanText, Sparkles, Star } from 'lucide-react'
 import { ContentIcon } from '../../content'
 import { summaryToContent } from '../summaryPresentation'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
@@ -34,7 +34,15 @@ const ClipboardListItemComponent = ({
   const tags = clip.tags ?? []
   const score = clip.similarityScore ?? 0
   const hasScore = score > 0
-  const hasAttributes = isPinned || isFavorite || tags.length > 0 || Boolean(clip.note) || hasScore
+  const ocrActive = clip.ocrStatus === 'pending' || clip.ocrStatus === 'running'
+  const hasAttributes =
+    isPinned ||
+    isFavorite ||
+    tags.length > 0 ||
+    Boolean(clip.note) ||
+    hasScore ||
+    Boolean(clip.hasEmbedding) ||
+    ocrActive
 
   const handleClick = () => {
     if (onSelect) {
@@ -104,6 +112,29 @@ const ClipboardListItemComponent = ({
               {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
               {clip.note && (
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
+              )}
+              {ocrActive && (
+                <ScanText className="h-3 w-3 animate-pulse text-sky-400" strokeWidth={2.5} />
+              )}
+              {clip.hasEmbedding && (
+                <svg
+                  className="h-3 w-3 shrink-0"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-label="Embedded"
+                >
+                  <defs>
+                    <linearGradient id={`emb-${clip.id}`} x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" />
+                      <stop offset="50%" stopColor="#8b5cf6" />
+                      <stop offset="100%" stopColor="#ec4899" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M6 1L7.5 4.5H11L8.25 6.75L9.5 10.5L6 8.25L2.5 10.5L3.75 6.75L1 4.5H4.5Z"
+                    fill={`url(#emb-${clip.id})`}
+                  />
+                </svg>
               )}
               {hasScore && (
                 <span className="flex items-center gap-0.5 rounded-full border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-pink-500 dark:border-pink-500/30 dark:text-pink-400">

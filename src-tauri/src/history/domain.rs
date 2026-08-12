@@ -127,6 +127,8 @@ pub struct ClipSummary {
     pub representation_count: i64,
     pub primary_presentation_kind: String,
     pub thumbnail_asset_id: Option<String>,
+    pub has_embedding: bool,
+    pub ocr_status: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -80,7 +80,7 @@ export type PresentationClip = {
   readonly imagePath?: string | null
   readonly contentHtml?: string | null
   readonly ocrText?: string | null
-  readonly ocrStatus?: 'not_needed' | 'pending' | 'running' | 'done' | 'failed'
+  readonly ocrStatus?: string | null
   readonly appName?: string | null
 }
 

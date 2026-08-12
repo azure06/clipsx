@@ -223,7 +223,9 @@ pub async fn search(
                    ORDER BY r.ordinal LIMIT 1),'Binary or file content'), \
          COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'), \
          (SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1), \
-         CASE WHEN ? THEN fts.rank ELSE 0 END \
+         CASE WHEN ? THEN fts.rank ELSE 0 END, \
+         EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id), \
+         (SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) \
          FROM search_documents_fts fts \
          JOIN clip_items c ON c.id = fts.clip_id \
          WHERE c.lifecycle_state = 'ready'",
@@ -339,6 +341,8 @@ pub async fn search(
                 safe_summary: row.get(9),
                 primary_presentation_kind: row.get(10),
                 thumbnail_asset_id: row.get(11),
+                has_embedding: row.get::<i64, _>(13) != 0,
+                ocr_status: row.get(14),
                 tags,
             },
             snippet,

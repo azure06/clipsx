@@ -23,6 +23,8 @@ export type ClipSummary = {
   representationCount: number
   primaryPresentationKind: string
   thumbnailAssetId: string | null
+  hasEmbedding?: boolean
+  ocrStatus?: string | null
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */
   similarityScore?: number
 }

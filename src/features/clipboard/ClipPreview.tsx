@@ -101,9 +101,7 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
               OCR {ocr.state}…
             </span>
           )}
-          {ocr?.state === 'failed' && (
-            <span className="text-red-500">OCR failed</span>
-          )}
+          {ocr?.state === 'failed' && <span className="text-red-500">OCR failed</span>}
           {ocr?.state === 'ready' && ocr.text.trim() && (
             <span className="text-emerald-600 dark:text-emerald-400">OCR</span>
           )}
