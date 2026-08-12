@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState } from 'react'
+import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import {
   Box,
   CheckCircle2,
@@ -19,14 +20,6 @@ type Extension = {
   status: string
   displayName: string
 }
-type ProviderStatus = {
-  enabled: boolean
-  activeSpaceId: string | null
-  pendingSpaceId: string | null
-  indexedClips: number
-  pendingJobs: number
-  diagnostic: string | null
-}
 type RegistryPackage = {
   packageId: string
   version: string
@@ -40,7 +33,7 @@ type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }
 export const Plugins = () => {
   const [utilities, setUtilities] = useState<CoreUtility[]>([])
   const [extensions, setExtensions] = useState<Extension[]>([])
-  const [provider, setProvider] = useState<ProviderStatus | null>(null)
+  const [provider, setProvider] = useState<TextEmbeddingStatus | null>(null)
   const [registry, setRegistry] = useState<RegistryPackage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -52,7 +45,7 @@ export const Plugins = () => {
       const [core, installed, status, available] = await Promise.all([
         invoke<CoreUtility[]>('list_core_utilities'),
         invoke<Extension[]>('list_extensions'),
-        invoke<ProviderStatus>('get_text_embedding_status'),
+        invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<RegistryIndex>('get_extension_registry').catch(() => ({
           schemaVersion: 1,
           packages: [],

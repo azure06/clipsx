@@ -1,5 +1,14 @@
 export type V2Tag = { id: string; name: string; color: string | null }
 
+export type TextEmbeddingStatus = {
+  enabled: boolean
+  activeSpaceId: string | null
+  pendingSpaceId: string | null
+  diagnostic: string | null
+  indexedClips: number
+  pendingJobs: number
+}
+
 export type ClipSummary = {
   id: string
   sourceAppName: string | null

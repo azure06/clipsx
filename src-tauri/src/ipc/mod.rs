@@ -1,6 +1,9 @@
 //! Stable Tauri command surface and desktop runtime wiring.
 
-use crate::app::state::AppState;
+use crate::app::{
+    host,
+    state::{AppState, HostState, StartupState},
+};
 use crate::clipboard::contract::ClipboardAdapter;
 use crate::clipboard::{capture_coherent, is_self_write_snapshot, SystemClipboardAdapter};
 use crate::contracts::{self, FactoryResetResult, StartupStatus};
@@ -10,10 +13,19 @@ use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
 use crate::{artifacts, contributions, foundation, history, output::paste, search};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_shell::ShellExt;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
+
+#[cfg(target_os = "windows")]
+use tauri_plugin_decorum::WebviewWindowExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +37,8 @@ struct CoreUtility {
 }
 
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
+const LOCAL_AUTH_CALLBACK_EVENT: &str = "auth-callback-url";
+const LOCAL_AUTH_CALLBACK_PATH: &str = "/auth/desktop/callback";
 
 fn auth_storage_entry(key: &str) -> Result<keyring::Entry, String> {
     match key {
@@ -124,14 +138,14 @@ fn apply_capture_filters(
 }
 
 #[tauri::command]
-fn get_startup_status(state: State<'_, AppState>) -> StartupStatus {
+fn get_startup_status(state: State<'_, StartupState>) -> StartupStatus {
     foundation::startup_status(state.schema_state)
 }
 
 #[tauri::command]
 fn factory_reset(
     confirmation: String,
-    state: State<'_, AppState>,
+    state: State<'_, StartupState>,
 ) -> Result<FactoryResetResult, String> {
     foundation::factory_reset(&state.roots, &confirmation).map_err(|error| error.to_string())
 }
@@ -139,6 +153,137 @@ fn factory_reset(
 #[tauri::command]
 fn restart_app(app: tauri::AppHandle) {
     app.request_restart();
+}
+
+#[tauri::command]
+fn show_main_window_command(app: tauri::AppHandle) -> Result<(), String> {
+    host::show_main_window(&app)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayLabels {
+    open: String,
+    settings: String,
+    quit: String,
+}
+
+#[tauri::command]
+fn set_tray_labels(labels: TrayLabels, state: State<'_, HostState>) -> Result<(), String> {
+    state
+        .tray_open_item
+        .set_text(labels.open)
+        .map_err(|error| error.to_string())?;
+    state
+        .tray_settings_item
+        .set_text(labels.settings)
+        .map_err(|error| error.to_string())?;
+    state
+        .tray_quit_item
+        .set_text(labels.quit)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseInfo {
+    updater_configured: bool,
+}
+
+#[tauri::command]
+fn get_release_info(state: State<'_, HostState>) -> ReleaseInfo {
+    ReleaseInfo {
+        updater_configured: state.updater_configured,
+    }
+}
+
+fn parse_local_auth_callback_request_line(
+    request_line: &str,
+    port: u16,
+) -> Result<Option<String>, String> {
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    if method != "GET" || target.is_empty() {
+        return Ok(None);
+    }
+    let url = url::Url::parse(&format!("http://127.0.0.1:{port}{target}"))
+        .map_err(|error| format!("Unable to parse local auth callback URL: {error}"))?;
+    if url.path() != LOCAL_AUTH_CALLBACK_PATH {
+        return Ok(None);
+    }
+    Ok(Some(url.to_string()))
+}
+
+fn local_auth_callback_response(status_line: &str, body: &str) -> String {
+    format!(
+        "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+async fn serve_local_auth_callback(listener: TcpListener, port: u16, app: tauri::AppHandle) {
+    let Ok(accept_result) = tokio::time::timeout(Duration::from_secs(300), listener.accept()).await
+    else {
+        eprintln!("[AUTH] Local auth callback listener timed out.");
+        return;
+    };
+    let Ok((mut stream, _)) = accept_result else {
+        eprintln!("[AUTH] Local auth callback listener failed to accept a connection.");
+        return;
+    };
+    let mut buffer = [0_u8; 8 * 1024];
+    let Ok(bytes_read) = stream.read(&mut buffer).await else {
+        eprintln!("[AUTH] Local auth callback listener failed to read the request.");
+        return;
+    };
+    if bytes_read == 0 {
+        return;
+    }
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let request_line = request.lines().next().unwrap_or_default();
+    let response = match parse_local_auth_callback_request_line(request_line, port) {
+        Ok(Some(callback_url)) => {
+            if app.emit(LOCAL_AUTH_CALLBACK_EVENT, callback_url).is_err() {
+                local_auth_callback_response(
+                    "HTTP/1.1 500 Internal Server Error",
+                    "<!doctype html><title>ClipsX Sign-in</title><p>ClipsX could not finish sign-in. Return to the app and try again.</p>",
+                )
+            } else {
+                let _ = host::show_main_window(&app);
+                local_auth_callback_response(
+                    "HTTP/1.1 200 OK",
+                    "<!doctype html><title>ClipsX Sign-in</title><p>ClipsX received the sign-in callback. You can return to the app.</p><script>window.close()</script>",
+                )
+            }
+        }
+        Ok(None) => local_auth_callback_response(
+            "HTTP/1.1 404 Not Found",
+            "<!doctype html><title>Not Found</title><p>This callback URL is not used by ClipsX.</p>",
+        ),
+        Err(error) => {
+            eprintln!("[AUTH] Failed to parse local auth callback request: {error}");
+            local_auth_callback_response(
+                "HTTP/1.1 400 Bad Request",
+                "<!doctype html><title>Bad Request</title><p>ClipsX could not read the sign-in callback.</p>",
+            )
+        }
+    };
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.shutdown().await;
+}
+
+#[tauri::command]
+async fn start_local_auth_callback_listener(app: tauri::AppHandle) -> Result<String, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|error| format!("Unable to start a local auth callback listener: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("Unable to read the local auth callback address: {error}"))?
+        .port();
+    tauri::async_runtime::spawn(serve_local_auth_callback(listener, port, app));
+    Ok(format!("http://127.0.0.1:{port}{LOCAL_AUTH_CALLBACK_PATH}"))
 }
 
 #[tauri::command]
@@ -1215,25 +1360,76 @@ async fn update_search_settings(
         .map_err(|e| e.to_string())
 }
 
+fn updater_configured() -> bool {
+    option_env!("TAURI_UPDATER_PUBLIC_KEY")
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || serde_json::from_str::<serde_json::Value>(include_str!("../../tauri.conf.json"))
+            .ok()
+            .and_then(|config| {
+                config
+                    .get("plugins")?
+                    .get("updater")?
+                    .get("pubkey")?
+                    .as_str()
+                    .map(|value| !value.trim().is_empty())
+            })
+            .unwrap_or(false)
+}
+
+fn quit_app(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let should_clear = tauri::async_runtime::block_on(state.history.app_settings())
+            .map(|settings| settings.clear_on_exit)
+            .unwrap_or(false);
+        if should_clear {
+            if let Err(error) = tauri::async_runtime::block_on(state.history.clear_history()) {
+                eprintln!("[EXIT] Failed to clear clipboard history: {error}");
+            }
+        }
+    }
+    app.exit(0);
+}
+
+fn app_builder() -> tauri::Builder<tauri::Wry> {
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = host::show_main_window(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ));
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(tauri_plugin_decorum::init());
+    builder
+}
+
 pub(crate) fn run() {
-    tauri::Builder::default()
+    app_builder()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        let _ = host::toggle_main_window(app);
                     }
                 })
                 .build(),
         )
         .register_uri_scheme_protocol("clipsx-artifact", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
-            let state = context.app_handle().state::<AppState>();
+            let Some(state) = context.app_handle().try_state::<AppState>() else {
+                return tauri::http::Response::builder()
+                    .status(503)
+                    .header("Content-Type", "text/plain")
+                    .body(b"application recovery required".to_vec())
+                    .unwrap();
+            };
             match tauri::async_runtime::block_on(artifacts::artifact_binary(&state.history, id)) {
                 Ok((bytes, mime)) => tauri::http::Response::builder()
                     .status(200)
@@ -1251,7 +1447,13 @@ pub(crate) fn run() {
         })
         .register_uri_scheme_protocol("clipsx-asset", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
-            let state = context.app_handle().state::<AppState>();
+            let Some(state) = context.app_handle().try_state::<AppState>() else {
+                return tauri::http::Response::builder()
+                    .status(503)
+                    .header("Content-Type", "text/plain")
+                    .body(b"application recovery required".to_vec())
+                    .unwrap();
+            };
             match tauri::async_runtime::block_on(state.history.asset(id)) {
                 Ok((bytes, mime)) => tauri::http::Response::builder()
                     .status(200)
@@ -1268,152 +1470,213 @@ pub(crate) fn run() {
             }
         })
         .setup(|app| {
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+
+            let open_item = MenuItem::with_id(app, "open", "Open Clips", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&open_item, &settings_item, &quit_item])?;
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => {
+                        let _ = host::show_main_window(app);
+                    }
+                    "settings" => {
+                        if host::show_main_window(app).is_ok() {
+                            let _ = app.emit("open-settings", ());
+                        }
+                    }
+                    "quit" => quit_app(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        let _ = host::show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder.build(app)?;
+            app.manage(HostState {
+                updater_configured: updater_configured(),
+                tray_open_item: open_item,
+                tray_settings_item: settings_item,
+                tray_quit_item: quit_item,
+            });
+
+            #[cfg(any(target_os = "linux", all(debug_assertions, target_os = "windows")))]
+            app.deep_link().register_all()?;
+            let deep_link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |_| {
+                let _ = host::show_main_window(&deep_link_app);
+            });
+
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                window.create_overlay_titlebar()?;
+            }
+
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
                 .expect("Failed to prepare the ClipsX v2 foundation");
-            if schema_state != foundation::SchemaState::Ready {
-                let status = foundation::startup_status(schema_state);
-                return Err(std::io::Error::other(status.message).into());
-            }
-            let history = tauri::async_runtime::block_on(HistoryRepository::connect(
-                &roots.database(),
-                roots.clipboard_data(),
-            ))
-            .expect("Failed to open ClipsX history");
-            if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
-                if let Ok(shortcut) = settings.global_shortcut.parse::<Shortcut>() {
-                    let _ = app.global_shortcut().register(shortcut);
+            app.manage(StartupState {
+                roots: roots.clone(),
+                schema_state,
+            });
+            if schema_state == foundation::SchemaState::Ready {
+                let history = tauri::async_runtime::block_on(HistoryRepository::connect(
+                    &roots.database(),
+                    roots.clipboard_data(),
+                ))
+                .expect("Failed to open ClipsX history");
+                if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
+                    if let Ok(shortcut) = settings.global_shortcut.parse::<Shortcut>() {
+                        let _ = app.global_shortcut().register(shortcut);
+                    }
                 }
-            }
-            let extensions = ExtensionService::new(&roots)
-                .expect("Failed to initialize ClipsX extension storage");
-            tauri::async_runtime::block_on(contributions::initialize(&history))
-                .expect("Failed to initialize ClipsX facet registry");
-            // Materialize the host-owned artifact registry during startup.
-            let _ = artifacts::registered_producers();
-            let _ = crate::providers::provider_capabilities();
-            // Rebuild any stale FTS projections from previous sessions.
-            let fts_history = history.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = search::rebuild_stale_projections(&fts_history).await;
-                let _ = embeddings::index_pending(&fts_history).await;
-            });
-            let redetect_history = history.clone();
-            let redetect_extensions = extensions.clone();
-            let redetect_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                match contributions::redetect_outdated(&redetect_history).await {
-                    Ok(count) if count > 0 => {
-                        let _ = redetect_app.emit("clip-facets-updated", ());
-                    }
-                    Err(error) => {
-                        let _ = redetect_app.emit("detection-job-failed", error.to_string());
-                    }
-                    _ => {}
-                }
-            });
-            let extension_history = history.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = redetect_extensions
-                    .redetect_history(&extension_history)
-                    .await;
-            });
-            let monitor_history = history.clone();
-            let monitor_extensions = extensions.clone();
-            let monitor_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut adapter = SystemClipboardAdapter::new();
-                let mut last_token = adapter.snapshot_token().unwrap_or_default();
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(350));
-                loop {
-                    interval.tick().await;
-                    let token = match adapter.snapshot_token() {
-                        Ok(value) => value,
-                        Err(_) => continue,
-                    };
-                    if token == last_token {
-                        last_token = token;
-                        continue;
-                    }
-                    last_token = token;
-                    let mut snapshot = match capture_coherent(&mut adapter) {
-                        Ok(value) => value,
+                let extensions = ExtensionService::new(&roots)
+                    .expect("Failed to initialize ClipsX extension storage");
+                tauri::async_runtime::block_on(contributions::initialize(&history))
+                    .expect("Failed to initialize ClipsX facet registry");
+                // Materialize the host-owned artifact registry during startup.
+                let _ = artifacts::registered_producers();
+                let _ = crate::providers::provider_capabilities();
+                // Rebuild any stale FTS projections from previous sessions.
+                let fts_history = history.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = search::rebuild_stale_projections(&fts_history).await;
+                    let _ = embeddings::index_pending(&fts_history).await;
+                });
+                let redetect_history = history.clone();
+                let redetect_extensions = extensions.clone();
+                let redetect_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match contributions::redetect_outdated(&redetect_history).await {
+                        Ok(count) if count > 0 => {
+                            let _ = redetect_app.emit("clip-facets-updated", ());
+                        }
                         Err(error) => {
-                            let _ = monitor_app.emit("capture-rejected", error.to_string());
+                            let _ = redetect_app.emit("detection-job-failed", error.to_string());
+                        }
+                        _ => {}
+                    }
+                });
+                let extension_history = history.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = redetect_extensions
+                        .redetect_history(&extension_history)
+                        .await;
+                });
+                let monitor_history = history.clone();
+                let monitor_extensions = extensions.clone();
+                let monitor_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut adapter = SystemClipboardAdapter::new();
+                    let mut last_token = adapter.snapshot_token().unwrap_or_default();
+                    let mut interval = tokio::time::interval(std::time::Duration::from_millis(350));
+                    loop {
+                        interval.tick().await;
+                        let token = match adapter.snapshot_token() {
+                            Ok(value) => value,
+                            Err(_) => continue,
+                        };
+                        if token == last_token {
+                            last_token = token;
                             continue;
                         }
-                    };
-                    if is_self_write_snapshot(&snapshot) {
-                        continue;
-                    }
-                    let app_settings = match monitor_history.app_settings().await {
-                        Ok(value) => value,
-                        Err(_) => continue,
-                    };
-                    if source_is_excluded(&snapshot, &app_settings.excluded_apps) {
-                        continue;
-                    }
-                    apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
-                    if snapshot.representations.is_empty() {
-                        continue;
-                    }
-                    let settings = app_settings.capture;
-                    match monitor_history.capture(snapshot, &settings).await {
-                        Ok((id, duplicate)) => {
-                            let _ = monitor_app.emit(
-                                if duplicate {
-                                    "clip-updated"
-                                } else {
-                                    "clip-captured"
-                                },
-                                &id,
-                            );
-                            let detection_history = monitor_history.clone();
-                            let detection_extensions = monitor_extensions.clone();
-                            let detection_app = monitor_app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                match detect_with_extensions(
-                                    &detection_history,
-                                    &detection_extensions,
+                        last_token = token;
+                        let mut snapshot = match capture_coherent(&mut adapter) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                let _ = monitor_app.emit("capture-rejected", error.to_string());
+                                continue;
+                            }
+                        };
+                        if is_self_write_snapshot(&snapshot) {
+                            continue;
+                        }
+                        let app_settings = match monitor_history.app_settings().await {
+                            Ok(value) => value,
+                            Err(_) => continue,
+                        };
+                        if source_is_excluded(&snapshot, &app_settings.excluded_apps) {
+                            continue;
+                        }
+                        apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+                        if snapshot.representations.is_empty() {
+                            continue;
+                        }
+                        let settings = app_settings.capture;
+                        match monitor_history.capture(snapshot, &settings).await {
+                            Ok((id, duplicate)) => {
+                                let _ = monitor_app.emit(
+                                    if duplicate {
+                                        "clip-updated"
+                                    } else {
+                                        "clip-captured"
+                                    },
                                     &id,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        let _ =
-                                            detection_app.emit("clip-facets-updated", id.clone());
+                                );
+                                let detection_history = monitor_history.clone();
+                                let detection_extensions = monitor_extensions.clone();
+                                let detection_app = monitor_app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    match detect_with_extensions(
+                                        &detection_history,
+                                        &detection_extensions,
+                                        &id,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            let _ = detection_app
+                                                .emit("clip-facets-updated", id.clone());
+                                        }
+                                        Err(error) => {
+                                            let _ = detection_app
+                                                .emit("detection-job-failed", error.to_string());
+                                        }
                                     }
-                                    Err(error) => {
-                                        let _ = detection_app
-                                            .emit("detection-job-failed", error.to_string());
-                                    }
-                                }
-                                let _ = artifacts::produce_for_clip(&detection_history, &id).await;
-                                let _ = search::upsert_projection(&detection_history, &id).await;
-                                let _ = embeddings::enqueue_clip(&detection_history, &id).await;
-                                let _ = embeddings::index_pending(&detection_history).await;
-                            });
-                        }
-                        Err(error) => {
-                            let _ = monitor_app.emit("capture-rejected", error.to_string());
+                                    let _ =
+                                        artifacts::produce_for_clip(&detection_history, &id).await;
+                                    let _ =
+                                        search::upsert_projection(&detection_history, &id).await;
+                                    let _ = embeddings::enqueue_clip(&detection_history, &id).await;
+                                    let _ = embeddings::index_pending(&detection_history).await;
+                                });
+                            }
+                            Err(error) => {
+                                let _ = monitor_app.emit("capture-rejected", error.to_string());
+                            }
                         }
                     }
-                }
-            });
-            app.manage(AppState {
-                roots,
-                schema_state,
-                history,
-                transforms: transformers::TransformService::default(),
-                extensions,
-            });
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
+                });
+                app.manage(AppState {
+                    roots,
+                    history,
+                    transforms: transformers::TransformService::default(),
+                    extensions,
+                });
+            }
+            if !std::env::args().any(|argument| argument == "--hidden") {
+                let _ = host::show_main_window(app.handle());
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            show_main_window_command,
+            set_tray_labels,
+            get_release_info,
+            start_local_auth_callback_listener,
             get_startup_status,
             auth_storage_get,
             auth_storage_set,
@@ -1483,6 +1746,122 @@ pub(crate) fn run() {
             reindex_text_embeddings,
             clear_text_embedding_space
         ])
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running ClipsX");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeSet, fs, path::Path};
+
+    fn collect_frontend_sources(path: &Path, output: &mut Vec<String>) {
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                collect_frontend_sources(&path, output);
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.contains(".test.") || name.contains(".spec.") {
+                continue;
+            }
+            if matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("ts" | "tsx")
+            ) {
+                output.push(fs::read_to_string(path).unwrap());
+            }
+        }
+    }
+
+    fn literal_invocations(source: &str) -> Vec<String> {
+        let mut commands = Vec::new();
+        let mut remainder = source;
+        while let Some(index) = remainder.find("invoke") {
+            remainder = &remainder[index + "invoke".len()..];
+            let Some(open) = remainder.find('(') else {
+                break;
+            };
+            if remainder[..open].contains(['\n', ';']) {
+                continue;
+            }
+            let arguments = remainder[open + 1..].trim_start();
+            let Some(quote) = arguments
+                .chars()
+                .next()
+                .filter(|value| matches!(value, '\'' | '"'))
+            else {
+                continue;
+            };
+            let quoted = &arguments[quote.len_utf8()..];
+            if let Some(end) = quoted.find(quote) {
+                commands.push(quoted[..end].to_string());
+            }
+            remainder = arguments;
+        }
+        commands
+    }
+
+    #[test]
+    fn every_frontend_invoke_has_a_registered_handler() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut sources = Vec::new();
+        collect_frontend_sources(&manifest.join("../src"), &mut sources);
+        let invoked = sources
+            .iter()
+            .flat_map(|source| literal_invocations(source))
+            .collect::<BTreeSet<_>>();
+        let ipc_source = include_str!("mod.rs");
+        let handler = ipc_source
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .and_then(|(_, value)| value.split_once("])"))
+            .map(|(value, _)| value)
+            .expect("invoke handler block must be present");
+        let registered = handler
+            .split(|value: char| !(value.is_ascii_alphanumeric() || value == '_'))
+            .filter(|value| !value.is_empty())
+            .collect::<BTreeSet<_>>();
+        let missing = invoked
+            .iter()
+            .filter(|command| !registered.contains(command.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "frontend invokes commands missing from generate_handler!: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn local_auth_callback_accepts_only_the_owned_get_path() {
+        let accepted = parse_local_auth_callback_request_line(
+            "GET /auth/desktop/callback?code=abc HTTP/1.1",
+            43123,
+        )
+        .unwrap();
+        assert_eq!(
+            accepted.as_deref(),
+            Some("http://127.0.0.1:43123/auth/desktop/callback?code=abc")
+        );
+        assert_eq!(
+            parse_local_auth_callback_request_line("GET /other HTTP/1.1", 43123).unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_local_auth_callback_request_line("POST /auth/desktop/callback HTTP/1.1", 43123)
+                .unwrap(),
+            None
+        );
+    }
 }

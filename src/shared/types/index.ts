@@ -1,5 +1,6 @@
 export * from './capabilities'
 export * from './clipboard'
 export * from './settings'
+export * from './startup'
 export * from './updater'
 export * from './v2'

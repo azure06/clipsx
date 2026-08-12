@@ -1,237 +1,88 @@
-# ClipsX - Clipboard Manager
+# ClipsX
 
-See [Architecture](docs/ARCHITECTURE.md) for the system design and data flows,
-and the [Architecture Execution Plan](docs/ARCHITECTURE_EXECUTION_PLAN.md) for
-delivery milestones.
+ClipsX is a local-first programmable clipboard for macOS, Windows, and Linux/X11:
 
-> **Fast, privacy-first clipboard history with semantic search**
-
-Built with Tauri 2.x + React 19 + Rust + TypeScript
-
----
-
-## 📖 Documentation
-
-- **[README.md](./README.md)** ← You are here (High-level overview)
-- **[SEARCH.md](./docs/SEARCH.md)** - Search and indexing architecture
-- **[RELEASE.md](./docs/RELEASE.md)** - Cross-platform release checklist
-
-Exact dependency versions live in `package.json` and `src-tauri/Cargo.toml`.
-
----
-
-## 🎯 What We're Building
-
-A clipboard manager that **understands**, **enhances**, and **organizes** everything you copy:
-
-| Feature | What It Does | Why It Matters |
-|---------|-------------|----------------|
-| **Semantic Search** | Find "Python sorting code" without remembering exact words | Find anything by meaning, not just keywords |
-| **Semantic Reindex** | Backfill embeddings for older clips after enabling a model | Makes existing history immediately useful |
-| **Content Detection** | Recognize URLs, code, JSON, JWTs, paths, CSV, colors, and more | Unlocks smarter previews and actions |
-| **OCR Extractor** | Screenshot table → Paste as Excel data | No more manual data entry |
-| **Planned Organization** | Tags and collections for high-volume clip libraries | Keeps large histories manageable |
-
----
-
-## 🛠️ Technology Stack
-
-### Core Decisions
-
-| Layer | Technology | Why This vs Alternatives |
-|-------|-----------|-------------------------|
-| **Desktop** | Tauri 2.x | 10MB bundle vs Electron's 200MB, Rust security |
-| **Frontend** | React 19.2 | New compiler auto-optimizes, massive ecosystem |
-| **Language** | TypeScript | Type safety prevents bugs, better DX |
-| **Database** | SQLite | Embedded, no server, perfect for desktop |
-| **Vector Search** | SQLite-backed `VectorStore` | Local/private hybrid retrieval without a hosted vector database |
-| **Styling** | Tailwind 4 | Utility-first, new Oxide engine 10x faster |
-| **UI Components** | Radix UI | Headless/accessible, full control |
-| **State** | Zustand | 3KB vs Redux 30KB, minimal boilerplate |
-| **Build** | Vite 7 | Fast HMR, simple config |
-| **Testing** | Vitest + Playwright | Fast, modern, Vite-native |
-
-### Release Scope
-
-ClipsX v0.1.0 ships as a local-first desktop app:
-
-- clipboard capture and history
-- text and semantic search
-- content-aware previews and actions
-- tags and notes
-- automatic OCR for image and office clips
-- in-app updates for release builds
-
-Future hosted or direct-provider AI integrations are intentionally out of scope until the backend exists end to end.
-
----
-
-## 📦 What We Store
-
-| Content Type | Storage Strategy | Searchable | Example |
-|-------------|------------------|------------|---------|
-| **Plain Text** | Full text in DB | ✅ FTS + Vector | "Meeting notes" |
-| **HTML** | HTML + plain in DB | ✅ Plain text | Email body |
-| **Rich Text** | RTF + plain in DB | ✅ Plain text | Formatted docs |
-| **Code** | Code + language in DB | ✅ FTS + Vector | `const x = 5` |
-| **Images <1MB** | Thumbnail in DB, full on disk | ✅ OCR text | Screenshots |
-| **Images >1MB** | Thumbnail in DB, full on disk | ✅ OCR text | Photos |
-| **Files** | Paths only (not content!) | ✅ File names | ~/file.pdf |
-| **URLs** | URL + metadata in DB | ✅ URL + title | https://... |
-
-**Why this approach:**
-- Always extract plain text → Everything searchable
-- Preserve formatting → Paste with original style
-- Smart storage → Images on disk, thumbnails in DB
-- File references → Don't store 5GB videos in DB!
-
----
-
-## 🏗️ Architecture
-
-```
-┌──────────────────────────────────────┐
-│        React UI (Frontend)           │
-│  Search • History • Preview • Config │
-└────────────┬─────────────────────────┘
-             │ Tauri IPC
-┌────────────▼─────────────────────────┐
-│      Rust Backend (Local)            │
-│  Clipboard Monitor → SQLite          │
-│  Content Processor → Vector DB       │
-└────────────┬─────────────────────────┘
-             │
-     ┌───────┴────────┐
-     │                │
-     ▼                ▼
-┌─────────┐    ┌──────────────┐
-│  OCR &  │    │  Embeddings  │
-│Preview  │    │ + Search     │
-│Workers  │    │ Pipelines    │
-└─────────┘    └──────────────┘
+```text
+Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
-### Data Flow Example
+It is built with Tauri 2, Rust, React, TypeScript, SQLite, and optional local Ollama text embeddings.
 
-```
-1. User copies text
-2. Clipboard Monitor detects change (200ms polling)
-3. Extract all formats (plain, HTML, RTF)
-4. Save to SQLite immediately → UI updates
-5. Background jobs (async):
-   - Generate embedding → Vector DB
-   - Extract metadata (URLs, emails)
-   - OCR if image
+## Current status
 
-6. Background workers update OCR text, embeddings, and preview metadata
-```
+The V2 data and service foundation is implemented: multi-representation capture, managed binary files, additive facets, renderer resolution, transformations, FTS, Ollama embedding spaces, local artifacts, macOS/Linux OCR paths, and the WASM extension runtime. Windows OCR remains missing.
 
----
+Desktop Boundary Recovery is also implemented. Startup reset, IPC drift detection, tray/window behavior, deep links, single instance, autostart, updater, filesystem access, OAuth callback wiring, and Windows window controls now use V2 host boundaries. These integrations still need interactive validation on every supported platform.
 
-## �️ Development Roadmap
+The next milestone is the typed presentation boundary. The current `RenderModel` to legacy `Content` bridge loses structured table data, OCR state, file metadata, and rich Office/RTF relationships.
 
-| Status | Focus | Scope | Outcome |
-|-------|-------|-------|---------|
-| **Done** | Search foundation | Persistence, tests, filter alignment, reindexing, status UX | Stable search baseline |
-| **Done** | OCR baseline | Automatic OCR for image and office clips | Searchable image workflows |
-| **Next** | Keyboard productivity | Faster navigation and action execution | Lower-friction daily usage |
-| **Later** | Ecosystem | User scripts, plugins, and deeper app integrations | Extend ClipsX without bloating core |
+See [Documentation](docs/README.md) for the authoritative current state and execution order.
 
-**Current direction:** Focus on reliable local workflows, OCR, keyboard speed, and release hardening.
+## Architecture invariants
 
----
+- One capture owns independent raw representations; it has no persisted global content type.
+- Semantic facets are additive derived data with source provenance.
+- Binary clipboard payloads live in managed application files; SQLite stores metadata and relative paths.
+- Renderer selection is ephemeral UI policy.
+- Search projections, embeddings, previews, OCR, and generated output are rebuildable or versioned derived data.
+- Copy and paste reconstruct only explicitly supported platform formats.
+- The V2 schema is fresh. Legacy databases use the explicit reset flow; there are no V1 migrations or dual reads.
 
-## 🎨 Code Organization
+## Implemented foundations
 
-```
-clipsx/
-├── src/                          # React frontend
-│   ├── features/                 # Feature-based modules
-│   │   ├── clipboard/            # History, monitoring
-│   │   ├── search/               # Text + semantic search
-│   │   ├── transforms/           # Legacy placeholder, not on the active roadmap
-│   │   └── settings/             # Config, API keys
-│   ├── shared/                   # Reusable components
-│   └── stores/                   # Zustand state
-│
-├── src-tauri/                    # Rust backend (local)
-│   ├── commands/                 # Tauri IPC handlers
-│   ├── services/                 # Business logic
-│   │   ├── clipboard.rs          # Monitor & read
-│   │   └── ocr.rs                # Image processing
-│   ├── repositories/             # Data access
-│   └── models/                   # Types & schemas
-│
-└── tests/                        # Test suites
-    ├── unit/                     # 60% coverage target
-    ├── integration/              # 30% coverage target
-    └── e2e/                      # Critical paths only
-```
+- Multi-representation clipboard capture and coherent snapshot retry
+- Original, plain-text, and transformed output policies
+- History pagination, favorites, pins, notes, tags, filters, retention, and managed-file cleanup
+- Built-in detectors, renderers, and transformers
+- FTS5 plus optional loopback Ollama text embeddings
+- Native-local OCR/artifact pipeline where a platform runtime is available
+- Capability-free WASM detector, renderer, and transformer extensions
+- Tray, shortcut, close-to-tray, deep-link, single-instance, autostart, updater, and startup recovery wiring
 
-**Coding Approach:** Functional-first (pure functions, immutability, composition)
+“Implemented” does not imply release validation. The exact verified, partial, missing, and deferred behavior is tracked in [UI_PARITY.md](docs/UI_PARITY.md).
 
----
+## Development
 
-## ⚡ Performance & Quality Targets
-
-| Metric | Target | Why It Matters |
-|--------|--------|---------------|
-| Cold start | <500ms | First impression |
-| Clipboard detect | <50ms | Feel instant |
-| Search 10k items | <100ms | Stay productive |
-| OCR extraction | <2s for common screenshots | Keep image workflows practical |
-| Memory usage | <150MB | Don't slow down Mac |
-| Bundle size | <15MB | Fast download/updates |
-| Test coverage | >80% | Ship with confidence |
-
----
-
-## 🔒 Privacy & Security
-
-| Principle | Implementation |
-|-----------|---------------|
-| **Local-first** | Clipboard history, search index, tags, notes, and OCR results stay on device |
-| **Transparent** | Release docs describe what is shipped today instead of future backend plans |
-| **Sandboxed** | Tauri security prevents system access |
-| **Predictable** | OCR, updater, and search state are surfaced directly in the UI |
-
-**What we NEVER do:**
-- ❌ Send clipboard content to our servers
-- ❌ Track what you copy
-- ❌ Sell your data
-- ❌ Ship stubbed backend features as if they are production-ready
-
----
-
-## 🚀 Getting Started
-
-### Desktop App
 ```bash
 npm install
-npm run tauri dev
+npm run type-check
+npm test -- --run
+npm run tauri:dev
 ```
 
-See [RELEASE.md](./docs/RELEASE.md) for the cross-platform release checklist.
+`npm run tauri:dev` and `npm run tauri:build` require `VITE_SUPABASE_URL` so the generated Tauri CSP can allow only the configured authentication origin. Release builds additionally require the secrets listed in [RELEASE.md](docs/RELEASE.md).
 
-## 📊 Current Status (July 20, 2026)
+Common checks:
 
-### ✅ What's Working
-- **Clipboard Monitoring** - Multi-format capture (text, HTML, RTF, images, files)
-- **Smart Duplicate Detection** - Content hashing prevents duplicates across sessions
-- **Platform-Specific Optimization**
-  - macOS: NSPasteboard.changeCount (efficient, no unnecessary reads)
-  - Windows/Linux: Content hash comparison (polling fallback)
-- **SQLite Storage** - FTS5 full-text search, pagination, pin/favorite
-- **Semantic Search Foundation** - Persistent enablement, startup recovery, richer readiness states
-- **Semantic Reindexing** - Existing history can be indexed after a model is enabled
-- **Search Correctness** - Canonical filter alignment across UI and backend
-- **Native OCR** - Automatic OCR queueing and searchable OCR text for image/office clips (Apple Vision, Windows OCR, or Linux Tesseract when installed)
-- **Updater Wiring** - In-app update check, install flow, and restart prompt for release builds
-- **React UI** - List/grid views, infinite scroll, theme toggle, sidebar navigation
-- **Global Shortcut** - System-wide hotkey to toggle app (customizable)
-- **Real-time Updates** - Frontend syncs automatically on clipboard changes
+```bash
+npm run lint
+npm run format:check
+cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
+```
 
-### 🎯 Next Up
-- Improve keyboard-first navigation and quick actions
-- Harden release smoke tests across macOS, Windows, and Linux
-- Explore scripting/plugin hooks after the core workflow is stable
+## Repository map
+
+```text
+src/                         React desktop UI and typed V2 presentation contracts
+src-tauri/src/app/           Desktop composition and host/window behavior
+src-tauri/src/clipboard/     Platform capture and reconstruction adapters
+src-tauri/src/history/       Canonical history domain and repository
+src-tauri/src/contributions/ Built-in detector, renderer, and transformer host
+src-tauri/src/artifacts/     OCR and other derived artifacts
+src-tauri/src/search/        FTS and semantic indexing/search
+src-tauri/src/extensions/    Package validation, registry, and WASM runtime
+src-tauri/src/ipc/           Tauri commands and runtime orchestration
+docs/                        Architecture, status, recovery plan, and release gates
+```
+
+## Explicitly deferred or excluded
+
+- Encrypted Vault and entitlement gating
+- Remote/cloud clipboard sync
+- The old hard-wired visual search/model stack
+- Optional local visual semantic search until it fits the provider architecture
+- Hosted embedding providers, vision, and generation workflows
+
+The archived V1 source remains a read-only behavioral reference at `archive/v1-pre-m0`; see [LEGACY_V1_REFERENCE.md](docs/LEGACY_V1_REFERENCE.md).

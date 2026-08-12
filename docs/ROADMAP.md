@@ -17,7 +17,13 @@ parser and renderer state.
 
 ## Status
 
-**✅ Shipped:** M0–M4a. **🧪 Ready for validation:** M5, including the extension and registry work now in the current change set. **Deferred:** optional local visual search and additional hosted/user-selected providers and generation; their prior scope is preserved below without treating either as a current milestone.
+M0–M5 describe the implemented V2 backend foundations and their original acceptance requirements. They are not claims of complete user-facing delivery. Product recovery is tracked by R0–R7 below and by [UI_PARITY.md](UI_PARITY.md).
+
+- **Verified:** R0 IPC/startup recovery through automated tests.
+- **Implemented — validation pending:** R1 desktop host integration.
+- **Next:** R2 typed presentation boundary.
+- **Blocked behind R2:** R3 clipboard fidelity, R4 search/OCR/settings, R5 transformations, R6 extension workflow, and R7 release validation.
+- **Deferred/excluded:** Vault/entitlements/sync, visual semantic search, hosted providers, vision, and generation.
 
 ## UI parity program
 
@@ -37,13 +43,55 @@ provider management, and extension management through v2 contracts.
 - Every restored visible behavior needs an automated frontend, integration, or
   desktop acceptance test before the program is complete.
 
-Current gates are tracked in [UI_PARITY.md](UI_PARITY.md): data/search and
-resolver preview are in progress; desktop account/integration remains pending.
+Current gates are tracked in [UI_PARITY.md](UI_PARITY.md). Desktop host wiring
+is implemented but awaits installed-platform validation; the presentation,
+clipboard-fidelity, provider/OCR/settings, transform, and extension workflows
+remain partial.
+
+## Recovery milestones
+
+These milestones are the active execution order. Do not start a later phase by
+bypassing the contracts established by an earlier one.
+
+| Milestone | Status | Outcome and exit gate |
+|---|---|---|
+| **R0 — IPC and startup boundary** | Verified | Every production frontend `invoke` has a Rust handler; legacy/unsupported schemas reach exact-confirmation reset without normal `AppState`. |
+| **R1 — Desktop host integration** | Implemented — validation pending | Tray, close-to-tray, shortcut toggle, single instance, deep links, OAuth callback, autostart, updater, filesystem access and Windows decorum work in installed builds on all platforms. |
+| **R2 — Typed presentation boundary** | **Next** | Every `RenderModel` renders directly and losslessly; table, RTF, HTML, Office, files and OCR states meet the parity matrix. |
+| **R3 — Clipboard fidelity and output** | Pending; depends on R2 | Supported native fixtures survive capture, persistence, restart and reconstruction; paste/focus/permission behavior passes the platform matrix. |
+| **R4 — Search, OCR and settings workflows** | Pending; depends on R2/R3 | Ollama and OCR lifecycles are usable from UI; remaining settings have real runtime effects; defaults are decided. |
+| **R5 — Transformations and contextual actions** | Pending; depends on R2/R3 | Exact preview is visible; parameters and source selection are correct; Copy/Paste/Save reuse identical cached bytes. |
+| **R6 — Extension product workflow** | Pending; depends on R2/R5 | Registry and developer installation, diagnostics, quarantine/recovery and contribution output work end to end. |
+| **R7 — Release validation** | Pending; depends on R1–R6 | Installed Windows/macOS/Linux builds pass [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) and [RELEASE.md](RELEASE.md). |
+
+### R2 implementation contract
+
+R2 must replace the universal `RenderModel -> legacy Content` conversion with
+typed React presentations. Working archived components may be retained behind
+lossless adapters, but no adapter may fabricate OCR status, file sizes,
+timestamps, delimiter metadata, or Office relationships.
+
+Required R2 slices, in order:
+
+1. Define frontend presentation props for every `RenderModel` variant and a
+   single exhaustive dispatcher.
+2. Move text/code/Markdown and existing facet previews onto the typed path as
+   the low-risk baseline.
+3. Implement direct tree/key-value/table rendering and preserve structured
+   cells/values.
+4. Implement safe HTML/RTF presentation with explicit sanitization and source
+   fallback.
+5. Carry image artifact/OCR lifecycle and file-list metadata without invented
+   values.
+6. Resolve Office/native bundles to the best useful primary view while keeping
+   every exact supported representation available for Original output.
+7. Remove the legacy bridge only after fixture tests cover every model,
+   loading/empty/error/fallback state, alternate view, and raw inspector.
 ## Decisions Locked for This Program
 
 - SQLite is the catalog, relationship, query, and configuration store.
-- Managed application files hold image, Office/OLE, PDF, SVG, unknown native
-  formats, and other binary clipboard payloads. SQLite stores only their
+- Managed application files hold image, Office/OLE, PDF, SVG, adapter-supported
+  native formats, and other supported binary clipboard payloads. SQLite stores only their
   metadata and relative paths; it never stores those payload bytes in a
   generic BLOB table or JSON metadata.
 - Plain text, HTML, and RTF are stored in dedicated text-representation rows,
@@ -63,10 +111,9 @@ resolver preview are in progress; desktop account/integration remains pending.
 - Semantic search is provider-first: FTS is always available, no model is
   mandatory, and the first optional embedding provider is user-configured
   Ollama. ClipsX does not retain a hard-wired BGE/SigLIP runtime in its core.
-- Visual semantic search is part of delivery, but optional. It first ships as
-  an explicitly installed ClipsX local visual-provider package; any later
-  provider must prove compatible text-query and image embeddings in one shared
-  space.
+- Visual semantic search is deferred outside R0–R7. If resumed, it ships only
+  as an explicitly installed local provider whose text-query and image
+  embeddings share one declared compatible space.
 - Cloud configuration sync, vault sync, and cloud clipboard-history sync are
   out of scope for this program. Configuration is local to the device.
 - The extension hub is a reviewed GitHub registry with checksum-pinned
@@ -245,8 +292,9 @@ Rules:
   of the representation.
 - Every captured Office/native extra type becomes its own binary asset and
   representation row.
-- Unknown native types are retained but written back only when the platform
-  adapter explicitly supports their captured type.
+- Platform adapters capture only native types they explicitly support. A
+  captured native representation is written back only when that adapter
+  supports its exact type; unsupported unknown types are skipped.
 - No code may guess UTI, OLE, or other native clipboard types.
 - Clip-owned text, file-list, facet, and representation rows cascade on clip
   deletion. The binary-file reconciler removes an unreferenced managed file
@@ -356,8 +404,8 @@ Initial implementations:
 - Disabled text-embedding provider, which is the default and leaves FTS fully
   functional
 - Ollama text-embedding provider, delivered first
-- OpenAI-compatible text-embedding provider, delivered only after the Ollama
-  path is validated
+- OpenAI-compatible text-embedding provider is deferred until after the
+  current recovery and Ollama product workflow are validated
 - Optional ClipsX local visual-provider package, delivered for visual search;
   it owns its runtime, tokenizer, preprocessing, and model package and is not
   installed automatically
@@ -458,9 +506,14 @@ SHA-256, compatibility, permissions, and contribution metadata. Normal
 installation requires a checksum-pinned registry release. Local packages are
 available only in Developer Mode with a persistent warning.
 
-## Execution Milestones
+## V2 foundation milestone requirements
 
-### ✅ M0 — Foundation and reset
+The checklists below preserve the original architecture acceptance inventory.
+Their unchecked boxes are not the current delivery tracker; use R0–R7 and
+`UI_PARITY.md` for current status. A backend milestone can be implemented while
+its assembled desktop workflow remains partial.
+
+### M0 — Foundation and reset: implemented and automated
 
 - [ ] Add architecture decision records for storage, renderer policy, WASM,
   providers, and byte-exact versus normalized reconstruction rules.
@@ -482,7 +535,7 @@ available only in Developer Mode with a persistent warning.
 contracts, and reset behavior are approved; fresh setup and reset work
 reliably; legacy databases are rejected with a clear reset instruction.
 
-### ✅ M1 — Multi-representation capture
+### M1 — Multi-representation capture: implemented; native fidelity validation pending
 
 - [ ] Replace `ClipItem`, `content_type`, `detected_type`, and `metadata`.
 - [ ] Implement the `clip_*` repositories and managed-asset lifecycle.
@@ -501,7 +554,7 @@ reliably; legacy databases are rejected with a clear reset instruction.
 **Exit:** A rich Office capture survives restart with all its raw
 representations intact.
 
-### ✅ M2 — Facets and renderer resolution
+### M2 — Facets and renderer resolution: resolver implemented; presentation partial
 
 - [ ] Define built-in facets and extension namespaces.
 - [ ] Implement candidate routing and `content_detection_jobs`.
@@ -513,7 +566,7 @@ representations intact.
 **Exit:** JSON, HTML, Office, and ambiguous number/date content can expose
 multiple views without changing clip storage.
 
-### ✅ M3 — Transformer and paste pipeline
+### M3 — Transformer and paste pipeline: service implemented; workflow partial
 
 - [ ] Implement JSON, Base64, curl-to-fetch, JSON-to-TypeScript,
   HTML-to-Markdown, JWT, and URL utilities.
@@ -524,7 +577,7 @@ multiple views without changing clip storage.
 
 **Exit:** Previewed, copied, and pasted transformed bytes are identical.
 
-### ✅ M4 — Artifacts, FTS, and provider foundation
+### M4 — Artifacts, FTS, and provider foundation: core implemented; OCR parity partial
 
 - [ ] Move OCR, thumbnails, and approved model output into `artifact_*`.
 - [ ] Build/rebuild `search_documents` from approved sources.
@@ -537,7 +590,7 @@ multiple views without changing clip storage.
 **Exit:** FTS, local OCR where available, artifact provenance, and the
 provider/index lifecycle work without any configured model.
 
-### ✅ M4a — Ollama text embeddings
+### M4a — Ollama text embeddings: backend implemented; provider UI partial
 
 - [ ] Add loopback Ollama endpoint validation, installed-model discovery,
   explicit model selection, and embedding-capability probing. Treat a
@@ -550,7 +603,7 @@ provider/index lifecycle work without any configured model.
 **Exit:** A user can use FTS alone or select an installed Ollama embedding
 model; switching or clearing the profile safely rebuilds the local index.
 
-### 🧪 M5 — WASM extensions and registry
+### M5 — WASM extensions and registry: runtime implemented; product workflow partial
 
 - [ ] Register built-ins through extension contracts.
 - [ ] Validate contracts before freezing Extension API v1.
@@ -561,7 +614,7 @@ model; switching or clearing the profile safely rebuilds the local index.
 **Exit:** Verified extensions safely detect, render, and transform; invalid
 checksums, traps, and timeouts are rejected.
 
-### Planned M6 — Release validation
+### M6 — Release validation: replaced by R7 and currently blocked
 
 - [ ] Remove obsolete legacy schema, parser, asset, and frontend type-routing
   code.
@@ -571,7 +624,7 @@ checksums, traps, and timeouts are rejected.
 
 ## Deferred capabilities
 
-These capabilities remain documented because they affect the stable provider and data-model boundaries, but they are outside the current M0–M5 validation scope. They are not milestones in the present roadmap.
+These capabilities remain documented because they affect the stable provider and data-model boundaries, but they are outside the active R0–R7 recovery scope. They are not milestones in the present roadmap.
 
 ### Optional local visual search
 

@@ -4,7 +4,7 @@ This is the newcomer-friendly, stable architecture reference for ClipsX. It comb
 
 ClipsX is a local-first programmable clipboard: `Capture -> Understand -> Render / Transform -> Copy or Paste`. A clip is one coherent clipboard snapshot, not one content type. It can preserve several raw **representations**—for example plain text, HTML, PNG, and an exact Office format—and later gain semantic **facets** such as JSON or timestamp meaning.
 
-**✅ Shipped (through M4a); 🧪 ready for validation (M5):** coherent multi-representation capture, facets and renderers, transformations, local artifacts and OCR, FTS5, optional Ollama text embeddings, and the M5 extension/registry scope. **Deferred:** optional local visual search plus additional hosted/user-selected providers and generation; **Planned:** M6 release validation.
+This document defines stable boundaries, not delivery status. See [ROADMAP.md](ROADMAP.md) for recovery sequencing, [UI_PARITY.md](UI_PARITY.md) for user-facing status, and [PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md) for native desktop evidence.
 
 ## Read in this order
 
@@ -14,9 +14,9 @@ These documents separate stable behavior from delivery planning. Begin here, the
 | --- | --- |
 | Runtime, capture, output, invariants | [runtime architecture](#runtime-architecture-capture-and-output) |
 | Canonical data, derived data, persistence | [data model](#data-model-preserve-first-derive-later) |
-| Built-ins and planned community extensions | [extensions](#extensions-contributions-without-privilege) |
+| Built-ins and community extensions | [extensions](#extensions-contributions-without-privilege) |
 | FTS, embeddings, providers, limitations | [search](#search-keyword-first-semantic-when-opted-in) |
-| Decisions, M0–M6, validation | [ROADMAP.md](ROADMAP.md) |
+| Decisions, recovery milestones, validation | [ROADMAP.md](ROADMAP.md) |
 
 ## Four pillars
 
@@ -34,7 +34,7 @@ Architecture gives React and Rust distinct responsibilities. The data model pres
 | **Provider** | Trusted host-owned embedding, generation, or OCR integration; never a community extension. |
 | **Embedding** | Fixed-size semantic-search vector in one compatible embedding space. |
 | **Embedding space** | Immutable provider/model/modality/dimensions/normalization/metric identity. |
-| **Extension** | Detector, renderer, or transformer contribution; built-ins ship today, community WASM is in M5 validation. |
+| **Extension** | Detector, renderer, or transformer contribution; built-ins are trusted Rust and community packages are capability-free WASM components. |
 | **Renderer** | Contribution returning a structured model rendered by ClipsX-owned React UI. |
 | **Transformer** | Contribution that produces representations from source data and validated parameters. |
 | **Canonical / derived / ephemeral** | Preserved capture or durable user data / rebuildable output / session or in-memory state. |
@@ -53,11 +53,11 @@ Architecture gives React and Rust distinct responsibilities. The data model pres
 
 ## Runtime architecture, capture, and output
 
-ClipsX is one Rust desktop process plus one React webview. React owns interaction and rendering; Rust owns canonical data, clipboard access, persistence, search, and provider calls. **✅ Shipped through M4a; 🧪 M5 is ready for validation** unless marked **Deferred**; [ROADMAP.md](ROADMAP.md) tracks delivery and [data model](#data-model-preserve-first-derive-later) owns persistence detail.
+ClipsX is one Rust desktop process plus one React webview. React owns interaction and rendering; Rust owns canonical data, clipboard access, persistence, search, and provider calls. [ROADMAP.md](ROADMAP.md) tracks delivery and [data model](#data-model-preserve-first-derive-later) owns persistence detail.
 
 ## Runtime layers
 
-This shows the route from the webview to privileged systems. Dashed extension/hosted-provider paths are planned, not running code.
+This shows the route from the webview to privileged systems. The extension host and registry backend exist; the dashed hosted-provider path is deferred.
 
 ```mermaid
 flowchart TB
@@ -73,7 +73,7 @@ flowchart TB
     IPC["ipc: command handlers and current orchestration"]
     Services["history, contributions, artifacts, search, output"]
     Providers["host-owned provider contracts and adapters"]
-    ExtensionHost["WASM extension host - M5 validation"]
+    ExtensionHost["Capability-free WASM extension host"]
     Repository["HistoryRepository and SQLx"]
     Clipboard["ClipboardAdapter and platform implementations"]
   end
@@ -89,10 +89,12 @@ flowchart TB
   Clipboard <--> OS["OS clipboard and paste APIs"]
   Providers --> Ollama["Optional local Ollama"]
   Providers -. "explicit future consent" .-> Hosted["Future hosted providers"]
-  Registry["Reviewed checksum-pinned registry - planned"] -.-> ExtensionHost
+  Registry["Reviewed checksum-pinned registry"] --> ExtensionHost
 ```
 
-React uses typed Tauri commands, invalidation events, and app-owned binary URI protocols. Events such as `clip-captured`, `clip-updated`, and `clip-facets-updated` are not replicated state: `HistoryPage` queries current data again. Tokio tasks poll clipboard and run derived work in-process, moving blocking detector/OCR tasks where needed; `AppState` owns roots, schema state, cloneable repository, and in-memory `TransformService`.
+React uses typed Tauri commands, invalidation events, and app-owned binary URI protocols. Events such as `clip-captured`, `clip-updated`, and `clip-facets-updated` are not replicated state: `HistoryPage` queries current data again. Tokio tasks poll clipboard and run derived work in-process, moving blocking detector/OCR tasks where needed. `StartupState` always owns roots and schema status so an incompatible database can reach the explicit reset UI; `HostState` owns process-level tray/updater handles; `AppState` exists only for a ready schema and owns the repository and in-memory `TransformService`.
+
+The desktop composition root registers single-instance, deep-link, tray, autostart, updater, filesystem-dialog, global-shortcut, and platform window-chrome adapters. These are thin host boundaries: they show/hide/focus the webview and emit validated events, but never own clipboard representations or canonical data. A source-level contract test rejects frontend `invoke` command names that are absent from the Rust handler list.
 
 ## Clipboard ingestion
 
@@ -217,7 +219,7 @@ the document and queues re-embedding when a text provider is configured.
 
 ## Invariants and code map
 
-Canonical capture commits before detector/artifact/index work; derived data may be cleared/rebuilt. FTS works with providers disabled; hosted calls require explicit consent; secrets stay in OS secure storage and never logs/SQLite. Community code runs only as capability-free M5 WASM components; trusted provider adapters receive explicit immutable inputs.
+Canonical capture commits before detector/artifact/index work; derived data may be cleared/rebuilt. FTS works with providers disabled; hosted calls require explicit consent; secrets stay in OS secure storage and never logs/SQLite. Community code runs only as capability-free WASM components; trusted provider adapters receive explicit immutable inputs.
 
 | Concept | Start here |
 | --- | --- |
@@ -268,11 +270,11 @@ This is the complete backend-responsibility lookup table. The shorter ownership 
 
 The data model separates original clipboard data from everything ClipsX computes later. A clip is one coherent ownership state with many raw representations and additive facets; raw representations are canonical, while facets, artifacts, search documents, chunks, and embeddings are rebuildable.
 
-**✅ Shipped through M4a; 🧪 M5 is ready for validation.** This file is the stable persistence reference. [ROADMAP.md](ROADMAP.md) holds build scope and acceptance criteria.
+This file is the stable persistence reference. [ROADMAP.md](ROADMAP.md) holds build scope and acceptance criteria.
 
 ## Entity relationships
 
-This ERD shows the important persisted records. Canonical clip records are separate from derived work, user catalog data, and M5 extension package/runtime state.
+This ERD shows the important persisted records. Canonical clip records are separate from derived work, user catalog data, and extension package/runtime state.
 
 ```mermaid
 erDiagram
@@ -344,7 +346,7 @@ Binary capture writes unique staging bytes, hashes/fsyncs them, transactionally 
 
 Each `clip_representations` row contains `clip_id`; non-null `format_key` such as `mime:text/plain` or `macos:public.html`; MIME only when known without guessing; optional exact native type; storage kind; exactly one matching reference; ordinal/capture priority; and pending-to-ready lifecycle. `(clip_id, format_key)` is unique, preserving native-only formats without SQLite NULL ambiguity or invented MIME.
 
-Every Office/native extra is its own binary representation. Unknown native formats are kept but written back only with explicit adapter support; no code guesses UTI, OLE, or other native types. One-to-one text children, ordinal file lists, `binary_file_id`, `CHECK` constraints, and a trigger that confirms children/references (and binary ready state) enforce correctness. Only ready data reaches UI, detectors, renderers, search, or reconstruction.
+Every adapter-supported Office/native extra is its own binary representation. Adapters capture only native types they explicitly recognize; unsupported unknown types are skipped. A captured native representation is written back only when the platform adapter explicitly supports its exact type. No code guesses UTI, OLE, or other native identifiers. One-to-one text children, ordinal file lists, `binary_file_id`, `CHECK` constraints, and a trigger that confirms children/references (and binary ready state) enforce correctness. Only ready data reaches UI, detectors, renderers, search, or reconstruction.
 
 | Storage kind | Canonical storage | Read and processing contract | Clipboard reconstruction |
 | --- | --- | --- | --- |
@@ -352,7 +354,7 @@ Every Office/native extra is its own binary representation. Unknown native forma
 | `binary_asset` | `clip_binary_files` reference to immutable managed bytes. | Validate path/ready state; treat opaque unless exact-format parser supports it. | Write captured exact type only if supported; never guess identifiers. |
 | `file_list` | Ordered `clip_file_list_entries`; external content is not copied. | References may no longer exist. | Write supported file-list formats only. |
 
-Normalized text is semantically—not byte-for-byte—preserved. Byte-exact formats use `binary_asset`, mandatory for Office/OLE and unknown native data; the platform matrix decides each format’s rule. Deleting a clip cascades owned rows; only after no reference remains may the binary reconciler remove the managed file.
+Normalized text is semantically—not byte-for-byte—preserved. Byte-exact adapter-supported formats use `binary_asset`, including Office/OLE and supported native data; the platform matrix decides each format’s rule. Deleting a clip cascades owned rows; only after no reference remains may the binary reconciler remove the managed file.
 
 ## What may be persisted
 
@@ -371,7 +373,7 @@ Detection follows raw capture and never selects a global type. Detectors declare
 
 ## Extensions: contributions without privilege
 
-Extensions add semantic understanding, views, and transformations while preserving canonical capture. Built-ins are trusted Rust; community packages are untrusted WebAssembly Components in a capability-free M5 sandbox. Providers are deliberately not extensions because credentials, consent, model runtimes, and vector-space integrity need a host-owned boundary.
+Extensions add semantic understanding, views, and transformations while preserving canonical capture. Built-ins are trusted Rust; community packages are untrusted WebAssembly Components in a capability-free sandbox. Providers are deliberately not extensions because credentials, consent, model runtimes, and vector-space integrity need a host-owned boundary.
 
 ## Built-in contribution system
 
@@ -383,7 +385,7 @@ Built-ins use the same contracts intended for public extensions. A detector adds
 
 Built-ins are enabled by default. Renderer selection is computed UI policy: user MIME/facet preference, rich/native representation, facet, then plain text. See [runtime architecture](#runtime-architecture-capture-and-output) for output behavior and [data model](#data-model-preserve-first-derive-later) for persistence.
 
-## M5 WASM boundary
+## Extension API v1 WASM boundary
 
 This diagram shows how community contributions participate without receiving privileged handles.
 
@@ -424,7 +426,7 @@ Extension API v1 is defined by [`EXTENSION_API_V1.md`](EXTENSION_API_V1.md) and 
 
 ## Search: keyword-first, semantic when opted in
 
-Search is derived from preserved clips, not a replacement for them. **✅ Shipped:** FTS5 and optional user-selected loopback Ollama text embeddings. **Deferred:** optional local visual search, OpenAI-compatible/hosted providers, and generation.
+Search is derived from preserved clips, not a replacement for them. The implemented backend supports FTS5 and optional user-selected loopback Ollama text embeddings. Optional local visual search, OpenAI-compatible/hosted providers, and generation are deferred.
 
 ## Index and query flow
 
@@ -456,7 +458,7 @@ flowchart LR
   end
 ```
 
-Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR; facets, binary bytes, tags, unsaved/generated previews are not independently searchable. Simple syntax quotes whitespace tokens and uses FTS5 implicit AND; advanced mode passes FTS syntax, while scope/tag filters are SQL. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
+Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax quotes whitespace tokens and uses FTS5 implicit AND; advanced mode passes FTS syntax, while scope/tag filters are SQL. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
 
 ## Current hybrid limitation
 
@@ -464,11 +466,11 @@ Hybrid search currently improves lexical ordering, but it cannot return a semant
 
 It retrieves the FTS page first, embeds query, scans every active-space chunk vector in process, keeps best chunk per clip, then reciprocal-rank fuses only clips already in that FTS page. Pagination cursors/totals are pre-fusion FTS values. Code/UI must not claim semantic recall beyond FTS candidates. A future planner may union candidates, filter both, fuse, hydrate, and paginate after fusion.
 
-There is a second gap: `update_clip_note` changes canonical note but does not rebuild that clip’s projection; startup detects only missing/old versions. Notes can remain stale in FTS until another path rebuilds. This should move behind one projection-invalidation operation.
+Note and tag mutations call the shared projection refresh path, then enqueue and process embedding work when a text provider is configured. The canonical mutation and derived refresh are separate operations, so a refresh failure degrades search without rolling back the user's catalog edit; the normal stale-projection rebuild repairs it later.
 
 ## Providers, spaces, privacy
 
-Desktop connects directly to providers; v1 has no model proxy/server. Default disabled embedding leaves FTS functional; Ollama ships first; OpenAI-compatible follows validation; optional local visual provider owns runtime/tokenizer/preprocessing/model and is never auto-installed/downloaded.
+Desktop connects directly to providers; V2 has no model proxy/server. Default disabled embedding leaves FTS functional. Ollama is the implemented text-embedding backend. OpenAI-compatible providers and an optional local visual provider are deferred; any local visual provider must own its runtime, tokenizer, preprocessing, and model and must never be auto-installed or downloaded.
 
 Embedding providers implement `describe`, `embed_documents`, `embed_query`; multimodal also `embed_images`. `describe` gives immutable kind, canonical endpoint when applicable, model/revision/digest when available, modality, dimensions, normalization, metric; descriptor/config change creates space and host rejects mismatched vectors.
 

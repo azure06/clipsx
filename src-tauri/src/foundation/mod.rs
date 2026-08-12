@@ -191,7 +191,7 @@ async fn inspect_database(path: &Path) -> Result<SchemaState> {
 
 pub fn startup_status(state: SchemaState) -> StartupStatus {
     match state {
-        SchemaState::Ready => StartupStatus { state: "architecture_cutover".into(), message: "The v2 foundation is active. Clipboard flows return in M1.".into(), reset_available: true },
+        SchemaState::Ready => StartupStatus { state: "ready".into(), message: "ClipsX v2 storage is ready.".into(), reset_available: false },
         SchemaState::LegacyResetRequired => StartupStatus { state: "legacy_reset_required".into(), message: "This ClipsX database uses the retired schema. Factory reset is required; data is not migrated.".into(), reset_available: true },
         SchemaState::UnsupportedSchema => StartupStatus { state: "unsupported_schema".into(), message: "The local database is not a supported ClipsX v2 schema. Factory reset is required.".into(), reset_available: true },
     }

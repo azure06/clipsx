@@ -313,7 +313,7 @@ describe('AppLayout search focus ownership', () => {
     expect(eventHandlers.get('clip-captured')).toBeUndefined()
   })
 
-  it('re-fetches text search status when text-search-status-changed fires after startup', async () => {
+  it('re-fetches embedding status when embedding-space-changed fires after startup', async () => {
     invokeMock.mockResolvedValueOnce({
       state: 'loading',
       enabled: true,
@@ -326,11 +326,11 @@ describe('AppLayout search focus ownership', () => {
     render(<AppLayout />)
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith('get_text_search_status')
+      expect(invokeMock).toHaveBeenCalledWith('get_text_embedding_status')
     })
 
     const callCountAfterMount = invokeMock.mock.calls.filter(
-      c => c[0] === 'get_text_search_status'
+      c => c[0] === 'get_text_embedding_status'
     ).length
 
     invokeMock.mockResolvedValueOnce({
@@ -343,11 +343,13 @@ describe('AppLayout search focus ownership', () => {
     })
 
     act(() => {
-      eventHandlers.get('text-search-status-changed')?.[0]?.({ payload: null })
+      eventHandlers.get('embedding-space-changed')?.[0]?.({ payload: null })
     })
 
     await waitFor(() => {
-      const callCount = invokeMock.mock.calls.filter(c => c[0] === 'get_text_search_status').length
+      const callCount = invokeMock.mock.calls.filter(
+        c => c[0] === 'get_text_embedding_status'
+      ).length
       expect(callCount).toBeGreaterThan(callCountAfterMount)
     })
   })

@@ -4,10 +4,11 @@ The complete pre-M0 ClipsX implementation is preserved on the local Git branch
 `archive/v1-pre-m0` at commit `d9f1392`. The same snapshot is also marked by
 the `v1-pre-m0-reference` tag.
 
-This branch is read-only reference material for M1 and later work. It preserves
-the original visual system, keyboard behavior, platform adapters, tests, and
-user-facing interactions without keeping any v1 database or runtime
-compatibility in the v2 application.
+This branch is read-only reference material for the active recovery program,
+especially R2 typed presentation and R7 parity validation. It preserves the
+original visual system, keyboard behavior, platform adapters, tests, and
+user-facing interactions without keeping any V1 database or runtime
+compatibility in the V2 application.
 
 Use the archive to inspect a prior path, for example:
 
@@ -34,8 +35,10 @@ belong to the current delivery. The hard-wired visual model is deferred in
 favor of the v2 provider boundary.
 
 See [UI_PARITY.md](UI_PARITY.md) for the authoritative feature-by-feature
-delivery status. Visual equivalence permits replacing component internals with
-v2 contracts; it never permits reintroducing v1 persistence or IPC.
+delivery status, [V1_V2_GAP_ANALYSIS.md](V1_V2_GAP_ANALYSIS.md) for the recovery
+baseline, and [ROADMAP.md](ROADMAP.md) for dependency order. Visual equivalence
+permits replacing component internals with V2 contracts; it never permits
+reintroducing V1 persistence or IPC.
 
 The preview chrome, `ClipActionsToolbar`, presentation specification, and the
 specialized components under `src/features/content/previews` are the concrete
@@ -43,5 +46,5 @@ interaction references. They may be refactored to accept `ClipPresentation`
 and typed `RenderModel` inputs. Their former `ClipItem`, sparse `metadata`,
 Vault action, and generic `open_path` command are explicitly not references.
 
-The archive branch must not be deleted until the v2 replacement has reached
-feature parity for the behavior it documents.
+The archive branch must not be deleted until R7 is verified and the V2
+replacement has reached parity for the included behavior it documents.

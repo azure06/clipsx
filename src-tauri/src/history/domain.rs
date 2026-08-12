@@ -87,7 +87,11 @@ impl Default for AppSettings {
             auto_clear_minutes: None,
             clear_on_exit: false,
             auto_start: false,
-            global_shortcut: "Ctrl+Shift+V".into(),
+            global_shortcut: if cfg!(target_os = "macos") {
+                "Cmd+Shift+V".into()
+            } else {
+                "Ctrl+Shift+V".into()
+            },
             excluded_apps: vec![],
             capture_filters: CaptureFilters::default(),
             capture: CaptureSettings::default(),

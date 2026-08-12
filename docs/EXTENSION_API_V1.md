@@ -1,5 +1,13 @@
 # Extension API v1
 
+**Delivery status:** the package format, runtime isolation, validation,
+resource limits, quarantine, service, and registry backend are implemented.
+The end-user registry/developer installation workflow, diagnostics, recovery,
+and complete renderer/transformer presentation paths remain partial and are
+scheduled for recovery milestone R6. See [ROADMAP.md](ROADMAP.md) and
+[UI_PARITY.md](UI_PARITY.md). This page defines the stable API contract; it is
+not a claim of complete product delivery.
+
 ClipsX extensions are checksum-pinned `.clipsx` packages containing a
 `clipsx-extension.toml` manifest and `component.wasm` WebAssembly Component.
 They run without WASI or any other imports: extensions have no filesystem,

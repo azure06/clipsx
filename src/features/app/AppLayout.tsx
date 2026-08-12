@@ -15,7 +15,7 @@ import { Settings, type SettingsTab } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { TextSearchStatus } from '../../shared/types'
+import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 
 export const AppLayout = () => {
@@ -38,7 +38,7 @@ export const AppLayout = () => {
   const { setThemeMode } = useTheme()
   const initializeAuth = useAuthStore(state => state.initialize)
   const completeAuthCallback = useAuthStore(state => state.completeCallback)
-  const [textSearchStatus, setTextSearchStatus] = useState<TextSearchStatus | null>(null)
+  const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
@@ -153,7 +153,7 @@ export const AppLayout = () => {
   useEffect(() => {
     const loadTextSearchStatus = async () => {
       try {
-        const status = await invoke<TextSearchStatus>('get_text_search_status')
+        const status = await invoke<TextEmbeddingStatus>('get_text_embedding_status')
         setTextSearchStatus(status)
       } catch {
         setTextSearchStatus(null)
@@ -162,11 +162,11 @@ export const AppLayout = () => {
 
     void loadTextSearchStatus()
 
-    const unlistenCapabilities = listen('ai-capabilities-changed', () => {
+    const unlistenCapabilities = listen('embedding-provider-status-changed', () => {
       void loadTextSearchStatus()
     })
 
-    const unlistenTextSearchStatus = listen('text-search-status-changed', () => {
+    const unlistenTextSearchStatus = listen('embedding-space-changed', () => {
       void loadTextSearchStatus()
     })
 

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
-import type { TextSearchStatus } from '../../shared/types'
+import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 
 const FILTER_OPTIONS = [
@@ -91,7 +91,7 @@ interface SearchBarProps {
   activeScope?: ScopeCommand
   placeholder?: string
   autoFocus?: boolean
-  semanticStatus?: TextSearchStatus | null
+  semanticStatus?: TextEmbeddingStatus | null
   isSemanticActive?: boolean
   onToggleSemantic?: () => void
 }
@@ -120,14 +120,17 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
   const lastAppliedScopeValueRef = useRef<string | null>(null)
-  const isSemanticAvailable =
-    semanticStatus?.state === 'ready' || semanticStatus?.state === 'indexing'
-  const semanticHint =
-    semanticStatus?.state === 'indexing'
-      ? t('search.semanticIndexing')
-      : semanticStatus && semanticStatus.state !== 'ready'
-        ? t('search.semanticFallback')
-        : null
+  const isSemanticIndexing = Boolean(
+    semanticStatus?.pendingSpaceId || (semanticStatus?.pendingJobs ?? 0) > 0
+  )
+  const isSemanticAvailable = Boolean(
+    semanticStatus?.enabled && (semanticStatus.activeSpaceId || semanticStatus.pendingSpaceId)
+  )
+  const semanticHint = isSemanticIndexing
+    ? t('search.semanticIndexing')
+    : semanticStatus && (!isSemanticAvailable || semanticStatus.diagnostic)
+      ? t('search.semanticFallback')
+      : null
 
   useEffect(() => {
     if (autoFocus) {

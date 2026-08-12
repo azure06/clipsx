@@ -26,6 +26,12 @@
     "core:window:allow-is-minimized",
     "core:window:allow-unminimize",
     "core:path:default",
-    "dialog:allow-open"
+    "autostart:default",
+    "deep-link:default",
+    "dialog:allow-open",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "shell:allow-open",
+    "updater:default"
   ]
 }
