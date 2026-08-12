@@ -28,8 +28,18 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useState, type ReactNode } from 'react'
+import mermaid from 'mermaid'
+import {
+  useState,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
+import { useTheme } from '../../shared/hooks/useTheme'
 
 const assetUrl = (id: string) => `clipsx-asset://localhost/${id}`
 
@@ -212,13 +222,13 @@ const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) =
         {columns.length} cols
       </span>
     </div>
-    <div className="flex-1 overflow-auto">
-      <table className="min-w-full border-collapse text-left text-sm">
+    <div className="flex-1 overflow-auto custom-scrollbar">
+      <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
         <thead className="sticky top-0 z-10">
           <tr>
             {columns.map((column, index) => (
               <th
-                className="border border-slate-300 bg-slate-100/95 px-3 py-2 backdrop-blur dark:border-slate-700 dark:bg-slate-800/95"
+                className="border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 backdrop-blur dark:border-white/10 dark:bg-slate-800/95 dark:text-gray-400"
                 key={`${index}:${column}`}
               >
                 {column}
@@ -226,14 +236,11 @@ const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) =
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-slate-100 dark:divide-white/5">
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
+            <tr key={rowIndex} className="transition-colors hover:bg-slate-50 dark:hover:bg-white/5">
               {columns.map((_, columnIndex) => (
-                <td
-                  className="border border-slate-200 px-3 py-2 align-top dark:border-slate-800"
-                  key={columnIndex}
-                >
+                <td className="px-3 py-2 text-gray-700 dark:text-gray-300" key={columnIndex}>
                   {row[columnIndex] ?? ''}
                 </td>
               ))}
@@ -778,6 +785,174 @@ const SemanticView = ({
   )
 }
 
+const MermaidDiagram = ({ chart }: { chart: string }) => {
+  const { appliedTheme } = useTheme()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const rawId = useId()
+  const [hasError, setHasError] = useState(false)
+  const diagramId = useMemo(() => `mermaid-${rawId.replace(/[:]/g, '')}`, [rawId])
+
+  useEffect(() => {
+    let cancelled = false
+    const container = containerRef.current
+    const run = async () => {
+      if (!container) return
+      setHasError(false)
+      container.innerHTML = ''
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: appliedTheme === 'dark' ? 'dark' : 'default',
+      })
+      try {
+        const { svg } = await mermaid.render(diagramId, chart)
+        if (!cancelled) container.innerHTML = svg
+      } catch {
+        if (!cancelled) setHasError(true)
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+      if (container) container.innerHTML = ''
+    }
+  }, [appliedTheme, chart, diagramId])
+
+  if (hasError) {
+    return (
+      <div className="rounded-lg border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+        Failed to render diagram
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-xl border border-slate-200/80 bg-white/70 px-3 py-3 shadow-sm dark:border-white/10 dark:bg-black/20">
+      <div
+        ref={containerRef}
+        data-testid="mermaid-diagram"
+        className="overflow-x-auto [&_svg]:mx-auto [&_svg]:max-w-full"
+      />
+    </div>
+  )
+}
+
+const markdownChildrenToText = (children: ReactNode): string =>
+  Array.isArray(children)
+    ? children.map(markdownChildrenToText).join('')
+    : typeof children === 'string'
+      ? children
+      : ''
+
+const MarkdownView = ({ markdown }: { markdown: string }) => {
+  const components = useMemo(
+    () => ({
+      pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => <>{children}</>,
+      h1: ({ children }: ComponentPropsWithoutRef<'h1'>) => (
+        <h1 className="mt-1 text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+          {children}
+        </h1>
+      ),
+      h2: ({ children }: ComponentPropsWithoutRef<'h2'>) => (
+        <h2 className="mt-5 text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+          {children}
+        </h2>
+      ),
+      h3: ({ children }: ComponentPropsWithoutRef<'h3'>) => (
+        <h3 className="mt-4 text-base font-semibold text-gray-900 dark:text-gray-100">{children}</h3>
+      ),
+      p: ({ children }: ComponentPropsWithoutRef<'p'>) => (
+        <p className="text-sm leading-7 text-gray-800 dark:text-gray-200">{children}</p>
+      ),
+      ul: ({ children }: ComponentPropsWithoutRef<'ul'>) => (
+        <ul className="list-disc space-y-1 pl-5 text-sm text-gray-800 dark:text-gray-200">
+          {children}
+        </ul>
+      ),
+      ol: ({ children }: ComponentPropsWithoutRef<'ol'>) => (
+        <ol className="list-decimal space-y-1 pl-5 text-sm text-gray-800 dark:text-gray-200">
+          {children}
+        </ol>
+      ),
+      li: ({ children }: ComponentPropsWithoutRef<'li'>) => <li className="pl-0.5">{children}</li>,
+      blockquote: ({ children }: ComponentPropsWithoutRef<'blockquote'>) => (
+        <blockquote className="border-l-4 border-sky-300/80 bg-sky-50/60 px-4 py-2 italic text-gray-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-gray-200">
+          {children}
+        </blockquote>
+      ),
+      a: ({ children, href }: ComponentPropsWithoutRef<'a'>) => (
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="font-medium text-sky-700 underline decoration-sky-400/60 underline-offset-4 dark:text-sky-300"
+        >
+          {children}
+        </a>
+      ),
+      table: ({ children }: ComponentPropsWithoutRef<'table'>) => (
+        <div className="overflow-x-auto rounded-xl border border-slate-200/80 dark:border-white/10">
+          <table className="min-w-full border-collapse bg-white/70 text-sm dark:bg-black/20">
+            {children}
+          </table>
+        </div>
+      ),
+      thead: ({ children }: ComponentPropsWithoutRef<'thead'>) => (
+        <thead className="bg-slate-100/80 dark:bg-white/5">{children}</thead>
+      ),
+      th: ({ children }: ComponentPropsWithoutRef<'th'>) => (
+        <th className="border-b border-slate-200/80 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:border-white/10 dark:text-gray-400">
+          {children}
+        </th>
+      ),
+      td: ({ children }: ComponentPropsWithoutRef<'td'>) => (
+        <td className="border-t border-slate-100 px-3 py-2 text-gray-700 dark:border-white/5 dark:text-gray-200">
+          {children}
+        </td>
+      ),
+      code: ({
+        className,
+        children,
+        inline,
+        ...rest
+      }: ComponentPropsWithoutRef<'code'> & { inline?: boolean }) => {
+        const language = className?.match(/language-([\w-]+)/)?.[1]?.toLowerCase()
+        const code = markdownChildrenToText(children).replace(/\n$/, '')
+        if (inline || !language) {
+          return (
+            <code
+              {...rest}
+              className="rounded bg-slate-200/80 px-1.5 py-0.5 font-mono text-[0.92em] text-fuchsia-700 dark:bg-white/10 dark:text-fuchsia-200"
+            >
+              {children}
+            </code>
+          )
+        }
+        if (language === 'mermaid') {
+          return <MermaidDiagram chart={code} />
+        }
+        return (
+          <pre className="overflow-x-auto rounded-xl border border-slate-200/80 bg-slate-950 px-4 py-3 text-sm text-slate-100 shadow-sm dark:border-white/10">
+            <code {...rest} className={className}>
+              {code}
+            </code>
+          </pre>
+        )
+      },
+    }),
+    []
+  )
+
+  return (
+    <div className="h-full overflow-y-auto px-4 py-4 custom-scrollbar">
+      <div className="space-y-4">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {markdown}
+        </ReactMarkdown>
+      </div>
+    </div>
+  )
+}
+
 const JsonView = ({ value }: { value: unknown }) => {
   const jsonText = JSON.stringify(value, null, 2)
   const keyCount = Array.isArray(value)
@@ -823,13 +998,7 @@ export const RenderModelView = ({
     case 'code':
       return <CodeView language={model.language} text={model.text} />
     case 'markdown':
-      return (
-        <div className="prose prose-sm max-w-none p-4 dark:prose-invert">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-            {model.markdown}
-          </ReactMarkdown>
-        </div>
-      )
+      return <MarkdownView markdown={model.markdown} />
     case 'table':
       return <TableView {...model} />
     case 'tree':
@@ -846,7 +1015,7 @@ export const RenderModelView = ({
         <iframe
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
-          srcDoc={`<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;background:#ffffff;color:#111827}@media(prefers-color-scheme:dark){html,body{background:#0f172a;color:#f1f5f9}}a{color:#3b82f6}pre,code{background:#f1f5f9;border-radius:4px;padding:2px 4px}@media(prefers-color-scheme:dark){pre,code{background:#1e293b}}</style>${model.sanitizedHtml}`}
+          srcDoc={model.sanitizedHtml}
           title="HTML preview"
         />
       ) : (
