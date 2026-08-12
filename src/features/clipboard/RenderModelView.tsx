@@ -708,8 +708,12 @@ const SemanticView = ({
           </span>
         </div>
         <div className="flex flex-col items-center gap-3 p-4">
-          <code className="max-w-full break-all rounded-lg bg-slate-100 p-3 text-sm dark:bg-slate-900">
-            {revealed ? model.text : '•'.repeat(Math.min(model.text.length, 48))}
+          <code className="max-w-full break-all rounded-lg bg-slate-100 p-3 font-mono text-sm dark:bg-slate-900">
+            {revealed
+              ? model.text
+              : model.text.length > 12
+                ? `${model.text.slice(0, 4)}${'•'.repeat(Math.min(model.text.length - 8, 32))}${model.text.slice(-4)}`
+                : '•'.repeat(model.text.length)}
           </code>
           <button
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
@@ -838,20 +842,24 @@ export const RenderModelView = ({
     case 'image':
       return <ImageView model={model} retrying={retryingOcr} onRetryOcr={onRetryOcr} />
     case 'html':
-      return (
+      return model.sanitizedHtml ? (
         <iframe
           className="h-full min-h-56 w-full"
-          sandbox=""
-          srcDoc={`<style>html,body{margin:0;padding:12px;background:transparent;color:inherit;font-family:system-ui,sans-serif;font-size:13px}</style>${model.sanitizedHtml}`}
+          sandbox="allow-same-origin"
+          srcDoc={`<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;background:#ffffff;color:#111827}@media(prefers-color-scheme:dark){html,body{background:#0f172a;color:#f1f5f9}}a{color:#3b82f6}pre,code{background:#f1f5f9;border-radius:4px;padding:2px 4px}@media(prefers-color-scheme:dark){pre,code{background:#1e293b}}</style>${model.sanitizedHtml}`}
           title="HTML preview"
         />
+      ) : (
+        <div className="flex h-full items-center justify-center p-6 text-sm text-gray-400">
+          No renderable HTML content.
+        </div>
       )
     case 'rich_text':
       return model.sanitizedHtml ? (
         <iframe
           className="h-full min-h-56 w-full"
-          sandbox=""
-          srcDoc={`<style>html,body{margin:0;padding:12px;background:transparent;color:inherit;font-family:system-ui,sans-serif;font-size:13px}</style>${model.sanitizedHtml}`}
+          sandbox="allow-same-origin"
+          srcDoc={`<style>html,body{margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;background:#ffffff;color:#111827}@media(prefers-color-scheme:dark){html,body{background:#0f172a;color:#f1f5f9}}a{color:#3b82f6}</style>${model.sanitizedHtml}`}
           title="Rich text preview"
         />
       ) : (

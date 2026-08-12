@@ -314,7 +314,7 @@ macro_rules! key_value_renderer {
 key_value_renderer!(UrlRenderer, "builtin.url", "URL", 85);
 key_value_renderer!(JwtRenderer, "builtin.jwt", "JWT", 85);
 key_value_renderer!(NumberRenderer, "builtin.number", "Number", 75);
-key_value_renderer!(DateRenderer, "builtin.date", "Date/time", 75);
+key_value_renderer!(DateRenderer, "builtin.date", "Date", 75);
 static ORIGINAL_RENDERER: OriginalRenderer = OriginalRenderer;
 static TEXT_RENDERER: TextRenderer = TextRenderer;
 static HTML_RENDERER: HtmlRenderer = HtmlRenderer;
@@ -457,7 +457,7 @@ impl DetectorContribution for DateDetector {
         "core.time.date"
     }
     fn name(&self) -> &'static str {
-        "Date/time"
+        "Date"
     }
     fn candidate(&self, s: &TextSource) -> bool {
         let t = s.text.trim();
@@ -525,7 +525,7 @@ impl DetectorContribution for TableDetector {
         "core.data.table"
     }
     fn name(&self) -> &'static str {
-        "Delimited table"
+        "Table"
     }
     fn candidate(&self, s: &TextSource) -> bool {
         s.text.lines().count() >= 2 && (s.text.contains('\t') || s.text.contains(','))
@@ -648,7 +648,7 @@ impl DetectorContribution for MathDetector {
         "core.math.expression"
     }
     fn name(&self) -> &'static str {
-        "Math expression"
+        "Math"
     }
     fn candidate(&self, s: &TextSource) -> bool {
         let value = s.text.trim();
@@ -1036,7 +1036,7 @@ pub async fn views(
         } else if rep.storage_kind == "file_list" {
             add_view(rep, "builtin.files", "Files", "files", None, 110, false);
         } else if mime == "text/html" {
-            add_view(rep, "builtin.html", "Formatted", "html", None, 100, false);
+            add_view(rep, "builtin.html", "HTML", "html", None, 100, false);
             add_view(rep, "builtin.original", "Source", "source", None, 20, true);
         } else if matches!(mime, "text/rtf" | "application/rtf") {
             add_view(
