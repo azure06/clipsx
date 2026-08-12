@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-type ViewType = 'clips' | 'plugins' | 'settings'
+type ViewType = 'clips' | 'extensions' | 'intelligence' | 'settings'
 
 interface UIState {
   activeView: ViewType

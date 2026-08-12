@@ -264,15 +264,20 @@ const SemanticView = ({
   const [revealed, setRevealed] = useState(false)
   if (kind === 'url') {
     const href = semanticScalar(model.payload, 'href') ?? model.text
-    const scheme = semanticScalar(model.payload, 'scheme')
-    const host = semanticScalar(model.payload, 'host')
-    const path = semanticScalar(model.payload, 'path')
-    const fragment = semanticScalar(model.payload, 'fragment')
-    const query = model.payload['query']
-    const queryEntries =
-      query && typeof query === 'object' && !Array.isArray(query)
-        ? Object.entries(query as Record<string, unknown>).map(([k, v]) => [k, String(v)] as const)
-        : []
+    // The Rust detector only stores href/host/path — parse client-side for scheme/query/fragment.
+    let parsed: URL | null = null
+    try {
+      parsed = new URL(href)
+    } catch {
+      /* ignore malformed href */
+    }
+    const scheme =
+      semanticScalar(model.payload, 'scheme') ?? parsed?.protocol.replace(':', '') ?? null
+    const host = semanticScalar(model.payload, 'host') ?? parsed?.hostname ?? null
+    const rawPath = semanticScalar(model.payload, 'path') ?? parsed?.pathname ?? null
+    const path = rawPath && rawPath !== '/' ? rawPath : null
+    const fragment = parsed?.hash ? parsed.hash.slice(1) : null
+    const queryEntries: [string, string][] = parsed ? [...parsed.searchParams.entries()] : []
     return (
       <div className="flex h-full flex-col gap-0 overflow-auto">
         <div className="flex items-start gap-4 border-b border-slate-200/60 bg-linear-to-r from-blue-500/5 to-cyan-500/5 p-5 dark:border-white/5">
@@ -297,10 +302,10 @@ const SemanticView = ({
           </div>
           {scheme && <CopyableRow label="Protocol" value={scheme} />}
           {host && <CopyableRow label="Domain" value={host} />}
-          {path && path !== '/' && <CopyableRow label="Path" value={path} />}
-          {fragment && <CopyableRow label="Fragment" value={fragment} />}
+          {path && <CopyableRow label="Path" value={path} />}
+          {fragment && <CopyableRow label="Fragment" value={`#${fragment}`} />}
           {queryEntries.map(([k, v]) => (
-            <CopyableRow key={k} label={k} value={v} />
+            <CopyableRow key={k} label={`?${k}`} value={v} />
           ))}
         </div>
       </div>

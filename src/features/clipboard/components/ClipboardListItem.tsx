@@ -1,6 +1,15 @@
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
-import { Command, CornerDownLeft, Hash, MessageSquare, Pin, ScanText, Sparkles, Star } from 'lucide-react'
+import {
+  Command,
+  CornerDownLeft,
+  Hash,
+  MessageSquare,
+  Pin,
+  ScanText,
+  Sparkles,
+  Star,
+} from 'lucide-react'
 import { ContentIcon } from '../../content'
 import { summaryToContent } from '../summaryPresentation'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'

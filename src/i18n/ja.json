@@ -34,6 +34,8 @@
   },
   "sidebar": {
     "clipboard": "クリップボード履歴",
+    "extensions": "拡張機能",
+    "intelligence": "インテリジェンス",
     "plugins": "プラグイン",
     "account": "アカウント",
     "accountSignedIn": "{{email}} でサインイン中",
@@ -46,7 +48,9 @@
   },
   "titleBar": {
     "clips": "クリップ",
-    "plugins": "プラグイン",
+    "extensions": "拡張機能",
+    "intelligence": "インテリジェンス",
+    "plugins": "拡張機能",
     "settings": "設定",
     "clipCount_one": "{{count}}件のクリップ",
     "clipCount_other": "{{count}}件のクリップ"

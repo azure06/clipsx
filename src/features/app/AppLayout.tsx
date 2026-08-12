@@ -13,6 +13,7 @@ import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings, type SettingsTab } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
+import { IntelligencePage } from '../intelligence/IntelligencePage'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { TextEmbeddingStatus } from '../../shared/types/v2'
@@ -231,7 +232,7 @@ export const AppLayout = () => {
 
   return (
     // Main Container - Single Background Color/Gradient Source
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-lg border border-white/50 dark:border-white/10">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-2xl border border-white/50 dark:border-white/10">
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
 
@@ -302,7 +303,9 @@ export const AppLayout = () => {
 
             {activeView === 'settings' && <Settings initialTab={settingsInitialTab} />}
 
-            {activeView === 'plugins' && <Plugins />}
+            {activeView === 'extensions' && <Plugins />}
+
+            {activeView === 'intelligence' && <IntelligencePage />}
 
             <UpdateBanner />
           </div>
