@@ -1,8 +1,9 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import {
   Archive,
   AtSign,
   Calculator,
+  CalendarDays,
   Check,
   Clock,
   Code2,
@@ -10,16 +11,19 @@ import {
   ExternalLink,
   File,
   FileQuestion,
+  FileSpreadsheet,
   FileText,
   Film,
   FolderOpen,
   Image,
   ImageOff,
   KeyRound,
+  MessageSquare,
   Music,
-  Palette,
   Phone,
   RotateCw,
+  Send,
+  ShieldAlert,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -106,6 +110,8 @@ const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
   },
   { exts: ['txt', 'md', 'rtf', 'doc', 'docx', 'odt'], icon: FileText },
 ]
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'])
 
 const getFileIcon = (name: string): LucideIcon => {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
@@ -195,6 +201,9 @@ const CodeView = ({ language, text }: { language: string | null; text: string })
 const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) => (
   <div className="flex h-full flex-col overflow-hidden">
     <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-white/10">
+      <div className="rounded-lg bg-emerald-500/20 p-1 text-emerald-400">
+        <FileSpreadsheet className="h-3.5 w-3.5" />
+      </div>
       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
         {rows.length} rows
       </span>
@@ -326,24 +335,41 @@ const FilesView = ({ entries }: Extract<RenderModel, { kind: 'files' }>) => (
   <ul className="space-y-2 p-4">
     {entries.map((entry, index) => {
       const Icon = getFileIcon(entry.name)
+      const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
+      const isImage = IMAGE_EXTS.has(ext)
       return (
         <li
-          className="flex items-center gap-3 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 dark:border-slate-700/60 dark:bg-slate-100/5"
+          className="flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 dark:border-slate-700/60 dark:bg-slate-100/5"
           key={`${index}:${entry.path}`}
         >
-          <Icon className="h-5 w-5 shrink-0 text-gray-400" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{entry.name}</div>
-            <div className="break-all text-xs text-gray-500">{entry.path}</div>
+          <div className="flex items-center gap-3">
+            <Icon className="h-5 w-5 shrink-0 text-gray-400" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{entry.name}</div>
+              <div className="break-all text-xs text-gray-500">{entry.path}</div>
+            </div>
+            <button
+              aria-label={`Open ${entry.name}`}
+              title="Open in Finder"
+              className="rounded p-2 text-gray-400 transition-colors hover:bg-slate-100 hover:text-gray-700 dark:hover:bg-white/10"
+              onClick={() => void invoke('open_clip_file', { path: entry.path })}
+            >
+              <FolderOpen className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            aria-label={`Open ${entry.name}`}
-            title="Open in Finder"
-            className="rounded p-2 text-gray-400 hover:bg-slate-100 hover:text-gray-700 dark:hover:bg-white/10 transition-colors"
-            onClick={() => void invoke('open_clip_file', { path: entry.path })}
-          >
-            <FolderOpen className="h-4 w-4" />
-          </button>
+          {isImage && (
+            <div className="overflow-hidden rounded-lg bg-slate-100/60 dark:bg-black/20">
+              <img
+                alt={entry.name}
+                className="max-h-48 w-auto object-contain"
+                src={convertFileSrc(entry.path)}
+                onError={e => {
+                  const el = e.currentTarget.parentElement
+                  if (el) el.style.display = 'none'
+                }}
+              />
+            </div>
+          )}
         </li>
       )
     })}
@@ -357,6 +383,45 @@ const semanticScalar = (payload: Record<string, unknown>, key: string): string |
     : null
 }
 
+// Extracted so it can hold its own copy-result state
+const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }> }) => {
+  const [copied, setCopied] = useState(false)
+  const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
+  const handleCopy = () => {
+    if (!result) return
+    void navigator.clipboard.writeText(result)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <Calculator className="h-8 w-8 text-indigo-400" />
+      <div className="flex w-full max-w-sm flex-col gap-3">
+        <code className="rounded-xl bg-slate-100/60 px-4 py-3 text-lg dark:bg-slate-100/10">
+          {model.text}
+        </code>
+        {result && result !== model.text && (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4">
+            <span className="text-[10px] uppercase tracking-widest text-gray-500">= result</span>
+            <code className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">{result}</code>
+            <button
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+              onClick={handleCopy}
+            >
+              {copied ? (
+                <Check className="h-3 w-3 text-emerald-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+              {copied ? 'Copied' : 'Copy result'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const SemanticView = ({
   model,
   kind,
@@ -367,9 +432,9 @@ const SemanticView = ({
   clipId: string
 }) => {
   const [revealed, setRevealed] = useState(false)
+
   if (kind === 'url') {
     const href = semanticScalar(model.payload, 'href') ?? model.text
-    // The Rust detector only stores href/host/path — parse client-side for scheme/query/fragment.
     let parsed: URL | null = null
     try {
       parsed = new URL(href)
@@ -383,6 +448,8 @@ const SemanticView = ({
     const path = rawPath && rawPath !== '/' ? rawPath : null
     const fragment = parsed?.hash ? parsed.hash.slice(1) : null
     const queryEntries: [string, string][] = parsed ? [...parsed.searchParams.entries()] : []
+    const urlExt = (href.split('?')[0] ?? '').split('.').pop()?.toLowerCase() ?? ''
+    const isImageUrl = IMAGE_EXTS.has(urlExt)
     return (
       <div className="flex h-full flex-col gap-0 overflow-auto">
         <div className="flex items-start gap-4 border-b border-slate-200/60 bg-linear-to-r from-blue-500/5 to-cyan-500/5 p-5 dark:border-white/5">
@@ -401,6 +468,19 @@ const SemanticView = ({
             {host && <div className="mt-0.5 text-xs text-gray-500">{host}</div>}
           </div>
         </div>
+        {isImageUrl && (
+          <div className="border-b border-slate-200/60 p-3 dark:border-white/5">
+            <img
+              alt="URL image preview"
+              className="max-h-48 w-auto rounded-lg object-contain"
+              src={href}
+              onError={e => {
+                const el = e.currentTarget.parentElement
+                if (el) el.style.display = 'none'
+              }}
+            />
+          </div>
+        )}
         <div className="p-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
             URL Structure
@@ -416,20 +496,53 @@ const SemanticView = ({
       </div>
     )
   }
+
   if (kind === 'email') {
     const address = semanticScalar(model.payload, 'address') ?? model.text
+    const atIdx = address.indexOf('@')
+    const user = atIdx >= 0 ? address.slice(0, atIdx) : address
+    const domain = atIdx >= 0 ? address.slice(atIdx + 1) : null
+    const gravatarUrl = `https://www.gravatar.com/avatar/${address.toLowerCase().trim()}?d=mp&s=80`
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
-        <AtSign className="h-10 w-10 text-violet-500" />
-        <button
-          className="break-all text-lg text-blue-600 underline"
+      <div className="flex h-full flex-col overflow-auto">
+        <div
+          className="group flex cursor-pointer items-center gap-3 border-b border-slate-200/60 p-5 transition-colors hover:bg-amber-500/5 dark:border-white/5"
           onClick={() => void invoke('compose_email', { address })}
         >
-          {address}
-        </button>
+          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-amber-500/20 ring-1 ring-amber-500/30">
+            <img
+              alt={user}
+              className="h-full w-full object-cover"
+              src={gravatarUrl}
+              onError={e => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-1">
+              <span className="text-base font-semibold text-gray-800 dark:text-gray-100">
+                {user}
+              </span>
+              {domain && (
+                <>
+                  <AtSign className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  <span className="text-sm text-amber-600 dark:text-amber-300">{domain}</span>
+                </>
+              )}
+            </div>
+            <span className="text-xs text-gray-500">Click to compose email</span>
+          </div>
+          <Send className="h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover:text-amber-500" />
+        </div>
+        <div className="p-3">
+          {domain && <CopyableRow label="Domain" value={domain} />}
+          <CopyableRow label="Full" value={address} />
+        </div>
       </div>
     )
   }
+
   if (kind === 'color') {
     const hex = semanticScalar(model.payload, 'hex')
     const safeHex = hex && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex) ? hex : null
@@ -437,17 +550,31 @@ const SemanticView = ({
     const hsl = rgb ? rgbToHsl(rgb.r, rgb.g, rgb.b) : null
     const rgbStr = rgb ? `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})` : null
     const hslStr = hsl ? `hsl(${hsl.h}°, ${hsl.s}%, ${hsl.l}%)` : null
+    const hasAlpha = safeHex?.length === 9
+    const colorValue = safeHex ?? model.text
     return (
       <div className="flex h-full flex-col overflow-auto">
-        <div className="flex items-center gap-4 border-b border-slate-200/60 p-5 dark:border-white/5">
-          {safeHex ? (
+        {/* Full-width swatch */}
+        <div className="relative border-b border-slate-200/60 dark:border-white/5">
+          {hasAlpha && (
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage: 'repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%)',
+                backgroundSize: '20px 20px',
+              }}
+            />
+          )}
+          <div className="relative h-24 w-full" style={{ backgroundColor: colorValue }} />
+        </div>
+        {/* Hex label */}
+        <div className="flex items-center gap-3 border-b border-slate-200/60 px-5 py-3 dark:border-white/5">
+          {safeHex && (
             <div
               aria-label={`Color ${safeHex}`}
-              className="h-16 w-16 shrink-0 rounded-2xl border border-black/10 shadow-inner dark:border-white/10"
+              className="h-8 w-8 shrink-0 rounded-lg border border-black/10 shadow-inner dark:border-white/10"
               style={{ backgroundColor: safeHex }}
             />
-          ) : (
-            <Palette className="h-10 w-10 text-gray-400" />
           )}
           <code className="text-lg font-semibold">{safeHex ?? model.text}</code>
         </div>
@@ -464,26 +591,38 @@ const SemanticView = ({
       </div>
     )
   }
+
   if (kind === 'phone') {
     const number = semanticScalar(model.payload, 'display') ?? model.text
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
-        <Phone className="h-10 w-10 text-emerald-500" />
-        <span className="text-xl">{number}</span>
-        <button
-          className="rounded border px-3 py-1 text-sm"
-          onClick={() => void invoke('start_phone_action', { number, message: false })}
-        >
-          Call
-        </button>
+        <div className="flex w-full flex-col items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-6">
+          <Phone className="h-8 w-8 text-emerald-500" />
+          <span className="font-mono text-2xl font-semibold">{number}</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+            onClick={() => void invoke('start_phone_action', { number, message: false })}
+          >
+            <Phone className="h-4 w-4" /> Call
+          </button>
+          <button
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+            onClick={() => void invoke('start_phone_action', { number, message: true })}
+          >
+            <MessageSquare className="h-4 w-4" /> SMS
+          </button>
+        </div>
       </div>
     )
   }
+
   if (kind === 'path') {
     const path = semanticScalar(model.payload, 'path') ?? model.text
     const separator = path.includes('/') ? '/' : '\\'
     const parts = path.split(separator)
-    const filename = parts.at(-1) ?? ''
+    const filename = parts[parts.length - 1] ?? ''
     const dir = parts.length > 1 ? parts.slice(0, -1).join(separator) + separator : separator
     return (
       <div className="flex h-full flex-col overflow-auto">
@@ -501,7 +640,7 @@ const SemanticView = ({
         </div>
         <div className="px-3 pt-1">
           <button
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5 transition-colors"
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
             onClick={() => void invoke('open_detected_path', { clipId, path })}
           >
             Open in Finder
@@ -510,59 +649,95 @@ const SemanticView = ({
       </div>
     )
   }
+
   if (kind === 'jwt') {
+    const header = model.payload['header'] as Record<string, unknown> | null
+    const alg = header && typeof header['alg'] === 'string' ? header['alg'] : null
+    const typ = header && typeof header['typ'] === 'string' ? header['typ'] : null
     return (
-      <div className="h-full overflow-auto p-4">
-        <h3 className="mb-2 font-semibold">Header</h3>
-        {TreeNode({ value: model.payload['header'] })}
-        <h3 className="mb-2 mt-4 font-semibold">Claims</h3>
-        {TreeNode({ value: model.payload['claims'] })}
+      <div className="h-full overflow-auto">
+        <div className="flex items-center gap-2 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
+          <div className="rounded-lg bg-yellow-500/20 p-2 text-yellow-400 ring-1 ring-yellow-500/30">
+            <KeyRound className="h-4 w-4" />
+          </div>
+          <span className="text-xs font-semibold uppercase tracking-wider">JWT</span>
+          {alg && (
+            <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-medium text-yellow-400">
+              {alg}
+            </span>
+          )}
+          {typ && (
+            <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:border-white/10 dark:bg-white/10 dark:text-gray-400">
+              {typ}
+            </span>
+          )}
+        </div>
+        <div className="p-4">
+          <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            Header
+          </h3>
+          <div className="mb-4 font-mono text-sm">
+            {TreeNode({ value: model.payload['header'] })}
+          </div>
+          <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+            Claims
+          </h3>
+          <div className="font-mono text-sm">{TreeNode({ value: model.payload['claims'] })}</div>
+        </div>
       </div>
     )
   }
+
   if (kind === 'secret') {
+    const secretKind =
+      semanticScalar(model.payload, 'kind') ??
+      semanticScalar(model.payload, 'format') ??
+      'secret'
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
-        <KeyRound className="h-10 w-10 text-red-400" />
-        <code className="max-w-full break-all rounded bg-slate-100 p-3 dark:bg-slate-900">
-          {revealed ? model.text : '•'.repeat(Math.min(model.text.length, 48))}
-        </code>
-        <button
-          className="rounded border px-3 py-1 text-sm"
-          onClick={() => setRevealed(value => !value)}
-        >
-          {revealed ? 'Hide' : 'Reveal'}
-        </button>
+      <div className="flex h-full flex-col overflow-auto">
+        <div className="flex flex-col items-center gap-3 border-b border-slate-200/60 bg-red-500/5 p-5 dark:border-white/5">
+          <div className="rounded-full bg-red-500/20 p-3 text-red-400 ring-1 ring-red-500/30">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <span className="text-sm font-semibold text-red-700 dark:text-red-300">
+            Sensitive content detected
+          </span>
+          <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
+            {secretKind}
+          </span>
+        </div>
+        <div className="flex flex-col items-center gap-3 p-4">
+          <code className="max-w-full break-all rounded-lg bg-slate-100 p-3 text-sm dark:bg-slate-900">
+            {revealed ? model.text : '•'.repeat(Math.min(model.text.length, 48))}
+          </code>
+          <button
+            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+            onClick={() => setRevealed(v => !v)}
+          >
+            {revealed ? 'Hide' : 'Reveal'}
+          </button>
+        </div>
       </div>
     )
   }
+
   if (kind === 'code') {
     return <CodeView language={semanticScalar(model.payload, 'language')} text={model.text} />
   }
+
   if (kind === 'math') {
-    const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        <Calculator className="h-8 w-8 text-indigo-400" />
-        <code className="rounded-xl bg-slate-100/60 px-4 py-2 text-lg dark:bg-slate-100/10">
-          {model.text}
-        </code>
-        {result && result !== model.text && (
-          <div className="text-sm text-gray-500">
-            = <code className="text-xl font-bold text-gray-800 dark:text-gray-200">{result}</code>
-          </div>
-        )}
-      </div>
-    )
+    return <MathView model={model} />
   }
+
   if (kind === 'date' || kind === 'timestamp') {
     const raw = model.text
     const parsed = new Date(raw)
     const valid = !isNaN(parsed.getTime())
+    const DateIcon = kind === 'date' ? CalendarDays : Clock
     return (
       <div className="flex h-full flex-col overflow-auto">
         <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
-          <Clock className="h-7 w-7 shrink-0 text-yellow-500" />
+          <DateIcon className="h-7 w-7 shrink-0 text-yellow-500" />
           <code className="min-w-0 break-all text-sm">{raw}</code>
         </div>
         {valid && (
@@ -578,6 +753,7 @@ const SemanticView = ({
       </div>
     )
   }
+
   const entries = Object.entries(model.payload).flatMap(([key, value]) => {
     if (value === null || ['string', 'number', 'boolean'].includes(typeof value))
       return [[key, String(value)] as [string, string]]

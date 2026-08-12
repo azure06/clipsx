@@ -232,7 +232,7 @@ export const AppLayout = () => {
 
   return (
     // Main Container - Single Background Color/Gradient Source
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-2xl border border-white/50 dark:border-white/10">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10">
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
 

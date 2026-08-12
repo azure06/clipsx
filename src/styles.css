@@ -26,7 +26,13 @@ body,
   [disabled] {
     cursor: not-allowed;
   }
-} /* Custom scrollbar - no Tailwind alternative */
+}
+
+/* Hide scrollbar while keeping scroll — used for tab strips */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Custom scrollbar - no Tailwind alternative */
 .custom-scrollbar::-webkit-scrollbar {
   width: 0.5rem;
 }

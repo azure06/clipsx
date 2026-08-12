@@ -70,29 +70,45 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
 
   return (
     <div className="flex flex-col h-full rounded-2xl overflow-hidden my-0.5 mr-2 bg-slate-100/25 dark:bg-slate-100/5 backdrop-blur-xl border border-slate-200/70 dark:border-white/5">
-      {/* Single unified header row */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100/10 dark:border-slate-100/5 shrink-0 bg-slate-100/40 dark:bg-slate-100/5 min-h-0">
-        {/* Left: type badge + timestamp */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-100/50 dark:bg-slate-100/10">
-            <span className={`h-1.5 w-1.5 rounded-full ${typeDotColor}`} />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
-              {typeLabel.replaceAll('_', ' ')}
+      {/* Header: row 1 — type badge + timestamp + actions */}
+      <div className="flex shrink-0 flex-col border-b border-slate-100/10 bg-slate-100/40 dark:border-slate-100/5 dark:bg-slate-100/5">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="flex shrink-0 items-center gap-1.5 rounded-md bg-slate-100/50 px-2 py-1 dark:bg-slate-100/10">
+              <span className={`h-1.5 w-1.5 rounded-full ${typeDotColor}`} />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700 dark:text-gray-400">
+                {typeLabel.replaceAll('_', ' ')}
+              </span>
+            </div>
+            <span className="hidden truncate text-xs tabular-nums text-gray-500 dark:text-gray-500 sm:block">
+              {new Date(clip.capturedAt).toLocaleString(i18n.resolvedLanguage)}
             </span>
           </div>
-          <span className="text-xs text-gray-500 dark:text-gray-500 tabular-nums hidden sm:block">
-            {new Date(clip.capturedAt).toLocaleString(i18n.resolvedLanguage)}
-          </span>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {tabControls && (
+              <button
+                aria-label="Open representation inspector"
+                title="Representations"
+                className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-100 dark:hover:bg-white/10"
+                onClick={tabControls.onShowInspector}
+              >
+                <Database className="h-4 w-4" />
+              </button>
+            )}
+            {currentPresentation && (
+              <ClipActionsToolbar presentation={currentPresentation} context={actionContext} />
+            )}
+          </div>
         </div>
 
-        {/* Centre: view tabs (only when multiple views exist) */}
+        {/* Row 2: view tabs (only when multiple views exist) */}
         {visibleTabs && (
-          <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          <div className="flex gap-1 overflow-x-auto px-3 pb-1.5 no-scrollbar">
             {visibleTabs.views.map(item => (
               <button
                 key={item.id}
                 onClick={() => visibleTabs.onTabChange(item.id)}
-                className={`shrink-0 rounded-md px-2 py-1 text-xs transition-colors ${
+                className={`shrink-0 rounded-md px-2.5 py-1 text-xs transition-colors ${
                   visibleTabs.activeId === item.id
                     ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
                     : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'
@@ -103,24 +119,6 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
             ))}
           </div>
         )}
-        {!visibleTabs && <div className="flex-1" />}
-
-        {/* Right: DB inspector, action toolbar */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          {tabControls && (
-            <button
-              aria-label="Open representation inspector"
-              title="Representations"
-              className="rounded-md p-1.5 text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
-              onClick={tabControls.onShowInspector}
-            >
-              <Database className="h-4 w-4" />
-            </button>
-          )}
-          {currentPresentation && (
-            <ClipActionsToolbar presentation={currentPresentation} context={actionContext} />
-          )}
-        </div>
       </div>
 
       <div className="flex-1 overflow-hidden p-0 relative">
