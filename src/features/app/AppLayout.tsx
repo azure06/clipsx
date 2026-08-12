@@ -21,11 +21,6 @@ import { useTranslation } from 'react-i18next'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
-
-  useEffect(() => {
-    void invoke('enable_modern_window_style', { cornerRadius: 12 }).catch(() => {})
-  }, [])
-
   const {
     activeView,
     setActiveView,

@@ -63,7 +63,7 @@
         "visible": false,
         "focus": true,
         "windowEffects": {
-          "effects": ["acrylic", "underWindowBackground"]
+          "effects": ["sidebar", "acrylic", "hudWindow"]
         }
       }
     ],

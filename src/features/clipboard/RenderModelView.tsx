@@ -35,9 +35,13 @@ const assertNever = (value: never): never => {
 // ── Color utilities ────────────────────────────────────────────────────────
 const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
   const clean = hex.replace('#', '')
-  const c = clean.length === 3
-    ? clean.split('').map(ch => ch + ch).join('')
-    : clean.slice(0, 6)
+  const c =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map(ch => ch + ch)
+          .join('')
+      : clean.slice(0, 6)
   if (c.length !== 6) return null
   const n = parseInt(c, 16)
   if (isNaN(n)) return null
@@ -45,8 +49,11 @@ const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
 }
 
 const rgbToHsl = (r: number, g: number, b: number): { h: number; s: number; l: number } => {
-  const rn = r / 255, gn = g / 255, bn = b / 255
-  const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn)
+  const rn = r / 255,
+    gn = g / 255,
+    bn = b / 255
+  const max = Math.max(rn, gn, bn),
+    min = Math.min(rn, gn, bn)
   const l = (max + min) / 2
   if (max === min) return { h: 0, s: 0, l: Math.round(l * 100) }
   const d = max - min
@@ -66,7 +73,37 @@ const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
   { exts: ['mp3', 'aac', 'wav', 'flac', 'm4a', 'ogg'], icon: Music },
   { exts: ['zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar', 'tgz'], icon: Archive },
   { exts: ['pdf'], icon: FileText },
-  { exts: ['js', 'ts', 'jsx', 'tsx', 'rs', 'py', 'go', 'java', 'c', 'cpp', 'cs', 'rb', 'php', 'swift', 'kt', 'sh', 'bash', 'zsh', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'css', 'scss'], icon: Code2 },
+  {
+    exts: [
+      'js',
+      'ts',
+      'jsx',
+      'tsx',
+      'rs',
+      'py',
+      'go',
+      'java',
+      'c',
+      'cpp',
+      'cs',
+      'rb',
+      'php',
+      'swift',
+      'kt',
+      'sh',
+      'bash',
+      'zsh',
+      'json',
+      'yaml',
+      'yml',
+      'toml',
+      'xml',
+      'html',
+      'css',
+      'scss',
+    ],
+    icon: Code2,
+  },
   { exts: ['txt', 'md', 'rtf', 'doc', 'docx', 'odt'], icon: FileText },
 ]
 
@@ -512,8 +549,7 @@ const SemanticView = ({
         </code>
         {result && result !== model.text && (
           <div className="text-sm text-gray-500">
-            ={' '}
-            <code className="text-xl font-bold text-gray-800 dark:text-gray-200">{result}</code>
+            = <code className="text-xl font-bold text-gray-800 dark:text-gray-200">{result}</code>
           </div>
         )}
       </div>
@@ -595,18 +631,18 @@ export const RenderModelView = ({
     case 'html':
       return (
         <iframe
-          className="h-full min-h-56 w-full bg-white"
+          className="h-full min-h-56 w-full"
           sandbox=""
-          srcDoc={model.sanitizedHtml}
+          srcDoc={`<style>html,body{margin:0;padding:12px;background:transparent;color:inherit;font-family:system-ui,sans-serif;font-size:13px}</style>${model.sanitizedHtml}`}
           title="HTML preview"
         />
       )
     case 'rich_text':
       return model.sanitizedHtml ? (
         <iframe
-          className="h-full min-h-56 w-full bg-white"
+          className="h-full min-h-56 w-full"
           sandbox=""
-          srcDoc={model.sanitizedHtml}
+          srcDoc={`<style>html,body{margin:0;padding:12px;background:transparent;color:inherit;font-family:system-ui,sans-serif;font-size:13px}</style>${model.sanitizedHtml}`}
           title="Rich text preview"
         />
       ) : (
