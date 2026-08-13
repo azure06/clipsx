@@ -53,18 +53,6 @@ pub struct TransformPreview {
     pub model: RenderModel,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum OutputPolicy {
-    Original { clip_id: String },
-    PlainText { clip_id: String },
-    Transformed { result_id: String },
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TransformPreferences {
@@ -1115,39 +1103,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn output_policy_uses_the_frontend_camel_case_wire_shape() {
-        assert_eq!(
-            serde_json::from_value::<OutputPolicy>(json!({
-                "kind": "original",
-                "clipId": "clip-1"
-            }))
-            .unwrap(),
-            OutputPolicy::Original {
-                clip_id: "clip-1".into()
-            }
-        );
-        assert_eq!(
-            serde_json::from_value::<OutputPolicy>(json!({
-                "kind": "plain_text",
-                "clipId": "clip-2"
-            }))
-            .unwrap(),
-            OutputPolicy::PlainText {
-                clip_id: "clip-2".into()
-            }
-        );
-        assert_eq!(
-            serde_json::from_value::<OutputPolicy>(json!({
-                "kind": "transformed",
-                "resultId": "result-1"
-            }))
-            .unwrap(),
-            OutputPolicy::Transformed {
-                result_id: "result-1".into()
-            }
-        );
-    }
     #[test]
     fn json_format_is_deterministic() {
         let a = json_transform("{\"b\":2,\"a\":1}", true).unwrap();

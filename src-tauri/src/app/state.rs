@@ -4,6 +4,7 @@ use crate::{
     foundation::{AppRoots, SchemaState},
     history::HistoryRepository,
 };
+use std::sync::{Arc, Mutex};
 use tauri::menu::MenuItem;
 
 pub struct StartupState {
@@ -16,6 +17,20 @@ pub struct HostState {
     pub tray_open_item: MenuItem<tauri::Wry>,
     pub tray_settings_item: MenuItem<tauri::Wry>,
     pub tray_quit_item: MenuItem<tauri::Wry>,
+    pub paste_target: Mutex<Option<crate::output::paste::FocusTarget>>,
+    pub window_behavior: Arc<super::window_behavior::WindowBehaviorState>,
+}
+
+impl HostState {
+    pub fn remember_paste_target(&self, target: Option<crate::output::paste::FocusTarget>) {
+        if let Ok(mut value) = self.paste_target.lock() {
+            *value = target;
+        }
+    }
+
+    pub fn take_paste_target(&self) -> Option<crate::output::paste::FocusTarget> {
+        self.paste_target.lock().ok()?.take()
+    }
 }
 
 pub struct AppState {

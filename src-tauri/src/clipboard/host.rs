@@ -230,6 +230,20 @@ impl ClipboardAdapter for SystemClipboardAdapter {
     }
 }
 
+/// Builds the one platform-supported plain-text representation used by host
+/// output commands. Native clipboard identity remains owned by this adapter.
+pub fn plain_text_representation(text: String) -> CapturedRepresentation {
+    let (format_key, native_type) = plain_text_identity();
+    CapturedRepresentation {
+        format_key: format_key.into(),
+        canonical_mime_type: Some("text/plain".into()),
+        native_type: Some(native_type.into()),
+        platform: platform_name().into(),
+        capture_priority: 0,
+        payload: CapturedPayload::Text(text),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn format_observation(
     ordinal: usize,

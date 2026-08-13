@@ -1,9 +1,15 @@
 export type V2Tag = { id: string; name: string; color: string | null }
 
-export type OutputPolicy =
+export type ClipboardOutputSource =
   | { kind: 'original'; clipId: string }
   | { kind: 'plain_text'; clipId: string }
   | { kind: 'transformed'; resultId: string }
+  | { kind: 'literal_text'; text: string; sourceClipId?: string }
+
+export type ClipboardOutputRequest = {
+  disposition: 'copy' | 'paste'
+  source: ClipboardOutputSource
+}
 
 export type TextEmbeddingStatus = {
   enabled: boolean

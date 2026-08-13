@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
-import type { ClipPresentation, OutputPolicy, RenderModel } from '../../shared/types/v2'
+import { executeClipboardOutput } from '../../shared/clipboardOutput'
+import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { getPlatform, matchShortcut, parseAccelerator } from '../../shared/keyboard/shortcuts'
 
 export type Transformer = { id: string; label: string; version: string }
@@ -135,12 +136,12 @@ export const useTransformState = ({
         }
         setPreview(result.preview)
         if (result.disposition !== 'preview') {
-          const policy: OutputPolicy = { kind: 'transformed', resultId: result.preview.resultId }
           if (result.disposition === 'save_as_clip') {
             await invoke('save_transform_result', { resultId: result.preview.resultId })
           } else {
-            await invoke(result.disposition === 'copy' ? 'copy_clip_output' : 'paste_clip_output', {
-              policy,
+            await executeClipboardOutput(result.disposition, {
+              kind: 'transformed',
+              resultId: result.preview.resultId,
             })
           }
           setPreview(null)
@@ -177,13 +178,16 @@ export const useTransformState = ({
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [actions, runAction])
 
-  const applyResult = async (command: string) => {
+  const applyResult = async (action: 'copy' | 'save') => {
     if (!preview) return
-    const policy: OutputPolicy = { kind: 'transformed', resultId: preview.resultId }
-    await invoke(
-      command,
-      command === 'save_transform_result' ? { resultId: preview.resultId } : { policy }
-    )
+    if (action === 'save') {
+      await invoke('save_transform_result', { resultId: preview.resultId })
+    } else {
+      await executeClipboardOutput('copy', {
+        kind: 'transformed',
+        resultId: preview.resultId,
+      })
+    }
     setPreview(null)
   }
 

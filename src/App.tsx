@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { useWindowBehavior } from './shared/hooks/useWindowBehavior'
 import { ErrorBoundary } from './shared/components/ErrorBoundary'
 import { ThemeProvider } from './shared/hooks/useTheme'
 import { AppLayout } from './features/app/AppLayout'
@@ -28,7 +27,6 @@ const applyAppLanguage = async (language: string) => {
 }
 
 const App = () => {
-  useWindowBehavior()
   const settings = useSettingsStore(state => state.settings)
   const loadSettings = useSettingsStore(state => state.loadSettings)
   const updateSettings = useSettingsStore(state => state.updateSettings)

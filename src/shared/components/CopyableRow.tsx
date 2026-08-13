@@ -1,20 +1,24 @@
 import { useState } from 'react'
 import { Check, Copy } from 'lucide-react'
+import { copyLiteralText } from '../clipboardOutput'
 
 interface CopyableRowProps {
   label: string
   value: string
   mono?: boolean
+  sourceClipId?: string
 }
 
-export const CopyableRow = ({ label, value, mono = false }: CopyableRowProps) => {
+export const CopyableRow = ({ label, value, mono = false, sourceClipId }: CopyableRowProps) => {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
+    void copyLiteralText(value, sourceClipId)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => undefined)
   }
 
   return (

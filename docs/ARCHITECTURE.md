@@ -66,7 +66,7 @@ macOS encodes the proven Microsoft package and `com.microsoft.ole.source.*` sign
 
 ## Runtime architecture, capture, and output
 
-ClipsX is one Rust desktop process plus one React webview. React owns interaction and rendering; Rust owns canonical data, clipboard access, persistence, search, and provider calls. [ROADMAP.md](ROADMAP.md) tracks delivery and [data model](#data-model-preserve-first-derive-later) owns persistence detail.
+ClipsX is one Rust desktop process plus one React webview. React owns interaction and rendering; Rust owns canonical data, all clipboard reads and writes, persistence, search, and provider calls. [ROADMAP.md](ROADMAP.md) tracks delivery and [data model](#data-model-preserve-first-derive-later) owns persistence detail.
 
 ## Runtime layers
 
@@ -107,7 +107,7 @@ flowchart TB
 
 React uses typed Tauri commands, invalidation events, and app-owned binary URI protocols. Events such as `clip-captured`, `clip-updated`, and `clip-facets-updated` are not replicated state: `HistoryPage` queries current data again. Tokio tasks poll clipboard and run derived work in-process, moving blocking detector/OCR tasks where needed. `StartupState` always owns roots and schema status so an incompatible database can reach the explicit reset UI; `HostState` owns process-level tray/updater handles; `AppState` exists only for a ready schema and owns the repository and in-memory `TransformService`.
 
-The desktop composition root registers single-instance, deep-link, tray, autostart, updater, filesystem-dialog, global-shortcut, and platform window-chrome adapters. These are thin host boundaries: they show/hide/focus the webview and emit validated events, but never own clipboard representations or canonical data. A source-level contract test rejects frontend `invoke` command names that are absent from the Rust handler list.
+The desktop composition root registers single-instance, deep-link, tray, autostart, updater, filesystem-dialog, global-shortcut, and platform window-chrome adapters. These are thin host boundaries: they show/hide/focus the webview and emit validated events, but never own clipboard representations or canonical data. A source-level contract test rejects frontend `invoke` command names that are absent from the Rust handler list and rejects browser clipboard writes or retired output commands.
 
 ## Clipboard ingestion
 
@@ -181,7 +181,11 @@ Intended flow is `React -> Tauri adapter -> domain capability -> storage/platfor
 
 Renderer choice is computed from ready representations, facets, installed contributions, and global preferences—never stored as canonical clip state. Saved overrides apply facet, then capability, then MIME scope. Otherwise image, file, document, and Office clips prefer faithful views; text-centric clips prefer structured, semantic, faithful, source, then diagnostic views. Within a purpose, matcher specificity, capture priority, native ordinal, and stable contribution ID decide order. This lets a valid JSON facet outrank an application-added HTML alternative while rich HTML leads when no more-specific meaning exists. Active detail renderer remains UI session state.
 
-`TransformService` runs a built-in transformer from one representation plus validated parameters, caches exact outputs/preview under a short-lived result ID, and reuses exactly those bytes for preview/copy/paste/save. Save makes a new clip with `clip_transform_provenance`; it never overwrites source. Original output reconstructs every explicitly supported capture, plain output selects supported text, transformed output uses cached result representations; self-write suppression, focus restoration, synthetic paste, and `[RECONSTRUCT]` helper logs apply.
+`TransformService` runs a built-in transformer from one representation plus validated parameters, caches exact outputs/preview under a short-lived result ID, and reuses exactly those bytes for preview/copy/paste/save. Save makes a new clip with `clip_transform_provenance`; it never overwrites source. The Rust output boundary is the exclusive clipboard-write owner: one typed command resolves original, plain-text, transformed, or literal renderer text; writes through the platform adapter; registers self-write suppression; touches an existing source clip when supplied; and optionally pastes. Literal renderer values never create or mutate canonical representations. Original output reconstructs every explicitly supported capture, plain output selects supported text, and transformed output uses cached result representations.
+
+Immediately before ClipsX is shown, the host remembers the currently focused external application as a one-shot paste target. Paste writes first, consumes that target, hides ClipsX, restores and verifies the target when possible, then injects the platform paste shortcut; if no remembered target is valid, the platform adapter uses the window naturally refocused after hiding and never deliberately targets ClipsX. Clipboard content remains available if focus restoration or key injection fails.
+
+Window behavior is native and Rust-owned. Effective `hide_on_blur` and `always_on_top` settings are cached in host state and applied at startup and settings updates. A real focus loss schedules a guarded hide, while native move/resize events invalidate pending hides and establish a short interaction guard; refocus, disabled hide-on-blur, and always-on-top also cancel or prevent the hide. Close-to-tray remains separate and unchanged.
 
 ### UI parity and interaction contract
 
@@ -301,7 +305,7 @@ This is the complete backend-responsibility lookup table. The shorter ownership 
 | Derived artifacts | `artifacts/` | Thumbnail and native OCR producers, jobs, provenance, and artifact retrieval. |
 | Search | `search/mod.rs`, `search/semantic/mod.rs` | Search projections, FTS query construction, filters, Ollama indexing, cosine scoring, and fusion. |
 | Provider boundary | `providers/contracts/`, `providers/registry.rs`, `providers/ollama/` | Capability contracts and host-owned adapters. The current semantic path still has its operational Ollama provider in `search/semantic`. |
-| Output | `output/paste.rs`, clipboard writer | Original/plain/transformed reconstruction, self-write suppression, focus restoration, and synthetic paste. |
+| Output | `output/mod.rs`, `output/paste.rs`, clipboard writer | Unified original/plain/transformed/literal output, self-write suppression, remembered focus restoration, and synthetic paste. |
 | Storage foundation | `foundation/mod.rs`, `migrations/` | App roots, fresh-schema validation/reset, migrations, managed-file primitives, and credential cleanup. |
 | Shared wire/domain contracts | `contracts.rs`, `src/shared/types/` | Serializable shapes used across the Tauri boundary. |
 

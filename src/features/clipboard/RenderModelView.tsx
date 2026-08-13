@@ -40,6 +40,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
+import { copyLiteralText } from '../../shared/clipboardOutput'
 import { useTheme } from '../../shared/hooks/useTheme'
 import { managedAssetUrl } from '../../shared/utils/assetUrl'
 
@@ -158,15 +159,26 @@ const TextBlock = ({ children }: { children: string }) => (
   <pre className={`${SCROLL_AREA} whitespace-pre-wrap p-4 text-sm leading-relaxed`}>{children}</pre>
 )
 
-const CopyableRow = ({ label, value }: { label: string; value: string }) => {
+const CopyableRow = ({
+  label,
+  value,
+  clipId,
+}: {
+  label: string
+  value: string
+  clipId: string
+}) => {
   const [copied, setCopied] = useState(false)
   return (
     <div
       className="group flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1 hover:bg-slate-100/60 dark:hover:bg-white/5"
       onClick={() => {
-        void navigator.clipboard.writeText(value)
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 1500)
+        void copyLiteralText(value, clipId)
+          .then(() => {
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => undefined)
       }}
     >
       <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
@@ -394,12 +406,23 @@ const semanticScalar = (payload: Record<string, unknown>, key: string): string |
     : null
 }
 
-const CopyButton = ({ text, className = '' }: { text: string; className?: string }) => {
+const CopyButton = ({
+  text,
+  clipId,
+  className = '',
+}: {
+  text: string
+  clipId: string
+  className?: string
+}) => {
   const [copied, setCopied] = useState(false)
   const handleCopy = () => {
-    void navigator.clipboard.writeText(text)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+    void copyLiteralText(text, clipId)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => undefined)
   }
   return (
     <button
@@ -413,7 +436,13 @@ const CopyButton = ({ text, className = '' }: { text: string; className?: string
 }
 
 // Extracted so it can hold its own copy-result state
-const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }> }) => {
+const MathView = ({
+  model,
+  clipId,
+}: {
+  model: Extract<RenderModel, { kind: 'semantic' }>
+  clipId: string
+}) => {
   const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
   return (
     <div className={`${SCROLL_AREA} flex flex-col gap-px p-3`}>
@@ -425,7 +454,7 @@ const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }>
         <code className="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
           {model.text}
         </code>
-        <CopyButton text={model.text} />
+        <CopyButton text={model.text} clipId={clipId} />
       </div>
       {/* Result row */}
       {result !== null && (
@@ -434,7 +463,7 @@ const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }>
           <code className="min-w-0 flex-1 break-all text-sm font-semibold text-indigo-700 dark:text-indigo-300">
             {result}
           </code>
-          <CopyButton text={result} />
+          <CopyButton text={result} clipId={clipId} />
         </div>
       )}
     </div>
@@ -511,12 +540,12 @@ const SemanticView = ({
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
             URL Structure
           </div>
-          {scheme && <CopyableRow label="Protocol" value={scheme} />}
-          {host && <CopyableRow label="Domain" value={host} />}
-          {path && <CopyableRow label="Path" value={path} />}
-          {fragment && <CopyableRow label="Fragment" value={`#${fragment}`} />}
+          {scheme && <CopyableRow label="Protocol" value={scheme} clipId={clipId} />}
+          {host && <CopyableRow label="Domain" value={host} clipId={clipId} />}
+          {path && <CopyableRow label="Path" value={path} clipId={clipId} />}
+          {fragment && <CopyableRow label="Fragment" value={`#${fragment}`} clipId={clipId} />}
           {queryEntries.map(([k, v]) => (
-            <CopyableRow key={k} label={`?${k}`} value={v} />
+            <CopyableRow key={k} label={`?${k}`} value={v} clipId={clipId} />
           ))}
           {host && (
             <button
@@ -574,8 +603,8 @@ const SemanticView = ({
           <Send className="h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover:text-amber-500" />
         </div>
         <div className="p-3">
-          {domain && <CopyableRow label="Domain" value={domain} />}
-          <CopyableRow label="Full" value={address} />
+          {domain && <CopyableRow label="Domain" value={domain} clipId={clipId} />}
+          <CopyableRow label="Full" value={address} clipId={clipId} />
         </div>
       </div>
     )
@@ -621,9 +650,9 @@ const SemanticView = ({
             <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
               Formats
             </div>
-            {safeHex && <CopyableRow label="HEX" value={safeHex.toUpperCase()} />}
-            {rgbStr && <CopyableRow label="RGB" value={rgbStr} />}
-            {hslStr && <CopyableRow label="HSL" value={hslStr} />}
+            {safeHex && <CopyableRow label="HEX" value={safeHex.toUpperCase()} clipId={clipId} />}
+            {rgbStr && <CopyableRow label="RGB" value={rgbStr} clipId={clipId} />}
+            {hslStr && <CopyableRow label="HSL" value={hslStr} clipId={clipId} />}
           </div>
         )}
       </div>
@@ -680,9 +709,9 @@ const SemanticView = ({
           <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
             Components
           </div>
-          <CopyableRow label="Full path" value={path} />
-          <CopyableRow label="Directory" value={dir} />
-          {filename && <CopyableRow label="File name" value={filename} />}
+          <CopyableRow label="Full path" value={path} clipId={clipId} />
+          <CopyableRow label="Directory" value={dir} clipId={clipId} />
+          {filename && <CopyableRow label="File name" value={filename} clipId={clipId} />}
         </div>
       </div>
     )
@@ -775,7 +804,7 @@ const SemanticView = ({
   }
 
   if (kind === 'math') {
-    return <MathView model={model} />
+    return <MathView model={model} clipId={clipId} />
   }
 
   if (kind === 'date' || kind === 'timestamp') {
@@ -815,11 +844,15 @@ const SemanticView = ({
             <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
               Formats
             </div>
-            <CopyableRow label="Local" value={parsed.toLocaleString()} />
-            <CopyableRow label="Date" value={parsed.toLocaleDateString()} />
-            <CopyableRow label="ISO 8601" value={parsed.toISOString()} />
-            <CopyableRow label="Unix epoch" value={String(Math.floor(parsed.getTime() / 1000))} />
-            <CopyableRow label="UTC" value={parsed.toUTCString()} />
+            <CopyableRow label="Local" value={parsed.toLocaleString()} clipId={clipId} />
+            <CopyableRow label="Date" value={parsed.toLocaleDateString()} clipId={clipId} />
+            <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
+            <CopyableRow
+              label="Unix epoch"
+              value={String(Math.floor(parsed.getTime() / 1000))}
+              clipId={clipId}
+            />
+            <CopyableRow label="UTC" value={parsed.toUTCString()} clipId={clipId} />
           </div>
         )}
       </div>

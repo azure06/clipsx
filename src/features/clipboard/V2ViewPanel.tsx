@@ -99,7 +99,7 @@ const TransformResultTab = ({
   presentation: ClipPresentation | null
   busy: boolean
   error: string | null
-  applyResult: (command: string) => Promise<void>
+  applyResult: (action: 'copy' | 'save') => Promise<void>
   onDismiss: () => void
 }) => (
   <Tooltip.Provider delayDuration={300}>
@@ -111,13 +111,10 @@ const TransformResultTab = ({
         </span>
         {presentation && (
           <div className="flex items-center gap-0.5">
-            <TransformAction label="Copy" onClick={() => void applyResult('copy_clip_output')}>
+            <TransformAction label="Copy" onClick={() => void applyResult('copy')}>
               <Copy className="h-3.5 w-3.5" />
             </TransformAction>
-            <TransformAction
-              label="Save as new clip"
-              onClick={() => void applyResult('save_transform_result')}
-            >
+            <TransformAction label="Save as new clip" onClick={() => void applyResult('save')}>
               <FolderInput className="h-3.5 w-3.5" />
             </TransformAction>
           </div>

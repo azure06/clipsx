@@ -150,6 +150,34 @@ describe('RenderModelView', () => {
     expect(container.firstElementChild).toHaveClass('custom-scrollbar', 'overscroll-contain')
   })
 
+  it('routes every color renderer format through source-linked literal output', async () => {
+    render(
+      <RenderModelView
+        presentation={presentation(
+          {
+            kind: 'semantic',
+            facetId: 'core.value.color',
+            text: '#ff0040',
+            payload: { hex: '#ff0040' },
+          },
+          'color'
+        )}
+      />
+    )
+
+    for (const value of ['#FF0040', 'rgb(255, 0, 64)', 'hsl(345°, 100%, 50%)']) {
+      fireEvent.click(screen.getByText(value))
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('execute_clipboard_output', {
+          request: {
+            disposition: 'copy',
+            source: { kind: 'literal_text', text: value, sourceClipId: 'clip-1' },
+          },
+        })
+      )
+    }
+  })
+
   it('keeps secrets out of the DOM until reveal and resets for a different clip', async () => {
     const firstSecret = 'sk_test_0123456789abcdefghijklmnop'
     const secretModel: RenderModel = {

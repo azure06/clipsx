@@ -9,8 +9,6 @@ const { mockInvoke, mockHide } = vi.hoisted(() => ({
   mockHide: vi.fn(),
 }))
 
-let clipboardWriteTextMock = vi.fn()
-
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: mockInvoke,
 }))
@@ -24,22 +22,18 @@ vi.mock('@tauri-apps/api/window', () => ({
 describe('useClipboardStore.copyDerivedText', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    clipboardWriteTextMock = vi.fn()
-
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: clipboardWriteTextMock,
-      },
-    })
   })
 
   it('routes derived copies through the backend plain-text copy command without hiding the window', async () => {
     await useClipboardStore.getState().copyDerivedText('example.com')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_text_value', { text: 'example.com' })
+    expect(mockInvoke).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: {
+        disposition: 'copy',
+        source: { kind: 'literal_text', text: 'example.com' },
+      },
+    })
     expect(mockHide).not.toHaveBeenCalled()
-    expect(clipboardWriteTextMock).not.toHaveBeenCalled()
   })
 })
 
@@ -60,8 +54,8 @@ describe('useClipboardStore.performCopy', () => {
 
     await useClipboardStore.getState().performCopy('copied text', 'clip-1')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
-      policy: { kind: 'original', clipId: 'clip-1' },
+    expect(mockInvoke).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: { disposition: 'copy', source: { kind: 'original', clipId: 'clip-1' } },
     })
     expect(mockHide).toHaveBeenCalledTimes(1)
   })
@@ -69,8 +63,8 @@ describe('useClipboardStore.performCopy', () => {
   it('does not hide the window after explicit copy when hide_on_copy is disabled', async () => {
     await useClipboardStore.getState().performCopy('copied text', 'clip-1')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
-      policy: { kind: 'original', clipId: 'clip-1' },
+    expect(mockInvoke).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: { disposition: 'copy', source: { kind: 'original', clipId: 'clip-1' } },
     })
     expect(mockHide).not.toHaveBeenCalled()
   })
@@ -82,8 +76,8 @@ describe('useClipboardStore.performCopy', () => {
 
     await useClipboardStore.getState().performCopy('copied text', 'clip-1')
 
-    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
-      policy: { kind: 'plain_text', clipId: 'clip-1' },
+    expect(mockInvoke).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: { disposition: 'copy', source: { kind: 'plain_text', clipId: 'clip-1' } },
     })
   })
 })

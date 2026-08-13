@@ -1,11 +1,17 @@
 //! Operating-system window behavior shared by shortcuts, tray, and deep links.
 
+use super::state::HostState;
 use tauri::Manager;
 
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
+    if !window.is_focused().unwrap_or(false) {
+        if let Some(state) = app.try_state::<HostState>() {
+            state.remember_paste_target(crate::output::paste::capture_focus());
+        }
+    }
     if window.is_minimized().unwrap_or(false) {
         window.unminimize().map_err(|error| error.to_string())?;
     }

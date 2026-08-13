@@ -4,7 +4,12 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from './settingsStore'
 import { useUIStore } from './uiStore'
-import type { ClipSummary, OutputPolicy, V2Tag } from '../shared/types/v2'
+import {
+  copyClipboardOutput,
+  copyLiteralText,
+  pasteClipboardOutput,
+} from '../shared/clipboardOutput'
+import type { ClipboardOutputSource, ClipSummary, V2Tag } from '../shared/types/v2'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
@@ -345,27 +350,27 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set({ clips: [], currentOffset: 0, hasMore: false })
   },
   copyDerivedText: async text => {
-    await invoke('copy_text_value', { text })
+    await copyLiteralText(text)
   },
   performPrimaryAction: async (_text, clipId) => {
     const settings = useSettingsStore.getState().settings
-    const policy: OutputPolicy =
+    const source: ClipboardOutputSource =
       settings?.default_paste_format === 'plain'
         ? { kind: 'plain_text', clipId }
         : { kind: 'original', clipId }
-    if (settings?.paste_on_enter) await invoke('paste_clip_output', { policy })
+    if (settings?.paste_on_enter) await pasteClipboardOutput(source)
     else {
-      await invoke('copy_clip_output', { policy })
+      await copyClipboardOutput(source)
       if (settings?.hide_on_copy) void getCurrentWindow().hide()
     }
   },
   performCopy: async (_text, clipId) => {
     const settings = useSettingsStore.getState().settings
-    const policy: OutputPolicy =
+    const source: ClipboardOutputSource =
       settings?.default_paste_format === 'plain'
         ? { kind: 'plain_text', clipId }
         : { kind: 'original', clipId }
-    await invoke('copy_clip_output', { policy })
+    await copyClipboardOutput(source)
     if (settings?.hide_on_copy) void getCurrentWindow().hide()
   },
 }))

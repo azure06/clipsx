@@ -15,7 +15,11 @@ use crate::extensions::ExtensionService;
 use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
-use crate::{artifacts, contributions, foundation, history, output::paste, search};
+use crate::{
+    artifacts, contributions, foundation, history,
+    output::{self, paste},
+    search,
+};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -776,45 +780,6 @@ async fn capture_clipboard(
     }
 }
 #[tauri::command]
-async fn copy_clip_original(clip_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    copy_policy(transformers::OutputPolicy::Original { clip_id }, &state)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-async fn policy_output(
-    policy: &transformers::OutputPolicy,
-    state: &AppState,
-) -> anyhow::Result<(Vec<history::CapturedRepresentation>, Option<String>)> {
-    match policy {
-        transformers::OutputPolicy::Original { clip_id } => Ok((
-            state.history.reconstruction(clip_id).await?,
-            Some(clip_id.clone()),
-        )),
-        transformers::OutputPolicy::PlainText { clip_id } => Ok((
-            state.history.plain_text_reconstruction(clip_id).await?,
-            Some(clip_id.clone()),
-        )),
-        transformers::OutputPolicy::Transformed { result_id } => {
-            let (_, source_clip_id, _) = state.transforms.saved_metadata(result_id)?;
-            Ok((
-                state.transforms.transformed(result_id)?,
-                Some(source_clip_id),
-            ))
-        }
-    }
-}
-
-async fn copy_policy(policy: transformers::OutputPolicy, state: &AppState) -> anyhow::Result<()> {
-    let (representations, source_clip) = policy_output(&policy, state).await?;
-    SystemClipboardAdapter::new().write(&representations)?;
-    if let Some(id) = source_clip {
-        state.history.touch(&id).await?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
 async fn list_transformer_contributions(
     clip_id: String,
     source_id: String,
@@ -1035,44 +1000,25 @@ fn normalized_accelerator(value: &str) -> String {
 }
 
 #[tauri::command]
-async fn copy_clip_output(
-    policy: transformers::OutputPolicy,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    copy_policy(policy, &state)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn copy_text_value(text: String) -> Result<(), String> {
-    let representation = history::CapturedRepresentation {
-        format_key: "clipsx:text/plain".into(),
-        canonical_mime_type: Some("text/plain".into()),
-        native_type: None,
-        platform: std::env::consts::OS.into(),
-        capture_priority: 0,
-        payload: history::CapturedPayload::Text(text),
-    };
-    SystemClipboardAdapter::new()
-        .write(&[representation])
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn paste_clip_output(
+async fn execute_clipboard_output(
     app: tauri::AppHandle,
-    policy: transformers::OutputPolicy,
+    request: output::ClipboardOutputRequest,
     state: State<'_, AppState>,
+    host_state: State<'_, HostState>,
 ) -> Result<(), String> {
-    if let Err(error) = copy_policy(policy, &state).await {
+    if let Err(error) =
+        output::write_source(&request.source, &state.history, &state.transforms).await
+    {
         let message = error.to_string();
-        let _ = app.emit("paste-failed", &message);
+        if request.disposition == output::ClipboardOutputDisposition::Paste {
+            let _ = app.emit("paste-failed", &message);
+        }
         return Err(message);
     }
-    // Capture focus before hiding so we know which application to restore.
-    let focus_target = paste::capture_focus();
+    if request.disposition == output::ClipboardOutputDisposition::Copy {
+        return Ok(());
+    }
+    let focus_target = host_state.take_paste_target();
     if let Some(window) = app.get_webview_window("main") {
         if let Err(error) = window.hide() {
             let message = error.to_string();
@@ -1080,9 +1026,17 @@ async fn paste_clip_output(
             return Err(message);
         }
     }
-    // Keep the focus target on this thread: Windows HWND handles are not Send.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    if let Err(error) = paste::simulate_paste(focus_target) {
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let paste_result =
+        match tokio::task::spawn_blocking(move || paste::simulate_paste(focus_target)).await {
+            Ok(result) => result,
+            Err(error) => {
+                let message = error.to_string();
+                let _ = app.emit("paste-failed", &message);
+                return Err(message);
+            }
+        };
+    if let Err(error) = paste_result {
         let message = error.to_string();
         let _ = app.emit("paste-failed", &message);
         return Err(message);
@@ -1333,12 +1287,20 @@ async fn update_app_settings(
         .update_app_settings(&settings)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("app-settings-updated", ());
-    state
+    let effective = state
         .history
         .app_settings()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let (Some(window), Some(host_state)) =
+        (app.get_webview_window("main"), app.try_state::<HostState>())
+    {
+        host_state
+            .window_behavior
+            .apply_settings(&window, &effective);
+    }
+    let _ = app.emit("app-settings-updated", ());
+    Ok(effective)
 }
 
 #[tauri::command]
@@ -1817,6 +1779,8 @@ pub(crate) fn run() {
                 tray_open_item: open_item,
                 tray_settings_item: settings_item,
                 tray_quit_item: quit_item,
+                paste_target: std::sync::Mutex::new(None),
+                window_behavior: std::sync::Arc::new(Default::default()),
             });
 
             #[cfg(any(target_os = "linux", all(debug_assertions, target_os = "windows")))]
@@ -1845,6 +1809,13 @@ pub(crate) fn run() {
                 if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
                     if let Ok(shortcut) = settings.global_shortcut.parse::<Shortcut>() {
                         let _ = app.global_shortcut().register(shortcut);
+                    }
+                    if let (Some(window), Some(host_state)) =
+                        (app.get_webview_window("main"), app.try_state::<HostState>())
+                    {
+                        host_state
+                            .window_behavior
+                            .apply_settings(&window, &settings);
                     }
                 }
                 let extensions = ExtensionService::new(&roots)
@@ -2020,16 +1991,13 @@ pub(crate) fn run() {
             list_clips,
             get_clip_detail,
             capture_clipboard,
-            copy_clip_original,
             list_transformer_contributions,
             create_transform_preview,
             list_context_actions,
             list_extension_actions,
             run_context_action,
             set_extension_action_shortcut,
-            copy_clip_output,
-            copy_text_value,
-            paste_clip_output,
+            execute_clipboard_output,
             save_transform_result,
             get_transform_preferences,
             update_transform_preferences,
@@ -2073,6 +2041,22 @@ pub(crate) fn run() {
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
+            }
+            if let Some(host_state) = window.app_handle().try_state::<HostState>() {
+                match event {
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
+                        host_state.window_behavior.mark_native_interaction();
+                    }
+                    tauri::WindowEvent::Focused(true) => {
+                        host_state.window_behavior.mark_focused();
+                    }
+                    tauri::WindowEvent::Focused(false) => {
+                        host_state
+                            .window_behavior
+                            .schedule_blur_hide(window.clone());
+                    }
+                    _ => {}
+                }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -2173,6 +2157,30 @@ mod tests {
             missing.is_empty(),
             "frontend invokes commands missing from generate_handler!: {missing:?}"
         );
+    }
+
+    #[test]
+    fn frontend_clipboard_output_cannot_bypass_the_unified_bridge() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut sources = Vec::new();
+        collect_frontend_sources(&manifest.join("../src"), &mut sources);
+        let frontend = sources.join("\n");
+
+        assert!(
+            !frontend.contains("navigator.clipboard.writeText"),
+            "desktop clipboard writes must be owned by the Rust output boundary"
+        );
+        for retired in [
+            "copy_clip_output",
+            "paste_clip_output",
+            "copy_text_value",
+            "copy_clip_original",
+        ] {
+            assert!(
+                !frontend.contains(retired),
+                "frontend still references retired clipboard command {retired}"
+            );
+        }
     }
 
     #[test]
