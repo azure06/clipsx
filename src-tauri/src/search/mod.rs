@@ -537,6 +537,7 @@ mod tests {
                 token,
                 source_app_name: None,
                 source_app_id: None,
+                format_observations: Vec::new(),
                 representations: vec![representation],
             },
             &CaptureSettings::default(),

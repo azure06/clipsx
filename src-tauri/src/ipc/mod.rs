@@ -14,6 +14,7 @@ use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
 use crate::{artifacts, contributions, foundation, history, output::paste, search};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
@@ -136,34 +137,77 @@ fn apply_capture_filters(
     filters: &history::CaptureFilters,
 ) {
     snapshot.representations.retain(|representation| {
+        let native = representation.native_type.as_deref().unwrap_or_default();
+        if let Some(capability) =
+            crate::clipboard::capabilities::resolve(&representation.platform, None, native)
+        {
+            return match capability.settings_gate.as_deref() {
+                Some("images") => filters.images,
+                Some("files") => filters.files,
+                Some("rich_text") => filters.rich_text,
+                Some("office_and_documents") => filters.office_and_documents,
+                _ => true,
+            };
+        }
         let mime = representation
             .canonical_mime_type
             .as_deref()
             .unwrap_or_default();
-        let native = representation
-            .native_type
-            .as_deref()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let format = representation.format_key.to_ascii_lowercase();
-        let is_file = matches!(&representation.payload, history::CapturedPayload::Files(_));
-        let is_image = mime.starts_with("image/");
-        let is_rich_text = matches!(mime, "text/html" | "text/rtf" | "application/rtf");
-        let is_document = mime == "application/pdf"
-            || native.contains("office")
-            || native.contains("word")
-            || native.contains("excel")
-            || native.contains("powerpoint")
-            || native.contains("object")
-            || format.contains("office")
-            || format.contains("word")
-            || format.contains("excel")
-            || format.contains("powerpoint");
-        (!is_file || filters.files)
-            && (!is_image || filters.images)
-            && (!is_rich_text || filters.rich_text)
-            && (!is_document || filters.office_and_documents)
+        (!matches!(&representation.payload, history::CapturedPayload::Files(_)) || filters.files)
+            && (!mime.starts_with("image/") || filters.images)
+            && (!matches!(mime, "text/html" | "text/rtf" | "application/rtf") || filters.rich_text)
+            && (mime != "application/pdf" || filters.office_and_documents)
     });
+    for observation in &mut snapshot.format_observations {
+        let Some(capability_id) = observation.capability_id.as_deref() else {
+            continue;
+        };
+        let Some(capability) = crate::clipboard::capabilities::matrix().by_id(capability_id) else {
+            continue;
+        };
+        let enabled = match capability.settings_gate.as_deref() {
+            Some("images") => filters.images,
+            Some("files") => filters.files,
+            Some("rich_text") => filters.rich_text,
+            Some("office_and_documents") => filters.office_and_documents,
+            _ => true,
+        };
+        if !enabled && observation.decision == "captured" {
+            observation.decision = "disabled".into();
+            observation.reason = "disabled_by_capture_setting".into();
+        }
+    }
+}
+
+fn apply_representation_size_limit(snapshot: &mut history::CapturedSnapshot, limit: Option<u64>) {
+    let Some(limit) = limit else { return };
+    let mut removed = std::collections::BTreeSet::new();
+    snapshot.representations.retain(|representation| {
+        let size = match &representation.payload {
+            history::CapturedPayload::Text(value) => value.len() as u64,
+            history::CapturedPayload::Binary(value) => value.len() as u64,
+            history::CapturedPayload::Files(values) => {
+                values.iter().map(|value| value.len() as u64).sum()
+            }
+        };
+        if size > limit {
+            removed.insert(
+                representation
+                    .native_type
+                    .clone()
+                    .unwrap_or_else(|| representation.format_key.clone()),
+            );
+            false
+        } else {
+            true
+        }
+    });
+    for observation in &mut snapshot.format_observations {
+        if removed.contains(&observation.native_identifier) && observation.decision == "captured" {
+            observation.decision = "too_large".into();
+            observation.reason = "representation_size_limit".into();
+        }
+    }
 }
 
 #[tauri::command]
@@ -628,6 +672,7 @@ async fn capture_clipboard(
         return Err("Clipboard source is excluded by capture settings".into());
     }
     apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+    apply_representation_size_limit(&mut snapshot, app_settings.capture.max_representation_bytes);
     if snapshot.representations.is_empty() {
         return Err(
             "Every representation in this clipboard snapshot is disabled by capture filters".into(),
@@ -863,6 +908,7 @@ async fn save_transform_result(
         token: 0,
         source_app_name: Some("ClipsX".into()),
         source_app_id: Some("clipsx.transform".into()),
+        format_observations: Vec::new(),
         representations: state
             .transforms
             .transformed(&result_id)
@@ -1580,6 +1626,8 @@ pub(crate) fn run() {
 
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
+            crate::clipboard::capabilities::validate_embedded()
+                .context("embedded clipboard capability policy is invalid")?;
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
                 .expect("Failed to prepare the ClipsX v2 foundation");
             app.manage(StartupState {
@@ -1666,6 +1714,10 @@ pub(crate) fn run() {
                             continue;
                         }
                         apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+                        apply_representation_size_limit(
+                            &mut snapshot,
+                            app_settings.capture.max_representation_bytes,
+                        );
                         if snapshot.representations.is_empty() {
                             continue;
                         }

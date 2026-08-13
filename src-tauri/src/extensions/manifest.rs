@@ -28,6 +28,10 @@ pub struct ManifestContribution {
     #[serde(default)]
     pub format_keys: Vec<String>,
     #[serde(default)]
+    pub capability_ids: Vec<String>,
+    #[serde(default)]
+    pub format_families: Vec<String>,
+    #[serde(default)]
     pub facet_ids: Vec<String>,
     #[serde(default)]
     pub priority: i32,
@@ -102,6 +106,8 @@ impl ExtensionManifest {
                 || contribution.display_name.len() > 120
                 || contribution.mime_types.len() > 32
                 || contribution.format_keys.len() > 32
+                || contribution.capability_ids.len() > 32
+                || contribution.format_families.len() > 32
                 || contribution.facet_ids.len() > 32
             {
                 bail!("extension contribution declaration exceeds its limits");
@@ -154,6 +160,8 @@ mod tests {
                 version: "1.0.0".into(),
                 mime_types: vec![],
                 format_keys: vec![],
+                capability_ids: vec![],
+                format_families: vec![],
                 facet_ids: vec![],
                 priority: 0,
                 parameter_schema: empty_object(),

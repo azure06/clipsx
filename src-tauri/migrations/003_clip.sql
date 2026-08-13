@@ -34,6 +34,8 @@ CREATE TABLE clip_representations (
     format_key TEXT NOT NULL,
     canonical_mime_type TEXT,
     native_type TEXT,
+    capability_id TEXT NOT NULL,
+    format_family TEXT NOT NULL,
     platform TEXT NOT NULL CHECK (platform IN ('macos', 'windows', 'linux_x11')),
     storage_kind TEXT NOT NULL CHECK (storage_kind IN ('text', 'binary_asset', 'file_list')),
     binary_file_id TEXT REFERENCES clip_binary_files(id) ON DELETE RESTRICT,
@@ -45,10 +47,27 @@ CREATE TABLE clip_representations (
     updated_at INTEGER NOT NULL,
     UNIQUE (clip_id, format_key),
     UNIQUE (clip_id, ordinal),
+    CHECK (length(capability_id) BETWEEN 3 AND 120),
+    CHECK (length(format_family) BETWEEN 2 AND 64),
     CHECK (
         (storage_kind = 'binary_asset' AND binary_file_id IS NOT NULL)
         OR (storage_kind IN ('text', 'file_list') AND binary_file_id IS NULL)
     )
+);
+
+CREATE TABLE clip_format_observations (
+    clip_id TEXT NOT NULL REFERENCES clip_items(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 512),
+    platform TEXT NOT NULL CHECK (platform IN ('macos', 'windows', 'linux_x11')),
+    native_identifier TEXT NOT NULL CHECK (length(native_identifier) BETWEEN 1 AND 256),
+    numeric_id INTEGER,
+    medium TEXT CHECK (medium IS NULL OR length(medium) <= 64),
+    byte_length INTEGER CHECK (byte_length IS NULL OR byte_length >= 0),
+    capability_id TEXT CHECK (capability_id IS NULL OR length(capability_id) BETWEEN 3 AND 120),
+    policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+    decision TEXT NOT NULL CHECK (decision IN ('captured', 'disabled', 'unsupported', 'redundant', 'unreadable', 'too_large')),
+    reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 120),
+    PRIMARY KEY (clip_id, ordinal)
 );
 
 CREATE TABLE clip_text_values (
@@ -121,6 +140,8 @@ CREATE INDEX idx_clip_items_ready_pinned
     ON clip_items(lifecycle_state, is_pinned, captured_at DESC);
 CREATE INDEX idx_clip_representations_clip_ready
     ON clip_representations(clip_id, lifecycle_state, ordinal);
+CREATE INDEX idx_clip_format_observations_clip
+    ON clip_format_observations(clip_id, ordinal);
 CREATE INDEX idx_clip_binary_files_state ON clip_binary_files(lifecycle_state);
 CREATE INDEX idx_clip_transform_provenance_source
     ON clip_transform_provenance(source_clip_id, source_representation_id);

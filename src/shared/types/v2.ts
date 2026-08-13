@@ -49,9 +49,28 @@ export type RepresentationDetail = {
   fileReferences: string[]
   binaryFileId: string | null
   sha256: string | null
+  capabilityId: string
+  formatFamily: string
 }
 
-export type ClipDetail = { clip: ClipSummary; representations: RepresentationDetail[] }
+export type FormatObservation = {
+  ordinal: number
+  platform: 'windows' | 'macos' | 'linux_x11'
+  nativeIdentifier: string
+  numericId: number | null
+  medium: string | null
+  byteLength: number | null
+  capabilityId: string | null
+  policyVersion: number
+  decision: 'captured' | 'disabled' | 'unsupported' | 'redundant' | 'unreadable' | 'too_large'
+  reason: string
+}
+
+export type ClipDetail = {
+  clip: ClipSummary
+  representations: RepresentationDetail[]
+  formatObservations: FormatObservation[]
+}
 
 export type ClipViewDescriptor = {
   id: string

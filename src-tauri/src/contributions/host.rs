@@ -1040,22 +1040,27 @@ pub fn renderers() -> Vec<RendererDescriptor> {
         .map(|renderer| renderer.descriptor())
         .collect()
 }
+
+fn image_view_label(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "PNG",
+        "image/svg+xml" => "SVG",
+        "image/jpeg" => "JPEG",
+        "image/tiff" => "TIFF",
+        _ => "Image",
+    }
+}
+
 pub async fn views(
     repo: &HistoryRepository,
     extensions: &ExtensionService,
     clip_id: &str,
 ) -> Result<ClipViewSet> {
     let detail = repo.detail(clip_id).await?;
-    let has_office_representation = detail.representations.iter().any(|rep| {
-        rep.native_type.as_deref().is_some_and(|native| {
-            let native = native.to_ascii_lowercase();
-            native.contains("office")
-                || native.contains("microsoft")
-                || native.contains("powerpoint")
-                || native.contains("excel")
-                || native.contains("word")
-        })
-    });
+    let has_office_representation = detail
+        .representations
+        .iter()
+        .any(|rep| rep.format_family == "office");
     let facets = facets(repo, clip_id).await?;
     let mut candidates: Vec<(ClipViewDescriptor, i64, i32, i64)> = Vec::new();
     let mut add_view = |rep: &RepresentationDetail,
@@ -1088,14 +1093,7 @@ pub async fn views(
     };
     for rep in &detail.representations {
         let mime = rep.canonical_mime_type.as_deref().unwrap_or_default();
-        let office = rep.native_type.as_deref().is_some_and(|native| {
-            let n = native.to_ascii_lowercase();
-            n.contains("office")
-                || n.contains("microsoft")
-                || n.contains("powerpoint")
-                || n.contains("excel")
-                || n.contains("word")
-        });
+        let office = rep.format_family == "office";
         if office {
             add_view(rep, "builtin.office", "Office", "office", None, 95, false);
         } else if rep.storage_kind == "file_list" {
@@ -1125,7 +1123,15 @@ pub async fn views(
                 false,
             );
         } else if mime.starts_with("image/") && rep.binary_file_id.is_some() {
-            add_view(rep, "builtin.image", "Image", "image", None, 100, false);
+            add_view(
+                rep,
+                "builtin.image",
+                image_view_label(mime),
+                "image",
+                None,
+                100,
+                false,
+            );
         } else if mime == "text/plain" {
             add_view(rep, "builtin.text", "Text", "text", None, 50, false);
         } else {
@@ -1481,6 +1487,13 @@ pub async fn update_preferences(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_tabs_name_the_captured_format() {
+        assert_eq!(image_view_label("image/png"), "PNG");
+        assert_eq!(image_view_label("image/svg+xml"), "SVG");
+        assert_eq!(image_view_label("image/unknown"), "Image");
+    }
     use crate::history::{
         CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
     };
@@ -1584,6 +1597,8 @@ mod tests {
             file_references: vec!["C:\\missing\\first.txt".into(), "/tmp/second.txt".into()],
             binary_file_id: None,
             sha256: None,
+            capability_id: "windows.files.hdrop".into(),
+            format_family: "files".into(),
         };
         let RenderModel::Files { entries } = FILES_RENDERER.render(&detail, None).unwrap() else {
             panic!("expected files model")
@@ -1660,6 +1675,7 @@ mod tests {
                     token: 1,
                     source_app_name: None,
                     source_app_id: None,
+                    format_observations: Vec::new(),
                     representations,
                 },
                 &CaptureSettings::default(),
@@ -1709,9 +1725,9 @@ mod tests {
     async fn resolver_prefers_formatted_alternate_over_opaque_office_native() {
         let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
             CapturedRepresentation {
-                format_key: "windows:Office".into(),
+                format_key: "windows:Biff12".into(),
                 canonical_mime_type: None,
-                native_type: Some("Microsoft Office Native".into()),
+                native_type: Some("Biff12".into()),
                 platform: "windows".into(),
                 capture_priority: 1,
                 payload: CapturedPayload::Binary(vec![1, 2, 3]),
@@ -1797,9 +1813,9 @@ mod tests {
     async fn resolver_honors_user_preference_before_office_utility_order() {
         let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
             CapturedRepresentation {
-                format_key: "windows:Office".into(),
+                format_key: "windows:Biff12".into(),
                 canonical_mime_type: None,
-                native_type: Some("Microsoft Office Native".into()),
+                native_type: Some("Biff12".into()),
                 platform: "windows".into(),
                 capture_priority: 1,
                 payload: CapturedPayload::Binary(vec![1, 2, 3]),

@@ -1,6 +1,10 @@
 //! Existing coherent capture and platform implementation host.
+use super::capabilities::{
+    self, CapturePolicy, ReaderCodec, UnreadablePolicy, WritePolicy, WriterCodec,
+};
 use crate::history::{
     capture_fingerprint, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
+    FormatObservation,
 };
 use anyhow::{bail, Context, Result};
 use arboard::{Clipboard, ImageData};
@@ -89,6 +93,8 @@ impl ClipboardAdapter for SystemClipboardAdapter {
     fn capture_once(&mut self, token: u64) -> Result<CapturedSnapshot> {
         let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
         let mut reps = Vec::new();
+        let mut observations = Vec::new();
+        let source_app_name = active_app_name();
         if let Ok(text) = clipboard.get_text() {
             if !text.is_empty() {
                 #[cfg(target_os = "linux")]
@@ -111,18 +117,30 @@ impl ClipboardAdapter for SystemClipboardAdapter {
                     capture_priority: 100,
                     payload: CapturedPayload::Text(text),
                 });
+                if cfg!(not(target_os = "windows")) {
+                    observations.push(format_observation(
+                        observations.len(),
+                        platform_name(),
+                        native_type,
+                        None,
+                        None,
+                        Some(format_key.trim_start_matches(&format!("{}:", platform_name()))),
+                        "captured",
+                        "normalized_text",
+                    ));
+                }
             }
         }
         #[cfg(target_os = "windows")]
         unsafe {
-            capture_windows_formats(&mut reps)?;
+            capture_windows_formats(&mut reps, &mut observations, source_app_name.as_deref())?;
         }
         #[cfg(target_os = "macos")]
         unsafe {
-            capture_macos_formats(&mut reps)?;
+            capture_macos_formats(&mut reps, &mut observations)?;
         }
         #[cfg(target_os = "linux")]
-        capture_x11_formats(&mut reps)?;
+        capture_x11_formats(&mut reps, &mut observations)?;
         let has_native_image = reps.iter().any(|representation| {
             representation
                 .canonical_mime_type
@@ -135,11 +153,24 @@ impl ClipboardAdapter for SystemClipboardAdapter {
                 reps.push(CapturedRepresentation {
                     format_key,
                     canonical_mime_type: Some("image/png".into()),
-                    native_type,
+                    native_type: native_type.clone(),
                     platform: platform_name().into(),
                     capture_priority: 200,
                     payload: CapturedPayload::Binary(encode_png(image)?),
                 });
+                let capability = native_type
+                    .as_deref()
+                    .and_then(|native| capabilities::resolve(platform_name(), None, native));
+                observations.push(format_observation(
+                    observations.len(),
+                    platform_name(),
+                    native_type.as_deref().unwrap_or("normalized:image/png"),
+                    None,
+                    None,
+                    capability.map(|value| value.id.as_str()),
+                    "captured",
+                    "normalized_image",
+                ));
             }
         }
         deduplicate_representation_formats(&mut reps);
@@ -149,8 +180,9 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         self.fallback_token = self.fallback_token.wrapping_add(1);
         Ok(CapturedSnapshot {
             token,
-            source_app_name: active_app_name(),
+            source_app_name,
             source_app_id: None,
+            format_observations: observations,
             representations: reps,
         })
     }
@@ -179,6 +211,31 @@ impl ClipboardAdapter for SystemClipboardAdapter {
             remember_self_write(token, reps);
             Ok(token)
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn format_observation(
+    ordinal: usize,
+    platform: &str,
+    identifier: &str,
+    numeric_id: Option<u32>,
+    byte_length: Option<usize>,
+    capability_id: Option<&str>,
+    decision: &str,
+    reason: &str,
+) -> FormatObservation {
+    FormatObservation {
+        ordinal: ordinal as i64,
+        platform: platform.into(),
+        native_identifier: identifier.chars().take(256).collect(),
+        numeric_id: numeric_id.map(i64::from),
+        medium: None,
+        byte_length: byte_length.and_then(|value| i64::try_from(value).ok()),
+        capability_id: capability_id.map(str::to_string),
+        policy_version: capabilities::matrix().version as i64,
+        decision: decision.into(),
+        reason: reason.into(),
     }
 }
 
@@ -232,6 +289,23 @@ fn deduplicate_representation_formats(representations: &mut Vec<CapturedRepresen
         }
     }
     *representations = deduplicated;
+}
+
+fn ordered_write_representations<'a>(
+    representations: &'a [CapturedRepresentation],
+    platform: &str,
+) -> Vec<&'a CapturedRepresentation> {
+    let mut ordered: Vec<_> = representations.iter().collect();
+    ordered.sort_by_key(|representation| {
+        representation
+            .native_type
+            .as_deref()
+            .and_then(|native| capabilities::resolve(platform, None, native))
+            .map_or(representation.capture_priority, |capability| {
+                capability.write_back.priority
+            })
+    });
+    ordered
 }
 #[cfg(target_os = "windows")]
 fn normalized_image_identity() -> (String, Option<String>) {
@@ -404,7 +478,7 @@ unsafe fn write_macos_formats(reps: &[CapturedRepresentation]) -> Result<()> {
     let pb: id = msg_send![class!(NSPasteboard), generalPasteboard];
     let _: i64 = msg_send![pb, clearContents];
     let mut written = 0;
-    for rep in reps {
+    for rep in ordered_write_representations(reps, "macos") {
         let Some(native) = rep
             .native_type
             .as_deref()
@@ -423,18 +497,8 @@ unsafe fn write_macos_formats(reps: &[CapturedRepresentation]) -> Result<()> {
         else {
             continue;
         };
-        let allowed = matches!(
-            native,
-            "public.utf8-plain-text"
-                | "public.html"
-                | "public.rtf"
-                | "public.png"
-                | "public.jpeg"
-                | "public.tiff"
-                | "com.adobe.pdf"
-                | "public.svg-image"
-                | "public.file-url"
-        ) || native.starts_with("com.microsoft.");
+        let allowed = capabilities::resolve("macos", None, native)
+            .is_some_and(|capability| capability.write_back.policy != WritePolicy::Unsupported);
         if !allowed {
             continue;
         }
@@ -476,7 +540,10 @@ unsafe fn write_macos_formats(reps: &[CapturedRepresentation]) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn capture_macos_formats(reps: &mut Vec<CapturedRepresentation>) -> Result<()> {
+unsafe fn capture_macos_formats(
+    reps: &mut Vec<CapturedRepresentation>,
+    observations: &mut Vec<FormatObservation>,
+) -> Result<()> {
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
     let pb: id = msg_send![class!(NSPasteboard), generalPasteboard];
@@ -509,6 +576,16 @@ unsafe fn capture_macos_formats(reps: &mut Vec<CapturedRepresentation>) -> Resul
                 capture_priority: 10,
                 payload: CapturedPayload::Files(files),
             });
+            observations.push(format_observation(
+                observations.len(),
+                "macos",
+                "public.file-url",
+                None,
+                None,
+                Some("macos.files.urls"),
+                "captured",
+                "ordered_file_references",
+            ));
         }
     }
     let types: id = msg_send![pb, types];
@@ -523,69 +600,96 @@ unsafe fn capture_macos_formats(reps: &mut Vec<CapturedRepresentation>) -> Resul
             continue;
         }
         let name = std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        if name == "public.file-url" {
+            continue;
+        }
+        let Some(capability) = capabilities::resolve("macos", None, &name) else {
+            observations.push(format_observation(
+                observations.len(),
+                "macos",
+                &name,
+                None,
+                None,
+                None,
+                "unsupported",
+                "no_matching_capability",
+            ));
+            continue;
+        };
+        if matches!(
+            capability.capture,
+            CapturePolicy::DiagnosticOnly | CapturePolicy::Redundant
+        ) {
+            observations.push(format_observation(
+                observations.len(),
+                "macos",
+                &name,
+                None,
+                None,
+                Some(&capability.id),
+                "unsupported",
+                "diagnostic_only",
+            ));
+            continue;
+        }
         let data: id = msg_send![pb,dataForType:ty];
         if data == nil {
-            if matches!(
-                name.as_str(),
-                "public.utf8-plain-text"
-                    | "public.html"
-                    | "public.rtf"
-                    | "public.file-url"
-                    | "public.png"
-                    | "public.jpeg"
-                    | "public.tiff"
-                    | "com.adobe.pdf"
-                    | "public.svg-image"
-            ) || name.starts_with("com.microsoft.")
-            {
+            observations.push(format_observation(
+                observations.len(),
+                "macos",
+                &name,
+                None,
+                None,
+                Some(&capability.id),
+                "unreadable",
+                "pasteboard_data_unavailable",
+            ));
+            if capability.unreadable == UnreadablePolicy::RejectSnapshot {
                 bail!("supported macOS pasteboard type {name} was unreadable")
             }
             continue;
         }
         let length: usize = msg_send![data, length];
         let bytes_ptr: *const u8 = msg_send![data, bytes];
-        if bytes_ptr.is_null() {
+        if bytes_ptr.is_null() && length != 0 {
             continue;
         }
-        let bytes = std::slice::from_raw_parts(bytes_ptr, length).to_vec();
-        let (mime, payload) = match name.as_str() {
-            "public.utf8-plain-text" => (
-                Some("text/plain".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            "public.html" => (
-                Some("text/html".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            "public.rtf" => (
-                Some("text/rtf".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            "public.file-url" => {
-                let value = String::from_utf8_lossy(&bytes)
-                    .trim_matches(char::from(0))
-                    .to_string();
-                (None, CapturedPayload::Files(vec![value]))
-            }
-            "public.png" => (Some("image/png".into()), CapturedPayload::Binary(bytes)),
-            "public.jpeg" => (Some("image/jpeg".into()), CapturedPayload::Binary(bytes)),
-            "public.tiff" => (Some("image/tiff".into()), CapturedPayload::Binary(bytes)),
-            "com.adobe.pdf" => (
-                Some("application/pdf".into()),
-                CapturedPayload::Binary(bytes),
-            ),
-            "public.svg-image" => (Some("image/svg+xml".into()), CapturedPayload::Binary(bytes)),
-            _ if name.starts_with("com.microsoft.") => (None, CapturedPayload::Binary(bytes)),
-            _ => continue,
+        let bytes = if length == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(bytes_ptr, length).to_vec()
+        };
+        let representation = capability
+            .representation
+            .as_ref()
+            .context("captured macOS capability has no representation")?;
+        let payload = if representation.storage_kind == "text" {
+            CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned())
+        } else {
+            CapturedPayload::Binary(bytes)
         };
         reps.push(CapturedRepresentation {
             format_key: format!("macos:{name}"),
-            canonical_mime_type: mime,
-            native_type: Some(name),
+            canonical_mime_type: representation.mime_type.clone(),
+            native_type: Some(name.clone()),
             platform: "macos".into(),
-            capture_priority: 20,
+            capture_priority: representation.priority,
             payload,
         });
+        observations.push(format_observation(
+            observations.len(),
+            "macos",
+            &name,
+            None,
+            Some(length),
+            Some(&capability.id),
+            "captured",
+            if capability.bundle.is_some() {
+                "captured_office_bundle_member"
+            } else {
+                "matched_capability"
+            },
+        ));
     }
     Ok(())
 }
@@ -849,7 +953,10 @@ fn parse_uri_list(text: &str) -> Option<Vec<String>> {
 }
 
 #[cfg(target_os = "linux")]
-fn capture_x11_formats(reps: &mut Vec<CapturedRepresentation>) -> Result<()> {
+fn capture_x11_formats(
+    reps: &mut Vec<CapturedRepresentation>,
+    observations: &mut Vec<FormatObservation>,
+) -> Result<()> {
     use x11rb::{
         connection::Connection,
         protocol::xproto::{ConnectionExt, CreateWindowAux, EventMask, WindowClass},
@@ -887,59 +994,76 @@ fn capture_x11_formats(reps: &mut Vec<CapturedRepresentation>) -> Result<()> {
         ) {
             continue;
         }
-        let supported = matches!(
-            name.as_str(),
-            "text/plain"
-                | "text/plain;charset=utf-8"
-                | "text/html"
-                | "text/rtf"
-                | "application/rtf"
-                | "text/uri-list"
-                | "image/png"
-        );
+        let Some(capability) = capabilities::resolve("linux_x11", None, &name) else {
+            observations.push(format_observation(
+                observations.len(),
+                "linux_x11",
+                &name,
+                Some(atom),
+                None,
+                None,
+                "unsupported",
+                "no_matching_capability",
+            ));
+            continue;
+        };
         let (_, bytes) = match x11_read_target(&conn, window, selection, atom, property) {
             Ok(value) => value,
-            Err(error) if supported => return Err(error),
-            Err(_) => continue,
+            Err(error) if capability.unreadable == UnreadablePolicy::RejectSnapshot => {
+                return Err(error)
+            }
+            Err(_) => {
+                observations.push(format_observation(
+                    observations.len(),
+                    "linux_x11",
+                    &name,
+                    Some(atom),
+                    None,
+                    Some(&capability.id),
+                    "unreadable",
+                    "selection_target_unavailable",
+                ));
+                continue;
+            }
         };
         if bytes.is_empty() {
             continue;
         }
-        let (mime, payload) = match name.as_str() {
-            "text/plain" | "text/plain;charset=utf-8" => (
-                Some("text/plain".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
+        let representation = capability
+            .representation
+            .as_ref()
+            .context("captured X11 capability has no representation")?;
+        let byte_length = bytes.len();
+        let payload = match representation.storage_kind.as_str() {
+            "text" => CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
+            "file_list" => CapturedPayload::Files(
+                String::from_utf8_lossy(&bytes)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty() && !v.starts_with('#'))
+                    .map(str::to_string)
+                    .collect(),
             ),
-            "text/html" => (
-                Some("text/html".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            "text/rtf" | "application/rtf" => (
-                Some("text/rtf".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(&bytes).into_owned()),
-            ),
-            "text/uri-list" => (
-                Some("text/uri-list".into()),
-                CapturedPayload::Files(
-                    String::from_utf8_lossy(&bytes)
-                        .lines()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty() && !v.starts_with('#'))
-                        .map(str::to_string)
-                        .collect(),
-                ),
-            ),
-            "image/png" => (Some("image/png".into()), CapturedPayload::Binary(bytes)),
-            _ => (None, CapturedPayload::Binary(bytes)),
+            _ => CapturedPayload::Binary(bytes),
         };
         reps.push(CapturedRepresentation {
             format_key: format!("linux_x11:{name}"),
-            canonical_mime_type: mime,
-            native_type: Some(name),
+            canonical_mime_type: representation.mime_type.clone(),
+            native_type: Some(name.clone()),
             platform: "linux_x11".into(),
-            capture_priority: 50,
+            capture_priority: representation.priority,
             payload,
         });
+        observations.push(format_observation(
+            observations.len(),
+            "linux_x11",
+            &name,
+            Some(atom),
+            Some(byte_length),
+            Some(&capability.id),
+            "captured",
+            "matched_capability",
+        ));
     }
     let _ = conn.destroy_window(window);
     let _ = conn.flush();
@@ -1007,13 +1131,17 @@ fn x11_read_target(
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Result<()> {
+unsafe fn capture_windows_formats(
+    reps: &mut Vec<CapturedRepresentation>,
+    observations: &mut Vec<FormatObservation>,
+    source_app: Option<&str>,
+) -> Result<()> {
     use windows::Win32::{
         Foundation::HGLOBAL,
         System::{
             DataExchange::{
                 CloseClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
-                OpenClipboard,
+                IsClipboardFormatAvailable, OpenClipboard,
             },
             Memory::{GlobalLock, GlobalSize, GlobalUnlock},
         },
@@ -1031,6 +1159,18 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
         }
     }
     let _guard = Guard;
+    if IsClipboardFormatAvailable(13).is_ok() {
+        observations.push(format_observation(
+            observations.len(),
+            "windows",
+            "CF_UNICODETEXT",
+            Some(13),
+            None,
+            Some("windows.text.unicode"),
+            "captured",
+            "normalized_text",
+        ));
+    }
     if let Ok(handle) = GetClipboardData(15) {
         let drop_handle = HDROP(handle.0);
         let count = DragQueryFileW(drop_handle, 0xFFFF_FFFF, None);
@@ -1050,8 +1190,37 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
                 capture_priority: 5,
                 payload: CapturedPayload::Files(files),
             });
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                "CF_HDROP",
+                Some(15),
+                None,
+                Some("windows.files.hdrop"),
+                "captured",
+                "ordered_file_references",
+            ));
         }
     }
+    for (id, name, capability_id) in [
+        (17, "CF_DIBV5", "windows.image.dibv5"),
+        (8, "CF_DIB", "windows.image.dib"),
+    ] {
+        if IsClipboardFormatAvailable(id).is_ok() {
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                name,
+                Some(id),
+                None,
+                Some(capability_id),
+                "captured",
+                "normalized_by_image_adapter",
+            ));
+        }
+    }
+    let mut office_candidates: Vec<(&'static capabilities::Capability, String, Vec<u8>, u32)> =
+        Vec::new();
     let mut format = 0u32;
     loop {
         format = EnumClipboardFormats(format);
@@ -1060,30 +1229,82 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
         }
         let mut name_buf = [0u16; 256];
         let len = GetClipboardFormatNameW(format, &mut name_buf);
-        if len == 0 {
+        if len == 0 && matches!(format, 8 | 13 | 15 | 17) {
             continue;
         }
-        let name = String::from_utf16_lossy(&name_buf[..len as usize]);
-        let supported_name = matches!(
-            name.as_str(),
-            "HTML Format" | "Rich Text Format" | "Portable Document Format" | "image/svg+xml"
-        ) || {
-            let value = name.to_ascii_lowercase();
-            value.contains("office")
-                || value.contains("object")
-                || value.contains("powerpoint")
-                || value.contains("excel")
-                || value.contains("word")
+        let name = if len == 0 {
+            windows_standard_format_name(format)
+                .map_or_else(|| format!("CF_FORMAT_{format}"), str::to_string)
+        } else {
+            String::from_utf16_lossy(&name_buf[..len as usize])
         };
+        let Some(capability) = capabilities::resolve("windows", Some(format), &name) else {
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                &name,
+                Some(format),
+                None,
+                None,
+                "unsupported",
+                "no_matching_capability",
+            ));
+            continue;
+        };
+        if matches!(
+            capability.capture,
+            CapturePolicy::DiagnosticOnly | CapturePolicy::Redundant
+        ) {
+            let (decision, reason) = if capability.capture == CapturePolicy::Redundant {
+                ("redundant", "superseded_by_canonical_format")
+            } else {
+                ("unsupported", "diagnostic_only")
+            };
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                &name,
+                Some(format),
+                None,
+                Some(&capability.id),
+                decision,
+                reason,
+            ));
+            continue;
+        }
         let handle = match GetClipboardData(format) {
             Ok(v) => v,
-            Err(error) if supported_name => return Err(error.into()),
-            Err(_) => continue,
+            Err(error) => {
+                observations.push(format_observation(
+                    observations.len(),
+                    "windows",
+                    &name,
+                    Some(format),
+                    None,
+                    Some(&capability.id),
+                    "unreadable",
+                    "get_clipboard_data_failed",
+                ));
+                if capability.unreadable == UnreadablePolicy::RejectSnapshot {
+                    return Err(error.into());
+                }
+                continue;
+            }
         };
         let global = std::mem::transmute::<windows::Win32::Foundation::HANDLE, HGLOBAL>(handle);
         let ptr = GlobalLock(global);
         if ptr.is_null() {
-            if supported_name {
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                &name,
+                Some(format),
+                None,
+                Some(&capability.id),
+                "unreadable",
+                "global_lock_failed",
+            ));
+            if capability.unreadable == UnreadablePolicy::RejectSnapshot {
                 bail!("supported Windows clipboard format {name} was unreadable")
             }
             continue;
@@ -1092,41 +1313,128 @@ unsafe fn capture_windows_formats(reps: &mut Vec<CapturedRepresentation>) -> Res
         let bytes = std::slice::from_raw_parts(ptr.cast::<u8>(), size).to_vec();
         let _ = GlobalUnlock(global);
         let trimmed = &bytes[..bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len())];
-        let lower = name.to_ascii_lowercase();
-        let (mime, payload) = if name == "HTML Format" {
-            (
-                Some("text/html".into()),
-                CapturedPayload::Text(parse_windows_html(trimmed)),
-            )
-        } else if name == "Rich Text Format" {
-            (
-                Some("text/rtf".into()),
-                CapturedPayload::Text(String::from_utf8_lossy(trimmed).into_owned()),
-            )
-        } else {
-            let mime = if lower.contains("svg") {
-                Some("image/svg+xml".into())
-            } else if lower.contains("pdf") {
-                Some("application/pdf".into())
-            } else {
-                None
-            };
-            (mime, CapturedPayload::Binary(bytes))
+        if capability.family == "office" {
+            office_candidates.push((capability, name, bytes, format));
+            continue;
+        }
+        let representation = capability
+            .representation
+            .as_ref()
+            .context("captured capability has no representation")?;
+        let payload = match capability.reader {
+            Some(ReaderCodec::WindowsHtml) => CapturedPayload::Text(parse_windows_html(trimmed)),
+            Some(ReaderCodec::WindowsRtf) => {
+                CapturedPayload::Text(String::from_utf8_lossy(trimmed).into_owned())
+            }
+            _ => CapturedPayload::Binary(bytes),
+        };
+        let byte_length = match &payload {
+            CapturedPayload::Text(v) => v.len(),
+            CapturedPayload::Binary(v) => v.len(),
+            CapturedPayload::Files(v) => v.iter().map(String::len).sum(),
         };
         reps.push(CapturedRepresentation {
             format_key: format!("windows:{name}"),
-            canonical_mime_type: mime,
-            native_type: Some(name),
+            canonical_mime_type: representation.mime_type.clone(),
+            native_type: Some(name.clone()),
             platform: "windows".into(),
-            capture_priority: if lower.contains("office") || lower.contains("object") {
-                10
-            } else {
-                50
-            },
+            capture_priority: representation.priority,
             payload,
         });
+        observations.push(format_observation(
+            observations.len(),
+            "windows",
+            &name,
+            Some(format),
+            Some(byte_length),
+            Some(&capability.id),
+            "captured",
+            "matched_capability",
+        ));
+    }
+    if !office_candidates.is_empty() {
+        office_candidates.sort_by(|left, right| {
+            let left_priority = left
+                .0
+                .representation
+                .as_ref()
+                .map_or(i64::MAX, |value| value.priority);
+            let right_priority = right
+                .0
+                .representation
+                .as_ref()
+                .map_or(i64::MAX, |value| value.priority);
+            left_priority
+                .cmp(&right_priority)
+                .then_with(|| right.2.len().cmp(&left.2.len()))
+                .then_with(|| left.1.cmp(&right.1))
+        });
+        let (selected, selected_name, selected_bytes, selected_format) =
+            office_candidates.remove(0);
+        let representation = selected
+            .representation
+            .as_ref()
+            .context("Office capability has no representation")?;
+        reps.push(CapturedRepresentation {
+            format_key: format!("windows:{selected_name}"),
+            canonical_mime_type: representation.mime_type.clone(),
+            native_type: Some(selected_name.clone()),
+            platform: "windows".into(),
+            capture_priority: representation.priority,
+            payload: CapturedPayload::Binary(selected_bytes.clone()),
+        });
+        observations.push(format_observation(
+            observations.len(),
+            "windows",
+            &selected_name,
+            Some(selected_format),
+            Some(selected_bytes.len()),
+            Some(&selected.id),
+            "captured",
+            if source_app.is_some() {
+                "selected_office_primary"
+            } else {
+                "selected_office_primary_without_source_hint"
+            },
+        ));
+        for (candidate, name, bytes, format) in office_candidates {
+            observations.push(format_observation(
+                observations.len(),
+                "windows",
+                &name,
+                Some(format),
+                Some(bytes.len()),
+                Some(&candidate.id),
+                "redundant",
+                "office_candidate_not_selected",
+            ));
+        }
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_standard_format_name(format: u32) -> Option<&'static str> {
+    Some(match format {
+        1 => "CF_TEXT",
+        2 => "CF_BITMAP",
+        3 => "CF_METAFILEPICT",
+        4 => "CF_SYLK",
+        5 => "CF_DIF",
+        6 => "CF_TIFF",
+        7 => "CF_OEMTEXT",
+        8 => "CF_DIB",
+        9 => "CF_PALETTE",
+        10 => "CF_PENDATA",
+        11 => "CF_RIFF",
+        12 => "CF_WAVE",
+        13 => "CF_UNICODETEXT",
+        14 => "CF_ENHMETAFILE",
+        15 => "CF_HDROP",
+        16 => "CF_LOCALE",
+        17 => "CF_DIBV5",
+        _ => return None,
+    })
 }
 #[cfg(target_os = "windows")]
 fn parse_windows_html(bytes: &[u8]) -> String {
@@ -1174,7 +1482,7 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
     let _guard = Guard;
     EmptyClipboard()?;
     let mut written = 0;
-    for rep in reps {
+    for rep in ordered_write_representations(reps, "windows") {
         match &rep.payload {
             CapturedPayload::Text(value)
                 if rep.canonical_mime_type.as_deref() == Some("text/plain") =>
@@ -1208,17 +1516,21 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                 }
             }
             CapturedPayload::Binary(bytes) => {
-                let native = rep
-                    .native_type
-                    .as_deref()
+                let native = rep.native_type.as_deref();
+                let capability = native
                     .filter(|name| writeback_allowed(name))
-                    .or(match rep.canonical_mime_type.as_deref() {
+                    .and_then(|name| capabilities::resolve("windows", None, name));
+                let target = match capability.and_then(|value| value.write_back.writer) {
+                    Some(WriterCodec::WindowsPng) => Some("PNG"),
+                    Some(WriterCodec::WindowsRegisteredBytes) => native,
+                    _ => match rep.canonical_mime_type.as_deref() {
                         Some("image/png") => Some("PNG"),
                         Some("application/pdf") => Some("Portable Document Format"),
                         Some("image/svg+xml") => Some("image/svg+xml"),
                         _ => None,
-                    });
-                if let Some(native) = native {
+                    },
+                };
+                if let Some(native) = target {
                     let format = register_windows_format(native);
                     if set_windows_format(format, bytes) {
                         written += 1
@@ -1300,13 +1612,8 @@ unsafe fn set_windows_format(format: u32, bytes: &[u8]) -> bool {
 }
 #[cfg(target_os = "windows")]
 fn writeback_allowed(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    matches!(name, "PNG" | "Portable Document Format" | "image/svg+xml")
-        || lower.contains("office")
-        || lower.contains("object")
-        || lower.contains("powerpoint")
-        || lower.contains("excel")
-        || lower.contains("word")
+    capabilities::resolve("windows", None, name)
+        .is_some_and(|capability| capability.write_back.policy != WritePolicy::Unsupported)
 }
 #[cfg(target_os = "windows")]
 fn windows_html_wrapper(fragment: &str) -> String {
@@ -1337,6 +1644,7 @@ mod tests {
                 token: t,
                 source_app_name: None,
                 source_app_id: None,
+                format_observations: Vec::new(),
                 representations: vec![CapturedRepresentation {
                     format_key: "x".into(),
                     canonical_mime_type: None,
@@ -1371,12 +1679,14 @@ mod tests {
             source_app_name: None,
             source_app_id: None,
             representations: representations.clone(),
+            format_observations: Vec::new(),
         };
         assert!(is_self_write_snapshot(&matching));
         let changed = CapturedSnapshot {
             token: 42,
             source_app_name: None,
             source_app_id: None,
+            format_observations: Vec::new(),
             representations: vec![CapturedRepresentation {
                 payload: CapturedPayload::Text("other".into()),
                 ..representations[0].clone()
@@ -1513,7 +1823,8 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn native_writeback_never_guesses_unknown_formats() {
-        assert!(writeback_allowed("PowerPoint 16.0 Internal Slides"));
+        assert!(writeback_allowed("PowerPoint 16.0 Slides Package"));
+        assert!(!writeback_allowed("PowerPoint 16.0 Internal Slides"));
         assert!(!writeback_allowed("mystery-format"));
     }
 }

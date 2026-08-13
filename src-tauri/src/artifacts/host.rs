@@ -674,6 +674,7 @@ mod tests {
                     token: 1,
                     source_app_name: None,
                     source_app_id: None,
+                    format_observations: Vec::new(),
                     representations: vec![CapturedRepresentation {
                         format_key: "windows:PNG".into(),
                         canonical_mime_type: Some("image/png".into()),

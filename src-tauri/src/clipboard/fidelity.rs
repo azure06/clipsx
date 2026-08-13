@@ -43,6 +43,7 @@ impl FidelityHarness {
                     token: 41,
                     source_app_name: Some("Fixture Writer".into()),
                     source_app_id: Some("clipsx.fixture".into()),
+                    format_observations: Vec::new(),
                     representations,
                 },
                 &CaptureSettings::default(),
@@ -190,6 +191,7 @@ async fn windows_text_html_rtf_and_files_survive_restart_in_contract_order() {
         token: 9_876_541,
         source_app_name: None,
         source_app_id: None,
+        format_observations: Vec::new(),
         representations: reconstructed,
     }));
 }

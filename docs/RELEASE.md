@@ -4,9 +4,11 @@ This document is the release gate for ClipsX. A release is ready only when the
 automated preflight, native clipboard matrix, installed-desktop workflows, and
 packaging requirements below pass for every advertised platform.
 
-The normative capture and reconstruction contract is
-[platform-format-matrix.json](platform-format-matrix.json). Update that file
-only when an adapter's supported-format contract changes.
+The normative capture and reconstruction contract is the executable
+[platform-format-matrix.json](platform-format-matrix.json), validated by its
+[JSON Schema](platform-format-matrix.schema.json) and the compiled Rust codec
+registry. Update the policy and installed-build fixtures together whenever an
+adapter's supported-format contract changes.
 
 ## Release scope
 
@@ -64,6 +66,10 @@ restart → reconstruction harness. It currently proves:
   both match; and
 - normalized Windows images retain an observed PNG/`CF_DIBV5`/`CF_DIB`
   identity, while an unavailable identity is not guessed.
+- unknown, disabled, redundant, diagnostic-only, unreadable, and oversized
+  advertisements produce bounded observations without retaining payload bytes;
+- schema-version reset enforcement and restart reconciliation preserve both
+  canonical and derived managed-file references.
 
 This evidence does not replace the installed native sequence below. A Windows
 development host cannot certify macOS pasteboard APIs, Linux/X11 ownership,
@@ -98,10 +104,17 @@ Required fixtures:
 - PNG and normalized `CF_DIB`
 - registered PDF and SVG
 - supported Office/native registered formats with useful alternates
+- private/control Office noise present alongside the fixture but retained only
+  as observations
 
 Installed-build checks:
 
 - exact registered-format writeback and wrapper regeneration;
+- screenshot capture/PNG preview and reconstruction after process restart;
+- PNG and SVG preview requests use the platform-correct custom-protocol origin,
+  and separate tabs identify the captured format;
+- editable same-application Word selections/tables, Excel formulas and
+  formatting, and PowerPoint shapes plus single/multiple slides after restart;
 - target focus and synthetic paste in representative applications;
 - tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
   updater, deep links, OAuth callback, and file dialogs;

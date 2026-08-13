@@ -224,6 +224,9 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
               <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
                 priority {rep.capturePriority}
               </span>
+              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
+                {rep.formatFamily}
+              </span>
               {rep.sha256 && (
                 <code className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] text-gray-400 dark:bg-white/8">
                   {rep.sha256.slice(0, 8)}…
@@ -253,6 +256,35 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
           </article>
         )
       })}
+      {detail.formatObservations.length > 0 && (
+        <section className="space-y-2 pt-2" aria-label="Clipboard format observations">
+          <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+            Advertised native formats
+          </div>
+          {detail.formatObservations.map(observation => (
+            <article
+              className="rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2.5 dark:border-white/8 dark:bg-white/4"
+              key={`${observation.ordinal}:${observation.nativeIdentifier}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <code className="break-all text-[10px] text-gray-700 dark:text-gray-300">
+                  {observation.nativeIdentifier}
+                </code>
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 dark:bg-white/8 dark:text-gray-300">
+                  {observation.decision.replace('_', ' ')}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-gray-400">
+                {observation.capabilityId && <span>{observation.capabilityId}</span>}
+                {observation.byteLength !== null && (
+                  <span>{formatBytes(observation.byteLength)}</span>
+                )}
+                <span>{observation.reason.replaceAll('_', ' ')}</span>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
     </div>
   </div>
 )

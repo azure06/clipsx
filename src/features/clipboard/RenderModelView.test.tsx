@@ -198,7 +198,10 @@ describe('RenderModelView', () => {
         })}
       />
     )
-    expect(screen.getByRole('img', { name: /clipboard image/i })).toBeInTheDocument()
+    const image = screen.getByRole('img', { name: /clipboard image/i })
+    expect(image).toHaveAttribute('src', 'http://clipsx-asset.localhost/image-1')
+    fireEvent.error(image)
+    expect(screen.getByText('No image source found')).toBeInTheDocument()
   })
 
   it('derives text statistics only from models that actually contain text', () => {

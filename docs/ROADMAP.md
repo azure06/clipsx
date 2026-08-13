@@ -73,9 +73,10 @@ roadmap.
   or `cargo run`.
 - Original, Plain Text, and transformed output are independent of the active
   renderer.
-- Unsupported native types are skipped or reported according to
-  [platform-format-matrix.json](platform-format-matrix.json); never guess a UTI,
-  OLE type, registered clipboard format, MIME type, or X11 target.
+- Unsupported native types are observed without reading or storing their bytes
+  according to the executable [platform capability matrix](platform-format-matrix.json)
+  and [JSON Schema](platform-format-matrix.schema.json); never guess a UTI, OLE
+  type, registered clipboard format, MIME type, or X11 target.
 - New work must not restore V1 persistence, IPC, or compatibility behavior.
 
 ## M1 — Native clipboard reliability
@@ -88,6 +89,9 @@ Windows, macOS, and Linux/X11.
 - Run the native fixture sequence in [RELEASE.md](RELEASE.md) for text, HTML,
   RTF, raster images, PDF, SVG, ordered file lists, Office/native formats, and
   unsupported inputs on every advertised platform.
+- On Windows, prove same-application editable round trips for Word selections
+  and tables, Excel formulas/formatting, and PowerPoint shapes and slides after
+  restarting ClipsX; keep private OLE/control noise diagnostic-only.
 - Verify platform wrapper regeneration and exact native identifier writeback
   in installed builds, including macOS ordered file URLs.
 - Validate focus restoration, synthetic paste, permission failures, self-write

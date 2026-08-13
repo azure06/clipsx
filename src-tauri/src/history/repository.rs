@@ -1,4 +1,5 @@
 use super::domain::*;
+use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -150,6 +151,7 @@ impl HistoryRepository {
             {
                 let id: String = row.get(0);
                 sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=? WHERE id=?").bind(now).bind(now).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(&id).execute(&mut *tx).await?;
+                replace_format_observations(&mut tx, &id, &snapshot.format_observations).await?;
                 tx.commit().await?;
                 return Ok((id, true));
             }
@@ -160,6 +162,7 @@ impl HistoryRepository {
             self.insert_representation(&mut tx, &id, ordinal as i64, rep, now)
                 .await?;
         }
+        replace_format_observations(&mut tx, &id, &snapshot.format_observations).await?;
         sqlx::query("UPDATE clip_items SET lifecycle_state='ready' WHERE id=?")
             .bind(&id)
             .execute(&mut *tx)
@@ -177,14 +180,15 @@ impl HistoryRepository {
         now: i64,
     ) -> Result<()> {
         let id = new_id();
+        let (capability_id, format_family) = representation_capability(rep);
         let (kind, binary_id) = match &rep.payload {
             CapturedPayload::Text(value) => {
-                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?, 'text',?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&rep.platform).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,capability_id,format_family,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?, 'text',?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&capability_id).bind(&format_family).bind(&rep.platform).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
                 sqlx::query("INSERT INTO clip_text_values(representation_id,text_value,utf8_byte_length,sha256) VALUES(?,?,?,?)").bind(&id).bind(value).bind(value.len() as i64).bind(sha256(value.as_bytes())).execute(&mut **tx).await?;
                 ("text", None)
             }
             CapturedPayload::Files(files) => {
-                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?, 'file_list',?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&rep.platform).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,capability_id,format_family,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?, 'file_list',?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&capability_id).bind(&format_family).bind(&rep.platform).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
                 for (index, value) in files.iter().enumerate() {
                     sqlx::query("INSERT INTO clip_file_list_entries(representation_id,ordinal,file_reference) VALUES(?,?,?)").bind(&id).bind(index as i64).bind(value).execute(&mut **tx).await?;
                 }
@@ -224,7 +228,7 @@ impl HistoryRepository {
                         .bind(&hash)
                         .fetch_one(&mut **tx)
                         .await?;
-                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,platform,storage_kind,binary_file_id,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?, 'binary_asset',?,?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&rep.platform).bind(&actual).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
+                sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,native_type,capability_id,format_family,platform,storage_kind,binary_file_id,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?, 'binary_asset',?,?,?, 'pending',?,?)").bind(&id).bind(clip_id).bind(&rep.format_key).bind(&rep.canonical_mime_type).bind(&rep.native_type).bind(&capability_id).bind(&format_family).bind(&rep.platform).bind(&actual).bind(ordinal).bind(rep.capture_priority).bind(now).bind(now).execute(&mut **tx).await?;
                 ("binary_asset", Some(actual))
             }
         };
@@ -238,7 +242,7 @@ impl HistoryRepository {
     pub async fn list(&self, request: ListRequest) -> Result<ClipPage> {
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
-        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
+        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
         }
@@ -308,8 +312,8 @@ impl HistoryRepository {
             .collect())
     }
     pub async fn detail(&self, id: &str) -> Result<ClipDetail> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
-        let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,r.capture_priority,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256 FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
+        let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,r.capture_priority,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256,r.capability_id,r.format_family FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
         let mut representations = Vec::new();
         for r in reps {
             let rep_id: String = r.get(0);
@@ -326,12 +330,21 @@ impl HistoryRepository {
                 text_value: r.get(8),
                 binary_file_id: r.get(9),
                 sha256: r.get(10),
+                capability_id: r.get(11),
+                format_family: r.get(12),
                 file_references: files,
             });
         }
+        let format_observations = sqlx::query("SELECT ordinal,platform,native_identifier,numeric_id,medium,byte_length,capability_id,policy_version,decision,reason FROM clip_format_observations WHERE clip_id=? ORDER BY ordinal")
+            .bind(id).fetch_all(&self.pool).await?.into_iter().map(|row| FormatObservation {
+                ordinal: row.get(0), platform: row.get(1), native_identifier: row.get(2),
+                numeric_id: row.get(3), medium: row.get(4), byte_length: row.get(5),
+                capability_id: row.get(6), policy_version: row.get(7), decision: row.get(8), reason: row.get(9),
+            }).collect();
         Ok(ClipDetail {
             clip: self.summary_from_row(row).await?,
             representations,
+            format_observations,
         })
     }
     pub async fn reconstruction(&self, id: &str) -> Result<Vec<CapturedRepresentation>> {
@@ -827,9 +840,32 @@ impl HistoryRepository {
                 .execute(&self.pool)
                 .await?;
         }
+        let artifact_rows = sqlx::query("SELECT id,sha256,relative_path FROM artifact_binary_files WHERE lifecycle_state IN ('pending','ready')").fetch_all(&self.pool).await?;
+        for row in artifact_rows {
+            let id: String = row.get(0);
+            let expected: String = row.get(1);
+            let relative: String = row.get(2);
+            let state = if !safe_relative(&relative) {
+                "quarantined"
+            } else {
+                match fs::read(self.managed_root.join(&relative)) {
+                    Ok(bytes) if sha256(&bytes) == expected => "ready",
+                    Ok(_) => "quarantined",
+                    Err(_) => "missing",
+                }
+            };
+            sqlx::query(
+                "UPDATE artifact_binary_files SET lifecycle_state=?,updated_at=? WHERE id=?",
+            )
+            .bind(state)
+            .bind(now_ms())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
         self.cleanup_orphans().await?;
         let known: std::collections::HashSet<String> =
-            sqlx::query_scalar("SELECT relative_path FROM clip_binary_files")
+            sqlx::query_scalar("SELECT relative_path FROM clip_binary_files UNION SELECT relative_path FROM artifact_binary_files")
                 .fetch_all(&self.pool)
                 .await?
                 .into_iter()
@@ -844,6 +880,7 @@ impl HistoryRepository {
                     }
                 }
             }
+            remove_empty_directories(&managed)?;
         }
         Ok(())
     }
@@ -878,6 +915,56 @@ fn payload_len(r: &CapturedRepresentation) -> u64 {
         CapturedPayload::Files(v) => v.iter().map(|x| x.len() as u64).sum(),
     }
 }
+
+fn representation_capability(rep: &CapturedRepresentation) -> (String, String) {
+    let native = rep
+        .native_type
+        .as_deref()
+        .or_else(|| rep.format_key.split_once(':').map(|(_, value)| value))
+        .unwrap_or(&rep.format_key);
+    if let Some(capability) = capabilities::resolve(&rep.platform, None, native) {
+        return (capability.id.clone(), capability.family.clone());
+    }
+    let family = match (&rep.payload, rep.canonical_mime_type.as_deref()) {
+        (CapturedPayload::Files(_), _) => "files",
+        (_, Some(mime)) if mime.starts_with("image/") => "image",
+        (_, Some("text/html" | "text/rtf" | "application/rtf")) => "rich_text",
+        (_, Some("application/pdf")) => "document",
+        (CapturedPayload::Text(_), _) => "text",
+        _ => "binary",
+    };
+    (format!("core.generated.{family}"), family.into())
+}
+
+async fn replace_format_observations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    clip_id: &str,
+    observations: &[FormatObservation],
+) -> Result<()> {
+    sqlx::query("DELETE FROM clip_format_observations WHERE clip_id=?")
+        .bind(clip_id)
+        .execute(&mut **tx)
+        .await?;
+    for (ordinal, observation) in observations.iter().take(512).enumerate() {
+        let identifier: String = observation.native_identifier.chars().take(256).collect();
+        if identifier.is_empty() {
+            continue;
+        }
+        let medium = observation
+            .medium
+            .as_ref()
+            .map(|value| value.chars().take(64).collect::<String>());
+        let reason: String = observation.reason.chars().take(120).collect();
+        sqlx::query("INSERT INTO clip_format_observations(clip_id,ordinal,platform,native_identifier,numeric_id,medium,byte_length,capability_id,policy_version,decision,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(clip_id).bind(ordinal as i64).bind(&observation.platform).bind(identifier)
+            .bind(observation.numeric_id).bind(medium).bind(observation.byte_length)
+            .bind(&observation.capability_id).bind(observation.policy_version)
+            .bind(&observation.decision).bind(if reason.is_empty() { "unspecified" } else { &reason })
+            .execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 fn managed_files(root: &Path) -> Result<Vec<PathBuf>> {
     let mut result = Vec::new();
     for entry in fs::read_dir(root)? {
@@ -893,6 +980,20 @@ fn managed_files(root: &Path) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(result)
+}
+
+fn remove_empty_directories(root: &Path) -> Result<bool> {
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if fs::symlink_metadata(&path)?.is_dir() {
+            let _ = remove_empty_directories(&path)?;
+        }
+    }
+    let empty = fs::read_dir(root)?.next().is_none();
+    if empty {
+        fs::remove_dir(root)?;
+    }
+    Ok(empty)
 }
 pub fn safe_relative(value: &str) -> bool {
     let path = Path::new(value);
@@ -954,6 +1055,18 @@ mod tests {
             token: 1,
             source_app_name: Some("Editor".into()),
             source_app_id: None,
+            format_observations: vec![FormatObservation {
+                ordinal: 0,
+                platform: "windows".into(),
+                native_identifier: "CF_UNICODETEXT".into(),
+                numeric_id: Some(13),
+                medium: Some("HGLOBAL".into()),
+                byte_length: Some(12),
+                capability_id: Some("windows.text.unicode".into()),
+                policy_version: 2,
+                decision: "captured".into(),
+                reason: "matched_capability".into(),
+            }],
             representations: vec![
                 CapturedRepresentation {
                     format_key: "windows:CF_UNICODETEXT".into(),
@@ -978,11 +1091,19 @@ mod tests {
             .await
             .unwrap();
         assert!(!duplicate);
-        assert_eq!(repo.detail(&id).await.unwrap().representations.len(), 2);
+        let first = repo.detail(&id).await.unwrap();
+        assert_eq!(first.representations.len(), 2);
+        assert_eq!(
+            first.representations[0].capability_id,
+            "windows.text.unicode"
+        );
+        assert_eq!(first.format_observations.len(), 1);
         repo.note(&id, Some("keep".into())).await.unwrap();
         repo.set_flag(&id, "is_pinned", true).await.unwrap();
+        let mut repeated = snapshot;
+        repeated.format_observations[0].reason = "refreshed_observation".into();
         let (same, promoted) = repo
-            .capture(snapshot, &CaptureSettings::default())
+            .capture(repeated, &CaptureSettings::default())
             .await
             .unwrap();
         assert_eq!(id, same);
@@ -990,5 +1111,9 @@ mod tests {
         let detail = repo.detail(&id).await.unwrap();
         assert_eq!(detail.clip.note.as_deref(), Some("keep"));
         assert!(detail.clip.is_pinned);
+        assert_eq!(
+            detail.format_observations[0].reason,
+            "refreshed_observation"
+        );
     }
 }

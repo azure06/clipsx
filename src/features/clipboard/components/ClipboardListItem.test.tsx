@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { ClipboardListItem } from './ClipboardListItem'
 import type { ClipSummary } from '../../../shared/types/v2'
 
@@ -81,6 +81,13 @@ describe('ClipboardListItem', () => {
     expect(thumbnail).toHaveAttribute('src', 'clipsx-asset://localhost/asset-image')
     expect(thumbnail.className).toContain('rounded-full')
     expect(thumbnail.className).toContain('object-cover')
+  })
+
+  it('falls back to the content icon when a thumbnail cannot load', () => {
+    render(<ClipboardListItem clip={createImageClip()} onCopy={vi.fn()} onSelect={vi.fn()} />)
+    const thumbnail = screen.getByRole('img', { name: /thumbnail/i })
+    fireEvent.error(thumbnail)
+    expect(screen.getByTestId('content-icon')).toBeInTheDocument()
   })
 
   it('should fallback to content icon when image path is missing', () => {

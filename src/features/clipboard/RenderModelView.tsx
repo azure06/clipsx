@@ -40,8 +40,7 @@ import {
 } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { useTheme } from '../../shared/hooks/useTheme'
-
-const assetUrl = (id: string) => `clipsx-asset://localhost/${id}`
+import { managedAssetUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
@@ -316,17 +315,31 @@ const KeyValueView = ({ entries }: { entries: [string, string][] }) => (
   </dl>
 )
 
-const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => (
-  <div
-    className={`${SCROLL_AREA} flex items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20`}
-  >
-    <img
-      className="max-h-full max-w-full rounded object-contain"
-      src={assetUrl(model.assetId)}
-      alt="Clipboard image"
-    />
-  </div>
-)
+const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => {
+  const { t } = useTranslation()
+  const [failedAssetId, setFailedAssetId] = useState<string | null>(null)
+  const failed = failedAssetId === model.assetId
+
+  return (
+    <div
+      className={`${SCROLL_AREA} flex items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20`}
+    >
+      {failed ? (
+        <div className="flex flex-col items-center gap-2 text-sm text-gray-500">
+          <ImageOff className="h-8 w-8" />
+          {t('preview.noImageSource')}
+        </div>
+      ) : (
+        <img
+          className="max-h-full max-w-full rounded object-contain"
+          src={managedAssetUrl(model.assetId)}
+          alt="Clipboard image"
+          onError={() => setFailedAssetId(model.assetId)}
+        />
+      )}
+    </div>
+  )
+}
 
 const FilesView = ({ entries }: Extract<RenderModel, { kind: 'files' }>) => (
   <ul className="space-y-2 p-4">
@@ -1095,7 +1108,7 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
       return (
         <object
           className="h-full w-full bg-white"
-          data={assetUrl(model.assetId)}
+          data={managedAssetUrl(model.assetId)}
           type={model.mimeType}
         >
           <p className="p-4 text-sm">Document preview unavailable.</p>

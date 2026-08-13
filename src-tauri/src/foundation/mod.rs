@@ -14,6 +14,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v2";
+pub const SCHEMA_VERSION: i64 = 2;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,15 +172,20 @@ async fn inspect_database(path: &Path) -> Result<SchemaState> {
     let mut connection = SqliteConnection::connect_with(&options).await?;
     let has_meta: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'system_schema_meta')").fetch_one(&mut connection).await?;
     if has_meta {
-        let id: Option<String> =
-            sqlx::query_scalar("SELECT schema_id FROM system_schema_meta LIMIT 1")
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT schema_id,schema_version FROM system_schema_meta LIMIT 1")
                 .fetch_optional(&mut connection)
                 .await?;
-        return Ok(if id.as_deref() == Some(SCHEMA_ID) {
-            SchemaState::Ready
-        } else {
-            SchemaState::UnsupportedSchema
-        });
+        return Ok(
+            if row
+                .as_ref()
+                .is_some_and(|(id, version)| id == SCHEMA_ID && *version == SCHEMA_VERSION)
+            {
+                SchemaState::Ready
+            } else {
+                SchemaState::UnsupportedSchema
+            },
+        );
     }
     let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name IN ('clips', 'embeddings', 'vault_items'))").fetch_one(&mut connection).await?;
     Ok(if legacy {
@@ -318,6 +324,26 @@ mod tests {
             SchemaState::LegacyResetRequired
         );
     }
+    #[tokio::test]
+    async fn requires_reset_for_an_older_v2_schema_version() {
+        let root = TempDir::new().unwrap();
+        let path = root.path().join("old-v2.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let mut conn = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("CREATE TABLE system_schema_meta(schema_id TEXT,schema_version INTEGER,created_at INTEGER)")
+            .execute(&mut conn).await.unwrap();
+        sqlx::query("INSERT INTO system_schema_meta VALUES('clipsx-local-v2',1,0)")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            inspect_database(&path).await.unwrap(),
+            SchemaState::UnsupportedSchema
+        );
+    }
     #[test]
     fn reset_requires_exact_confirmation() {
         let root = TempDir::new().unwrap();
@@ -343,7 +369,7 @@ mod tests {
         let matrix: serde_json::Value =
             serde_json::from_str(include_str!("../../../docs/platform-format-matrix.json"))
                 .unwrap();
-        let formats = matrix["formats"].as_array().unwrap();
+        let formats = matrix["capabilities"].as_array().unwrap();
         for platform in ["macos", "windows", "linux_x11"] {
             assert!(formats.iter().any(|entry| entry["platform"] == platform));
         }

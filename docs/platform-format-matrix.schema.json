@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clipsx.app/schemas/platform-format-matrix-v2.json",
+  "title": "ClipsX platform clipboard capability matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "capabilities"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "version": {"const": 2},
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/capability"}
+    }
+  },
+  "$defs": {
+    "selector": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["kind","id","name"],"properties":{"kind":{"const":"standard"},"id":{"type":"integer","minimum":1},"name":{"type":"string","minLength":1,"maxLength":128}}},
+        {"type":"object","additionalProperties":false,"required":["kind","name"],"properties":{"kind":{"const":"exact"},"name":{"type":"string","minLength":1,"maxLength":256}}},
+        {"type":"object","additionalProperties":false,"required":["kind","prefix"],"properties":{"kind":{"const":"prefix"},"prefix":{"type":"string","minLength":3,"maxLength":128},"suffix":{"type":["string","null"],"maxLength":128}}}
+      ]
+    },
+    "representation": {
+      "type":"object","additionalProperties":false,
+      "required":["storageKind","mimeType","byteContract","renderer","priority"],
+      "properties":{"storageKind":{"enum":["text","binary_asset","file_list"]},"mimeType":{"type":["string","null"]},"byteContract":{"enum":["normalized_utf8","byte_exact","normalized_png","ordered_references"]},"renderer":{"enum":["text","html","rich_text","files","image","document","office"]},"priority":{"type":"integer"}}
+    },
+    "writeBack": {
+      "type":"object","additionalProperties":false,"required":["policy","writer","priority"],
+      "properties":{"policy":{"enum":["unsupported","supported","exact","normalized"]},"writer":{"type":["string","null"]},"priority":{"type":"integer"}}
+    },
+    "capability": {
+      "type":"object","additionalProperties":false,
+      "required":["id","platform","family","selectors","settingsGate","capture","reader","representation","writeBack","unreadable"],
+      "properties": {
+        "id":{"type":"string","pattern":"^[a-z0-9._-]{3,120}$"},
+        "platform":{"enum":["windows","macos","linux_x11"]},
+        "family":{"type":"string","pattern":"^[a-z0-9_]{2,64}$"},
+        "selectors":{"type":"array","minItems":1,"maxItems":16,"items":{"$ref":"#/$defs/selector"}},
+        "settingsGate":{"type":["string","null"],"enum":[null,"images","files","rich_text","office_and_documents"]},
+        "capture":{"enum":["always","conditional","diagnostic_only","redundant"]},
+        "reader":{"type":["string","null"]},
+        "representation":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/representation"}]},
+        "writeBack":{"$ref":"#/$defs/writeBack"},
+        "unreadable":{"enum":["skip","reject_snapshot"]},
+        "bundle":{"type":"string","minLength":3,"maxLength":120}
+      }
+    }
+  }
+}

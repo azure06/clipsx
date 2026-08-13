@@ -55,8 +55,11 @@ describe('V2ViewPanel resolver boundary', () => {
               fileReferences: [],
               binaryFileId: null,
               sha256: null,
+              capabilityId: 'windows.text.unicode',
+              formatFamily: 'text',
             },
           ],
+          formatObservations: [],
         })
       }
       if (command === 'get_clip_views') {
@@ -157,6 +160,7 @@ describe('V2ViewPanel resolver boundary', () => {
           return Promise.resolve({
             clip: { ...summary, id: clipId },
             representations: [],
+            formatObservations: [],
           })
         }
         if (command === 'get_clip_views') {

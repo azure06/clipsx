@@ -673,6 +673,8 @@ fn accepts(
     input: &CapturedRepresentation,
     facet_id: Option<&str>,
 ) -> bool {
+    let native = input.native_type.as_deref().unwrap_or_default();
+    let capability = crate::clipboard::capabilities::resolve(&input.platform, None, native);
     (declaration.mime_types.is_empty()
         || input
             .canonical_mime_type
@@ -683,6 +685,20 @@ fn accepts(
                 .format_keys
                 .iter()
                 .any(|value| value == &input.format_key))
+        && (declaration.capability_ids.is_empty()
+            || capability.is_some_and(|capability| {
+                declaration
+                    .capability_ids
+                    .iter()
+                    .any(|value| value == &capability.id)
+            }))
+        && (declaration.format_families.is_empty()
+            || capability.is_some_and(|capability| {
+                declaration
+                    .format_families
+                    .iter()
+                    .any(|value| value == &capability.family)
+            }))
         && (declaration.facet_ids.is_empty()
             || facet_id.is_some_and(|id| declaration.facet_ids.iter().any(|value| value == id)))
 }

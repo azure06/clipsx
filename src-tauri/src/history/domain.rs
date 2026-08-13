@@ -148,6 +148,7 @@ pub struct Tag {
 pub struct ClipDetail {
     pub clip: ClipSummary,
     pub representations: Vec<RepresentationDetail>,
+    pub format_observations: Vec<FormatObservation>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +165,23 @@ pub struct RepresentationDetail {
     pub file_references: Vec<String>,
     pub binary_file_id: Option<String>,
     pub sha256: Option<String>,
+    pub capability_id: String,
+    pub format_family: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatObservation {
+    pub ordinal: i64,
+    pub platform: String,
+    pub native_identifier: String,
+    pub numeric_id: Option<i64>,
+    pub medium: Option<String>,
+    pub byte_length: Option<i64>,
+    pub capability_id: Option<String>,
+    pub policy_version: i64,
+    pub decision: String,
+    pub reason: String,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -194,6 +212,7 @@ pub struct CapturedSnapshot {
     pub source_app_name: Option<String>,
     pub source_app_id: Option<String>,
     pub representations: Vec<CapturedRepresentation>,
+    pub format_observations: Vec<FormatObservation>,
 }
 #[derive(Debug, Clone)]
 pub struct TransformProvenance {

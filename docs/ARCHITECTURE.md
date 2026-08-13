@@ -48,7 +48,17 @@ Architecture gives React and Rust distinct responsibilities. The data model pres
 - Platform adapters alone interpret native clipboard types; never guess UTI, OLE, or equivalent identifiers. Renderer selection is UI policy, not clip state.
 - Use the fresh domain-prefixed schema and reset flow. Do not add v1 migrations, compatibility reads/writes, or dual schemas.
 
-[platform-format-matrix.json](platform-format-matrix.json) defines supported capture/reconstruction. The read-only `archive/v1-pre-m0` branch/tag can inform visual behavior, keyboard interaction, accessibility, and platform discovery, but never V2 schema, IPC, semantic models, sparse metadata, or compatibility behavior; see the [legacy reference policy](ROADMAP.md#legacy-v1-reference).
+[platform-format-matrix.json](platform-format-matrix.json) is the bundled, executable capture and reconstruction policy. It is validated against [its JSON Schema](platform-format-matrix.schema.json) and Rust semantic rules before startup proceeds. The read-only `archive/v1-pre-m0` branch/tag can inform visual behavior, keyboard interaction, accessibility, and platform discovery, but never V2 schema, IPC, semantic models, sparse metadata, or compatibility behavior; see the [legacy reference policy](ROADMAP.md#legacy-v1-reference).
+
+## Native capability policy
+
+The matrix owns stable capability IDs and families, exact or explicitly bounded selectors, settings gates, codec names, storage contracts, MIME and renderer hints, capture/write priorities, error policy, and bundle membership for Windows, macOS, and X11. The document is app-owned and read-only at runtime. Existing user settings may disable a declared family, but cannot introduce a native format or codec.
+
+The JSON is declarative policy; compiled, audited Rust codecs remain the only code allowed to read or write native clipboard data. Startup rejects unknown codecs, conflicting selectors, unsupported write-back combinations, and structurally invalid policy. Capture resolves a native advertisement through the matrix before reading bytes. Unknown, disabled, redundant, diagnostic-only, unreadable, and oversized formats are retained only as bounded observations, never as payload bytes.
+
+Windows PNG, `CF_DIBV5`, and `CF_DIB` normalize to canonical PNG while retaining the observed capability and native identity. The Windows Office bundle accepts only declared Word, Excel, and PowerPoint candidates. Versioned PowerPoint matching and write-back require the `Slides Package` suffix; small `Internal Slides`, `Internal Theme`, and `Internal Color Scheme` advertisements are diagnostic metadata and cannot become the editable primary or reconstruction targets. The primary native representation is selected by matrix rank, then readable payload size; reconstruction writes that exact registered format first and follows with matrix-ordered useful alternatives. Private/control formats such as `DataObject*`, `Ole Private Data`, `AsyncFlag`, shell offsets, and drop-effect metadata are diagnostic-only. `FileName` and `FileNameW` are redundant when `CF_HDROP` is present. Generic OLE is not guessed.
+
+macOS encodes the proven Microsoft package and `com.microsoft.ole.source.*` signal bundle explicitly. X11 uses the same resolver but does not claim editable Office support. Virtual-file descriptors, indexed contents, and Shell namespace payloads remain diagnostic-only until paired capture and reconstruction codecs are implemented together.
 
 
 ---
@@ -122,11 +132,11 @@ sequenceDiagram
     Adapter-->>Monitor: reject after bounded retries
     Monitor-->>UI: capture-rejected event
   else coherent snapshot
-    Adapter-->>Monitor: immutable representations plus source app
+    Adapter-->>Monitor: immutable representations, observations, and source app
     Monitor->>Repo: capture(snapshot, limits)
     Repo->>Repo: fingerprint and duplicate check
     alt duplicate ready capture
-      Repo->>DB: refresh timestamps and source app
+      Repo->>DB: refresh timestamps, source app, and observations
       Monitor-->>UI: clip-updated event
     else new capture
       Repo->>DB: begin transaction and insert pending clip
@@ -225,6 +235,12 @@ can refresh without reloading canonical clip data. File presentation preserves
 ordered path/name references only; it does not stat external files or invent
 size or timestamp metadata.
 
+The `clipsx-asset` protocol serves canonical image bytes with their declared
+MIME type. Wry exposes it as `http://clipsx-asset.localhost/` on Windows and as
+`clipsx-asset://localhost/` on macOS/Linux, so frontend URL construction is
+platform-aware. A failed request renders an explicit preview error rather than
+a silent broken-image element.
+
 HTML is sanitized in the host and displayed in a sandboxed iframe. RTF input is
 bounded to 1 MiB, rejects binary/object/field/image control groups, and is
 parsed behind a failure boundary; its
@@ -246,7 +262,7 @@ Canonical capture commits before detector/artifact/index work; derived data may 
 | Concept | Start here |
 | --- | --- |
 | Startup, IPC | `src-tauri/src/main.rs`, `app/`, `ipc/mod.rs` |
-| Clipboard/output | `clipboard/`, `output/`, `docs/platform-format-matrix.json` |
+| Clipboard/output | `clipboard/`, `output/`, `docs/platform-format-matrix.json`, `docs/platform-format-matrix.schema.json` |
 | Data | `history/`, `migrations/`, `foundation/` |
 | Contributions | `contributions/`, `features/transforms/` |
 | Artifacts/search/providers | `artifacts/`, `search/`, `providers/` |
@@ -260,7 +276,7 @@ This table expands the ingestion diagram into concrete ownership. It is useful w
 | --- | --- |
 | OS clipboard | The operating system's clipboard, which owns native formats and its change token. |
 | Polling task in `ipc` | Watches for clipboard changes, coordinates capture, and emits UI invalidation events. |
-| `ClipboardAdapter` | Reads a coherent, platform-specific clipboard snapshot and converts supported formats into immutable representations. |
+| `ClipboardAdapter` | Resolves advertised formats through the executable matrix, records bounded observations, and converts supported formats into immutable representations with compiled codecs. |
 | `HistoryRepository` | Owns canonical capture: deduplication, transactional metadata writes, representation records, and ready-state transitions. |
 | Managed files | Application-owned, content-addressed files that hold binary representation bytes outside SQLite. |
 | SQLite | Stores clip metadata, representation rows, typed storage records, facets, jobs, and other durable relational state. |
@@ -331,7 +347,7 @@ erDiagram
 
 `clip_items`, representations, and typed children are canonical. Text is normalized UTF-8, file lists are ordered external references, binary bytes are immutable managed files; facets/artifacts/search preserve source and producer/version provenance, while job tables record resumable work rather than content. Tags, notes, pins/favorites, and transform provenance are durable; an unsaved transform is in-memory, but a saved transform makes a new linked canonical clip.
 
-`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. The fresh physical schema is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history.
+`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. The fresh physical schema is version 2 and is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history. A database from the earlier V2 development baseline is rejected and must use the explicit factory-reset flow.
 
 ## Files and database tables
 
@@ -340,21 +356,21 @@ SQLite stores relationships, metadata, queries, and local non-secret configurati
 ```text
 clipboard_data/
   managed/
-    images/
-    office/
-    pdf/
-    svg/
-    native/
-  derived/
-    thumbnails/
     binary/
+      <first-two-sha256-hex>/
+        <full-sha256-hex>
+    derived/
+      <first-two-sha256-hex>/
+        <full-sha256-hex>
   staging/
 ```
+
+The two-character directory is filesystem fan-out, not an abbreviated identity: the first SHA-256 byte selects one of 256 buckets so a large library does not accumulate in one directory. The complete 64-character SHA-256 remains the filename, integrity key, and deduplication identity, so unrelated payloads cannot be mixed merely because they share a bucket.
 
 | Domain | Tables | Purpose |
 | --- | --- | --- |
 | System | `system_schema_meta` | Fresh-schema identity/version; rejects legacy databases. |
-| Clip | `clip_items`, `clip_representations`, `clip_text_values`, `clip_binary_files`, `clip_file_list_entries` | Canonical catalog, raw references, managed-file metadata. |
+| Clip | `clip_items`, `clip_representations`, `clip_text_values`, `clip_binary_files`, `clip_file_list_entries`, `clip_format_observations` | Canonical catalog, raw references, capability metadata, managed-file metadata, and bounded capture diagnostics. |
 | Content | `content_facet_definitions`, `content_clip_facets`, `content_detection_jobs` | Facets and detection scheduling. |
 | Catalog | `catalog_tags`, `catalog_clip_tags` | User organization. |
 | Artifact | `artifact_records`, `artifact_inputs`, `artifact_text_values`, `artifact_binary_files`, `artifact_jobs` | OCR/previews/approved output, provenance, derived files/invalidation. |
@@ -362,13 +378,13 @@ clipboard_data/
 | Extension | `extension_installs`, `extension_runtime_state`, `extension_contribution_runtime_state` | Packages, activation, per-contribution failure streaks, and quarantine. |
 | Config | `config_profile_values`, `config_device_values` | Local non-secret configuration. |
 
-Binary capture writes unique staging bytes, hashes/fsyncs them, transactionally inserts/fetches a pending binary row and clip references, atomically renames to final hash path/fsyncs its parent, then marks ready. Startup reconciliation is idempotent across pending rows, stale staging, missing/unreferenced files and never deletes referenced bytes. Identical bytes may share one binary row/file across clips; deletion waits for the final representation reference.
+Binary capture writes unique staging bytes, hashes/fsyncs them, transactionally inserts/fetches a pending binary row and clip references, atomically renames to final hash path/fsyncs its parent, then marks ready. Startup reconciliation is idempotent across pending rows, stale staging, missing/unreferenced files, and empty bucket directories. It preserves every ready canonical and derived reference. Identical bytes may share one binary row/file across clips; deletion waits for the final canonical or derived reference.
 
 ## Representation and byte contract
 
-Each `clip_representations` row contains `clip_id`; non-null `format_key` such as `mime:text/plain` or `macos:public.html`; MIME only when known without guessing; optional exact native type; storage kind; exactly one matching reference; ordinal/capture priority; and pending-to-ready lifecycle. `(clip_id, format_key)` is unique, preserving native-only formats without SQLite NULL ambiguity or invented MIME.
+Each `clip_representations` row contains `clip_id`; a stable `capability_id` and `format_family`; non-null `format_key` such as `mime:text/plain` or `macos:public.html`; MIME only when declared without guessing; optional exact native type; storage kind; exactly one matching reference; ordinal/capture priority; and pending-to-ready lifecycle. `(clip_id, format_key)` is unique, preserving native-only formats without SQLite NULL ambiguity or invented MIME. Generated representations use core-owned generated capability IDs rather than pretending to be native captures.
 
-Every adapter-supported Office/native extra is its own binary representation. Adapters capture only native types they explicitly recognize; unsupported unknown types are skipped. A captured native representation is written back only when the platform adapter explicitly supports its exact type. No code guesses UTI, OLE, or other native identifiers. One-to-one text children, ordinal file lists, `binary_file_id`, `CHECK` constraints, and a trigger that confirms children/references (and binary ready state) enforce correctness. Only ready data reaches UI, detectors, renderers, search, or reconstruction.
+Every adapter-supported Office/native extra is its own binary representation. Adapters capture only matrix-authorized native types and write back only capabilities with a compiled writer codec. No code guesses UTI, OLE, or other native identifiers. `clip_format_observations` records advertised order, identifier, numeric ID or medium when available, matched capability, policy version, decision/reason, and known byte length with strict count and string bounds. Observations contain no payload, are excluded from fingerprints, cascade with the clip, and are refreshed when an identical clip is recaptured. One-to-one text children, ordinal file lists, `binary_file_id`, `CHECK` constraints, and a trigger that confirms children/references (and binary ready state) enforce correctness. Only ready data reaches UI, detectors, renderers, search, or reconstruction.
 
 | Storage kind | Canonical storage | Read and processing contract | Clipboard reconstruction |
 | --- | --- | --- | --- |
@@ -435,7 +451,7 @@ flowchart LR
 
 Normal installation will accept checksum-pinned reviewed GitHub releases with package ID/version, release URL, SHA-256, compatibility, permissions, contribution metadata. Developer Mode permits local packages only with a persistent warning; packages use app-owned storage and relative `extension_installs` paths, while enabled/runtime/quarantine state is SQLite.
 
-WASM gets only representation/facet data and explicit hook context: no history, clipboard, SQLite/database, filesystem, network, shell, environment, React/frontend code/components, secrets, or providers. Host owns scheduling, size/time/memory limits, validation, retries, and quarantine. Detection is post-capture derived work; rendering is on-demand; transforms use built-in preview/copy/paste/save and cannot mutate clips in place.
+WASM gets only host-approved captured representation/facet data and explicit hook context: no history, native clipboard, SQLite/database, filesystem, network, shell, environment, React/frontend code/components, secrets, or providers. Manifest matching may use capability IDs and format families in addition to compatible MIME and format-key selectors. This does not change the component ABI or its 1 MiB input limit. Native format resolution and codecs remain core-owned. Host owns scheduling, size/time/memory limits, validation, retries, and quarantine. Detection is post-capture derived work; rendering is on-demand; transforms use built-in preview/copy/paste/save and cannot mutate clips in place.
 
 Extension API v1 is defined by [`EXTENSION_API_V1.md`](EXTENSION_API_V1.md) and its WIT world. Packages are validated before installation, run with bounded memory/fuel/epoch interruption, and are quarantined after repeated contribution failures. The Extensions UI manages reviewed-registry and explicitly enabled Developer Mode packages; live reload remains unsupported.
 

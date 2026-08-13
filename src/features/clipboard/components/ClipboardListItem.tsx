@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
 import {
   Command,
@@ -13,6 +13,7 @@ import {
 import { ContentIcon } from '../../content/icons'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
+import { managedAssetUrl } from '../../../shared/utils/assetUrl'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -34,6 +35,8 @@ const ClipboardListItemComponent = ({
   const { t } = useTranslation()
   const platform = getPlatform()
   const isMac = platform === 'macos'
+  const [failedThumbnailId, setFailedThumbnailId] = useState<string | null>(null)
+  const thumbnailFailed = failedThumbnailId === clip.thumbnailAssetId
   const preview =
     clip.safeSummary.length > 100 ? `${clip.safeSummary.slice(0, 100)}...` : clip.safeSummary
 
@@ -81,15 +84,12 @@ const ClipboardListItemComponent = ({
 
         {/* Type icon or thumbnail */}
         <div className="shrink-0">
-          {clip.primaryPresentationKind === 'image' && clip.thumbnailAssetId ? (
+          {clip.primaryPresentationKind === 'image' && clip.thumbnailAssetId && !thumbnailFailed ? (
             <img
-              src={`clipsx-asset://localhost/${clip.thumbnailAssetId}`}
+              src={managedAssetUrl(clip.thumbnailAssetId, platform)}
               alt={t('clipboard.thumbnail')}
               className="h-6 w-6 rounded-full object-cover ring-2 ring-gray-200/50 dark:ring-gray-700/50 shadow-sm"
-              onError={e => {
-                // Fallback to icon if image fails to load
-                e.currentTarget.style.display = 'none'
-              }}
+              onError={() => setFailedThumbnailId(clip.thumbnailAssetId)}
             />
           ) : (
             <div className="text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
