@@ -44,6 +44,22 @@ pub fn remember_self_write(token: u64, representations: &[CapturedRepresentation
     }
 }
 
+/// Consumes a pending ClipsX write by its platform change token before capture.
+/// This handles platform-generated clipboard wrappers that make a read-back
+/// representation fingerprint differ from the representation set we wrote.
+/// The token is one-shot and short-lived, so a later clipboard owner is still
+/// captured normally.
+pub fn consume_self_write_token(token: u64) -> bool {
+    let now = std::time::Instant::now();
+    let mut writes = self_writes().lock().expect("self-write ledger poisoned");
+    writes.retain(|entry| entry.expires_at > now);
+    let Some(index) = writes.iter().position(|entry| entry.token == token) else {
+        return false;
+    };
+    writes.remove(index);
+    true
+}
+
 /// Suppression deliberately compares both the platform token and the complete
 /// representation fingerprint. This prevents an unrelated clipboard update from
 /// being dropped merely because it follows a ClipsX write.
@@ -1693,6 +1709,20 @@ mod tests {
             }],
         };
         assert!(!is_self_write_snapshot(&changed));
+    }
+    #[test]
+    fn self_write_token_is_consumed_once_before_readback() {
+        let representations = vec![CapturedRepresentation {
+            format_key: "windows:text/plain".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: None,
+            platform: "windows".into(),
+            capture_priority: 1,
+            payload: CapturedPayload::Text("expected".into()),
+        }];
+        remember_self_write(43, &representations);
+        assert!(consume_self_write_token(43));
+        assert!(!consume_self_write_token(43));
     }
     #[test]
     fn plain_text_identity_matches_platform_matrix() {

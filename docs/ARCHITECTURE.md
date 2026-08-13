@@ -159,7 +159,7 @@ sequenceDiagram
   end
 ```
 
-The adapter compares token A/B, rejects changed or required-format-failed reads after bounded retries, and returns immutable representations plus source app. Repository deduplicates ready captures or writes pending canonical rows, staging/hashing/fsyncing/atomically renaming binary bytes while the transaction is open, then marks ready and commits. Startup reconciles missing/pending/staged/unreferenced files; manual `capture_clipboard` uses the same adapter/repository and ordering; self-writes are fingerprinted/suppressed.
+The adapter compares token A/B, rejects changed or required-format-failed reads after bounded retries, and returns immutable representations plus source app. Repository deduplicates ready captures or writes pending canonical rows, staging/hashing/fsyncing/atomically renaming binary bytes while the transaction is open, then marks ready and commits. Startup reconciles missing/pending/staged/unreferenced files; manual `capture_clipboard` uses the same adapter/repository and ordering. Self-writes are suppressed once by their short-lived platform change token before readback, with a representation-fingerprint check retained as fallback; this prevents OS-generated clipboard wrappers from creating history entries.
 
 ## Ownership and dependencies
 

@@ -6,7 +6,9 @@ use crate::app::{
     window_chrome,
 };
 use crate::clipboard::contract::ClipboardAdapter;
-use crate::clipboard::{capture_coherent, is_self_write_snapshot, SystemClipboardAdapter};
+use crate::clipboard::{
+    capture_coherent, consume_self_write_token, is_self_write_snapshot, SystemClipboardAdapter,
+};
 use crate::contracts::{self, FactoryResetResult, StartupStatus};
 use crate::contributions::transformer as transformers;
 use crate::extensions::ExtensionService;
@@ -1896,6 +1898,9 @@ pub(crate) fn run() {
                             continue;
                         }
                         last_token = token;
+                        if consume_self_write_token(token) {
+                            continue;
+                        }
                         let mut snapshot = match capture_coherent(&mut adapter) {
                             Ok(value) => value,
                             Err(error) => {
