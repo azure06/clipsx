@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   Search,
   Command,
@@ -131,7 +132,6 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const inputRef = useRef<HTMLInputElement>(null)
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
-  const [sourcesOpen, setSourcesOpen] = useState(false)
   const lastAppliedScopeValueRef = useRef<string | null>(null)
   const isSemanticIndexing = Boolean(
     semanticStatus?.pendingSpaceId || (semanticStatus?.pendingJobs ?? 0) > 0
@@ -327,23 +327,30 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         <div className="pr-4 flex items-center gap-2">
           {/* Search sources */}
           {searchSources.length > 0 ? (
-            <div className="relative">
-              <button
-                onClick={() => setSourcesOpen(value => !value)}
-                className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-all ${isSemanticActive ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400' : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'}`}
-                aria-expanded={sourcesOpen}
-              >
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                {t('search.sources')}
-              </button>
-              {sourcesOpen && (
-                <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-slate-900">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-all ${isSemanticActive ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400' : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  {t('search.sources')}
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  className="z-50 w-64 rounded-xl border border-slate-200/60 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/95"
+                  sideOffset={6}
+                  align="end"
+                >
                   {searchSources.map(source => (
-                    <button
+                    <DropdownMenu.Item
                       key={source.id}
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-slate-100 disabled:cursor-default dark:hover:bg-white/5"
                       disabled={source.mandatory}
-                      onClick={() => onToggleSource?.(source.id)}
+                      onSelect={event => {
+                        event.preventDefault()
+                        onToggleSource?.(source.id)
+                      }}
+                      className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-left outline-none data-highlighted:bg-slate-100 data-disabled:cursor-not-allowed data-disabled:opacity-60 dark:data-highlighted:bg-white/5"
                     >
                       <span
                         className={`mt-0.5 flex h-4 w-4 items-center justify-center rounded border ${source.enabled ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
@@ -360,11 +367,11 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
                             : t(`search.sourceState.${source.state}`)}
                         </span>
                       </span>
-                    </button>
+                    </DropdownMenu.Item>
                   ))}
-                </div>
-              )}
-            </div>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           ) : isSemanticAvailable ? (
             <button
               onClick={onToggleSemantic}

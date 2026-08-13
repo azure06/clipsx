@@ -13,12 +13,14 @@ import {
   RefreshCw,
   ScanSearch,
   Server,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Unplug,
   Wand2,
 } from 'lucide-react'
 import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
+import { Switch } from '../../shared/components/ui'
 
 type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
 type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
@@ -222,8 +224,18 @@ export const IntelligencePage = () => {
   const progressPct = total > 0 ? Math.round((status!.indexedClips / total) * 100) : 100
 
   return (
-    <div className="flex h-full flex-col overflow-auto p-8">
-      <div className="mx-auto w-full max-w-2xl space-y-6">
+    <div className="relative flex h-full flex-col overflow-auto p-8">
+      <div
+        aria-hidden
+        className="animate-dot-drift pointer-events-none absolute inset-0 opacity-[0.4] dark:opacity-[0.25]"
+        style={{
+          backgroundImage: 'radial-gradient(circle, rgb(139 92 246) 1px, transparent 1px)',
+          backgroundSize: '24px 24px',
+          maskImage: 'radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%)',
+        }}
+      />
+      <div className="relative mx-auto w-full max-w-2xl space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-violet-500/20 to-pink-500/20">
@@ -479,70 +491,72 @@ export const IntelligencePage = () => {
           )}
         </div>
 
-        {/* Visual Image Search — coming soon */}
-        <div className="space-y-3 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-              Search sources
-            </h2>
-            <p className="mt-1 text-xs text-gray-500">
+        {/* Search Configuration — sources + advanced syntax */}
+        <div className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
+            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Search Configuration
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              Sources
+            </div>
+            <p className="text-xs text-gray-500">
               Choose which independent searches contribute candidates. Indexing continues when a
               source is off.
             </p>
-          </div>
-          {searchSources.map(source => (
-            <div
-              key={source.id}
-              className="flex items-center justify-between gap-4 rounded-xl border border-slate-200/60 px-3 py-2 dark:border-white/10"
-            >
-              <div>
-                <p className="text-xs font-medium text-gray-800 dark:text-gray-200">
-                  {source.label}
-                </p>
-                <p className="text-[10px] text-gray-500">
-                  {source.mandatory ? 'Always on' : source.state.replaceAll('_', ' ')}
-                </p>
-              </div>
-              <button
-                className={`relative h-5 w-9 rounded-full transition-colors ${source.enabled ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'} ${source.mandatory ? 'cursor-not-allowed opacity-60' : ''}`}
-                disabled={source.mandatory}
-                aria-pressed={source.enabled}
-                onClick={() => void toggleSource(source.id)}
-              >
-                <span
-                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${source.enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
-                />
-              </button>
+            <div className="space-y-2 pt-1">
+              {searchSources.map(source => (
+                <div
+                  key={source.id}
+                  className="flex items-center justify-between gap-4 rounded-xl border border-slate-200/60 px-3 py-2 dark:border-white/10"
+                >
+                  <div>
+                    <p className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                      {source.label}
+                    </p>
+                    <p className="text-[10px] text-gray-500">
+                      {source.mandatory ? 'Always on' : source.state.replaceAll('_', ' ')}
+                    </p>
+                  </div>
+                  <Switch
+                    size="sm"
+                    checked={source.enabled}
+                    disabled={source.mandatory}
+                    onChange={() => void toggleSource(source.id)}
+                  />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
 
-        <div className="space-y-3 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+          <div className="h-px bg-slate-200/60 dark:bg-white/10" />
+
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 Advanced keyword queries
-              </h2>
+              </div>
               <p className="mt-1 text-xs text-gray-500">
                 Allow raw FTS5 syntax such as <code>car OR truck</code> and <code>title*</code>.
                 This only changes Keyword Search.
               </p>
             </div>
-            <button
-              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${searchSettings?.syntaxMode === 'advanced' ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'}`}
-              aria-pressed={searchSettings?.syntaxMode === 'advanced'}
-              onClick={() =>
+            <Switch
+              size="sm"
+              className="shrink-0"
+              checked={searchSettings?.syntaxMode === 'advanced'}
+              onChange={checked =>
                 searchSettings &&
                 void updateSearchSettings({
                   ...searchSettings,
-                  syntaxMode: searchSettings.syntaxMode === 'advanced' ? 'simple' : 'advanced',
+                  syntaxMode: checked ? 'advanced' : 'simple',
                 })
               }
-            >
-              <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${searchSettings?.syntaxMode === 'advanced' ? 'translate-x-4' : 'translate-x-0.5'}`}
-              />
-            </button>
+            />
           </div>
         </div>
 

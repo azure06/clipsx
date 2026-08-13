@@ -95,8 +95,13 @@ const App = () => {
 
   if (startupError) {
     return (
-      <main className="flex h-screen items-center justify-center bg-slate-950 px-6 text-red-200">
-        <p role="alert">Unable to inspect ClipsX storage: {startupError}</p>
+      <main className="flex h-screen items-center justify-center bg-slate-100 px-6 dark:bg-slate-950">
+        <p
+          role="alert"
+          className="max-w-lg rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-900/20 dark:text-red-400"
+        >
+          Unable to inspect ClipsX storage: {startupError}
+        </p>
       </main>
     )
   }
