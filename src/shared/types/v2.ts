@@ -1,5 +1,10 @@
 export type V2Tag = { id: string; name: string; color: string | null }
 
+export type OutputPolicy =
+  | { kind: 'original'; clipId: string }
+  | { kind: 'plain_text'; clipId: string }
+  | { kind: 'transformed'; resultId: string }
+
 export type TextEmbeddingStatus = {
   enabled: boolean
   activeSpaceId: string | null

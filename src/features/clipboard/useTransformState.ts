@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
-import type { RenderModel } from '../../shared/types/v2'
-import type { ClipPresentation } from '../../shared/types/v2'
+import type { ClipPresentation, OutputPolicy, RenderModel } from '../../shared/types/v2'
 
 export type Transformer = { id: string; label: string; version: string }
 export type TransformPreview = { resultId: string; model: RenderModel }
@@ -74,11 +73,10 @@ export const useTransformState = ({
 
   const applyResult = async (command: string) => {
     if (!preview) return
+    const policy: OutputPolicy = { kind: 'transformed', resultId: preview.resultId }
     await invoke(
       command,
-      command === 'save_transform_result'
-        ? { resultId: preview.resultId }
-        : { policy: { kind: 'transformed', resultId: preview.resultId } }
+      command === 'save_transform_result' ? { resultId: preview.resultId } : { policy }
     )
     setPreview(null)
   }

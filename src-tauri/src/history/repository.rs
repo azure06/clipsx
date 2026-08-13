@@ -393,12 +393,26 @@ impl HistoryRepository {
             .await?
             .context("ready source representation not found")?;
         let kind: String = row.get(5);
-        let payload = match kind.as_str() {
-            "text" => CapturedPayload::Text(row.get(6)),
-            "binary_asset" => {
-                CapturedPayload::Binary(self.asset(&row.get::<String, _>(7)).await?.0)
+        let (payload, source_sha256) = match kind.as_str() {
+            "text" => (CapturedPayload::Text(row.get(6)), row.get::<String, _>(8)),
+            "binary_asset" => (
+                CapturedPayload::Binary(self.asset(&row.get::<String, _>(7)).await?.0),
+                row.get::<String, _>(8),
+            ),
+            "file_list" => {
+                let files = sqlx::query_scalar::<_, String>(
+                    "SELECT file_reference FROM clip_file_list_entries WHERE representation_id=? ORDER BY ordinal",
+                )
+                .bind(representation_id)
+                .fetch_all(&self.pool)
+                .await?;
+                let mut hash_input = Vec::new();
+                for file in &files {
+                    hash_input.extend_from_slice(&(file.len() as u64).to_le_bytes());
+                    hash_input.extend_from_slice(file.as_bytes());
+                }
+                (CapturedPayload::Files(files), sha256(&hash_input))
             }
-            "file_list" => bail!("file-list representations are not transform inputs"),
             _ => bail!("unsupported transform input"),
         };
         Ok((
@@ -410,7 +424,7 @@ impl HistoryRepository {
                 capture_priority: row.get(4),
                 payload,
             },
-            row.get(8),
+            source_sha256,
         ))
     }
     pub async fn touch(&self, id: &str) -> Result<()> {

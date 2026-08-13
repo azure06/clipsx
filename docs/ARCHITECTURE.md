@@ -480,7 +480,7 @@ flowchart LR
   end
 ```
 
-Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax quotes whitespace tokens and uses FTS5 implicit AND; advanced mode passes FTS syntax, while scope/tag filters are SQL. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
+Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
 
 ## Current hybrid limitation
 

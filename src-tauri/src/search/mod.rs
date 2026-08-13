@@ -211,8 +211,8 @@ pub async fn search(
     let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
     let scope = request.scope.as_deref().unwrap_or("all");
 
-    // Build the query with optional scope / tag filters.
-    // We use a CTe so the scope filter applies before the FTS join.
+    // Text queries require an FTS candidate. Filter-only queries start from the
+    // canonical clip catalog so they still work while projections are pending.
     let mut sql = String::from(
         "SELECT c.id, c.source_app_name, c.source_app_id, c.captured_at, c.updated_at, \
          c.is_pinned, c.is_favorite, c.note, \
@@ -223,15 +223,23 @@ pub async fn search(
                    ORDER BY r.ordinal LIMIT 1),'Binary or file content'), \
          COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'), \
          (SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1), \
-         CASE WHEN ? THEN fts.rank ELSE 0 END, \
+         CASE WHEN ? THEN fts.rank ELSE 0.0 END, \
          EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id), \
          (SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) \
-         FROM search_documents_fts fts \
-         JOIN clip_items c ON c.id = fts.clip_id \
-         WHERE c.lifecycle_state = 'ready'",
+         ",
     );
     if fts_query.is_some() {
-        sql.push_str(" AND fts.search_text MATCH ?");
+        sql.push_str(
+            " FROM search_documents_fts fts \
+             JOIN clip_items c ON c.id = fts.clip_id \
+             WHERE c.lifecycle_state = 'ready' AND fts.search_text MATCH ?",
+        );
+    } else {
+        sql.push_str(
+            " FROM clip_items c \
+             LEFT JOIN search_documents_fts fts ON fts.clip_id = c.id \
+             WHERE c.lifecycle_state = 'ready'",
+        );
     }
     if scope == "favorites" {
         sql.push_str(" AND c.is_favorite=1");
@@ -276,9 +284,17 @@ pub async fn search(
         sql.push(')');
     }
     if request.cursor.is_some() {
-        sql.push_str(" AND (fts.rank > ? OR (fts.rank = ? AND c.id < ?))");
+        if fts_query.is_some() {
+            sql.push_str(" AND (fts.rank > ? OR (fts.rank = ? AND c.id < ?))");
+        } else {
+            sql.push_str(" AND c.id < ?");
+        }
     }
-    sql.push_str(" ORDER BY fts.rank, c.id DESC LIMIT ?");
+    if fts_query.is_some() {
+        sql.push_str(" ORDER BY fts.rank, c.id DESC LIMIT ?");
+    } else {
+        sql.push_str(" ORDER BY c.id DESC LIMIT ?");
+    }
 
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(fts_query.is_some());
     if let Some(fts_query) = &fts_query {
@@ -297,8 +313,12 @@ pub async fn search(
     }
     if let Some(cursor) = &request.cursor {
         let (rank_s, id) = cursor.split_once('|').context("invalid search cursor")?;
-        let rank: f64 = rank_s.parse()?;
-        q = q.bind(rank).bind(rank).bind(id);
+        if fts_query.is_some() {
+            let rank: f64 = rank_s.parse()?;
+            q = q.bind(rank).bind(rank).bind(id);
+        } else {
+            q = q.bind(id);
+        }
     }
     let rows = q.bind(limit + 1).fetch_all(&repo.pool).await?;
     let has_more = rows.len() as i64 > limit;
@@ -347,7 +367,7 @@ pub async fn search(
             },
             snippet,
             rank,
-            fts_match: true,
+            fts_match: fts_query.is_some(),
             semantic_match: None,
         });
         if has_more && index + 1 == limit as usize {
@@ -357,14 +377,15 @@ pub async fn search(
             ));
         }
     }
-    let requested_hybrid = match request.mode {
-        Some(SearchMode::Fts) => false,
-        Some(SearchMode::Hybrid) => true,
-        None => crate::search::semantic::status(repo)
-            .await
-            .map(|status| status.active_space_id.is_some())
-            .unwrap_or(false),
-    };
+    let requested_hybrid = !raw.is_empty()
+        && match request.mode {
+            Some(SearchMode::Fts) => false,
+            Some(SearchMode::Hybrid) => true,
+            None => crate::search::semantic::status(repo)
+                .await
+                .map(|status| status.active_space_id.is_some())
+                .unwrap_or(false),
+        };
     let mut diagnostic = None;
     let effective_mode = if requested_hybrid {
         match crate::search::semantic::hybrid_matches(repo, raw, (limit * 4).max(100) as usize)
@@ -455,10 +476,13 @@ pub async fn update_settings(pool: &SqlitePool, settings: &SearchSettings) -> Re
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Convert free text to an FTS5 implicit-AND phrase query by quoting each token.
+/// Convert free text to escaped FTS5 prefix terms joined with implicit AND.
 fn to_simple_query(raw: &str) -> String {
     raw.split_whitespace()
-        .map(|tok| format!("\"{}\"", tok.replace('"', "")))
+        .filter_map(|token| {
+            let escaped = token.replace('"', "");
+            (!escaped.is_empty()).then(|| format!("\"{escaped}\"*"))
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -468,7 +492,7 @@ fn build_snippet(query: &str, text: Option<&str>) -> Option<String> {
     let first_token = query
         .split_whitespace()
         .next()
-        .map(|t| t.trim_matches('"'))
+        .map(|token| token.trim_end_matches('*').trim_matches('"'))
         .unwrap_or("");
     if first_token.is_empty() {
         return Some(text.chars().take(160).collect());
@@ -479,4 +503,170 @@ fn build_snippet(query: &str, text: Option<&str>) -> Option<String> {
     let start = pos.saturating_sub(40);
     let snippet: String = text.chars().skip(start).take(160).collect();
     Some(snippet)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        contributions,
+        foundation::AppRoots,
+        history::{CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot},
+    };
+
+    fn request(query: &str) -> SearchRequest {
+        SearchRequest {
+            query: query.into(),
+            scope: Some("all".into()),
+            tag_id: None,
+            limit: Some(50),
+            cursor: None,
+            mode: Some(SearchMode::Fts),
+            representation_families: Vec::new(),
+            facet_ids: Vec::new(),
+        }
+    }
+
+    async fn capture(
+        repo: &HistoryRepository,
+        token: u64,
+        representation: CapturedRepresentation,
+    ) -> String {
+        repo.capture(
+            CapturedSnapshot {
+                token,
+                source_app_name: None,
+                source_app_id: None,
+                representations: vec![representation],
+            },
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap()
+        .0
+    }
+
+    #[test]
+    fn simple_query_uses_escaped_prefix_terms_with_implicit_and() {
+        assert_eq!(to_simple_query("doc ref"), "\"doc\"* \"ref\"*");
+        assert_eq!(to_simple_query("a\"b"), "\"ab\"*");
+        assert_eq!(to_simple_query("\"\""), "");
+    }
+
+    #[tokio::test]
+    async fn prefix_search_and_filter_only_queries_cover_unprojected_clips() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        contributions::initialize(&repo).await.unwrap();
+
+        let text_id = capture(
+            &repo,
+            1,
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("documentation reference".into()),
+            },
+        )
+        .await;
+        upsert_projection(&repo, &text_id).await.unwrap();
+
+        let file_id = capture(
+            &repo,
+            2,
+            CapturedRepresentation {
+                format_key: "windows:CF_HDROP".into(),
+                canonical_mime_type: Some("application/x-file-list".into()),
+                native_type: Some("CF_HDROP".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Files(vec![r"C:\Temp\example.txt".into()]),
+            },
+        )
+        .await;
+        let image_id = capture(
+            &repo,
+            3,
+            CapturedRepresentation {
+                format_key: "windows:PNG".into(),
+                canonical_mime_type: Some("image/png".into()),
+                native_type: Some("PNG".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Binary(vec![1, 2, 3]),
+            },
+        )
+        .await;
+        let json_id = capture(
+            &repo,
+            4,
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("{\"ready\":true}".into()),
+            },
+        )
+        .await;
+        contributions::detect_clip(&repo, &json_id).await.unwrap();
+
+        let settings = SearchSettings {
+            syntax_mode: SyntaxMode::Simple,
+        };
+        let prefix = search(&repo, &request("doc"), &settings).await.unwrap();
+        assert_eq!(prefix.items.len(), 1);
+        assert_eq!(prefix.items[0].clip.id, text_id);
+        assert!(search(&repo, &request("ument"), &settings)
+            .await
+            .unwrap()
+            .items
+            .is_empty());
+
+        let mut files = request("");
+        files.representation_families.push("files".into());
+        let file_results = search(&repo, &files, &settings).await.unwrap();
+        assert_eq!(file_results.items.len(), 1);
+        assert_eq!(file_results.items[0].clip.id, file_id);
+        assert!(!file_results.items[0].fts_match);
+
+        let mut images = request("");
+        images.representation_families.push("image".into());
+        assert_eq!(
+            search(&repo, &images, &settings).await.unwrap().items[0]
+                .clip
+                .id,
+            image_id
+        );
+
+        let mut facets = request("");
+        facets.facet_ids.push("core.data.json".into());
+        assert_eq!(
+            search(&repo, &facets, &settings).await.unwrap().items[0]
+                .clip
+                .id,
+            json_id
+        );
+
+        let advanced = SearchSettings {
+            syntax_mode: SyntaxMode::Advanced,
+        };
+        assert!(search(&repo, &request("doc*"), &advanced)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.clip.id == text_id));
+    }
 }

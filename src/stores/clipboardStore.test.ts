@@ -74,6 +74,18 @@ describe('useClipboardStore.performCopy', () => {
     })
     expect(mockHide).not.toHaveBeenCalled()
   })
+
+  it('uses the snake-case policy kind and camel-case field for plain text', async () => {
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, default_paste_format: 'plain' },
+    })
+
+    await useClipboardStore.getState().performCopy('copied text', 'clip-1')
+
+    expect(mockInvoke).toHaveBeenCalledWith('copy_clip_output', {
+      policy: { kind: 'plain_text', clipId: 'clip-1' },
+    })
+  })
 })
 
 describe('useClipboardStore.mergeClipUpdate', () => {
@@ -273,6 +285,28 @@ describe('useClipboardStore filtered view stability', () => {
         mode: 'hybrid',
       },
     })
+  })
+
+  it('discards an older browse response after a search starts', async () => {
+    mockInvoke.mockReset()
+    let resolveBrowse!: (value: { items: ClipSummary[]; nextCursor: null }) => void
+    const browse = new Promise<{ items: ClipSummary[]; nextCursor: null }>(resolve => {
+      resolveBrowse = resolve
+    })
+    mockInvoke.mockReturnValueOnce(browse).mockResolvedValueOnce({
+      items: [{ clip: makeClip({ id: 'search-result' }), snippet: null, rank: 0 }],
+      nextCursor: null,
+    })
+    useClipboardStore.setState({ hasMore: true, loading: false })
+
+    const browseRequest = useClipboardStore.getState().loadMoreClips()
+    const searchRequest = useClipboardStore.getState().enterSearchMode('doc')
+    await searchRequest
+    resolveBrowse({ items: [makeClip({ id: 'stale-browse-result' })], nextCursor: null })
+    await browseRequest
+
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['search-result'])
+    expect(useClipboardStore.getState().mode).toBe('search')
   })
 })
 

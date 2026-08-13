@@ -16,10 +16,12 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { formatShortcut, getPlatform, type ShortcutDef } from '../../shared/keyboard/shortcuts'
 import type { TransformControls } from './useTransformState'
+import { useToast } from '../../shared/contexts/ToastContext'
 
 const platform = getPlatform()
 
@@ -78,6 +80,8 @@ export const ClipActionsToolbar = ({
   transformControls?: TransformControls | null
 }) => {
   const [copied, setCopied] = useState(false)
+  const { toast } = useToast()
+  const { t } = useTranslation()
   const performCopy = useClipboardStore(state => state.performCopy)
   const actions = useMemo<ToolbarAction[]>(() => {
     const values: ToolbarAction[] = [
@@ -90,9 +94,17 @@ export const ClipActionsToolbar = ({
           'bg-emerald-500/20 text-emerald-600 ring-1 ring-emerald-500/40 dark:text-emerald-400 dark:bg-emerald-500/15',
         shortcut: { modifiers: ['primary'], key: 'C' },
         run: async () => {
-          await performCopy('', presentation.id)
-          setCopied(true)
-          window.setTimeout(() => setCopied(false), 2000)
+          try {
+            await performCopy('', presentation.id)
+            setCopied(true)
+            window.setTimeout(() => setCopied(false), 2000)
+          } catch (error) {
+            toast({
+              title: t('common.error'),
+              description: String(error),
+              type: 'error',
+            })
+          }
         },
       },
     ]
@@ -165,7 +177,7 @@ export const ClipActionsToolbar = ({
       { id: 'delete', label: 'Delete', icon: Trash2, run: () => context.onDelete(presentation.id) }
     )
     return values
-  }, [context, copied, performCopy, presentation])
+  }, [context, copied, performCopy, presentation, t, toast])
 
   return (
     <Tooltip.Provider delayDuration={300}>

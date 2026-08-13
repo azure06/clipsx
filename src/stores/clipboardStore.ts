@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useSettingsStore } from './settingsStore'
 import { useUIStore } from './uiStore'
-import type { ClipSummary, V2Tag } from '../shared/types/v2'
+import type { ClipSummary, OutputPolicy, V2Tag } from '../shared/types/v2'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
@@ -65,6 +65,7 @@ const initialState: ClipboardState = {
   tagFilter: null,
 }
 let nextCursor: string | null | undefined
+let requestGeneration = 0
 let eventListenerReady = false
 
 const scope = (state: ClipboardState) => (state.activeTab === 'all' ? 'all' : state.activeTab)
@@ -155,6 +156,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   loadMoreClips: async (limit = 50) => {
     const state = useClipboardStore.getState()
     if (state.loading || !state.hasMore) return
+    const generation = requestGeneration
     ensureEvents()
     set({ loading: true, error: null })
     try {
@@ -185,6 +187,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         cursor = result.nextCursor
       }
       const clips = summaries
+      if (generation !== requestGeneration) return
       nextCursor = cursor
       set(current => ({
         clips: [...current.clips, ...clips],
@@ -193,6 +196,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         currentOffset: current.currentOffset + clips.length,
       }))
     } catch (error) {
+      if (generation !== requestGeneration) return
       set({ loading: false, error: String(error) })
     }
   },
@@ -210,27 +214,48 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         .filter(item => matchesVisibleScope(state, item)),
     })),
   resetPagination: () => {
+    requestGeneration += 1
     nextCursor = undefined
-    set({ currentOffset: 0, hasMore: true })
+    set({ currentOffset: 0, hasMore: true, loading: false })
   },
   setActiveTab: async tab => {
+    requestGeneration += 1
     nextCursor = undefined
-    set({ activeTab: tab, clips: [], currentOffset: 0, hasMore: true })
+    set({ activeTab: tab, clips: [], currentOffset: 0, hasMore: true, loading: false })
     await useClipboardStore.getState().loadMoreClips()
   },
   enterSearchMode: async query => {
+    const current = useClipboardStore.getState()
+    if (current.mode === 'search' && current.searchQuery === query) return
+    requestGeneration += 1
     nextCursor = undefined
-    set({ mode: 'search', searchQuery: query, clips: [], currentOffset: 0, hasMore: true })
+    set({
+      mode: 'search',
+      searchQuery: query,
+      clips: [],
+      currentOffset: 0,
+      hasMore: true,
+      loading: false,
+    })
     await useClipboardStore.getState().loadMoreClips()
   },
   exitSearchMode: () => {
+    requestGeneration += 1
     nextCursor = undefined
-    set({ mode: 'browse', searchQuery: '', clips: [], currentOffset: 0, hasMore: true })
+    set({
+      mode: 'browse',
+      searchQuery: '',
+      clips: [],
+      currentOffset: 0,
+      hasMore: true,
+      loading: false,
+    })
     void useClipboardStore.getState().loadMoreClips()
   },
   setTagFilter: async tagFilter => {
+    requestGeneration += 1
     nextCursor = undefined
-    set({ tagFilter, clips: [], currentOffset: 0, hasMore: true })
+    set({ tagFilter, clips: [], currentOffset: 0, hasMore: true, loading: false })
     await useClipboardStore.getState().loadMoreClips()
   },
   refreshAvailableTags: async () => {
@@ -324,9 +349,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
   performPrimaryAction: async (_text, clipId) => {
     const settings = useSettingsStore.getState().settings
-    const policy =
+    const policy: OutputPolicy =
       settings?.default_paste_format === 'plain'
-        ? { kind: 'plainText', clipId }
+        ? { kind: 'plain_text', clipId }
         : { kind: 'original', clipId }
     if (settings?.paste_on_enter) await invoke('paste_clip_output', { policy })
     else {
@@ -336,9 +361,9 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
   performCopy: async (_text, clipId) => {
     const settings = useSettingsStore.getState().settings
-    const policy =
+    const policy: OutputPolicy =
       settings?.default_paste_format === 'plain'
-        ? { kind: 'plainText', clipId }
+        ? { kind: 'plain_text', clipId }
         : { kind: 'original', clipId }
     await invoke('copy_clip_output', { policy })
     if (settings?.hide_on_copy) void getCurrentWindow().hide()

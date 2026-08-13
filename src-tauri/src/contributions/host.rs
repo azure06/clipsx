@@ -1740,6 +1740,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolver_renders_ordered_file_list_paths() {
+        let paths = vec![
+            r"C:\Users\Example\Desktop\first.png".to_string(),
+            r"C:\Users\Example\Desktop\second.txt".to_string(),
+        ];
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
+            format_key: "windows:CF_HDROP".into(),
+            canonical_mime_type: Some("application/x-file-list".into()),
+            native_type: Some("CF_HDROP".into()),
+            platform: "windows".into(),
+            capture_priority: 1,
+            payload: CapturedPayload::Files(paths.clone()),
+        }])
+        .await;
+
+        let view_set = views(&repo, &extensions, &clip_id).await.unwrap();
+        assert_eq!(view_set.presentation_kind, "files");
+        let primary = view_set
+            .views
+            .iter()
+            .find(|view| view.id == view_set.primary_view_id)
+            .unwrap();
+        assert_eq!(primary.renderer_id, "builtin.files");
+
+        let model = render(
+            &repo,
+            &extensions,
+            &clip_id,
+            &primary.renderer_id,
+            &primary.source_id,
+            None,
+        )
+        .await
+        .unwrap();
+        let RenderModel::Files { entries } = model else {
+            panic!("file-list view must render a files model");
+        };
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (paths[0].as_str(), "first.png"),
+                (paths[1].as_str(), "second.txt"),
+            ]
+        );
+        assert!(matches!(
+            &repo.source_representation(&clip_id, &primary.source_id).await.unwrap().0.payload,
+            CapturedPayload::Files(files) if files == &paths
+        ));
+    }
+
+    #[tokio::test]
     async fn resolver_honors_user_preference_before_office_utility_order() {
         let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
             CapturedRepresentation {

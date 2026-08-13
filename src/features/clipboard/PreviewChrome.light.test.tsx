@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
+const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
 const clipboardStoreState = {
   clips: [],
   availableTags: [{ id: 'tag-urgent', name: 'urgent', color: '#ef4444' }],
@@ -16,6 +17,10 @@ const clipboardStoreState = {
 vi.mock('../../stores/clipboardStore', () => ({
   useClipboardStore: (selector: (state: typeof clipboardStoreState) => unknown) =>
     selector(clipboardStoreState),
+}))
+
+vi.mock('../../shared/contexts/ToastContext', () => ({
+  useToast: () => ({ toast: toastMock }),
 }))
 
 describe('preview chrome light theme styling', () => {
@@ -71,6 +76,53 @@ describe('preview chrome light theme styling', () => {
     await user.click(screen.getByRole('button', { name: 'Copy' }))
 
     expect(clipboardStoreState.performCopy).toHaveBeenCalledWith('', 'clip-1')
+  })
+
+  it('surfaces a rejected copy instead of showing false success', async () => {
+    const user = userEvent.setup()
+    clipboardStoreState.performCopy.mockRejectedValueOnce(new Error('clipboard unavailable'))
+
+    render(
+      <ClipActionsToolbar
+        presentation={{
+          id: 'clip-1',
+          sourceAppName: null,
+          sourceAppId: null,
+          capturedAt: 1,
+          updatedAt: 1,
+          isPinned: false,
+          isFavorite: false,
+          note: null,
+          tags: [],
+          safeSummary: 'sample',
+          representationCount: 1,
+          primaryPresentationKind: 'text',
+          thumbnailAssetId: null,
+          activeView: {
+            id: 'view',
+            rendererId: 'builtin.text',
+            label: 'Text',
+            sourceId: 'rep',
+            mimeType: 'text/plain',
+            facetId: null,
+            isOriginal: false,
+            presentationKind: 'text',
+            placement: 'primary',
+          },
+          model: { kind: 'text', text: 'sample' },
+        }}
+        context={{ onDelete: vi.fn(), onTogglePin: vi.fn(), onToggleFavorite: vi.fn() }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Copy' }))
+
+    expect(toastMock).toHaveBeenCalledWith({
+      title: 'Error',
+      description: 'Error: clipboard unavailable',
+      type: 'error',
+    })
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument()
   })
 
   it('renders toolbar tooltips with light-safe popover classes', async () => {
