@@ -13,13 +13,41 @@ export type ClipboardOutputRequest = {
 
 export type TextEmbeddingStatus = {
   enabled: boolean
+  phase:
+    | 'not_configured'
+    | 'checking'
+    | 'validating_model'
+    | 'indexing'
+    | 'ready'
+    | 'degraded'
+    | 'disabled'
   activeSpaceId: string | null
   pendingSpaceId: string | null
   diagnostic: string | null
   indexedClips: number
   pendingJobs: number
+  failedJobs: number
+  totalClips: number
   endpoint: string | null
   model: string | null
+}
+
+export type SearchSourceDescriptor = {
+  id: string
+  label: string
+  mandatory: boolean
+  inputKinds: string[]
+  indexingRequired: boolean
+  enabled: boolean
+  state: 'ready' | 'indexing' | 'degraded' | 'disabled' | 'not_configured'
+  diagnostic: string | null
+}
+
+export type SearchMatch = { sourceId: string; sourceRank: number }
+export type SearchSourceOutcome = {
+  sourceId: string
+  status: 'used' | 'unavailable' | 'failed'
+  diagnostic: string | null
 }
 
 export type ClipSummary = {
@@ -41,6 +69,7 @@ export type ClipSummary = {
   compactPresentation?: CompactPresentation | null
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */
   similarityScore?: number
+  searchMatches?: SearchMatch[]
 }
 
 export type RepresentationDetail = {

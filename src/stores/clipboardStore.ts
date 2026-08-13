@@ -9,7 +9,13 @@ import {
   copyLiteralText,
   pasteClipboardOutput,
 } from '../shared/clipboardOutput'
-import type { ClipboardOutputSource, ClipSummary, V2Tag } from '../shared/types/v2'
+import type {
+  ClipboardOutputSource,
+  ClipSummary,
+  SearchMatch,
+  SearchSourceOutcome,
+  V2Tag,
+} from '../shared/types/v2'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
@@ -18,7 +24,16 @@ type V2Representation = {
 }
 type V2Detail = { clip: ClipSummary; representations: V2Representation[] }
 type V2Page<T> = { items: T[]; nextCursor: string | null }
-type V2SearchResult = { clip: ClipSummary; snippet: string | null; rank: number }
+type V2SearchResult = {
+  clip: ClipSummary
+  snippet: string | null
+  rank: number
+  matches: SearchMatch[]
+}
+type V2SearchPage = V2Page<V2SearchResult> & {
+  sourceOutcomes: SearchSourceOutcome[]
+  isExhaustive: boolean
+}
 
 type ClipboardState = {
   clips: ClipSummary[]
@@ -31,6 +46,7 @@ type ClipboardState = {
   searchQuery: string
   activeTab: 'all' | 'favorites' | 'pinned'
   tagFilter: string | null
+  searchSourceOutcomes: SearchSourceOutcome[]
 }
 type ClipboardActions = {
   loadMoreClips: (limit?: number) => Promise<void>
@@ -54,6 +70,7 @@ type ClipboardActions = {
   performPrimaryAction: (text: string, clipId: string) => Promise<void>
   performCopy: (text: string, clipId: string) => Promise<void>
   resetPagination: () => void
+  refreshSearch: () => Promise<void>
 }
 type ClipboardStore = ClipboardState & ClipboardActions
 
@@ -68,6 +85,7 @@ const initialState: ClipboardState = {
   searchQuery: '',
   activeTab: 'all',
   tagFilter: null,
+  searchSourceOutcomes: [],
 }
 let nextCursor: string | null | undefined
 let requestGeneration = 0
@@ -170,7 +188,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       let cursor: string | null
       if (state.mode === 'search') {
         const parsedSearch = parseSearch(state.searchQuery)
-        const result = await invoke<V2Page<V2SearchResult>>('search_clips', {
+        const result = await invoke<V2SearchPage>('search_clips', {
           request: {
             query: parsedSearch.query,
             representationFamilies: parsedSearch.representationFamilies,
@@ -179,10 +197,17 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
             tagId,
             limit,
             cursor: nextCursor ?? null,
-            mode: useUIStore.getState().isSemanticActive ? 'hybrid' : 'fts',
+            enabledSourceIds: useUIStore.getState().isSemanticActive
+              ? ['builtin.search.fts', 'builtin.search.semantic_text']
+              : ['builtin.search.fts'],
           },
         })
-        summaries = result.items.map(item => ({ ...item.clip, similarityScore: item.rank }))
+        summaries = result.items.map(item => ({
+          ...item.clip,
+          similarityScore: item.rank,
+          searchMatches: item.matches,
+        }))
+        set({ searchSourceOutcomes: result.sourceOutcomes })
         cursor = result.nextCursor
       } else {
         const result = await invoke<V2Page<ClipSummary>>('list_clips', {
@@ -222,6 +247,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     requestGeneration += 1
     nextCursor = undefined
     set({ currentOffset: 0, hasMore: true, loading: false })
+  },
+  refreshSearch: async () => {
+    const state = useClipboardStore.getState()
+    if (state.mode !== 'search') return
+    requestGeneration += 1
+    nextCursor = undefined
+    set({ clips: [], currentOffset: 0, hasMore: true, loading: false })
+    await useClipboardStore.getState().loadMoreClips()
   },
   setActiveTab: async tab => {
     requestGeneration += 1

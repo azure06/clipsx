@@ -2,10 +2,18 @@
 pub mod semantic;
 use crate::history::{now_ms, ClipSummary, HistoryRepository};
 use anyhow::{Context, Result};
+use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+use std::collections::{HashMap, HashSet};
 
 const PROJECTION_VERSION: i64 = 2;
+pub const FTS_SOURCE_ID: &str = "builtin.search.fts";
+pub const SEMANTIC_TEXT_SOURCE_ID: &str = "builtin.search.semantic_text";
+const RRF_K: f64 = 60.0;
+const SOURCE_CANDIDATE_LIMIT: usize = 5_000;
 
 // ─── Domain ───────────────────────────────────────────────────────────────────
 
@@ -15,8 +23,53 @@ pub struct SearchResult {
     pub clip: ClipSummary,
     pub snippet: Option<String>,
     pub rank: f64,
-    pub fts_match: bool,
-    pub semantic_match: Option<f64>,
+    pub matches: Vec<SearchMatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+    pub source_id: String,
+    pub source_rank: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSourceOutcome {
+    pub source_id: String,
+    pub status: SearchSourceOutcomeStatus,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchSourceOutcomeStatus {
+    Used,
+    Unavailable,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSourceDescriptor {
+    pub id: String,
+    pub label: String,
+    pub mandatory: bool,
+    pub input_kinds: Vec<String>,
+    pub indexing_required: bool,
+    pub enabled: bool,
+    pub state: SearchSourceState,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchSourceState {
+    Ready,
+    Indexing,
+    Degraded,
+    Disabled,
+    NotConfigured,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,8 +78,8 @@ pub struct SearchPage {
     pub items: Vec<SearchResult>,
     pub total: u32,
     pub next_cursor: Option<String>,
-    pub effective_mode: SearchMode,
-    pub provider_diagnostic: Option<String>,
+    pub source_outcomes: Vec<SearchSourceOutcome>,
+    pub is_exhaustive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,24 +90,20 @@ pub struct SearchRequest {
     pub tag_id: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
-    pub mode: Option<SearchMode>,
+    #[serde(default)]
+    pub enabled_source_ids: Vec<String>,
     #[serde(default)]
     pub representation_families: Vec<String>,
     #[serde(default)]
     pub facet_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SearchMode {
-    Fts,
-    Hybrid,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchSettings {
     pub syntax_mode: SyntaxMode,
+    #[serde(default = "default_enabled_sources")]
+    pub enabled_source_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,6 +111,10 @@ pub struct SearchSettings {
 pub enum SyntaxMode {
     Simple,
     Advanced,
+}
+
+fn default_enabled_sources() -> Vec<String> {
+    vec![FTS_SOURCE_ID.into()]
 }
 
 // ─── Projection ───────────────────────────────────────────────────────────────
@@ -187,61 +240,339 @@ async fn build_manifest(repo: &HistoryRepository, clip_id: &str) -> Result<Strin
 
 // ─── Query ────────────────────────────────────────────────────────────────────
 
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct RankedCandidate {
+    clip_id: String,
+    snippet: Option<String>,
+}
+
+struct SourceCandidates {
+    items: Vec<RankedCandidate>,
+    truncated: bool,
+}
+
+struct SourceContext<'a> {
+    repo: &'a HistoryRepository,
+    query: &'a str,
+    fts_query: Option<&'a str>,
+    eligible_ids: &'a HashSet<String>,
+    updated_at: &'a HashMap<String, i64>,
+}
+
+#[async_trait]
+trait SearchSource: Send + Sync {
+    fn descriptor(&self) -> StaticSearchSourceDescriptor;
+    fn id(&self) -> &'static str {
+        self.descriptor().id
+    }
+    fn mandatory(&self) -> bool {
+        self.descriptor().mandatory
+    }
+    async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates>;
+}
+
+#[derive(Clone, Copy)]
+struct StaticSearchSourceDescriptor {
+    id: &'static str,
+    label: &'static str,
+    mandatory: bool,
+    input_kinds: &'static [&'static str],
+    indexing_required: bool,
+}
+
+struct FtsSearchSource;
+
+#[async_trait]
+impl SearchSource for FtsSearchSource {
+    fn descriptor(&self) -> StaticSearchSourceDescriptor {
+        StaticSearchSourceDescriptor {
+            id: FTS_SOURCE_ID,
+            label: "Keyword Search",
+            mandatory: true,
+            input_kinds: &["text"],
+            indexing_required: true,
+        }
+    }
+    async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let Some(query) = context.fts_query else {
+            let mut ids: Vec<_> = context.eligible_ids.iter().cloned().collect();
+            ids.sort_by(|a, b| {
+                context.updated_at[b]
+                    .cmp(&context.updated_at[a])
+                    .then_with(|| a.cmp(b))
+            });
+            let truncated = ids.len() > SOURCE_CANDIDATE_LIMIT;
+            ids.truncate(SOURCE_CANDIDATE_LIMIT);
+            return Ok(SourceCandidates {
+                items: ids
+                    .into_iter()
+                    .map(|clip_id| RankedCandidate {
+                        clip_id,
+                        snippet: None,
+                    })
+                    .collect(),
+                truncated,
+            });
+        };
+        let rows = sqlx::query("SELECT fts.clip_id,sd.search_text FROM search_documents_fts fts JOIN search_documents sd ON sd.clip_id=fts.clip_id JOIN json_each(?) eligible ON eligible.value=fts.clip_id WHERE search_documents_fts MATCH ? ORDER BY fts.rank,fts.clip_id LIMIT ?")
+            .bind(serde_json::to_string(context.eligible_ids)?).bind(query)
+            .bind((SOURCE_CANDIDATE_LIMIT + 1) as i64).fetch_all(&context.repo.pool).await
+            .context("invalid advanced FTS5 query")?;
+        let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
+        Ok(SourceCandidates {
+            items: rows
+                .into_iter()
+                .take(SOURCE_CANDIDATE_LIMIT)
+                .map(|row| {
+                    let text: String = row.get(1);
+                    RankedCandidate {
+                        clip_id: row.get(0),
+                        snippet: build_snippet(query, Some(&text)),
+                    }
+                })
+                .collect(),
+            truncated,
+        })
+    }
+}
+
+struct SemanticTextSearchSource;
+
+#[async_trait]
+impl SearchSource for SemanticTextSearchSource {
+    fn descriptor(&self) -> StaticSearchSourceDescriptor {
+        StaticSearchSourceDescriptor {
+            id: SEMANTIC_TEXT_SOURCE_ID,
+            label: "Meaning Search",
+            mandatory: false,
+            input_kinds: &["text"],
+            indexing_required: true,
+        }
+    }
+    async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let rows = semantic::semantic_matches(
+            context.repo,
+            context.query,
+            context.eligible_ids,
+            SOURCE_CANDIDATE_LIMIT + 1,
+        )
+        .await?;
+        let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
+        Ok(SourceCandidates {
+            items: rows
+                .into_iter()
+                .take(SOURCE_CANDIDATE_LIMIT)
+                .map(|(clip_id, _, text)| RankedCandidate {
+                    clip_id,
+                    snippet: Some(text.chars().take(160).collect()),
+                })
+                .collect(),
+            truncated,
+        })
+    }
+}
+
+fn registered_search_sources() -> Vec<Box<dyn SearchSource>> {
+    vec![
+        Box::new(FtsSearchSource),
+        Box::new(SemanticTextSearchSource),
+    ]
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchCursor {
+    fingerprint: String,
+    score_bits: u64,
+    updated_at: i64,
+    clip_id: String,
+}
+
+struct FusedCandidate {
+    clip_id: String,
+    score: f64,
+    updated_at: i64,
+    matches: Vec<SearchMatch>,
+    snippet: Option<String>,
+}
+
+fn fuse_source(
+    fused: &mut HashMap<String, FusedCandidate>,
+    source_id: &str,
+    candidates: Vec<RankedCandidate>,
+    eligible: &HashMap<String, i64>,
+) {
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        let rank = (index + 1) as u32;
+        let entry = fused
+            .entry(candidate.clip_id.clone())
+            .or_insert_with(|| FusedCandidate {
+                updated_at: eligible[&candidate.clip_id],
+                clip_id: candidate.clip_id.clone(),
+                score: 0.0,
+                matches: Vec::new(),
+                snippet: None,
+            });
+        entry.score += 1.0 / (RRF_K + f64::from(rank));
+        entry.matches.push(SearchMatch {
+            source_id: source_id.into(),
+            source_rank: rank,
+        });
+        if entry.snippet.is_none() {
+            entry.snippet = candidate.snippet;
+        }
+    }
+}
+
 pub async fn search(
     repo: &HistoryRepository,
     request: &SearchRequest,
     settings: &SearchSettings,
 ) -> Result<SearchPage> {
     let raw = request.query.trim();
-    if raw.is_empty() && request.representation_families.is_empty() && request.facet_ids.is_empty()
+    if raw.is_empty()
+        && request.representation_families.is_empty()
+        && request.facet_ids.is_empty()
+        && request.tag_id.is_none()
+        && request.scope.as_deref().unwrap_or("all") == "all"
     {
         return Ok(SearchPage {
             items: Vec::new(),
             total: 0,
             next_cursor: None,
-            effective_mode: SearchMode::Fts,
-            provider_diagnostic: None,
+            source_outcomes: vec![SearchSourceOutcome {
+                source_id: FTS_SOURCE_ID.into(),
+                status: SearchSourceOutcomeStatus::Used,
+                diagnostic: None,
+            }],
+            is_exhaustive: true,
         });
     }
-
+    let eligible = eligible_clips(repo, request).await?;
+    let eligible_ids: HashSet<_> = eligible.keys().cloned().collect();
     let fts_query = (!raw.is_empty()).then(|| match settings.syntax_mode {
         SyntaxMode::Simple => to_simple_query(raw),
         SyntaxMode::Advanced => raw.to_string(),
     });
-
-    let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
-    let scope = request.scope.as_deref().unwrap_or("all");
-
-    // Text queries require an FTS candidate. Filter-only queries start from the
-    // canonical clip catalog so they still work while projections are pending.
-    let mut sql = String::from(
-        "SELECT c.id, c.source_app_name, c.source_app_id, c.captured_at, c.updated_at, \
-         c.is_pinned, c.is_favorite, c.note, \
-         (SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'), \
-         COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r \
-                   JOIN clip_text_values t ON t.representation_id=r.id \
-                   WHERE r.clip_id=c.id AND r.lifecycle_state='ready' \
-                   ORDER BY r.ordinal LIMIT 1),'Binary or file content'), \
-         COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN lower(COALESCE(r.native_type,'')) LIKE '%office%' OR lower(COALESCE(r.native_type,'')) LIKE '%word%' OR lower(COALESCE(r.native_type,'')) LIKE '%excel%' OR lower(COALESCE(r.native_type,'')) LIKE '%powerpoint%' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'), \
-         (SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1), \
-         CASE WHEN ? THEN fts.rank ELSE 0.0 END, \
-         EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id), \
-         (SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) \
-         ",
-    );
-    if fts_query.is_some() {
-        sql.push_str(
-            " FROM search_documents_fts fts \
-             JOIN clip_items c ON c.id = fts.clip_id \
-             WHERE c.lifecycle_state = 'ready' AND fts.search_text MATCH ?",
-        );
+    let context = SourceContext {
+        repo,
+        query: raw,
+        fts_query: fts_query.as_deref(),
+        eligible_ids: &eligible_ids,
+        updated_at: &eligible,
+    };
+    let mut selected: HashSet<String> = if request.enabled_source_ids.is_empty() {
+        settings.enabled_source_ids.iter().cloned().collect()
     } else {
-        sql.push_str(
-            " FROM clip_items c \
-             LEFT JOIN search_documents_fts fts ON fts.clip_id = c.id \
-             WHERE c.lifecycle_state = 'ready'",
-        );
+        request.enabled_source_ids.iter().cloned().collect()
+    };
+    selected.insert(FTS_SOURCE_ID.into());
+    let sources: Vec<Box<dyn SearchSource>> = registered_search_sources()
+        .into_iter()
+        .filter(|source| source.mandatory() || (!raw.is_empty() && selected.contains(source.id())))
+        .collect();
+    let results = join_all(sources.iter().map(|source| source.candidates(&context))).await;
+    let mut outcomes = Vec::new();
+    let mut fused: HashMap<String, FusedCandidate> = HashMap::new();
+    let mut exhaustive = true;
+    for (source, result) in sources.iter().zip(results) {
+        match result {
+            Ok(candidates) => {
+                exhaustive &= !candidates.truncated;
+                outcomes.push(SearchSourceOutcome {
+                    source_id: source.id().into(),
+                    status: SearchSourceOutcomeStatus::Used,
+                    diagnostic: None,
+                });
+                fuse_source(&mut fused, source.id(), candidates.items, &eligible);
+            }
+            Err(error) if source.mandatory() => return Err(error),
+            Err(error) => outcomes.push(SearchSourceOutcome {
+                source_id: source.id().into(),
+                status: SearchSourceOutcomeStatus::Unavailable,
+                diagnostic: Some(error.to_string()),
+            }),
+        }
     }
+    let mut ranked: Vec<_> = fused.into_values().collect();
+    ranked.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+            .then_with(|| a.clip_id.cmp(&b.clip_id))
+    });
+    let mut selected_for_fingerprint: Vec<_> = selected.iter().collect();
+    selected_for_fingerprint.sort();
+    let fingerprint = crate::history::sha256(
+        serde_json::to_string(&(
+            raw,
+            request.scope.as_deref(),
+            request.tag_id.as_deref(),
+            &request.representation_families,
+            &request.facet_ids,
+            selected_for_fingerprint,
+            &settings.syntax_mode,
+        ))?
+        .as_bytes(),
+    );
+    let start = if let Some(cursor) = &request.cursor {
+        let cursor: SearchCursor = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(cursor)?)?;
+        if cursor.fingerprint != fingerprint {
+            anyhow::bail!("search cursor does not match the current query")
+        }
+        ranked
+            .iter()
+            .position(|item| {
+                item.score.to_bits() == cursor.score_bits
+                    && item.updated_at == cursor.updated_at
+                    && item.clip_id == cursor.clip_id
+            })
+            .context("search cursor is no longer valid")?
+            + 1
+    } else {
+        0
+    };
+    let limit = request.limit.unwrap_or(50).clamp(1, 100) as usize;
+    let end = (start + limit).min(ranked.len());
+    let next_cursor = (end < ranked.len()).then(|| {
+        let last = &ranked[end - 1];
+        URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&SearchCursor {
+                fingerprint: fingerprint.clone(),
+                score_bits: last.score.to_bits(),
+                updated_at: last.updated_at,
+                clip_id: last.clip_id.clone(),
+            })
+            .expect("cursor serialization cannot fail"),
+        )
+    });
+    let mut items = Vec::with_capacity(end.saturating_sub(start));
+    for candidate in &ranked[start..end] {
+        items.push(SearchResult {
+            clip: repo.summary(&candidate.clip_id).await?,
+            snippet: candidate.snippet.clone(),
+            rank: candidate.score,
+            matches: candidate.matches.clone(),
+        });
+    }
+    Ok(SearchPage {
+        items,
+        total: ranked.len().min(u32::MAX as usize) as u32,
+        next_cursor,
+        source_outcomes: outcomes,
+        is_exhaustive: exhaustive,
+    })
+}
+
+async fn eligible_clips(
+    repo: &HistoryRepository,
+    request: &SearchRequest,
+) -> Result<HashMap<String, i64>> {
+    let scope = request.scope.as_deref().unwrap_or("all");
+    let mut sql =
+        String::from("SELECT c.id,c.updated_at FROM clip_items c WHERE c.lifecycle_state='ready'");
     if scope == "favorites" {
         sql.push_str(" AND c.is_favorite=1");
     } else if scope == "pinned" {
@@ -253,203 +584,28 @@ pub async fn search(
         );
     }
     if !request.representation_families.is_empty() {
-        sql.push_str(" AND (");
-        for (index, _) in request.representation_families.iter().enumerate() {
-            if index > 0 {
-                sql.push_str(" OR ");
-            }
-            sql.push_str(
-                "EXISTS(SELECT 1 FROM clip_representations sr WHERE sr.clip_id=c.id \
-                 AND sr.lifecycle_state='ready' AND \
-                 ((?='text' AND sr.storage_kind='text') OR \
-                  (?='image' AND sr.canonical_mime_type LIKE 'image/%') OR \
-                  (?='files' AND sr.storage_kind='file_list') OR \
-                  (?='html' AND sr.canonical_mime_type='text/html') OR \
-                  (?='rtf' AND sr.canonical_mime_type IN ('text/rtf','application/rtf')) OR \
-                  (?='office' AND (sr.native_type LIKE '%office%' OR sr.native_type LIKE '%word%' OR sr.native_type LIKE '%excel%' OR sr.native_type LIKE '%powerpoint%')) OR \
-                  (?='document' AND sr.canonical_mime_type IN ('application/pdf','image/svg+xml'))))",
-            );
-        }
-        sql.push(')');
+        sql.push_str(" AND EXISTS(SELECT 1 FROM clip_representations sr JOIN json_each(?) families ON ((families.value='text' AND sr.storage_kind='text') OR (families.value='image' AND sr.canonical_mime_type LIKE 'image/%') OR (families.value='files' AND sr.storage_kind='file_list') OR (families.value='html' AND sr.canonical_mime_type='text/html') OR (families.value='rtf' AND sr.canonical_mime_type IN ('text/rtf','application/rtf')) OR (families.value='office' AND sr.format_family='office') OR (families.value='document' AND sr.canonical_mime_type IN ('application/pdf','image/svg+xml'))) WHERE sr.clip_id=c.id AND sr.lifecycle_state='ready')");
     }
     if !request.facet_ids.is_empty() {
-        sql.push_str(" AND (");
-        for (index, _) in request.facet_ids.iter().enumerate() {
-            if index > 0 {
-                sql.push_str(" OR ");
-            }
-            sql.push_str(
-                "EXISTS(SELECT 1 FROM content_clip_facets sf WHERE sf.clip_id=c.id AND sf.facet_id=?)",
-            );
-        }
-        sql.push(')');
+        sql.push_str(" AND EXISTS(SELECT 1 FROM content_clip_facets sf JOIN json_each(?) facets ON sf.facet_id=facets.value WHERE sf.clip_id=c.id)");
     }
-    if request.cursor.is_some() {
-        if fts_query.is_some() {
-            sql.push_str(" AND (fts.rank > ? OR (fts.rank = ? AND c.id < ?))");
-        } else {
-            sql.push_str(" AND c.id < ?");
-        }
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    if let Some(tag_id) = &request.tag_id {
+        query = query.bind(tag_id);
     }
-    if fts_query.is_some() {
-        sql.push_str(" ORDER BY fts.rank, c.id DESC LIMIT ?");
-    } else {
-        sql.push_str(" ORDER BY c.id DESC LIMIT ?");
+    if !request.representation_families.is_empty() {
+        query = query.bind(serde_json::to_string(&request.representation_families)?);
     }
-
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(fts_query.is_some());
-    if let Some(fts_query) = &fts_query {
-        q = q.bind(fts_query);
+    if !request.facet_ids.is_empty() {
+        query = query.bind(serde_json::to_string(&request.facet_ids)?);
     }
-    if let Some(tag) = &request.tag_id {
-        q = q.bind(tag);
-    }
-    for family in &request.representation_families {
-        for _ in 0..7 {
-            q = q.bind(family);
-        }
-    }
-    for facet_id in &request.facet_ids {
-        q = q.bind(facet_id);
-    }
-    if let Some(cursor) = &request.cursor {
-        let (rank_s, id) = cursor.split_once('|').context("invalid search cursor")?;
-        if fts_query.is_some() {
-            let rank: f64 = rank_s.parse()?;
-            q = q.bind(rank).bind(rank).bind(id);
-        } else {
-            q = q.bind(id);
-        }
-    }
-    let rows = q.bind(limit + 1).fetch_all(&repo.pool).await?;
-    let has_more = rows.len() as i64 > limit;
-    let total = rows.len().min(limit as usize) as u32;
-
-    let mut items = Vec::new();
-    let mut next_cursor = None;
-    for (index, row) in rows.into_iter().take(limit as usize).enumerate() {
-        let clip_id: String = row.get(0);
-        let tags = sqlx::query(
-            "SELECT t.id, t.name, t.color FROM catalog_tags t \
-             JOIN catalog_clip_tags ct ON ct.tag_id=t.id \
-             WHERE ct.clip_id=? ORDER BY t.name",
-        )
-        .bind(&clip_id)
+    Ok(query
         .fetch_all(&repo.pool)
         .await?
         .into_iter()
-        .map(|r| crate::history::Tag {
-            id: r.get(0),
-            name: r.get(1),
-            color: r.get(2),
-        })
-        .collect();
-        let rank: f64 = row.get(12);
-        let snippet = fts_query
-            .as_deref()
-            .and_then(|query| build_snippet(query, row.get::<Option<String>, _>(9).as_deref()));
-        let compact_presentation = repo.compact_presentation(&clip_id).await?;
-        items.push(SearchResult {
-            clip: ClipSummary {
-                id: clip_id,
-                source_app_name: row.get(1),
-                source_app_id: row.get(2),
-                captured_at: row.get(3),
-                updated_at: row.get(4),
-                is_pinned: row.get::<i64, _>(5) != 0,
-                is_favorite: row.get::<i64, _>(6) != 0,
-                note: row.get(7),
-                representation_count: row.get(8),
-                safe_summary: row.get(9),
-                primary_presentation_kind: row.get(10),
-                thumbnail_asset_id: row.get(11),
-                has_embedding: row.get::<i64, _>(13) != 0,
-                ocr_status: row.get(14),
-                compact_presentation,
-                tags,
-            },
-            snippet,
-            rank,
-            fts_match: fts_query.is_some(),
-            semantic_match: None,
-        });
-        if has_more && index + 1 == limit as usize {
-            next_cursor = Some(format!(
-                "{rank}|{}",
-                items.last().expect("just inserted").clip.id
-            ));
-        }
-    }
-    let requested_hybrid = !raw.is_empty()
-        && match request.mode {
-            Some(SearchMode::Fts) => false,
-            Some(SearchMode::Hybrid) => true,
-            None => crate::search::semantic::status(repo)
-                .await
-                .map(|status| status.active_space_id.is_some())
-                .unwrap_or(false),
-        };
-    let mut diagnostic = None;
-    let effective_mode = if requested_hybrid {
-        match crate::search::semantic::hybrid_matches(repo, raw, (limit * 4).max(100) as usize)
-            .await
-        {
-            Ok(semantic) => {
-                let semantic_scores: std::collections::HashMap<_, _> = semantic
-                    .into_iter()
-                    .map(|(clip_id, score, _)| (clip_id, score))
-                    .collect();
-                for item in &mut items {
-                    item.semantic_match = semantic_scores.get(&item.clip.id).copied();
-                }
-                // Reciprocal-rank fusion uses rank positions, not model-specific scores.
-                let mut semantic_order: Vec<_> = items
-                    .iter()
-                    .filter_map(|item| {
-                        item.semantic_match
-                            .map(|score| (item.clip.id.clone(), score))
-                    })
-                    .collect();
-                semantic_order.sort_by(|a, b| b.1.total_cmp(&a.1));
-                let semantic_rank: std::collections::HashMap<_, _> = semantic_order
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (id, _))| (id, i + 1))
-                    .collect();
-                for (index, item) in items.iter_mut().enumerate() {
-                    let fts = 1.0 / (60.0 + (index + 1) as f64);
-                    let semantic = semantic_rank
-                        .get(&item.clip.id)
-                        .map(|rank| 1.0 / (60.0 + *rank as f64))
-                        .unwrap_or(0.0);
-                    item.rank = fts + semantic;
-                }
-                items.sort_by(|a, b| {
-                    b.rank
-                        .total_cmp(&a.rank)
-                        .then_with(|| b.clip.updated_at.cmp(&a.clip.updated_at))
-                        .then_with(|| a.clip.id.cmp(&b.clip.id))
-                });
-                SearchMode::Hybrid
-            }
-            Err(error) => {
-                diagnostic = Some(error.to_string());
-                SearchMode::Fts
-            }
-        }
-    } else {
-        SearchMode::Fts
-    };
-    Ok(SearchPage {
-        items,
-        total,
-        next_cursor,
-        effective_mode,
-        provider_diagnostic: diagnostic,
-    })
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
 }
-
-// ─── Settings ────────────────────────────────────────────────────────────────
 
 pub async fn get_settings(pool: &SqlitePool) -> Result<SearchSettings> {
     let raw: Option<String> = sqlx::query_scalar(
@@ -461,7 +617,22 @@ pub async fn get_settings(pool: &SqlitePool) -> Result<SearchSettings> {
         Some(v) => serde_json::from_str(v).unwrap_or(SyntaxMode::Simple),
         None => SyntaxMode::Simple,
     };
-    Ok(SearchSettings { syntax_mode: mode })
+    let sources: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_profile_values WHERE key='search.enabled_sources'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let mut enabled_source_ids: Vec<String> = sources
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(default_enabled_sources);
+    if !enabled_source_ids.iter().any(|id| id == FTS_SOURCE_ID) {
+        enabled_source_ids.insert(0, FTS_SOURCE_ID.into());
+    }
+    Ok(SearchSettings {
+        syntax_mode: mode,
+        enabled_source_ids,
+    })
 }
 
 pub async fn update_settings(pool: &SqlitePool, settings: &SearchSettings) -> Result<()> {
@@ -475,7 +646,63 @@ pub async fn update_settings(pool: &SqlitePool, settings: &SearchSettings) -> Re
     .bind(now_ms())
     .execute(pool)
     .await?;
+    let mut enabled = settings.enabled_source_ids.clone();
+    if !enabled.iter().any(|id| id == FTS_SOURCE_ID) {
+        enabled.insert(0, FTS_SOURCE_ID.into());
+    }
+    sqlx::query(
+        "INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES('search.enabled_sources',?,?,?) \
+         ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
+    )
+    .bind(serde_json::to_string(&enabled)?)
+    .bind(now_ms())
+    .bind(now_ms())
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+pub async fn list_sources(repo: &HistoryRepository) -> Result<Vec<SearchSourceDescriptor>> {
+    let settings = get_settings(&repo.pool).await?;
+    let provider = semantic::status(repo).await?;
+    let semantic_state = match provider.phase {
+        semantic::ProviderPhase::Ready => SearchSourceState::Ready,
+        semantic::ProviderPhase::Indexing
+        | semantic::ProviderPhase::Checking
+        | semantic::ProviderPhase::ValidatingModel => SearchSourceState::Indexing,
+        semantic::ProviderPhase::Degraded => SearchSourceState::Degraded,
+        semantic::ProviderPhase::Disabled => SearchSourceState::Disabled,
+        semantic::ProviderPhase::NotConfigured => SearchSourceState::NotConfigured,
+    };
+    Ok(registered_search_sources()
+        .into_iter()
+        .map(|source| {
+            let descriptor = source.descriptor();
+            let semantic = descriptor.id == SEMANTIC_TEXT_SOURCE_ID;
+            SearchSourceDescriptor {
+                id: descriptor.id.into(),
+                label: descriptor.label.into(),
+                mandatory: descriptor.mandatory,
+                input_kinds: descriptor
+                    .input_kinds
+                    .iter()
+                    .map(|kind| (*kind).into())
+                    .collect(),
+                indexing_required: descriptor.indexing_required,
+                enabled: descriptor.mandatory
+                    || settings
+                        .enabled_source_ids
+                        .iter()
+                        .any(|id| id == descriptor.id),
+                state: if semantic {
+                    semantic_state.clone()
+                } else {
+                    SearchSourceState::Ready
+                },
+                diagnostic: semantic.then(|| provider.diagnostic.clone()).flatten(),
+            }
+        })
+        .collect())
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -525,7 +752,7 @@ mod tests {
             tag_id: None,
             limit: Some(50),
             cursor: None,
-            mode: Some(SearchMode::Fts),
+            enabled_source_ids: vec![FTS_SOURCE_ID.into()],
             representation_families: Vec::new(),
             facet_ids: Vec::new(),
         }
@@ -556,6 +783,59 @@ mod tests {
         assert_eq!(to_simple_query("doc ref"), "\"doc\"* \"ref\"*");
         assert_eq!(to_simple_query("a\"b"), "\"ab\"*");
         assert_eq!(to_simple_query("\"\""), "");
+    }
+
+    #[test]
+    fn balanced_rrf_unions_any_number_of_sources_and_rewards_consensus() {
+        let eligible = HashMap::from([
+            ("keyword".into(), 3),
+            ("meaning".into(), 2),
+            ("visual".into(), 1),
+        ]);
+        let mut fused = HashMap::new();
+        fuse_source(
+            &mut fused,
+            FTS_SOURCE_ID,
+            vec![
+                RankedCandidate {
+                    clip_id: "keyword".into(),
+                    snippet: None,
+                },
+                RankedCandidate {
+                    clip_id: "meaning".into(),
+                    snippet: None,
+                },
+            ],
+            &eligible,
+        );
+        fuse_source(
+            &mut fused,
+            SEMANTIC_TEXT_SOURCE_ID,
+            vec![
+                RankedCandidate {
+                    clip_id: "meaning".into(),
+                    snippet: None,
+                },
+                RankedCandidate {
+                    clip_id: "visual".into(),
+                    snippet: None,
+                },
+            ],
+            &eligible,
+        );
+        fuse_source(
+            &mut fused,
+            "test.search.visual",
+            vec![RankedCandidate {
+                clip_id: "visual".into(),
+                snippet: None,
+            }],
+            &eligible,
+        );
+        assert_eq!(fused.len(), 3);
+        assert_eq!(fused["meaning"].matches.len(), 2);
+        assert_eq!(fused["visual"].matches.len(), 2);
+        assert!(fused["meaning"].score > fused["keyword"].score);
     }
 
     #[tokio::test]
@@ -629,6 +909,7 @@ mod tests {
 
         let settings = SearchSettings {
             syntax_mode: SyntaxMode::Simple,
+            enabled_source_ids: vec![FTS_SOURCE_ID.into()],
         };
         let prefix = search(&repo, &request("doc"), &settings).await.unwrap();
         assert_eq!(prefix.items.len(), 1);
@@ -644,7 +925,10 @@ mod tests {
         let file_results = search(&repo, &files, &settings).await.unwrap();
         assert_eq!(file_results.items.len(), 1);
         assert_eq!(file_results.items[0].clip.id, file_id);
-        assert!(!file_results.items[0].fts_match);
+        assert!(file_results.items[0]
+            .matches
+            .iter()
+            .any(|item| item.source_id == FTS_SOURCE_ID));
 
         let mut images = request("");
         images.representation_families.push("image".into());
@@ -666,6 +950,7 @@ mod tests {
 
         let advanced = SearchSettings {
             syntax_mode: SyntaxMode::Advanced,
+            enabled_source_ids: vec![FTS_SOURCE_ID.into()],
         };
         assert!(search(&repo, &request("doc*"), &advanced)
             .await

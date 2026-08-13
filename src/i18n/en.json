@@ -92,7 +92,17 @@
     "semanticOff": "Text search — click to switch to AI semantic search",
     "semanticIndexing": "Semantic search is available while existing clips finish indexing in the background.",
     "semanticFallback": "AI search is unavailable. Using text search for now.",
-    "aiUnavailable": "AI unavailable"
+    "aiUnavailable": "AI unavailable",
+    "sources": "Sources",
+    "alwaysOn": "Always on",
+    "meaningMatch": "Meaning match",
+    "sourceState": {
+      "ready": "Ready",
+      "indexing": "Indexing in the background",
+      "degraded": "Needs attention",
+      "disabled": "Provider disabled",
+      "not_configured": "Not configured"
+    }
   },
   "clipboard": {
     "all": "All",

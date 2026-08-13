@@ -22,7 +22,10 @@ use crate::{
 };
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -142,10 +145,98 @@ async fn detect_with_extensions(
     Ok(())
 }
 
-async fn refresh_search_for_clip(history: &HistoryRepository, clip_id: &str) -> anyhow::Result<()> {
+static EMBEDDING_WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn wake_embedding_worker(app: tauri::AppHandle, history: HistoryRepository) {
+    if EMBEDDING_WORKER_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let retry_delays = [5_u64, 15, 30, 60];
+        let mut retry = 0_usize;
+        let mut validated = false;
+        loop {
+            if !validated {
+                match embeddings::validate_configured_provider(&history).await {
+                    Ok(()) => {
+                        validated = true;
+                        retry = 0;
+                        let _ = app.emit(
+                            "search-source-status-changed",
+                            search::SEMANTIC_TEXT_SOURCE_ID,
+                        );
+                    }
+                    Err(error) => {
+                        let enabled = embeddings::status(&history)
+                            .await
+                            .map(|status| status.enabled)
+                            .unwrap_or(false);
+                        if !enabled {
+                            break;
+                        }
+                        let _ = app.emit("embedding-index-failed", error.to_string());
+                        let _ = app.emit(
+                            "search-source-status-changed",
+                            search::SEMANTIC_TEXT_SOURCE_ID,
+                        );
+                        let delay = retry_delays[retry.min(retry_delays.len() - 1)];
+                        retry = (retry + 1).min(retry_delays.len() - 1);
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                }
+            }
+            match embeddings::index_pending(&history).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    retry = 0;
+                    let _ = app.emit("search-index-progress", search::SEMANTIC_TEXT_SOURCE_ID);
+                }
+                Err(error) => {
+                    validated = false;
+                    let _ = app.emit(
+                        "search-source-status-changed",
+                        search::SEMANTIC_TEXT_SOURCE_ID,
+                    );
+                    let _ = app.emit("embedding-index-failed", error.to_string());
+                    let enabled = embeddings::status(&history)
+                        .await
+                        .map(|status| status.enabled)
+                        .unwrap_or(false);
+                    if !enabled {
+                        break;
+                    }
+                    let delay = retry_delays[retry.min(retry_delays.len() - 1)];
+                    retry = (retry + 1).min(retry_delays.len() - 1);
+                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                }
+            }
+        }
+        EMBEDDING_WORKER_RUNNING.store(false, Ordering::SeqCst);
+        // Close the enqueue race between the worker's final empty poll and
+        // releasing the single-worker guard.
+        if embeddings::status(&history)
+            .await
+            .is_ok_and(|status| status.pending_jobs > 0)
+        {
+            wake_embedding_worker(app.clone(), history.clone());
+        }
+        let _ = app.emit(
+            "search-source-status-changed",
+            search::SEMANTIC_TEXT_SOURCE_ID,
+        );
+        let _ = app.emit("embedding-space-changed", ());
+    });
+}
+
+async fn refresh_search_for_clip(
+    app: &tauri::AppHandle,
+    history: &HistoryRepository,
+    clip_id: &str,
+) -> anyhow::Result<()> {
     search::upsert_projection(history, clip_id).await?;
     embeddings::enqueue_clip(history, clip_id).await?;
-    embeddings::index_pending(history).await?;
+    wake_embedding_worker(app.clone(), history.clone());
     Ok(())
 }
 
@@ -761,7 +852,7 @@ async fn capture_clipboard(
                     .await;
                 let _ = search::upsert_projection(&history_for_artifacts, &artifact_id).await;
                 let _ = embeddings::enqueue_clip(&history_for_artifacts, &artifact_id).await;
-                let _ = embeddings::index_pending(&history_for_artifacts).await;
+                wake_embedding_worker(artifact_app, history_for_artifacts);
             });
             let _ = app.emit(
                 if duplicate {
@@ -1189,7 +1280,7 @@ async fn update_clip_note(
         .note(&clip_id, note)
         .await
         .map_err(|e| e.to_string())?;
-    refresh_search_for_clip(&state.history, &clip_id)
+    refresh_search_for_clip(&app, &state.history, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
     let _ = app.emit("clip-updated", clip_id);
@@ -1212,7 +1303,11 @@ async fn create_tag(
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn delete_tag(tag_id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn delete_tag(
+    app: tauri::AppHandle,
+    tag_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let clips = state
         .history
         .clips_for_tag(&tag_id)
@@ -1224,7 +1319,7 @@ async fn delete_tag(tag_id: String, state: State<'_, AppState>) -> Result<(), St
         .await
         .map_err(|e| e.to_string())?;
     for clip_id in clips {
-        refresh_search_for_clip(&state.history, &clip_id)
+        refresh_search_for_clip(&app, &state.history, &clip_id)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -1232,6 +1327,7 @@ async fn delete_tag(tag_id: String, state: State<'_, AppState>) -> Result<(), St
 }
 #[tauri::command]
 async fn add_clip_tag(
+    app: tauri::AppHandle,
     clip_id: String,
     tag_id: String,
     state: State<'_, AppState>,
@@ -1241,13 +1337,14 @@ async fn add_clip_tag(
         .tag_clip(&clip_id, &tag_id, true)
         .await
         .map_err(|e| e.to_string())?;
-    refresh_search_for_clip(&state.history, &clip_id)
+    refresh_search_for_clip(&app, &state.history, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 #[tauri::command]
 async fn remove_clip_tag(
+    app: tauri::AppHandle,
     clip_id: String,
     tag_id: String,
     state: State<'_, AppState>,
@@ -1257,7 +1354,7 @@ async fn remove_clip_tag(
         .tag_clip(&clip_id, &tag_id, false)
         .await
         .map_err(|e| e.to_string())?;
-    refresh_search_for_clip(&state.history, &clip_id)
+    refresh_search_for_clip(&app, &state.history, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -1451,7 +1548,7 @@ async fn redetect_clip(
     detect_with_extensions(&state.history, &state.extensions, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
-    refresh_search_for_clip(&state.history, &clip_id)
+    refresh_search_for_clip(&app, &state.history, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
     let _ = app.emit("clip-facets-updated", clip_id);
@@ -1479,7 +1576,7 @@ async fn redetect_history(
             detect_with_extensions(&state.history, &state.extensions, &clip.id)
                 .await
                 .map_err(|e| e.to_string())?;
-            refresh_search_for_clip(&state.history, &clip.id)
+            refresh_search_for_clip(&app, &state.history, &clip.id)
                 .await
                 .map_err(|e| e.to_string())?;
             count += 1;
@@ -1537,23 +1634,22 @@ async fn configure_text_embedding_provider(
     let status = embeddings::configure(&state.history, endpoint, model)
         .await
         .map_err(|e| e.to_string())?;
-    let history = state.history.clone();
-    let event_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match embeddings::index_pending(&history).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    let _ = event_app.emit("embedding-index-progress", ());
-                }
-                Err(error) => {
-                    let _ = event_app.emit("embedding-index-failed", error.to_string());
-                    break;
-                }
-            }
-        }
-        let _ = event_app.emit("embedding-space-changed", ());
-    });
+    let mut search_settings = search::get_settings(&state.history.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !search_settings
+        .enabled_source_ids
+        .iter()
+        .any(|id| id == search::SEMANTIC_TEXT_SOURCE_ID)
+    {
+        search_settings
+            .enabled_source_ids
+            .push(search::SEMANTIC_TEXT_SOURCE_ID.into());
+        search::update_settings(&state.history.pool, &search_settings)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    wake_embedding_worker(app.clone(), state.history.clone());
     let _ = app.emit("embedding-provider-status-changed", ());
     Ok(status)
 }
@@ -1584,7 +1680,7 @@ async fn reindex_text_embeddings(
     embeddings::reindex(&state.history)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("embedding-index-progress", ());
+    wake_embedding_worker(app, state.history.clone());
     Ok(())
 }
 #[tauri::command]
@@ -1595,7 +1691,19 @@ async fn index_missing_text_embeddings(
     embeddings::index_missing(&state.history)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("embedding-index-progress", ());
+    wake_embedding_worker(app, state.history.clone());
+    Ok(())
+}
+
+#[tauri::command]
+async fn retry_text_embedding_provider(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    embeddings::retry_failed(&state.history)
+        .await
+        .map_err(|e| e.to_string())?;
+    wake_embedding_worker(app, state.history.clone());
     Ok(())
 }
 #[tauri::command]
@@ -1611,6 +1719,15 @@ async fn clear_text_embedding_space(
 #[tauri::command]
 async fn get_search_settings(state: State<'_, AppState>) -> Result<search::SearchSettings, String> {
     search::get_settings(&state.history.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_search_sources(
+    state: State<'_, AppState>,
+) -> Result<Vec<search::SearchSourceDescriptor>, String> {
+    search::list_sources(&state.history)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1827,9 +1944,11 @@ pub(crate) fn run() {
                 let _ = crate::providers::provider_capabilities();
                 // Rebuild any stale FTS projections from previous sessions.
                 let fts_history = history.clone();
+                let fts_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = search::rebuild_stale_projections(&fts_history).await;
-                    let _ = embeddings::index_pending(&fts_history).await;
+                    let _ = embeddings::recover_interrupted(&fts_history).await;
+                    wake_embedding_worker(fts_app, fts_history);
                 });
                 let redetect_history = history.clone();
                 let redetect_extensions = extensions.clone();
@@ -1939,7 +2058,7 @@ pub(crate) fn run() {
                                     let _ =
                                         search::upsert_projection(&detection_history, &id).await;
                                     let _ = embeddings::enqueue_clip(&detection_history, &id).await;
-                                    let _ = embeddings::index_pending(&detection_history).await;
+                                    wake_embedding_worker(detection_app, detection_history);
                                 });
                             }
                             Err(error) => {
@@ -2028,12 +2147,14 @@ pub(crate) fn run() {
             search_clips,
             get_search_settings,
             update_search_settings,
+            list_search_sources,
             probe_ollama_endpoint,
             list_ollama_models,
             probe_ollama_model,
             configure_text_embedding_provider,
             disable_text_embedding_provider,
             get_text_embedding_status,
+            retry_text_embedding_provider,
             reindex_text_embeddings,
             index_missing_text_embeddings,
             clear_text_embedding_space

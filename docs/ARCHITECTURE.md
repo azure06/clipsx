@@ -17,7 +17,7 @@ These documents separate stable behavior from delivery planning. Begin here, the
 | Runtime, capture, output, invariants | [runtime architecture](#runtime-architecture-capture-and-output) |
 | Canonical data, derived data, persistence | [data model](#data-model-preserve-first-derive-later) |
 | Built-ins and community extensions | [extensions](#extensions-contributions-without-privilege) |
-| FTS, embeddings, providers, limitations | [search](#search-keyword-first-semantic-when-opted-in) |
+| FTS, embeddings, providers, limitations | [search](#search-mandatory-fts-plus-optional-candidate-sources) |
 | Unfinished milestones and acceptance criteria | [ROADMAP.md](ROADMAP.md) |
 
 ## Four pillars
@@ -477,18 +477,18 @@ The repository includes a generated-binding Rust template and buildable Color To
 
 ## Provider separation
 
-`TextEmbeddingProvider`, `MultimodalEmbeddingProvider`, `GenerationProvider`, `OcrProvider` are Rust host-owned capabilities. Ollama, later OpenAI-compatible integrations, and optional local visual provider implement that interface; generic provider integrations, rather than community WASM, are the supported route to other services. The host owns consent/scheduling/retries/space validation/rebuilds; providers own invocation/tokenization/preprocessing/vector production and receive immutable input, never repository access. See [search](#search-keyword-first-semantic-when-opted-in).
+`TextEmbeddingProvider`, `MultimodalEmbeddingProvider`, `GenerationProvider`, `OcrProvider` are Rust host-owned capabilities. Ollama, later OpenAI-compatible integrations, and optional local visual provider implement that interface; generic provider integrations, rather than community WASM, are the supported route to other services. The host owns consent/scheduling/retries/space validation/rebuilds; providers own invocation/tokenization/preprocessing/vector production and receive immutable input, never repository access. See [search](#search-mandatory-fts-plus-optional-candidate-sources).
 
 
 ---
 
-## Search: keyword-first, semantic when opted in
+## Search: mandatory FTS plus optional candidate sources
 
-Search is derived from preserved clips, not a replacement for them. The implemented backend supports FTS5 and optional user-selected loopback Ollama text embeddings. Optional local visual search, OpenAI-compatible/hosted providers, and generation are deferred.
+Search is derived from preserved clips, not a replacement for them. A host-owned search planner resolves canonical filters once, runs mandatory FTS5 plus any enabled optional candidate sources, unions clip IDs, and performs one final fusion and pagination pass. Ollama text embeddings are the first optional source. Optional local visual search, OpenAI-compatible/hosted providers, and generation are deferred.
 
 ## Index and query flow
 
-This diagram shows ingestion-time indexes and query-time ranking. FTS is always available and, today, is also the candidate gate for hybrid ranking.
+This diagram shows ingestion-time indexes and provider-agnostic query planning. FTS is always enabled but is not a gate for other sources.
 
 ```mermaid
 flowchart LR
@@ -501,28 +501,27 @@ flowchart LR
   end
 
   subgraph QueryPath["Query time"]
-    React["React query; 200 ms debounce"] --> Command["search_clips command"]
-    Command --> Syntax["Trim; Simple quoting or Advanced FTS syntax"]
-    Syntax --> FTSQuery["FTS MATCH + pin/favorite/tag filters"]
+    React["Typed query + enabled source IDs"] --> Filters["Resolve eligible clips once"]
+    Filters --> FTSQuery["Mandatory FTS source"]
+    Filters --> SemanticQuery["Optional text-semantic source"]
+    Filters -.-> Future["Future trusted visual/other source"]
     FTS --> FTSQuery
-    FTSQuery --> Candidates["FTS candidates with summaries and tags"]
-
-    Syntax --> QueryEmbed["Ollama embed_query when hybrid"]
-    QueryEmbed --> Cosine["Linear cosine scan; best chunk per clip"]
-    Vectors --> Cosine
-    Candidates --> RRF["Reciprocal-rank fusion"]
-    Cosine --> RRF
-    RRF --> Page["SearchPage to React"]
+    Vectors --> SemanticQuery
+    FTSQuery --> Union["Union candidates by clip ID"]
+    SemanticQuery --> Union
+    Future -.-> Union
+    Union --> RRF["Equal-weight RRF; k=60"]
+    RRF --> Page["Deterministic fused pagination + hydration"]
   end
 ```
 
 Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
 
-## Current hybrid limitation
+## Candidate-source contract
 
-Hybrid search currently improves lexical ordering, but it cannot return a semantic-only clip. This is an implementation limitation, not the target definition of semantic retrieval.
+Search sources are trusted host capabilities that accept a typed query plus the shared eligible clip set and return an independently ranked, bounded candidate list. Sources do not hydrate UI models, paginate independently, or decide global rank. The planner unions results, applies equal-weight reciprocal-rank fusion, and only then paginates and hydrates clips. A source failure is isolated: optional failures produce diagnostics and FTS results, while invalid advanced FTS syntax is a correctable query error. The 5,000-candidate per-source bound is disclosed through `isExhaustive`.
 
-It retrieves the FTS page first, embeds query, scans every active-space chunk vector in process, keeps best chunk per clip, then reciprocal-rank fuses only clips already in that FTS page. Pagination cursors/totals are pre-fusion FTS values. Code/UI must not claim semantic recall beyond FTS candidates. A future planner may union candidates, filter both, fuse, hydrate, and paginate after fusion.
+`builtin.search.fts` is mandatory. `builtin.search.semantic_text` can return semantic-only clips and is independently enabled for querying; disabling it does not stop its rebuildable index. Future visual sources register through the same internal planner contract but remain host-owned provider capabilities rather than community extensions.
 
 Note and tag mutations call the shared projection refresh path, then enqueue and process embedding work when a text provider is configured. The canonical mutation and derived refresh are separate operations, so a refresh failure degrades search without rolling back the user's catalog edit; the normal stale-projection rebuild repairs it later.
 

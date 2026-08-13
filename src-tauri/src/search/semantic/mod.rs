@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::{redirect::Policy, Client};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+use std::collections::HashSet;
 use std::{net::IpAddr, time::Duration};
 use url::Url;
 
@@ -44,13 +45,28 @@ pub struct EmbeddingProviderDescriptor {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderStatus {
     pub enabled: bool,
+    pub phase: ProviderPhase,
     pub active_space_id: Option<String>,
     pub pending_space_id: Option<String>,
     pub diagnostic: Option<String>,
     pub indexed_clips: u64,
     pub pending_jobs: u64,
+    pub failed_jobs: u64,
+    pub total_clips: u64,
     pub endpoint: Option<String>,
     pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderPhase {
+    NotConfigured,
+    Checking,
+    ValidatingModel,
+    Indexing,
+    Ready,
+    Degraded,
+    Disabled,
 }
 
 /// Stable host contribution contract. WASM packages may consume this shape in
@@ -124,7 +140,12 @@ impl OllamaTextEmbeddingProvider {
             bail!("Ollama redirect rejected")
         }
         if !response.status().is_success() {
-            bail!("Ollama returned {}", response.status())
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "{}",
+                ollama_request_error(status.as_u16(), path, &self.model, &body)
+            )
         }
         Ok(response.json().await?)
     }
@@ -145,7 +166,12 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
             .send()
             .await?;
         if !response.status().is_success() {
-            bail!("Ollama returned {}", response.status())
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!(
+                "{}",
+                ollama_request_error(status.as_u16(), "api/tags", "", &body)
+            )
         }
         let json: serde_json::Value = response.json().await?;
         Ok(json["models"]
@@ -209,6 +235,27 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
     }
 }
 
+fn ollama_request_error(status: u16, path: &str, model: &str, body: &str) -> String {
+    let detail = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value["error"].as_str().map(str::to_owned))
+        .or_else(|| (!body.trim().is_empty()).then(|| body.trim().to_owned()))
+        .map(|detail| detail.chars().take(300).collect::<String>());
+    let target = format!("/{}", path.trim_start_matches('/'));
+    let detail = detail
+        .map(|detail| format!(": {detail}"))
+        .unwrap_or_default();
+    let guidance = if status == 400 && path == "api/embed" {
+        format!(
+            " Check that {} is an installed text-embedding model and that Ollama is up to date; the response above may also identify input that exceeds the model context.",
+            if model.is_empty() { "the selected model" } else { model }
+        )
+    } else {
+        String::new()
+    };
+    format!("Ollama rejected {target} (HTTP {status}){detail}.{guidance}")
+}
+
 pub async fn probe_endpoint(endpoint: String) -> OllamaEndpointStatus {
     let result = match OllamaTextEmbeddingProvider::new(&endpoint, "unused".into()).await {
         Ok(provider) => provider.discover_models().await.map(|_| ()),
@@ -258,54 +305,101 @@ pub async fn configure(
     .unwrap_or_else(new_id);
     sqlx::query("INSERT OR IGNORE INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
         .bind(&space_id).bind(&descriptor.provider_kind).bind(&descriptor_json).bind(&fingerprint).bind("text").bind(descriptor.dimensions as i64).bind("l2").bind("cosine").bind(now_ms()).execute(&repo.pool).await?;
-    let previous = get_config(&repo.pool).await?;
+    let previous = get_space_state(&repo.pool).await?;
     let active = previous
         .as_ref()
         .and_then(|value| value["activeSpaceId"].as_str());
-    let config = serde_json::json!({"endpoint": endpoint, "model": model, "pendingSpaceId": space_id, "activeSpaceId": active});
-    put_config(&repo.pool, "search.embedding.provider", &config).await?;
-    enqueue_all(repo, &space_id, 1).await?;
+    put_device_config(
+        &repo.pool,
+        &serde_json::json!({"endpoint": endpoint, "model": model, "enabled": true}),
+    )
+    .await?;
+    put_space_state(
+        &repo.pool,
+        &serde_json::json!({"pendingSpaceId": space_id, "activeSpaceId": active}),
+    )
+    .await?;
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(generation),0)+1 FROM search_index_jobs WHERE space_id=?",
+    )
+    .bind(&space_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    enqueue_all(repo, &space_id, generation).await?;
     status(repo).await
 }
 pub async fn disable(repo: &HistoryRepository) -> Result<()> {
-    put_config(
-        &repo.pool,
-        "search.embedding.provider",
-        &serde_json::Value::Null,
-    )
-    .await
+    let Some(mut config) = get_device_config(&repo.pool).await? else {
+        return Ok(());
+    };
+    config["enabled"] = serde_json::Value::Bool(false);
+    put_device_config(&repo.pool, &config).await
 }
 pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
-    let config = get_config(&repo.pool).await?;
-    let Some(value) = config else {
+    let device = get_device_config(&repo.pool).await?;
+    let state = get_space_state(&repo.pool)
+        .await?
+        .unwrap_or_else(|| serde_json::json!({}));
+    let Some(value) = device else {
         return Ok(ProviderStatus {
             enabled: false,
+            phase: ProviderPhase::NotConfigured,
             active_space_id: None,
             pending_space_id: None,
             diagnostic: None,
             indexed_clips: 0,
             pending_jobs: 0,
+            failed_jobs: 0,
+            total_clips: 0,
             endpoint: None,
             model: None,
         });
     };
-    let pending = value["pendingSpaceId"].as_str().map(str::to_string);
-    let active = value["activeSpaceId"].as_str().map(str::to_string);
+    let enabled = value["enabled"].as_bool().unwrap_or(false);
+    let pending = state["pendingSpaceId"].as_str().map(str::to_string);
+    let active = state["activeSpaceId"].as_str().map(str::to_string);
     let endpoint = value["endpoint"].as_str().map(str::to_string);
     let model = value["model"].as_str().map(str::to_string);
     let indexed: i64 =
         sqlx::query_scalar("SELECT count(DISTINCT clip_id) FROM search_chunks WHERE space_id=?")
-            .bind(active.as_ref().or(pending.as_ref()))
+            .bind(pending.as_ref().or(active.as_ref()))
             .fetch_one(&repo.pool)
             .await?;
     let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status IN ('pending','running')").bind(pending.as_ref().or(active.as_ref())).fetch_one(&repo.pool).await?;
+    let failed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status='failed'",
+    )
+    .bind(pending.as_ref().or(active.as_ref()))
+    .fetch_one(&repo.pool)
+    .await?;
+    let total: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM clip_items WHERE lifecycle_state='ready'")
+            .fetch_one(&repo.pool)
+            .await?;
+    let job_diagnostic: Option<String> = sqlx::query_scalar("SELECT last_error FROM search_index_jobs WHERE space_id=? AND status='failed' AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1").bind(pending.as_ref().or(active.as_ref())).fetch_optional(&repo.pool).await?;
+    let diagnostic = value["lastDiagnostic"]
+        .as_str()
+        .map(str::to_string)
+        .or(job_diagnostic);
+    let phase = if !enabled {
+        ProviderPhase::Disabled
+    } else if diagnostic.is_some() || failed > 0 || active.is_none() && pending.is_none() {
+        ProviderPhase::Degraded
+    } else if pending.is_some() || jobs > 0 {
+        ProviderPhase::Indexing
+    } else {
+        ProviderPhase::Ready
+    };
     Ok(ProviderStatus {
-        enabled: true,
+        enabled,
+        phase,
         active_space_id: active,
         pending_space_id: pending,
-        diagnostic: None,
+        diagnostic,
         indexed_clips: indexed as u64,
         pending_jobs: jobs as u64,
+        failed_jobs: failed as u64,
+        total_clips: total as u64,
         endpoint,
         model,
     })
@@ -328,6 +422,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     let rows = sqlx::query("SELECT id,clip_id,generation FROM search_index_jobs WHERE space_id=? AND status='pending' ORDER BY requested_at LIMIT 16").bind(&space).fetch_all(&repo.pool).await?;
     let mut count = 0;
     for row in rows {
+        count += 1;
         let id: String = row.get(0);
         let clip: String = row.get(1);
         let generation: i64 = row.get(2);
@@ -342,7 +437,6 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
                 .bind(&id)
                 .execute(&repo.pool)
                 .await?;
-                count += 1;
             }
             Err(error) => {
                 sqlx::query("UPDATE search_index_jobs SET status=CASE WHEN attempt_count >= 3 THEN 'failed' ELSE 'pending' END,last_error=?,completed_at=?,updated_at=? WHERE id=?").bind(error.to_string()).bind(now_ms()).bind(now_ms()).bind(&id).execute(&repo.pool).await?;
@@ -351,10 +445,20 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     }
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status IN ('pending','running')").bind(&space).fetch_one(&repo.pool).await?;
     if pending == 0 {
-        let mut promoted = config;
-        promoted["activeSpaceId"] = serde_json::Value::String(space);
-        promoted["pendingSpaceId"] = serde_json::Value::Null;
-        put_config(&repo.pool, "search.embedding.provider", &promoted).await?;
+        let failed: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status='failed'",
+        )
+        .bind(&space)
+        .fetch_one(&repo.pool)
+        .await?;
+        if failed == 0 {
+            let mut promoted = get_space_state(&repo.pool)
+                .await?
+                .unwrap_or_else(|| serde_json::json!({}));
+            promoted["activeSpaceId"] = serde_json::Value::String(space);
+            promoted["pendingSpaceId"] = serde_json::Value::Null;
+            put_space_state(&repo.pool, &promoted).await?;
+        }
     }
     Ok(count)
 }
@@ -381,6 +485,11 @@ async fn index_clip(
     let projection = sha256(format!("{CHUNKER_VERSION}:{manifest}:{text}").as_bytes());
     let chunks = chunk_text(&text);
     if chunks.is_empty() {
+        sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=?")
+            .bind(space)
+            .bind(clip)
+            .execute(&repo.pool)
+            .await?;
         return Ok(());
     }
     let vectors = provider.embed_documents(&chunks).await?;
@@ -393,10 +502,9 @@ async fn index_clip(
             .fetch_one(&repo.pool)
             .await?;
     let mut tx = repo.pool.begin().await?;
-    sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=? AND generation=?")
+    sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=?")
         .bind(space)
         .bind(clip)
-        .bind(generation)
         .execute(&mut *tx)
         .await?;
     for (ordinal, (text, vector)) in chunks.into_iter().zip(vectors).enumerate() {
@@ -426,7 +534,13 @@ pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
         .as_str()
         .or(config["pendingSpaceId"].as_str())
         .context("no space")?;
-    enqueue_all(repo, space, 2).await
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(generation),0)+1 FROM search_index_jobs WHERE space_id=?",
+    )
+    .bind(space)
+    .fetch_one(&repo.pool)
+    .await?;
+    enqueue_all(repo, space, generation).await
 }
 pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     let config = get_config(&repo.pool)
@@ -471,12 +585,63 @@ pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
         .bind(space)
         .execute(&repo.pool)
         .await?;
+    if let Some(mut state) = get_space_state(&repo.pool).await? {
+        if state["activeSpaceId"].as_str() == Some(space) {
+            state["activeSpaceId"] = serde_json::Value::Null;
+        }
+        if state["pendingSpaceId"].as_str() == Some(space) {
+            state["pendingSpaceId"] = serde_json::Value::Null;
+        }
+        put_space_state(&repo.pool, &state).await?;
+    }
     Ok(())
 }
 
-pub async fn hybrid_matches(
+pub async fn recover_interrupted(repo: &HistoryRepository) -> Result<()> {
+    sqlx::query("UPDATE search_index_jobs SET status='pending',started_at=NULL,updated_at=? WHERE status='running'")
+        .bind(now_ms()).execute(&repo.pool).await?;
+    Ok(())
+}
+
+pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
+    sqlx::query("UPDATE search_index_jobs SET status='pending',attempt_count=0,last_error=NULL,completed_at=NULL,updated_at=? WHERE status='failed'")
+        .bind(now_ms()).execute(&repo.pool).await?;
+    Ok(())
+}
+
+pub async fn validate_configured_provider(repo: &HistoryRepository) -> Result<()> {
+    let Some(mut device) = get_device_config(&repo.pool).await? else {
+        bail!("embeddings are not configured");
+    };
+    if !device["enabled"].as_bool().unwrap_or(false) {
+        bail!("embeddings are disabled");
+    }
+    let endpoint = device["endpoint"]
+        .as_str()
+        .context("missing endpoint")?
+        .to_string();
+    let model = device["model"]
+        .as_str()
+        .context("missing model")?
+        .to_string();
+    match probe_model(endpoint, model).await {
+        Ok(_) => {
+            device["lastDiagnostic"] = serde_json::Value::Null;
+            put_device_config(&repo.pool, &device).await?;
+            Ok(())
+        }
+        Err(error) => {
+            device["lastDiagnostic"] = serde_json::Value::String(error.to_string());
+            put_device_config(&repo.pool, &device).await?;
+            Err(error)
+        }
+    }
+}
+
+pub async fn semantic_matches(
     repo: &HistoryRepository,
     query: &str,
+    eligible_ids: &HashSet<String>,
     limit: usize,
 ) -> Result<Vec<(String, f64, String)>> {
     let config = get_config(&repo.pool)
@@ -491,6 +656,9 @@ pub async fn hybrid_matches(
     let mut best = std::collections::HashMap::<String, (f64, String)>::new();
     for row in rows {
         let clip: String = row.get(0);
+        if !eligible_ids.contains(&clip) {
+            continue;
+        }
         let vector: Vec<u8> = row.get(1);
         let score = cosine(&query_vector, &read_blob(&vector)?);
         let text: String = row.get(2);
@@ -597,19 +765,74 @@ fn cosine(a: &[f32], b: &[f32]) -> f64 {
     a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum()
 }
 async fn get_config(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
-    let raw: Option<String> = sqlx::query_scalar(
-        "SELECT value_json FROM config_profile_values WHERE key='search.embedding.provider'",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let Some(device) = get_device_config(pool).await? else {
+        return Ok(None);
+    };
+    if !device["enabled"].as_bool().unwrap_or(false) {
+        return Ok(None);
+    }
+    let state = get_space_state(pool)
+        .await?
+        .unwrap_or_else(|| serde_json::json!({}));
+    Ok(Some(serde_json::json!({
+        "endpoint": device["endpoint"], "model": device["model"],
+        "activeSpaceId": state["activeSpaceId"], "pendingSpaceId": state["pendingSpaceId"]
+    })))
+}
+async fn get_device_config(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
+    read_config(pool, "config_device_values", "search.ollama.text_embedding").await
+}
+async fn get_space_state(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
+    read_config(pool, "config_profile_values", "search.embedding.state").await
+}
+async fn read_config(
+    pool: &SqlitePool,
+    table: &str,
+    key: &str,
+) -> Result<Option<serde_json::Value>> {
+    let sql = format!("SELECT value_json FROM {table} WHERE key=?");
+    let raw: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
     match raw.as_deref() {
         Some("null") | None => Ok(None),
-        Some(v) => Ok(Some(serde_json::from_str(v)?)),
+        Some(value) => Ok(Some(serde_json::from_str(value)?)),
     }
 }
-async fn put_config(pool: &SqlitePool, key: &str, value: &serde_json::Value) -> Result<()> {
+async fn put_device_config(pool: &SqlitePool, value: &serde_json::Value) -> Result<()> {
+    put_config(
+        pool,
+        "config_device_values",
+        "search.ollama.text_embedding",
+        value,
+    )
+    .await
+}
+async fn put_space_state(pool: &SqlitePool, value: &serde_json::Value) -> Result<()> {
+    put_config(
+        pool,
+        "config_profile_values",
+        "search.embedding.state",
+        value,
+    )
+    .await
+}
+async fn put_config(
+    pool: &SqlitePool,
+    table: &str,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<()> {
     let now = now_ms();
-    sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(key).bind(serde_json::to_string(value)?).bind(now).bind(now).execute(pool).await?;
+    let sql = format!("INSERT INTO {table}(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at");
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(key)
+        .bind(serde_json::to_string(value)?)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 async fn validated_endpoint(raw: &str) -> Result<Url> {
@@ -666,5 +889,18 @@ mod tests {
         assert!(validated_endpoint("http://user@localhost:11434")
             .await
             .is_err());
+    }
+
+    #[test]
+    fn describes_ollama_embedding_bad_requests() {
+        let message = ollama_request_error(
+            400,
+            "api/embed",
+            "nomic-embed-text:latest",
+            r#"{"error":"input length exceeds the context length"}"#,
+        );
+        assert!(message.contains("/api/embed (HTTP 400)"));
+        assert!(message.contains("input length exceeds the context length"));
+        assert!(message.contains("nomic-embed-text:latest"));
     }
 }

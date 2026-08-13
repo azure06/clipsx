@@ -56,8 +56,11 @@ const ClipboardListItemComponent = ({
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
-  const score = clip.similarityScore ?? 0
-  const hasScore = score > 0
+  const hasScore = (clip.similarityScore ?? 0) > 0
+  const isMeaningOnly = Boolean(
+    clip.searchMatches?.some(match => match.sourceId === 'builtin.search.semantic_text') &&
+    !clip.searchMatches?.some(match => match.sourceId === 'builtin.search.fts')
+  )
   const ocrActive = clip.ocrStatus === 'pending' || clip.ocrStatus === 'running'
   const hasAttributes =
     isPinned ||
@@ -65,6 +68,7 @@ const ClipboardListItemComponent = ({
     tags.length > 0 ||
     Boolean(clip.note) ||
     hasScore ||
+    isMeaningOnly ||
     Boolean(clip.hasEmbedding) ||
     ocrActive
 
@@ -174,10 +178,10 @@ const ClipboardListItemComponent = ({
                   aria-label="Embedded"
                 />
               )}
-              {hasScore && (
+              {isMeaningOnly && (
                 <span className="flex items-center gap-0.5 rounded-full border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-pink-500 dark:border-pink-500/30 dark:text-pink-400">
                   <Sparkles className="h-2 w-2" strokeWidth={2.5} />
-                  {Math.round(score * 100)}%
+                  {t('search.meaningMatch')}
                 </span>
               )}
             </div>

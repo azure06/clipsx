@@ -141,6 +141,32 @@ describe('ClipboardListItem', () => {
     expect(listItem).toHaveClass('gap-3') // spacing is maintained
   })
 
+  it('labels only semantic-only search results as meaning matches', () => {
+    const { rerender } = render(
+      <ClipboardListItem
+        clip={createTextClip({
+          searchMatches: [{ sourceId: 'builtin.search.semantic_text', sourceRank: 1 }],
+        })}
+        onCopy={vi.fn()}
+        onSelect={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Meaning match')).toBeInTheDocument()
+    rerender(
+      <ClipboardListItem
+        clip={createTextClip({
+          searchMatches: [
+            { sourceId: 'builtin.search.fts', sourceRank: 1 },
+            { sourceId: 'builtin.search.semantic_text', sourceRank: 2 },
+          ],
+        })}
+        onCopy={vi.fn()}
+        onSelect={vi.fn()}
+      />
+    )
+    expect(screen.queryByText('Meaning match')).not.toBeInTheDocument()
+  })
+
   it('renders a cached compact swatch without invoking extension code', () => {
     const clip = createTextClip({
       compactPresentation: {

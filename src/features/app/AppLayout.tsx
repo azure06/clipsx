@@ -16,7 +16,7 @@ import { Plugins } from '../settings/Plugins'
 import { IntelligencePage } from '../intelligence/IntelligencePage'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { TextEmbeddingStatus } from '../../shared/types/v2'
+import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 
 export const AppLayout = () => {
@@ -30,16 +30,19 @@ export const AppLayout = () => {
     setPreviewClipId,
     resetSearch,
     isSemanticActive,
-    toggleSemantic,
+    setSemanticActive,
   } = useUIStore()
   const settings = useSettingsStore(state => state.settings)
   const clips = useClipboardStore(state => state.clips)
   const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
+  const refreshSearch = useClipboardStore(state => state.refreshSearch)
+  const searchSourceOutcomes = useClipboardStore(state => state.searchSourceOutcomes)
   const { setThemeMode } = useTheme()
   const initializeAuth = useAuthStore(state => state.initialize)
   const completeAuthCallback = useAuthStore(state => state.completeCallback)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
+  const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
@@ -154,8 +157,15 @@ export const AppLayout = () => {
   useEffect(() => {
     const loadTextSearchStatus = async () => {
       try {
-        const status = await invoke<TextEmbeddingStatus>('get_text_embedding_status')
+        const [status, sources] = await Promise.all([
+          invoke<TextEmbeddingStatus>('get_text_embedding_status'),
+          invoke<SearchSourceDescriptor[]>('list_search_sources'),
+        ])
         setTextSearchStatus(status)
+        setSearchSources(sources)
+        setSemanticActive(
+          sources.some(source => source.id === 'builtin.search.semantic_text' && source.enabled)
+        )
       } catch {
         setTextSearchStatus(null)
       }
@@ -170,12 +180,38 @@ export const AppLayout = () => {
     const unlistenTextSearchStatus = listen('embedding-space-changed', () => {
       void loadTextSearchStatus()
     })
+    const unlistenSourceStatus = listen('search-source-status-changed', () => {
+      void loadTextSearchStatus()
+    })
+    const unlistenIndexProgress = listen('search-index-progress', () => {
+      void loadTextSearchStatus()
+    })
 
     return () => {
       void unlistenCapabilities.then(fn => fn())
       void unlistenTextSearchStatus.then(fn => fn())
+      void unlistenSourceStatus.then(fn => fn())
+      void unlistenIndexProgress.then(fn => fn())
     }
-  }, [])
+  }, [setSemanticActive])
+
+  const handleToggleSource = useCallback(
+    async (sourceId: string) => {
+      if (sourceId === 'builtin.search.fts') return
+      const current = await invoke<{
+        syntaxMode: 'simple' | 'advanced'
+        enabledSourceIds: string[]
+      }>('get_search_settings')
+      const enabledSourceIds = current.enabledSourceIds.includes(sourceId)
+        ? current.enabledSourceIds.filter(id => id !== sourceId)
+        : [...current.enabledSourceIds, sourceId]
+      await invoke('update_search_settings', { settings: { ...current, enabledSourceIds } })
+      setSemanticActive(enabledSourceIds.includes('builtin.search.semantic_text'))
+      setSearchSources(await invoke<SearchSourceDescriptor[]>('list_search_sources'))
+      await refreshSearch()
+    },
+    [refreshSearch, setSemanticActive]
+  )
 
   // Event Listener for Tray "Settings" click
   useEffect(() => {
@@ -264,7 +300,9 @@ export const AppLayout = () => {
                     autoFocus={false}
                     semanticStatus={textSearchStatus}
                     isSemanticActive={isSemanticActive}
-                    onToggleSemantic={toggleSemantic}
+                    searchSources={searchSources}
+                    onToggleSource={sourceId => void handleToggleSource(sourceId)}
+                    sourceOutcomes={searchSourceOutcomes}
                   />
                 </div>
 

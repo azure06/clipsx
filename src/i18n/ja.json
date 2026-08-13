@@ -92,7 +92,17 @@
     "semanticOff": "テキスト検索 — クリックしてAIセマンティック検索に切り替え",
     "semanticIndexing": "既存のクリップをバックグラウンドで索引中も、セマンティック検索を利用できます。",
     "semanticFallback": "AI検索を利用できません。現在はテキスト検索を使用しています。",
-    "aiUnavailable": "AIを利用できません"
+    "aiUnavailable": "AIを利用できません",
+    "sources": "検索ソース",
+    "alwaysOn": "常にオン",
+    "meaningMatch": "意味で一致",
+    "sourceState": {
+      "ready": "使用可能",
+      "indexing": "バックグラウンドで索引中",
+      "degraded": "確認が必要",
+      "disabled": "プロバイダー無効",
+      "not_configured": "未設定"
+    }
   },
   "clipboard": {
     "all": "すべて",

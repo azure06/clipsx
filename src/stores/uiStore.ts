@@ -12,6 +12,7 @@ interface UIState {
   setPreviewClipId: (clipId: string | null) => void
   resetSearch: () => void
   toggleSemantic: () => void
+  setSemanticActive: (active: boolean) => void
 }
 
 export const useUIStore = create<UIState>(set => ({
@@ -25,4 +26,5 @@ export const useUIStore = create<UIState>(set => ({
   setPreviewClipId: previewClipId => set({ previewClipId }),
   resetSearch: () => set({ searchQuery: '', previewClipId: null }),
   toggleSemantic: () => set(state => ({ isSemanticActive: !state.isSemanticActive })),
+  setSemanticActive: isSemanticActive => set({ isSemanticActive }),
 }))

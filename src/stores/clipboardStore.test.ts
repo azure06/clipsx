@@ -276,7 +276,7 @@ describe('useClipboardStore filtered view stability', () => {
         tagId: null,
         limit: 50,
         cursor: null,
-        mode: 'hybrid',
+        enabledSourceIds: ['builtin.search.fts', 'builtin.search.semantic_text'],
       },
     })
   })

@@ -51,6 +51,7 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 url = "2.5.7"
 base64 = "0.22.1"
 async-trait = "0.1"
+futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 semver = "1.0"
 toml = "0.8"

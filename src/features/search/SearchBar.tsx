@@ -12,10 +12,16 @@ import {
   Briefcase,
   Star,
   Pin,
+  SlidersHorizontal,
+  Check,
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
-import type { TextEmbeddingStatus } from '../../shared/types/v2'
+import type {
+  SearchSourceDescriptor,
+  SearchSourceOutcome,
+  TextEmbeddingStatus,
+} from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 
 const FILTER_OPTIONS = [
@@ -94,6 +100,9 @@ interface SearchBarProps {
   semanticStatus?: TextEmbeddingStatus | null
   isSemanticActive?: boolean
   onToggleSemantic?: () => void
+  searchSources?: SearchSourceDescriptor[]
+  onToggleSource?: (sourceId: string) => void
+  sourceOutcomes?: SearchSourceOutcome[]
 }
 
 export interface SearchBarHandle {
@@ -112,6 +121,9 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     semanticStatus = null,
     isSemanticActive = false,
     onToggleSemantic,
+    searchSources = [],
+    onToggleSource,
+    sourceOutcomes = [],
   },
   ref
 ) {
@@ -119,6 +131,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const inputRef = useRef<HTMLInputElement>(null)
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [selectedFilterIndex, setSelectedFilterIndex] = useState(0)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const lastAppliedScopeValueRef = useRef<string | null>(null)
   const isSemanticIndexing = Boolean(
     semanticStatus?.pendingSpaceId || (semanticStatus?.pendingJobs ?? 0) > 0
@@ -126,11 +139,16 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const isSemanticAvailable = Boolean(
     semanticStatus?.enabled && (semanticStatus.activeSpaceId || semanticStatus.pendingSpaceId)
   )
-  const semanticHint = isSemanticIndexing
-    ? t('search.semanticIndexing')
-    : semanticStatus && (!isSemanticAvailable || semanticStatus.diagnostic)
-      ? t('search.semanticFallback')
-      : null
+  const queryFallback = sourceOutcomes.some(
+    outcome => outcome.sourceId !== 'builtin.search.fts' && outcome.status !== 'used'
+  )
+  const semanticHint = queryFallback
+    ? t('search.semanticFallback')
+    : isSemanticIndexing
+      ? t('search.semanticIndexing')
+      : semanticStatus && (!isSemanticAvailable || semanticStatus.diagnostic)
+        ? t('search.semanticFallback')
+        : null
 
   useEffect(() => {
     if (autoFocus) {
@@ -307,22 +325,57 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
         {/* Right Actions */}
         <div className="pr-4 flex items-center gap-2">
-          {/* Semantic Toggle */}
-          {isSemanticAvailable && (
+          {/* Search sources */}
+          {searchSources.length > 0 ? (
+            <div className="relative">
+              <button
+                onClick={() => setSourcesOpen(value => !value)}
+                className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-all ${isSemanticActive ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400' : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                aria-expanded={sourcesOpen}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {t('search.sources')}
+              </button>
+              {sourcesOpen && (
+                <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-slate-900">
+                  {searchSources.map(source => (
+                    <button
+                      key={source.id}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-slate-100 disabled:cursor-default dark:hover:bg-white/5"
+                      disabled={source.mandatory}
+                      onClick={() => onToggleSource?.(source.id)}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-4 w-4 items-center justify-center rounded border ${source.enabled ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
+                      >
+                        {source.enabled && <Check className="h-3 w-3" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">
+                          {source.label}
+                        </span>
+                        <span className="block text-[10px] text-gray-500">
+                          {source.mandatory
+                            ? t('search.alwaysOn')
+                            : t(`search.sourceState.${source.state}`)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : isSemanticAvailable ? (
             <button
               onClick={onToggleSemantic}
-              className={`p-1.5 rounded-md transition-all duration-200 ${
-                isSemanticActive
-                  ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 shadow-sm shadow-indigo-500/10'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-black/5 dark:hover:bg-slate-100/5'
-              }`}
+              className="p-1.5 rounded-md text-indigo-500"
               title={isSemanticActive ? t('search.semanticOn') : t('search.semanticOff')}
             >
               <Sparkles className="w-4 h-4" />
             </button>
-          )}
+          ) : null}
 
-          {!isSemanticAvailable && semanticStatus && (
+          {!isSemanticAvailable && semanticStatus && searchSources.length === 0 && (
             <div
               className="hidden sm:flex items-center gap-1 rounded-md border border-amber-200/70 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
               title={t('search.semanticFallback')}

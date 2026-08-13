@@ -18,15 +18,23 @@ import {
   Unplug,
   Wand2,
 } from 'lucide-react'
-import type { TextEmbeddingStatus } from '../../shared/types/v2'
+import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
 
 type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
 type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
+type SearchSettings = { syntaxMode: 'simple' | 'advanced'; enabledSourceIds: string[] }
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+const explainOllamaDiagnostic = (diagnostic: string): string => {
+  if (diagnostic === 'Ollama returned 400 Bad Request') {
+    return 'Ollama rejected a previous embedding request. Retry now; if it happens again, ClipsX will show Ollama’s specific reason. It is often an outdated Ollama version, a model that cannot create embeddings, or text that exceeds the model context.'
+  }
+  return diagnostic
 }
 
 export const IntelligencePage = () => {
@@ -44,17 +52,27 @@ export const IntelligencePage = () => {
   const [indexingMissing, setIndexingMissing] = useState(false)
   const [clearingIndex, setClearingIndex] = useState(false)
   const [configExpanded, setConfigExpanded] = useState(false)
+  const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
+  const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
 
-  const isConnected = Boolean(status?.enabled && status.activeSpaceId)
+  const isConfigured = Boolean(
+    status?.endpoint && status?.model && status.phase !== 'not_configured'
+  )
 
   const loadStatus = useCallback(async () => {
     try {
-      const s = await invoke<TextEmbeddingStatus>('get_text_embedding_status')
+      const [s, sources, settings] = await Promise.all([
+        invoke<TextEmbeddingStatus>('get_text_embedding_status'),
+        invoke<SearchSourceDescriptor[]>('list_search_sources'),
+        invoke<SearchSettings>('get_search_settings'),
+      ])
       setStatus(s)
+      setSearchSources(sources)
+      setSearchSettings(settings)
       if (s.endpoint) setEndpoint(s.endpoint)
       if (s.model) setSelectedModel(s.model)
       // Auto-expand config form when not yet configured
-      if (!s.enabled) setConfigExpanded(true)
+      if (!s.endpoint) setConfigExpanded(true)
     } catch {
       /* silent */
     } finally {
@@ -70,10 +88,14 @@ export const IntelligencePage = () => {
     const u1 = listen('embedding-provider-status-changed', () => void loadStatus())
     const u2 = listen('embedding-space-changed', () => void loadStatus())
     const u3 = listen('embedding-index-progress', () => void loadStatus())
+    const u4 = listen('search-source-status-changed', () => void loadStatus())
+    const u5 = listen('search-index-progress', () => void loadStatus())
     return () => {
       void u1.then(f => f())
       void u2.then(f => f())
       void u3.then(f => f())
+      void u4.then(f => f())
+      void u5.then(f => f())
     }
   }, [loadStatus])
 
@@ -114,7 +136,11 @@ export const IntelligencePage = () => {
     setConnecting(true)
     setConfigError(null)
     try {
-      await invoke('configure_text_embedding_provider', { endpoint, model: selectedModel })
+      const next = await invoke<TextEmbeddingStatus>('configure_text_embedding_provider', {
+        endpoint,
+        model: selectedModel,
+      })
+      setStatus(next)
       setConfigExpanded(false)
     } catch (e) {
       setConfigError(e instanceof Error ? e.message : String(e))
@@ -156,6 +182,7 @@ export const IntelligencePage = () => {
 
   const handleClearIndex = async () => {
     if (!status?.activeSpaceId) return
+    if (!window.confirm('Clear the current meaning-search index? It can be rebuilt later.')) return
     setClearingIndex(true)
     try {
       await invoke('clear_text_embedding_space', { spaceId: status.activeSpaceId })
@@ -167,12 +194,31 @@ export const IntelligencePage = () => {
     }
   }
 
+  const handleRetry = async () => {
+    await invoke('retry_text_embedding_provider')
+    await loadStatus()
+  }
+
+  const updateSearchSettings = async (next: SearchSettings) => {
+    setSearchSettings(next)
+    await invoke('update_search_settings', { settings: next })
+    await loadStatus()
+  }
+
+  const toggleSource = async (sourceId: string) => {
+    if (!searchSettings || sourceId === 'builtin.search.fts') return
+    const enabledSourceIds = searchSettings.enabledSourceIds.includes(sourceId)
+      ? searchSettings.enabledSourceIds.filter(id => id !== sourceId)
+      : [...searchSettings.enabledSourceIds, sourceId]
+    await updateSearchSettings({ ...searchSettings, enabledSourceIds })
+  }
+
   const canConnect = Boolean(selectedModel && endpoint.trim())
   const showModelSelector = probeResult?.reachable || Boolean(status?.model)
 
   // Progress bar math
-  const indexing = isConnected && (status?.pendingJobs ?? 0) > 0
-  const total = (status?.indexedClips ?? 0) + (status?.pendingJobs ?? 0)
+  const indexing = status?.phase === 'indexing'
+  const total = status?.totalClips ?? 0
   const progressPct = total > 0 ? Math.round((status!.indexedClips / total) * 100) : 100
 
   return (
@@ -202,19 +248,22 @@ export const IntelligencePage = () => {
             {loadingStatus && (
               <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-gray-400" />
             )}
-            {!loadingStatus && isConnected && (
-              <span className="ml-auto flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="h-3 w-3" />
-                active
+            {!loadingStatus && status && (
+              <span
+                className={`ml-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${status.phase === 'ready' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : status.phase === 'degraded' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-violet-500/15 text-violet-600 dark:text-violet-400'}`}
+              >
+                {status.phase === 'ready' ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <Circle className="h-3 w-3" />
+                )}
+                {status.phase.replaceAll('_', ' ')}
               </span>
-            )}
-            {!loadingStatus && !isConnected && (
-              <Circle className="ml-auto h-3.5 w-3.5 text-gray-400" />
             )}
           </div>
 
           {/* Index stats + progress bar */}
-          {isConnected && status && (
+          {isConfigured && status && (
             <div className="space-y-3 rounded-xl border border-slate-200/60 bg-slate-100/30 p-4 dark:border-white/5 dark:bg-slate-100/5">
               {/* Progress bar */}
               <div className="space-y-1.5">
@@ -244,16 +293,22 @@ export const IntelligencePage = () => {
               </div>
 
               {status.diagnostic && (
-                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-                  {status.diagnostic}
-                </p>
+                <div className="flex items-start justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+                  <span>
+                    <span className="font-semibold">Meaning Search needs attention. </span>
+                    {explainOllamaDiagnostic(status.diagnostic)}
+                  </span>
+                  <button className="font-semibold underline" onClick={() => void handleRetry()}>
+                    Retry
+                  </button>
+                </div>
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
                   disabled={reindexing}
-                  onClick={handleReindex}
+                  onClick={() => void handleReindex()}
                 >
                   {reindexing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -265,7 +320,7 @@ export const IntelligencePage = () => {
                 <button
                   className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
                   disabled={indexingMissing}
-                  onClick={handleIndexMissing}
+                  onClick={() => void handleIndexMissing()}
                 >
                   {indexingMissing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -277,7 +332,7 @@ export const IntelligencePage = () => {
                 <button
                   className="flex items-center gap-1.5 rounded-lg border border-red-200/70 px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-500/20 dark:text-red-400 dark:hover:bg-red-500/10"
                   disabled={clearingIndex}
-                  onClick={handleClearIndex}
+                  onClick={() => void handleClearIndex()}
                 >
                   {clearingIndex ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -291,7 +346,7 @@ export const IntelligencePage = () => {
           )}
 
           {/* Config toggle — show summary when configured, expand on demand */}
-          {isConnected && (
+          {isConfigured && (
             <button
               className="flex w-full items-center gap-1.5 text-[11px] text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300"
               onClick={() => setConfigExpanded(v => !v)}
@@ -308,7 +363,7 @@ export const IntelligencePage = () => {
           )}
 
           {/* Ollama config form — always shown when not connected, toggled when connected */}
-          {(!isConnected || configExpanded) && (
+          {(!isConfigured || configExpanded) && (
             <div className="space-y-3">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 Ollama Endpoint
@@ -329,7 +384,7 @@ export const IntelligencePage = () => {
                 <button
                   className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
                   disabled={probing || !endpoint.trim()}
-                  onClick={handleProbe}
+                  onClick={() => void handleProbe()}
                 >
                   {probing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {probing ? 'Testing…' : 'Test'}
@@ -393,19 +448,25 @@ export const IntelligencePage = () => {
                     <button
                       className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-600 disabled:opacity-50"
                       disabled={!canConnect || connecting}
-                      onClick={handleConnect}
+                      onClick={() => void handleConnect()}
                     >
                       {connecting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <PlugZap className="h-3.5 w-3.5" />
                       )}
-                      {isConnected ? 'Update' : 'Connect'}
+                      {connecting
+                        ? 'Validating model…'
+                        : status?.phase === 'disabled'
+                          ? 'Enable'
+                          : isConfigured
+                            ? 'Update'
+                            : 'Connect'}
                     </button>
-                    {isConnected && (
+                    {isConfigured && status?.phase !== 'disabled' && (
                       <button
                         className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
-                        onClick={handleDisconnect}
+                        onClick={() => void handleDisconnect()}
                       >
                         <Unplug className="h-3.5 w-3.5" />
                         Disconnect
@@ -419,6 +480,72 @@ export const IntelligencePage = () => {
         </div>
 
         {/* Visual Image Search — coming soon */}
+        <div className="space-y-3 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Search sources
+            </h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Choose which independent searches contribute candidates. Indexing continues when a
+              source is off.
+            </p>
+          </div>
+          {searchSources.map(source => (
+            <div
+              key={source.id}
+              className="flex items-center justify-between gap-4 rounded-xl border border-slate-200/60 px-3 py-2 dark:border-white/10"
+            >
+              <div>
+                <p className="text-xs font-medium text-gray-800 dark:text-gray-200">
+                  {source.label}
+                </p>
+                <p className="text-[10px] text-gray-500">
+                  {source.mandatory ? 'Always on' : source.state.replaceAll('_', ' ')}
+                </p>
+              </div>
+              <button
+                className={`relative h-5 w-9 rounded-full transition-colors ${source.enabled ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'} ${source.mandatory ? 'cursor-not-allowed opacity-60' : ''}`}
+                disabled={source.mandatory}
+                aria-pressed={source.enabled}
+                onClick={() => void toggleSource(source.id)}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${source.enabled ? 'translate-x-4' : 'translate-x-0.5'}`}
+                />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-3 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                Advanced keyword queries
+              </h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Allow raw FTS5 syntax such as <code>car OR truck</code> and <code>title*</code>.
+                This only changes Keyword Search.
+              </p>
+            </div>
+            <button
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${searchSettings?.syntaxMode === 'advanced' ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'}`}
+              aria-pressed={searchSettings?.syntaxMode === 'advanced'}
+              onClick={() =>
+                searchSettings &&
+                void updateSearchSettings({
+                  ...searchSettings,
+                  syntaxMode: searchSettings.syntaxMode === 'advanced' ? 'simple' : 'advanced',
+                })
+              }
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${searchSettings?.syntaxMode === 'advanced' ? 'translate-x-4' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </div>
+        </div>
+
         <div className="rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 opacity-60 dark:border-white/10 dark:bg-slate-100/5">
           <div className="flex items-center gap-2">
             <ScanSearch className="h-4 w-4 text-sky-400" strokeWidth={1.5} />
