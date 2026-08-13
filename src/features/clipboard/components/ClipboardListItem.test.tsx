@@ -18,6 +18,17 @@ vi.mock('lucide-react', () => ({
   Command: () => <div data-testid="command-icon" />,
   CornerDownLeft: () => <div data-testid="corner-icon" />,
   ScanText: () => <div data-testid="scan-icon" />,
+  Braces: () => <div data-testid="braces-icon" />,
+  Code2: () => <div data-testid="code-icon" />,
+  Database: () => <div data-testid="database-icon" />,
+  File: () => <div data-testid="file-icon" />,
+  Globe: () => <div data-testid="globe-icon" />,
+  KeyRound: () => <div data-testid="key-icon" />,
+  Link: () => <div data-testid="link-icon" />,
+  Palette: () => <div data-testid="palette-icon" />,
+  Table2: () => <div data-testid="table-icon" />,
+  Terminal: () => <div data-testid="terminal-icon" />,
+  Text: () => <div data-testid="text-icon" />,
 }))
 
 // Mock ContentIcon
@@ -124,9 +135,29 @@ describe('ClipboardListItem', () => {
 
   it('should maintain list item layout with thumbnail', () => {
     const clip = createImageClip()
+    render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} index={0} />)
+
+    const listItem = screen.getByText(/Image:/).closest('[data-clip-index]')
+    expect(listItem).toHaveClass('gap-3') // spacing is maintained
+  })
+
+  it('renders a cached compact swatch without invoking extension code', () => {
+    const clip = createTextClip({
+      compactPresentation: {
+        leading: { kind: 'swatch', red: 255, green: 0, blue: 64, alpha: 255 },
+        title: '#FF0040',
+        subtitle: 'rgb(255, 0, 64)',
+        badge: 'HEX',
+        accessibilityLabel: 'Bright red color',
+      },
+    })
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
-    const listItem = screen.getByText(/Image:/).closest('div')
-    expect(listItem).toHaveClass('gap-3') // spacing is maintained
+    const swatch = screen.getByLabelText('Bright red color')
+    expect(swatch).toHaveStyle({ backgroundColor: 'rgba(255, 0, 64, 1)' })
+    expect(screen.getByText('#FF0040')).toBeInTheDocument()
+    expect(screen.getByText('rgb(255, 0, 64)')).toBeInTheDocument()
+    expect(screen.getByText('HEX')).toBeInTheDocument()
+    expect(screen.queryByTestId('content-icon')).not.toBeInTheDocument()
   })
 })

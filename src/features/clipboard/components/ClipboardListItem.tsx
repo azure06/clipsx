@@ -9,6 +9,18 @@ import {
   ScanText,
   Sparkles,
   Star,
+  Braces,
+  Code2,
+  Database,
+  File,
+  Globe,
+  KeyRound,
+  Link,
+  Palette,
+  Table2,
+  Terminal,
+  Text,
+  type LucideIcon,
 } from 'lucide-react'
 import { ContentIcon } from '../../content/icons'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
@@ -37,8 +49,9 @@ const ClipboardListItemComponent = ({
   const isMac = platform === 'macos'
   const [failedThumbnailId, setFailedThumbnailId] = useState<string | null>(null)
   const thumbnailFailed = failedThumbnailId === clip.thumbnailAssetId
-  const preview =
-    clip.safeSummary.length > 100 ? `${clip.safeSummary.slice(0, 100)}...` : clip.safeSummary
+  const compact = clip.compactPresentation
+  const summary = compact?.title ?? clip.safeSummary
+  const preview = summary.length > 100 ? `${summary.slice(0, 100)}...` : summary
 
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
@@ -84,7 +97,27 @@ const ClipboardListItemComponent = ({
 
         {/* Type icon or thumbnail */}
         <div className="shrink-0">
-          {clip.primaryPresentationKind === 'image' && clip.thumbnailAssetId && !thumbnailFailed ? (
+          {compact?.leading.kind === 'swatch' ? (
+            <div
+              aria-label={compact.accessibilityLabel}
+              className="h-6 w-6 rounded-full border border-black/15 shadow-sm dark:border-white/25"
+              style={{
+                backgroundColor: `rgba(${compact.leading.red}, ${compact.leading.green}, ${compact.leading.blue}, ${compact.leading.alpha / 255})`,
+              }}
+            />
+          ) : compact?.leading.kind === 'monogram' ? (
+            <div
+              aria-label={compact.accessibilityLabel}
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold dark:bg-slate-700"
+            >
+              {compact.leading.text}
+            </div>
+          ) : compact?.leading.kind === 'host_icon' ? (
+            <HostIcon name={compact.leading.name} label={compact.accessibilityLabel} />
+          ) : (compact?.leading.kind === 'input_thumbnail' ||
+              (!compact && clip.primaryPresentationKind === 'image')) &&
+            clip.thumbnailAssetId &&
+            !thumbnailFailed ? (
             <img
               src={managedAssetUrl(clip.thumbnailAssetId, platform)}
               alt={t('clipboard.thumbnail')}
@@ -101,15 +134,25 @@ const ClipboardListItemComponent = ({
         {/* Main content area - Horizontal Flow */}
         <div className="flex-1 min-w-0 flex items-center gap-3">
           {/* Preview text - Strictly 1 line */}
-          <span
-            className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
-          >
-            {preview}
-          </span>
+          <div className="min-w-0">
+            <div
+              className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
+            >
+              {preview}
+            </div>
+            {compact?.subtitle && (
+              <div className="truncate text-[10px] text-gray-400">{compact.subtitle}</div>
+            )}
+          </div>
         </div>
 
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
         <div className="flex items-center gap-2 shrink-0 ml-auto pl-2">
+          {compact?.badge && (
+            <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] text-gray-500 dark:bg-white/10">
+              {compact.badge}
+            </span>
+          )}
           {/* Attributes - Right Aligned */}
           {hasAttributes && (
             <div className="flex items-center gap-1.5 shrink-0 opacity-70">
@@ -174,3 +217,23 @@ const ClipboardListItemComponent = ({
   )
 } // Memoize the component to prevent re-renders when other items change
 export const ClipboardListItem = memo(ClipboardListItemComponent)
+
+const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
+  braces: Braces,
+  code: Code2,
+  database: Database,
+  file: File,
+  globe: Globe,
+  hash: Hash,
+  key: KeyRound,
+  link: Link,
+  palette: Palette,
+  table: Table2,
+  terminal: Terminal,
+  text: Text,
+}
+
+const HostIcon = ({ name, label }: { name: string; label: string }) => {
+  const Icon = HOST_ICON_CATALOG[name] ?? File
+  return <Icon aria-label={label} className="h-5 w-5 text-gray-500" />
+}

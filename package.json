@@ -20,6 +20,8 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx",
+    "extension:pack": "cargo run --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool -- pack",
+    "extension:validate": "cargo run --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool -- validate",
     "test:all": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
     "lint:rust:fix": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features --fix --allow-dirty -- -D warnings",

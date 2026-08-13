@@ -32,6 +32,7 @@ export type ClipSummary = {
   thumbnailAssetId: string | null
   hasEmbedding?: boolean
   ocrStatus?: string | null
+  compactPresentation?: CompactPresentation | null
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */
   similarityScore?: number
 }
@@ -78,9 +79,12 @@ export type ClipViewDescriptor = {
   label: string
   sourceId: string
   mimeType: string | null
+  capabilityId: string
   facetId: string | null
   isOriginal: boolean
   presentationKind: string
+  purpose: 'faithful' | 'structured' | 'semantic' | 'source' | 'diagnostic'
+  matchSpecificity: number
   placement: 'primary' | 'alternate' | 'advanced'
 }
 
@@ -107,6 +111,13 @@ export type RenderModel =
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'tree'; value: unknown }
   | { kind: 'key_value'; entries: [string, string][] }
+  | {
+      kind: 'card'
+      leading: LeadingVisual
+      title: string
+      subtitle: string | null
+      fields: [string, string][]
+    }
   | { kind: 'image'; assetId: string; ocr: OcrPresentation }
   | { kind: 'html'; sanitizedHtml: string }
   | { kind: 'rich_text'; sanitizedHtml: string | null; plainText: string }
@@ -122,6 +133,21 @@ export type RenderModel =
       byteLength: number
     }
   | { kind: 'error'; message: string }
+
+export type LeadingVisual =
+  | { kind: 'none' }
+  | { kind: 'host_icon'; name: string }
+  | { kind: 'swatch'; red: number; green: number; blue: number; alpha: number }
+  | { kind: 'input_thumbnail' }
+  | { kind: 'monogram'; text: string }
+
+export type CompactPresentation = {
+  leading: LeadingVisual
+  title: string | null
+  subtitle: string | null
+  badge: string | null
+  accessibilityLabel: string
+}
 
 export type OcrPresentation =
   | { state: 'disabled' }

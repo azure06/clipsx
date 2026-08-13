@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import type { TextEmbeddingStatus } from '../../shared/types/v2'
 import { Button } from '../../shared/components/ui/Button'
 import { Switch } from '../../shared/components/ui/Switch'
+import { ShortcutRecorder } from './Settings'
 import {
   ArrowRight,
   Box,
@@ -33,6 +34,9 @@ type Extension = {
   displayName: string
   description: string
   source: 'registry' | 'developer'
+  httpOrigins: string[]
+  credentialLabels: string[]
+  unavailableContributions: string[]
 }
 type RegistryPackage = {
   packageId: string
@@ -42,6 +46,15 @@ type RegistryPackage = {
   contributions: string[]
 }
 type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }
+type ExtensionAction = {
+  id: string
+  packageId: string
+  label: string
+  shortcut: string | null
+  available: boolean
+  unavailableReason: string | null
+  execution: 'local' | 'capability_backed'
+}
 
 const KIND_META: Record<string, { icon: React.ReactNode; color: string; description: string }> = {
   Detector: {
@@ -88,6 +101,7 @@ const CollapsibleSection = ({
 export const Plugins = () => {
   const [utilities, setUtilities] = useState<CoreUtility[]>([])
   const [extensions, setExtensions] = useState<Extension[]>([])
+  const [extensionActions, setExtensionActions] = useState<ExtensionAction[]>([])
   const [provider, setProvider] = useState<TextEmbeddingStatus | null>(null)
   const [registry, setRegistry] = useState<RegistryPackage[]>([])
   const [devMode, setDevMode] = useState(false)
@@ -101,9 +115,10 @@ export const Plugins = () => {
     setBusy(true)
     setError(null)
     try {
-      const [core, installed, status, available, isDev] = await Promise.all([
+      const [core, installed, actions, status, available, isDev] = await Promise.all([
         invoke<CoreUtility[]>('list_core_utilities'),
         invoke<Extension[]>('list_extensions'),
+        invoke<ExtensionAction[]>('list_extension_actions'),
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<RegistryIndex>('get_extension_registry').catch(() => ({
           schemaVersion: 1,
@@ -113,6 +128,7 @@ export const Plugins = () => {
       ])
       setUtilities(core)
       setExtensions(installed)
+      setExtensionActions(actions)
       setProvider(status)
       setRegistry(available.packages)
       setDevMode(isDev)
@@ -147,19 +163,48 @@ export const Plugins = () => {
 
   const handleInstallLocal = async () => {
     const path = await open({
-      title: 'Select WASM Package',
-      filters: [{ name: 'WASM Package', extensions: ['wasm'] }],
+      title: 'Select ClipsX Extension Package',
+      filters: [{ name: 'ClipsX Extension', extensions: ['clipsx'] }],
       multiple: false,
     })
     if (!path || typeof path !== 'string') return
     setInstalling(true)
     setError(null)
     try {
+      const preview = await invoke<Extension>('inspect_local_extension', { path })
+      const disclosures = [
+        `${preview.displayName} v${preview.version}`,
+        preview.httpOrigins.length > 0
+          ? `Future HTTP origins: ${preview.httpOrigins.join(', ')}`
+          : 'No network origins declared.',
+        preview.credentialLabels.length > 0
+          ? `Credential slots: ${preview.credentialLabels.join(', ')}`
+          : 'No credential slots declared.',
+        preview.unavailableContributions.length > 0
+          ? `Unavailable until the capability broker ships: ${preview.unavailableContributions.join(', ')}`
+          : '',
+        '',
+        'Install this extension?',
+      ].filter(Boolean)
+      if (!window.confirm(disclosures.join('\n'))) return
       await invoke('install_local_extension', { path })
     } catch (value) {
       setError(String(value))
     } finally {
       setInstalling(false)
+    }
+  }
+
+  const setActionShortcut = async (actionId: string, accelerator: string | null) => {
+    setBusyId(actionId)
+    setError(null)
+    try {
+      await invoke('set_extension_action_shortcut', { actionId, accelerator })
+      await load()
+    } catch (value) {
+      setError(String(value))
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -270,11 +315,15 @@ export const Plugins = () => {
               <div>
                 <div className="text-sm font-semibold">Developer mode</div>
                 <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  Install local .wasm packages without registry verification.
+                  Install local .clipsx packages without registry verification.
                 </div>
               </div>
             </div>
-            <Switch checked={devMode} onChange={handleDevModeToggle} size="sm" />
+            <Switch
+              checked={devMode}
+              onChange={enabled => void handleDevModeToggle(enabled)}
+              size="sm"
+            />
           </div>
           {devMode && (
             <div className="mt-3 border-t border-slate-200/60 pt-3 dark:border-white/10">
@@ -283,7 +332,7 @@ export const Plugins = () => {
                 size="sm"
                 isLoading={installing}
                 leftIcon={<FolderOpen className="h-3.5 w-3.5" />}
-                onClick={handleInstallLocal}
+                onClick={() => void handleInstallLocal()}
               >
                 Install local package…
               </Button>
@@ -351,7 +400,7 @@ export const Plugins = () => {
             <p className="rounded-lg border border-dashed border-slate-200 p-4 text-xs text-gray-500 dark:border-white/10">
               No extensions installed.{' '}
               {devMode
-                ? 'Use "Install local package…" above to load a .wasm file.'
+                ? 'Use "Install local package…" above to load a .clipsx package.'
                 : 'Browse the reviewed registry below, or enable Developer mode to install local packages.'}
             </p>
           ) : (
@@ -385,6 +434,22 @@ export const Plugins = () => {
                       v{extension.version}
                       {extension.description ? ` · ${extension.description}` : ''}
                     </div>
+                    {(extension.httpOrigins ?? []).length > 0 && (
+                      <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                        Declares future HTTP access: {extension.httpOrigins.join(', ')}
+                      </div>
+                    )}
+                    {(extension.credentialLabels ?? []).length > 0 && (
+                      <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                        Credential slots: {extension.credentialLabels.join(', ')}
+                      </div>
+                    )}
+                    {(extension.unavailableContributions ?? []).length > 0 && (
+                      <div className="text-[10px] text-gray-400">
+                        Unavailable until the capability broker ships:{' '}
+                        {extension.unavailableContributions.join(', ')}
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {extension.status === 'quarantined' && (
@@ -424,6 +489,45 @@ export const Plugins = () => {
             </div>
           )}
         </CollapsibleSection>
+
+        {extensionActions.length > 0 && (
+          <CollapsibleSection title="Extension action shortcuts">
+            <div className="space-y-2">
+              {extensionActions.map(action => (
+                <div
+                  key={action.id}
+                  className="flex items-center gap-3 rounded-lg border border-slate-200/70 px-3 py-2 dark:border-white/10"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{action.label}</div>
+                    <div className="truncate text-[10px] text-gray-500">
+                      {action.packageId}
+                      {action.unavailableReason ? ` · ${action.unavailableReason}` : ''}
+                    </div>
+                  </div>
+                  {action.available && (
+                    <>
+                      <ShortcutRecorder
+                        value={action.shortcut ?? ''}
+                        onChange={shortcut => void setActionShortcut(action.id, shortcut)}
+                      />
+                      {action.shortcut && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busyId === action.id}
+                          onClick={() => void setActionShortcut(action.id, null)}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CollapsibleSection>
+        )}
 
         {/* Registry */}
         {availableInRegistry.length > 0 && (

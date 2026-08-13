@@ -44,6 +44,11 @@ npm run build
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
+cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
+cargo build --manifest-path examples/extensions/color-tools/Cargo.toml --target wasm32-wasip2 --release
+cp examples/extensions/color-tools/target/wasm32-wasip2/release/clipsx_color_tools.wasm examples/extensions/color-tools/component.wasm
+npm run extension:pack -- examples/extensions/color-tools color-tools.clipsx
+npm run extension:validate -- color-tools.clipsx
 ```
 
 The revision must also pass command-registration drift, schema/reset,
@@ -179,7 +184,15 @@ Wayland is not covered by this matrix.
   and retry states.
 - Settings restart behavior, import/export, autostart, periodic auto-clear, and
   explicit-quit clear-on-exit.
-- Extension install/use/failure/quarantine/recovery/uninstall.
+- Extension API v1 rejection; v2 manifest/matcher/purpose/surface/action/permission validation.
+- Developer installation selects `.clipsx`, discloses declared permissions, and
+  covers install/use/disable/failure/quarantine/recovery/uninstall.
+- Cached compact presentation survives restart and history scrolling invokes no
+  WASM; malformed output falls back to the core row.
+- Color Tools detail/compact swatch, HEX/RGB/HSL transforms, contextual Copy
+  actions, selected-clip shortcut targeting, conflict handling, and cleanup.
+- Capability-backed contributions are visibly unavailable and local
+  contributions in the same package continue to work.
 - A renderer, transformer, provider, extension, or OCR failure leaves canonical
   representations usable.
 - Accessibility and keyboard-only operation for history, previews, actions,

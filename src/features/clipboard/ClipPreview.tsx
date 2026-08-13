@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScanText } from 'lucide-react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { presentationTextStats } from './presentationModel'
@@ -134,6 +135,32 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
                 </button>
               )
             })}
+            {visibleTabs.preferenceScopes.length > 0 && !visibleTabs.activeId.startsWith('__') && (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="ml-auto shrink-0 rounded-md px-2 py-1 text-[10px] text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10">
+                    Use by default…
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="end"
+                    sideOffset={4}
+                    className="z-50 min-w-44 rounded-lg border border-slate-200 bg-white p-1 text-xs shadow-lg dark:border-white/10 dark:bg-slate-900"
+                  >
+                    {visibleTabs.preferenceScopes.map(scope => (
+                      <DropdownMenu.Item
+                        key={scope}
+                        className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-slate-100 dark:hover:bg-white/10"
+                        onSelect={() => void visibleTabs.onPreferActive(scope)}
+                      >
+                        Always for this {scope}
+                      </DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            )}
           </div>
         )}
       </div>

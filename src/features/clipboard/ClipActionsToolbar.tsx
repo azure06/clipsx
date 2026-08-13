@@ -15,7 +15,7 @@ import {
   Sparkles,
   type LucideIcon,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
@@ -83,6 +83,20 @@ export const ClipActionsToolbar = ({
   const { toast } = useToast()
   const { t } = useTranslation()
   const performCopy = useClipboardStore(state => state.performCopy)
+  useEffect(() => {
+    const onNotification = (event: Event) => {
+      const detail = (event as CustomEvent<{ level: string; message: string }>).detail
+      if (detail) {
+        toast({
+          title: 'Extension action',
+          description: detail.message,
+          type: detail.level === 'error' ? 'error' : 'success',
+        })
+      }
+    }
+    window.addEventListener('clipsx-extension-action-notification', onNotification)
+    return () => window.removeEventListener('clipsx-extension-action-notification', onNotification)
+  }, [toast])
   const actions = useMemo<ToolbarAction[]>(() => {
     const values: ToolbarAction[] = [
       {
@@ -193,9 +207,10 @@ export const ClipActionsToolbar = ({
             <ActionButton action={action} key={action.id} />
           </>
         ))}
-        {transformControls && transformControls.items.length > 0 && (
-          <TransformDropdown controls={transformControls} />
-        )}
+        {transformControls &&
+          (transformControls.items.length > 0 || transformControls.actions.length > 0) && (
+            <TransformDropdown controls={transformControls} />
+          )}
       </div>
     </Tooltip.Provider>
   )
@@ -263,6 +278,23 @@ const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
               onSelect={() => void controls.run(item.id)}
             >
               {item.label}
+            </DropdownMenu.Item>
+          ))}
+          {controls.items.length > 0 && controls.actions.length > 0 && (
+            <DropdownMenu.Separator className="my-1 h-px bg-slate-200 dark:bg-white/10" />
+          )}
+          {controls.actions.map(action => (
+            <DropdownMenu.Item
+              key={action.id}
+              disabled={!action.available}
+              title={action.unavailableReason ?? undefined}
+              className="flex cursor-pointer select-none items-center justify-between gap-4 px-3 py-1.5 text-sm text-gray-700 outline-none hover:bg-slate-100 data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-gray-300 dark:hover:bg-white/10"
+              onSelect={() => void controls.runAction(action.id)}
+            >
+              <span>{action.label}</span>
+              {action.shortcut && (
+                <span className="text-[10px] text-gray-400">{action.shortcut}</span>
+              )}
             </DropdownMenu.Item>
           ))}
         </DropdownMenu.Content>

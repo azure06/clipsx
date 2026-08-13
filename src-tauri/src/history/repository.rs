@@ -282,6 +282,7 @@ impl HistoryRepository {
     async fn summary_from_row(&self, row: sqlx::sqlite::SqliteRow) -> Result<ClipSummary> {
         let id: String = row.get(0);
         let tags = self.tags_for(&id).await?;
+        let compact_presentation = self.compact_presentation(&id).await?;
         Ok(ClipSummary {
             id,
             source_app_name: row.get(1),
@@ -297,8 +298,26 @@ impl HistoryRepository {
             thumbnail_asset_id: row.get(11),
             has_embedding: row.get::<i64, _>(12) != 0,
             ocr_status: row.get(13),
+            compact_presentation,
             tags,
         })
+    }
+
+    pub async fn compact_presentation(
+        &self,
+        clip_id: &str,
+    ) -> Result<Option<crate::contracts::CompactPresentation>> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT model_json FROM content_compact_presentations WHERE clip_id=? ORDER BY updated_at DESC,renderer_id LIMIT 1",
+        )
+        .bind(clip_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        value
+            .map(|json| {
+                serde_json::from_str(&json).context("stored compact presentation is invalid")
+            })
+            .transpose()
     }
     async fn tags_for(&self, clip_id: &str) -> Result<Vec<Tag>> {
         let rows=sqlx::query("SELECT t.id,t.name,t.color FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name").bind(clip_id).fetch_all(&self.pool).await?;
@@ -626,7 +645,8 @@ impl HistoryRepository {
                 serde_json::to_string(&s.max_snapshot_bytes)?,
             ),
         ] {
-            sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(k).bind(v).bind(now_ms()).execute(&self.pool).await?;
+            let now = now_ms();
+            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(k).bind(v).bind(now).bind(now).execute(&self.pool).await?;
         }
         self.enforce_retention(s).await
     }
@@ -734,8 +754,9 @@ impl HistoryRepository {
                 serde_json::to_string(&settings.auto_start)?,
             ),
         ] {
-            sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
-                .bind(key).bind(value).bind(now_ms()).execute(&self.pool).await?;
+            let now = now_ms();
+            sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+                .bind(key).bind(value).bind(now).bind(now).execute(&self.pool).await?;
         }
         for (key, value) in [
             (
@@ -751,8 +772,9 @@ impl HistoryRepository {
                 serde_json::to_string(&settings.global_shortcut)?,
             ),
         ] {
-            sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
-                .bind(key).bind(value).bind(now_ms()).execute(&self.pool).await?;
+            let now = now_ms();
+            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+                .bind(key).bind(value).bind(now).bind(now).execute(&self.pool).await?;
         }
         Ok(())
     }

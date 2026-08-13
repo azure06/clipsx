@@ -1,36 +1,45 @@
-package clipsx:extension@1.0.0;
+package clipsx:extension@2.0.0;
 
 interface types {
   enum guest-error-code { unsupported, invalid-input, invalid-parameters, failed }
+  record guest-error { code: guest-error-code, message: string }
 
-  record guest-error {
-    code: guest-error-code,
-    message: string,
-  }
-
-  variant content {
-    text(string),
-    binary(list<u8>),
-    files(list<string>),
-  }
-
+  variant content { text(string), binary(list<u8>), files(list<string>) }
   record representation {
     format-key: string,
     mime-type: option<string>,
     storage-kind: string,
     content: content,
   }
+  record facet { id: string, payload-json: string }
 
-  record facet {
-    id: string,
-    payload-json: string,
+  record rgba { red: u8, green: u8, blue: u8, alpha: u8 }
+  variant leading-visual {
+    none,
+    host-icon(string),
+    swatch(rgba),
+    input-thumbnail,
+    monogram(string),
+  }
+  record card-field { label: string, value: string }
+  record card-model {
+    leading: leading-visual,
+    title: string,
+    subtitle: option<string>,
+    fields: list<card-field>,
+  }
+  record compact-model {
+    leading: leading-visual,
+    title: option<string>,
+    subtitle: option<string>,
+    badge: option<string>,
+    accessibility-label: string,
   }
 
   record code-model { language: option<string>, text: string }
   record table-model { columns: list<string>, rows: list<list<string>> }
   record key-value-entry { key: string, value: string }
   record image-model { source: string }
-
   variant render-model {
     text(string),
     code(code-model),
@@ -39,25 +48,26 @@ interface types {
     tree(string),
     key-value(list<key-value-entry>),
     image(image-model),
+    card(card-model),
     error(string),
   }
 
-  record output-representation {
-    format-key: string,
-    mime-type: string,
-    content: output-content,
-  }
+  record output-representation { format-key: string, mime-type: string, content: output-content }
+  variant output-content { text(string), binary(list<u8>) }
 
-  variant output-content {
-    text(string),
-    binary(list<u8>),
+  enum action-disposition { preview, copy, paste, save-as-clip }
+  variant action-result {
+    output(tuple<list<output-representation>, action-disposition>),
+    open-https-url(string),
+    notification(tuple<string, string>),
   }
 }
 
 world extension {
-  use types.{representation, facet, render-model, output-representation, guest-error};
-
+  use types.{representation, facet, render-model, compact-model, output-representation, action-result, guest-error};
   export detect: func(contribution-id: string, input: representation) -> result<list<facet>, guest-error>;
-  export render: func(contribution-id: string, input: representation, facet: option<facet>) -> result<render-model, guest-error>;
+  export render-detail: func(contribution-id: string, input: representation, facet: option<facet>) -> result<render-model, guest-error>;
+  export render-compact: func(contribution-id: string, input: representation, facet: option<facet>) -> result<compact-model, guest-error>;
   export transform: func(contribution-id: string, input: representation, parameters-json: string) -> result<list<output-representation>, guest-error>;
+  export run-action: func(contribution-id: string, input: representation, facet: option<facet>, parameters-json: string) -> result<action-result, guest-error>;
 }

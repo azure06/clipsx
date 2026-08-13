@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::contracts::CompactPresentation;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureSettings {
@@ -129,6 +131,7 @@ pub struct ClipSummary {
     pub thumbnail_asset_id: Option<String>,
     pub has_embedding: bool,
     pub ocr_status: Option<String>,
+    pub compact_presentation: Option<CompactPresentation>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

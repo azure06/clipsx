@@ -76,7 +76,36 @@ pub enum ExtensionRenderModel {
     Tree(String),
     KeyValue(Vec<(String, String)>),
     Image,
+    Card {
+        leading: ExtensionLeadingVisual,
+        title: String,
+        subtitle: Option<String>,
+        fields: Vec<(String, String)>,
+    },
     Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExtensionLeadingVisual {
+    None,
+    HostIcon(String),
+    Swatch {
+        red: u8,
+        green: u8,
+        blue: u8,
+        alpha: u8,
+    },
+    InputThumbnail,
+    Monogram(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionCompactModel {
+    pub leading: ExtensionLeadingVisual,
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    pub badge: Option<String>,
+    pub accessibility_label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +113,19 @@ pub struct ExtensionOutputRepresentation {
     pub format_key: String,
     pub mime_type: String,
     pub content: ExtensionContent,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExtensionActionResult {
+    Output {
+        outputs: Vec<ExtensionOutputRepresentation>,
+        disposition: super::ActionDisposition,
+    },
+    OpenHttpsUrl(String),
+    Notification {
+        level: String,
+        message: String,
+    },
 }
 
 struct StoreData {
@@ -180,7 +222,7 @@ impl ExtensionRuntime {
             .map_err(guest_error)
     }
 
-    pub async fn render(
+    pub async fn render_detail(
         &self,
         sha256: &str,
         contribution_id: &str,
@@ -192,7 +234,7 @@ impl ExtensionRuntime {
             .await?;
         let result = timeout(
             Duration::from_millis(250),
-            instance.call_render(
+            instance.call_render_detail(
                 &mut store,
                 contribution_id,
                 &to_wit_representation(input),
@@ -203,6 +245,31 @@ impl ExtensionRuntime {
         .map_err(|_| anyhow!("extension renderer timed out"))?
         .map_err(wasmtime_error)?;
         result.map(from_wit_render_model).map_err(guest_error)
+    }
+
+    pub async fn render_compact(
+        &self,
+        sha256: &str,
+        contribution_id: &str,
+        input: ExtensionRepresentation,
+        facet: Option<ExtensionFacet>,
+    ) -> Result<ExtensionCompactModel> {
+        let (mut store, instance) = self
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100))
+            .await?;
+        let result = timeout(
+            Duration::from_millis(100),
+            instance.call_render_compact(
+                &mut store,
+                contribution_id,
+                &to_wit_representation(input),
+                facet.map(to_wit_facet).as_ref(),
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("extension compact renderer timed out"))?
+        .map_err(wasmtime_error)?;
+        result.map(from_wit_compact_model).map_err(guest_error)
     }
 
     pub async fn transform(
@@ -230,6 +297,33 @@ impl ExtensionRuntime {
         result
             .map(|outputs| outputs.into_iter().map(from_wit_output).collect())
             .map_err(guest_error)
+    }
+
+    pub async fn run_action(
+        &self,
+        sha256: &str,
+        contribution_id: &str,
+        input: ExtensionRepresentation,
+        facet: Option<ExtensionFacet>,
+        parameters_json: String,
+    ) -> Result<ExtensionActionResult> {
+        let (mut store, instance) = self
+            .binding_instance(sha256, TRANSFORM_FUEL, Duration::from_millis(500))
+            .await?;
+        let result = timeout(
+            Duration::from_millis(500),
+            instance.call_run_action(
+                &mut store,
+                contribution_id,
+                &to_wit_representation(input),
+                facet.map(to_wit_facet).as_ref(),
+                &parameters_json,
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("extension action timed out"))?
+        .map_err(wasmtime_error)?;
+        result.map(from_wit_action_result).map_err(guest_error)
     }
 
     async fn binding_instance(
@@ -357,7 +451,68 @@ fn from_wit_render_model(
                 .collect(),
         ),
         RenderModel::Image(_) => ExtensionRenderModel::Image,
+        RenderModel::Card(value) => ExtensionRenderModel::Card {
+            leading: from_wit_leading(value.leading),
+            title: value.title,
+            subtitle: value.subtitle,
+            fields: value
+                .fields
+                .into_iter()
+                .map(|field| (field.label, field.value))
+                .collect(),
+        },
         RenderModel::Error(value) => ExtensionRenderModel::Error(value),
+    }
+}
+
+fn from_wit_compact_model(
+    value: bindings::clipsx::extension::types::CompactModel,
+) -> ExtensionCompactModel {
+    ExtensionCompactModel {
+        leading: from_wit_leading(value.leading),
+        title: value.title,
+        subtitle: value.subtitle,
+        badge: value.badge,
+        accessibility_label: value.accessibility_label,
+    }
+}
+
+fn from_wit_leading(
+    value: bindings::clipsx::extension::types::LeadingVisual,
+) -> ExtensionLeadingVisual {
+    use bindings::clipsx::extension::types::LeadingVisual;
+    match value {
+        LeadingVisual::None => ExtensionLeadingVisual::None,
+        LeadingVisual::HostIcon(value) => ExtensionLeadingVisual::HostIcon(value),
+        LeadingVisual::Swatch(value) => ExtensionLeadingVisual::Swatch {
+            red: value.red,
+            green: value.green,
+            blue: value.blue,
+            alpha: value.alpha,
+        },
+        LeadingVisual::InputThumbnail => ExtensionLeadingVisual::InputThumbnail,
+        LeadingVisual::Monogram(value) => ExtensionLeadingVisual::Monogram(value),
+    }
+}
+
+fn from_wit_action_result(
+    value: bindings::clipsx::extension::types::ActionResult,
+) -> ExtensionActionResult {
+    use bindings::clipsx::extension::types::{ActionDisposition, ActionResult};
+    match value {
+        ActionResult::Output((outputs, disposition)) => ExtensionActionResult::Output {
+            outputs: outputs.into_iter().map(from_wit_output).collect(),
+            disposition: match disposition {
+                ActionDisposition::Preview => super::ActionDisposition::Preview,
+                ActionDisposition::Copy => super::ActionDisposition::Copy,
+                ActionDisposition::Paste => super::ActionDisposition::Paste,
+                ActionDisposition::SaveAsClip => super::ActionDisposition::SaveAsClip,
+            },
+        },
+        ActionResult::OpenHttpsUrl(url) => ExtensionActionResult::OpenHttpsUrl(url),
+        ActionResult::Notification((level, message)) => {
+            ExtensionActionResult::Notification { level, message }
+        }
     }
 }
 

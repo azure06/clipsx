@@ -35,6 +35,26 @@ struct CoreUtility {
     version: String,
 }
 
+#[derive(Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+enum ContextActionRunResponse {
+    Output {
+        preview: Box<transformers::TransformPreview>,
+        disposition: String,
+    },
+    OpenHttpsUrl {
+        url: String,
+    },
+    Notification {
+        level: String,
+        message: String,
+    },
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ArtifactUpdate {
@@ -110,6 +130,9 @@ async fn detect_with_extensions(
 ) -> anyhow::Result<()> {
     contributions::detect_clip(history, clip_id).await?;
     extensions.detect_clip(history, clip_id).await?;
+    extensions
+        .refresh_compact_presentations(history, clip_id)
+        .await?;
     Ok(())
 }
 
@@ -546,6 +569,11 @@ async fn install_registry_extension(
         .install_registry(&state.history, &package_id, &version)
         .await
         .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .redetect_history(&state.history)
+        .await
+        .map_err(|error| error.to_string())?;
     let _ = app.emit("extension-catalog-updated", ());
     Ok(installed)
 }
@@ -561,8 +589,25 @@ async fn install_local_extension(
         .install_local(&state.history, std::path::Path::new(&path))
         .await
         .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .redetect_history(&state.history)
+        .await
+        .map_err(|error| error.to_string())?;
     let _ = app.emit("extension-catalog-updated", ());
     Ok(installed)
+}
+
+#[tauri::command]
+async fn inspect_local_extension(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionSummary, String> {
+    state
+        .extensions
+        .inspect_local(&state.history, std::path::Path::new(&path))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -577,6 +622,13 @@ async fn set_extension_enabled(
         .set_enabled(&state.history, &package_id, enabled)
         .await
         .map_err(|error| error.to_string())?;
+    if enabled {
+        state
+            .extensions
+            .redetect_history(&state.history)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
 }
@@ -835,6 +887,149 @@ async fn create_transform_preview(
         )
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_context_actions(
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::ContextActionDescriptor>, String> {
+    state
+        .extensions
+        .context_actions(&state.history, &clip_id, &source_id, facet_id.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_extension_actions(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::ContextActionDescriptor>, String> {
+    state
+        .extensions
+        .action_catalog(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn run_context_action(
+    app: tauri::AppHandle,
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    action_id: String,
+    parameters: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<ContextActionRunResponse, String> {
+    match state
+        .extensions
+        .run_action(
+            &state.history,
+            &action_id,
+            &clip_id,
+            &source_id,
+            facet_id.as_deref(),
+            parameters.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        crate::extensions::ActionOutcome::Output {
+            outputs,
+            disposition,
+            action_id,
+            version,
+        } => {
+            let preview = state
+                .transforms
+                .cache_external(clip_id, action_id, version, source_id, parameters, outputs)
+                .map_err(|error| error.to_string())?;
+            Ok(ContextActionRunResponse::Output {
+                preview: Box::new(preview),
+                disposition: match disposition {
+                    crate::extensions::ActionDisposition::Preview => "preview",
+                    crate::extensions::ActionDisposition::Copy => "copy",
+                    crate::extensions::ActionDisposition::Paste => "paste",
+                    crate::extensions::ActionDisposition::SaveAsClip => "save_as_clip",
+                }
+                .into(),
+            })
+        }
+        crate::extensions::ActionOutcome::OpenHttpsUrl(url) => {
+            open_external_url(url.clone(), app)?;
+            Ok(ContextActionRunResponse::OpenHttpsUrl { url })
+        }
+        crate::extensions::ActionOutcome::Notification { level, message } => {
+            let _ = app.emit(
+                "extension-action-notification",
+                serde_json::json!({ "level": level, "message": message }),
+            );
+            Ok(ContextActionRunResponse::Notification { level, message })
+        }
+    }
+}
+
+#[tauri::command]
+async fn set_extension_action_shortcut(
+    action_id: String,
+    accelerator: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(value) = accelerator.as_deref() {
+        let normalized = value.to_ascii_lowercase();
+        if !normalized.contains('+')
+            || !["cmd", "ctrl", "alt", "shift", "super", "meta"]
+                .iter()
+                .any(|modifier| normalized.split('+').any(|part| part.trim() == *modifier))
+        {
+            return Err("action shortcuts require at least one modifier".into());
+        }
+        value
+            .parse::<Shortcut>()
+            .map_err(|_| "action shortcut is not a valid accelerator".to_string())?;
+        let key = normalized_accelerator(value);
+        let mut reserved = vec![
+            normalized_accelerator("Ctrl+C"),
+            normalized_accelerator("Cmd+C"),
+            normalized_accelerator("Ctrl+F"),
+            normalized_accelerator("Cmd+F"),
+            normalized_accelerator("Ctrl+P"),
+            normalized_accelerator("Cmd+P"),
+            normalized_accelerator("Ctrl+Shift+O"),
+            normalized_accelerator("Cmd+Shift+O"),
+        ];
+        for digit in '1'..='9' {
+            reserved.push(normalized_accelerator(&format!("Ctrl+{digit}")));
+            reserved.push(normalized_accelerator(&format!("Cmd+{digit}")));
+        }
+        let settings = state
+            .history
+            .app_settings()
+            .await
+            .map_err(|error| error.to_string())?;
+        reserved.push(normalized_accelerator(&settings.global_shortcut));
+        if reserved.contains(&key) {
+            return Err("action shortcut conflicts with a ClipsX command".into());
+        }
+    }
+    state
+        .extensions
+        .set_action_shortcut(&state.history, &action_id, accelerator.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn normalized_accelerator(value: &str) -> String {
+    let mut parts = value
+        .split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("+")
 }
 
 #[tauri::command]
@@ -1273,6 +1468,11 @@ async fn update_renderer_preferences(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     contributions::update_preferences(&state.history, &preferences)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .extensions
+        .refresh_compact_history(&state.history)
         .await
         .map_err(|e| e.to_string())?;
     let _ = app.emit("renderer-preferences-updated", ());
@@ -1798,6 +1998,7 @@ pub(crate) fn run() {
             refresh_extension_registry,
             install_registry_extension,
             install_local_extension,
+            inspect_local_extension,
             set_extension_enabled,
             recover_extension,
             uninstall_extension,
@@ -1817,6 +2018,10 @@ pub(crate) fn run() {
             copy_clip_original,
             list_transformer_contributions,
             create_transform_preview,
+            list_context_actions,
+            list_extension_actions,
+            run_context_action,
+            set_extension_action_shortcut,
             copy_clip_output,
             copy_text_value,
             paste_clip_output,
@@ -1925,6 +2130,14 @@ mod tests {
             remainder = arguments;
         }
         commands
+    }
+
+    #[test]
+    fn action_shortcut_normalization_is_order_and_case_insensitive() {
+        assert_eq!(
+            normalized_accelerator("Ctrl+Shift+O"),
+            normalized_accelerator(" shift + CTRL + o ")
+        );
     }
 
     #[test]

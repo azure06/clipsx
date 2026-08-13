@@ -133,7 +133,7 @@ const KeyChip = ({ label }: { label: string }) => (
   </span>
 )
 
-const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
+export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
   const { t } = useTranslation()
   const [isRecording, setIsRecording] = useState(false)
   const [pendingShortcut, setPendingShortcut] = useState<ReturnType<typeof parseAccelerator>>(null)

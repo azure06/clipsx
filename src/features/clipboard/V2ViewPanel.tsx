@@ -151,6 +151,14 @@ export type ViewTabControls = {
   activeId: string
   onTabChange: (id: string) => void
   onShowInspector: () => void
+  preferenceScopes: Array<'facet' | 'capability' | 'mime'>
+  onPreferActive: (scope: 'facet' | 'capability' | 'mime') => Promise<void>
+}
+
+type RendererPreferences = {
+  byMimeType: Record<string, string>
+  byFacetId: Record<string, string>
+  byCapabilityId: Record<string, string>
 }
 
 const STORAGE_KIND_STYLE: Record<string, string> = {
@@ -388,7 +396,7 @@ export const V2ViewPanel = ({
     return () => {
       alive = false
     }
-  }, [clipId, renderRevision, view, viewSet])
+  }, [clipId, isSyntheticTab, renderRevision, view, viewSet])
 
   const effectiveView = view ?? (isSyntheticTab ? lastRealView : null)
   const presentation = useMemo<ClipPresentation | null>(
@@ -406,6 +414,24 @@ export const V2ViewPanel = ({
   }, [])
 
   const handleShowInspector = useCallback(() => setInspecting(true), [])
+
+  const handlePreferActive = useCallback(
+    async (scope: 'facet' | 'capability' | 'mime') => {
+      if (!view) return
+      const preferences = await invoke<RendererPreferences>('get_renderer_preferences')
+      if (scope === 'facet' && view.facetId) {
+        preferences.byFacetId[view.facetId] = view.rendererId
+      } else if (scope === 'capability') {
+        preferences.byCapabilityId[view.capabilityId] = view.rendererId
+      } else if (scope === 'mime' && view.mimeType) {
+        preferences.byMimeType[view.mimeType] = view.rendererId
+      } else {
+        return
+      }
+      await invoke('update_renderer_preferences', { preferences })
+    },
+    [view]
+  )
 
   const retryOcr = async () => {
     if (!presentation || presentation.model.kind !== 'image') return
@@ -444,9 +470,12 @@ export const V2ViewPanel = ({
             label: 'Text',
             sourceId: '',
             mimeType: null,
+            capabilityId: 'builtin.ocr',
             facetId: null,
             isOriginal: false,
             presentationKind: 'text',
+            purpose: 'semantic',
+            matchSpecificity: 0,
             placement: 'alternate',
           }
         : null
@@ -457,9 +486,12 @@ export const V2ViewPanel = ({
           label: transformState.activeTransformer.label,
           sourceId: '',
           mimeType: null,
+          capabilityId: 'builtin.transform',
           facetId: null,
           isOriginal: false,
           presentationKind: 'text',
+          purpose: 'structured',
+          matchSpecificity: 0,
           placement: 'alternate',
         }
       : null
@@ -469,6 +501,14 @@ export const V2ViewPanel = ({
       activeId: active,
       onTabChange: handleTabChange,
       onShowInspector: handleShowInspector,
+      preferenceScopes: view
+        ? [
+            ...(view.facetId ? (['facet'] as const) : []),
+            'capability' as const,
+            ...(view.mimeType ? (['mime'] as const) : []),
+          ]
+        : [],
+      onPreferActive: handlePreferActive,
     })
   }, [
     viewSet,
@@ -478,6 +518,8 @@ export const V2ViewPanel = ({
     onTabControls,
     handleTabChange,
     handleShowInspector,
+    handlePreferActive,
+    view,
   ])
 
   // Clear controls when unmounted

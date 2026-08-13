@@ -30,9 +30,12 @@ const presentation = (
     label: 'View',
     sourceId: 'rep-1',
     mimeType: null,
+    capabilityId: 'test.text',
     facetId: null,
     isOriginal: false,
     presentationKind,
+    purpose: 'faithful',
+    matchSpecificity: 0,
     placement: 'primary',
   },
   model,
@@ -80,6 +83,16 @@ describe('RenderModelView', () => {
       'Unsupported preview',
     ],
     [{ kind: 'error', message: 'render failed' }, 'render failed'],
+    [
+      {
+        kind: 'card',
+        leading: { kind: 'swatch', red: 255, green: 0, blue: 64, alpha: 255 },
+        title: '#FF0040',
+        subtitle: 'Color',
+        fields: [['RGB', '255, 0, 64']],
+      },
+      '255, 0, 64',
+    ],
   ]
 
   it.each(fixtures)('renders the %s model without a legacy Content adapter', (model, expected) => {

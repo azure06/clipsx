@@ -7,21 +7,25 @@ mod runtime;
 mod service;
 
 #[allow(unused_imports)]
-pub use manifest::{ContributionKind, ExtensionManifest, ManifestContribution};
+pub use manifest::{
+    ActionDisposition, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
+    ExecutionClass, ExtensionManifest, ManifestContribution, RenderSurface, ViewPurpose,
+};
 #[allow(unused_imports)]
 pub use packages::{
     ExtensionPackage, ExtensionPackageStore, InstallSource, RegistryIndex, RegistryPackage,
 };
 #[allow(unused_imports)]
 pub use runtime::{
-    ExtensionContent, ExtensionFacet, ExtensionOutputRepresentation, ExtensionRenderModel,
+    ExtensionActionResult, ExtensionCompactModel, ExtensionContent, ExtensionFacet,
+    ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
     ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
 };
-pub use service::ExtensionService;
+pub use service::{ActionOutcome, ContextActionDescriptor, ExtensionService};
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "1.0.0";
+pub const API_VERSION: &str = "2.0.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 
@@ -43,4 +47,7 @@ pub struct ExtensionSummary {
     pub source: InstallSource,
     pub enabled: bool,
     pub status: RuntimeStatus,
+    pub http_origins: Vec<String>,
+    pub credential_labels: Vec<String>,
+    pub unavailable_contributions: Vec<String>,
 }

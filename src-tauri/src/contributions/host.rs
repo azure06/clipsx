@@ -32,7 +32,8 @@ pub struct RendererDescriptor {
     pub id: String,
     pub version: String,
     pub display_name: String,
-    pub priority: i32,
+    pub purpose: String,
+    pub surfaces: Vec<String>,
     pub trusted_html: bool,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -50,9 +51,12 @@ pub struct ClipViewDescriptor {
     pub label: String,
     pub source_id: String,
     pub mime_type: Option<String>,
+    pub capability_id: String,
     pub facet_id: Option<String>,
     pub is_original: bool,
     pub presentation_kind: String,
+    pub purpose: String,
+    pub match_specificity: i32,
     pub placement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +73,7 @@ pub struct ClipViewSet {
 pub struct RendererPreferences {
     pub by_mime_type: BTreeMap<String, String>,
     pub by_facet_id: BTreeMap<String, String>,
+    pub by_capability_id: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -134,14 +139,23 @@ struct DateRenderer;
 fn renderer_descriptor(
     id: &str,
     name: &str,
-    priority: i32,
+    _priority: i32,
     trusted_html: bool,
 ) -> RendererDescriptor {
+    let purpose = match id {
+        "builtin.original" => "source",
+        "builtin.office" => "diagnostic",
+        "builtin.json" | "builtin.table" => "structured",
+        "builtin.key_value" | "builtin.url" | "builtin.jwt" | "builtin.number" | "builtin.date"
+        | "builtin.markdown" => "semantic",
+        _ => "faithful",
+    };
     RendererDescriptor {
         id: id.into(),
         version: "1".into(),
         display_name: name.into(),
-        priority,
+        purpose: purpose.into(),
+        surfaces: vec!["detail".into()],
         trusted_html,
     }
 }
@@ -870,7 +884,8 @@ pub fn detector_descriptors() -> Vec<DetectorDescriptor> {
 
 pub async fn initialize(repo: &HistoryRepository) -> Result<()> {
     for detector in detectors() {
-        sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES(?,?,?,?) ON CONFLICT(owner_id,id) DO UPDATE SET version=excluded.version,display_name=excluded.display_name").bind(detector.id()).bind("builtin").bind(detector.version()).bind(detector.name()).execute(&repo.pool).await?;
+        let now = now_ms();
+        sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(owner_id,id) DO UPDATE SET version=excluded.version,display_name=excluded.display_name,updated_at=excluded.updated_at").bind(detector.id()).bind("builtin").bind(detector.version()).bind(detector.name()).bind(now).bind(now).execute(&repo.pool).await?;
     }
     Ok(())
 }
@@ -1057,19 +1072,37 @@ pub async fn views(
     clip_id: &str,
 ) -> Result<ClipViewSet> {
     let detail = repo.detail(clip_id).await?;
-    let has_office_representation = detail
-        .representations
-        .iter()
-        .any(|rep| rep.format_family == "office");
+    let faithful_first = detail.representations.iter().any(|rep| {
+        matches!(
+            rep.format_family.as_str(),
+            "image" | "files" | "document" | "office"
+        )
+    });
     let facets = facets(repo, clip_id).await?;
-    let mut candidates: Vec<(ClipViewDescriptor, i64, i32, i64)> = Vec::new();
+    let mut candidates: Vec<(ClipViewDescriptor, i64, i64)> = Vec::new();
     let mut add_view = |rep: &RepresentationDetail,
                         renderer_id: &str,
                         label: &str,
                         kind: &str,
                         facet_id: Option<String>,
-                        renderer_priority: i32,
+                        _renderer_priority: i32,
                         is_original: bool| {
+        let purpose = if renderer_id == "builtin.office" {
+            "diagnostic"
+        } else if renderer_id == "builtin.original" {
+            if kind == "unsupported" {
+                "diagnostic"
+            } else {
+                "source"
+            }
+        } else if matches!(kind, "json" | "table") {
+            "structured"
+        } else if facet_id.is_some() {
+            "semantic"
+        } else {
+            "faithful"
+        };
+        let match_specificity = if facet_id.is_some() { 500 } else { 200 };
         let id = facet_id.as_ref().map_or_else(
             || format!("{}:{}", renderer_id, rep.id),
             |facet_id| format!("{}:{}:{}", renderer_id, rep.id, facet_id),
@@ -1081,13 +1114,15 @@ pub async fn views(
                 label: label.into(),
                 source_id: rep.id.clone(),
                 mime_type: rep.canonical_mime_type.clone(),
+                capability_id: rep.capability_id.clone(),
                 facet_id,
                 is_original,
                 presentation_kind: kind.into(),
+                purpose: purpose.into(),
+                match_specificity,
                 placement: "alternate".into(),
             },
             rep.capture_priority,
-            renderer_priority,
             rep.ordinal,
         ));
     };
@@ -1203,12 +1238,11 @@ pub async fn views(
         candidates.push((
             view,
             rep.map_or(i64::MAX, |rep| rep.capture_priority),
-            65,
             rep.map_or(i64::MAX, |rep| rep.ordinal),
         ));
     }
     let renderer_preferences = preferences(repo).await?;
-    candidates.sort_by_key(|(view, capture_priority, renderer_priority, ordinal)| {
+    candidates.sort_by_key(|(view, capture_priority, ordinal)| {
         let facet_preference = facets
             .iter()
             .find(|facet| view.facet_id.as_deref() == Some(facet.id.as_str()))
@@ -1217,36 +1251,37 @@ pub async fn views(
             .mime_type
             .as_ref()
             .and_then(|mime| renderer_preferences.by_mime_type.get(mime));
+        let capability_preference = renderer_preferences
+            .by_capability_id
+            .get(&view.capability_id);
         let preferred = facet_preference
+            .or(capability_preference)
             .or(mime_preference)
             .is_some_and(|id| id == &view.renderer_id);
-        let office_utility_rank = if has_office_representation {
-            match view.presentation_kind.as_str() {
-                "table" | "html" => 0,
-                "document" | "image" => 1,
-                "office" => 3,
-                _ => 2,
-            }
-        } else {
-            0
+        let purpose_rank = match (faithful_first, view.purpose.as_str()) {
+            (true, "faithful") | (false, "structured") => 0,
+            (true, "structured") | (false, "semantic") => 1,
+            (true, "semantic") | (false, "faithful") => 2,
+            (_, "source") => 3,
+            _ => 4,
         };
         (
             !preferred,
-            office_utility_rank,
+            purpose_rank,
+            -view.match_specificity,
             *capture_priority,
-            -*renderer_priority,
             *ordinal,
             view.id.clone(),
         )
     });
     let primary_view_id = candidates
         .first()
-        .map(|(view, _, _, _)| view.id.clone())
+        .map(|(view, _, _)| view.id.clone())
         .context("clip has no renderable representation")?;
     let presentation_kind = candidates[0].0.presentation_kind.clone();
     let views = candidates
         .into_iter()
-        .map(|(mut view, _, _, _)| {
+        .map(|(mut view, _, _)| {
             if view.id == primary_view_id {
                 view.placement = "primary".into();
             }
@@ -1480,7 +1515,8 @@ pub async fn update_preferences(
     repo: &HistoryRepository,
     prefs: &RendererPreferences,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES('renderer.preferences',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(serde_json::to_string(prefs)?).bind(now_ms()).execute(&repo.pool).await?;
+    let now = now_ms();
+    sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES('renderer.preferences',?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(serde_json::to_string(prefs)?).bind(now).bind(now).execute(&repo.pool).await?;
     Ok(())
 }
 
@@ -1719,6 +1755,37 @@ mod tests {
                 .placement,
             "primary"
         );
+    }
+
+    #[tokio::test]
+    async fn resolver_prefers_structured_json_over_html_wrapper() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:HTML Format".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: Some("HTML Format".into()),
+                platform: "windows".into(),
+                capture_priority: 10,
+                payload: CapturedPayload::Text("<pre>{\"ok\":true}</pre>".into()),
+            },
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()),
+                platform: "windows".into(),
+                capture_priority: 20,
+                payload: CapturedPayload::Text("{\"ok\":true}".into()),
+            },
+        ])
+        .await;
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        let primary = result
+            .views
+            .iter()
+            .find(|view| view.id == result.primary_view_id)
+            .unwrap();
+        assert_eq!(primary.renderer_id, "builtin.json");
+        assert_eq!(primary.purpose, "structured");
     }
 
     #[tokio::test]

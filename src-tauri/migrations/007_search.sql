@@ -3,7 +3,8 @@ CREATE TABLE search_documents (
     search_text TEXT NOT NULL,
     projection_version INTEGER NOT NULL,
     source_manifest_json TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000)
 );
 
 CREATE VIRTUAL TABLE search_documents_fts USING fts5(
@@ -92,6 +93,8 @@ CREATE TABLE search_index_jobs (
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
     attempt_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     requested_at INTEGER NOT NULL,
     started_at INTEGER,
     completed_at INTEGER,

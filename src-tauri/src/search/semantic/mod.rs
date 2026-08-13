@@ -331,12 +331,13 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
         let id: String = row.get(0);
         let clip: String = row.get(1);
         let generation: i64 = row.get(2);
-        sqlx::query("UPDATE search_index_jobs SET status='running',started_at=?,attempt_count=attempt_count+1 WHERE id=?").bind(now_ms()).bind(&id).execute(&repo.pool).await?;
+        sqlx::query("UPDATE search_index_jobs SET status='running',started_at=?,updated_at=?,attempt_count=attempt_count+1 WHERE id=?").bind(now_ms()).bind(now_ms()).bind(&id).execute(&repo.pool).await?;
         match index_clip(repo, &provider, &space, &clip, generation).await {
             Ok(()) => {
                 sqlx::query(
-                    "UPDATE search_index_jobs SET status='completed',completed_at=? WHERE id=?",
+                    "UPDATE search_index_jobs SET status='completed',completed_at=?,updated_at=? WHERE id=?",
                 )
+                .bind(now_ms())
                 .bind(now_ms())
                 .bind(&id)
                 .execute(&repo.pool)
@@ -344,7 +345,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
                 count += 1;
             }
             Err(error) => {
-                sqlx::query("UPDATE search_index_jobs SET status=CASE WHEN attempt_count >= 3 THEN 'failed' ELSE 'pending' END,last_error=?,completed_at=? WHERE id=?").bind(error.to_string()).bind(now_ms()).bind(&id).execute(&repo.pool).await?;
+                sqlx::query("UPDATE search_index_jobs SET status=CASE WHEN attempt_count >= 3 THEN 'failed' ELSE 'pending' END,last_error=?,completed_at=?,updated_at=? WHERE id=?").bind(error.to_string()).bind(now_ms()).bind(now_ms()).bind(&id).execute(&repo.pool).await?;
             }
         }
     }
@@ -607,7 +608,8 @@ async fn get_config(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
     }
 }
 async fn put_config(pool: &SqlitePool, key: &str, value: &serde_json::Value) -> Result<()> {
-    sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(key).bind(serde_json::to_string(value)?).bind(now_ms()).execute(pool).await?;
+    let now = now_ms();
+    sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(key).bind(serde_json::to_string(value)?).bind(now).bind(now).execute(pool).await?;
     Ok(())
 }
 async fn validated_endpoint(raw: &str) -> Result<Url> {

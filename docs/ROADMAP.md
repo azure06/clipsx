@@ -44,7 +44,7 @@ roadmap.
 | Semantic search                          | FTS, Ollama text-embedding spaces/jobs, hybrid cosine+RRF scoring, 8 IPC commands, status, and fallback exist. Indexing queue runs at startup and on capture.              | Add Ollama endpoint/model configuration UI, enable/disable, indexing progress, reindex, clear, degraded-state recovery, and diagnostics. Decide whether semantic-only recall beyond FTS candidates is required. | M2    |
 | Runtime settings                         | Capture filters, retention, import/export, autostart, updater integration, and explicit-quit clear behavior have service paths. `auto_clear_minutes` is persisted.          | Implement periodic auto-clear background timer, validate restart/runtime effects in installed builds, and decide the representation-size default. | M2    |
 | Transformations                          | Built-in transformer registry (12 transformers), parameter validation, 15-min expiring cache, output commands, provenance, and save-as-new-clip exist. `TransformMenu` surfaced in view panel. | Render exact previews through the typed renderer, generate parameter controls from contribution schemas, resolve the correct source, handle failures/expiry, and prove preview/Copy/Paste/Save byte equivalence. | M3    |
-| Extensions                               | Full capability-free WASM component runtime (Wasmtime, fuel/memory/epoch limits), package validation, 3-strike quarantine, `ExtensionService`, registry backend, WIT world, and host renderer fallback exist. | Complete developer install UI, registry lifecycle (update/compatibility reporting), diagnostics/recovery UI, transformer UX integration, and end-to-end package tests. | M4    |
+| Extensions                               | Extension API v2 provides isolated detectors, typed detail/compact renderers, local transformers, contextual actions, cached compact rows, app-local action shortcuts, package tooling, permission disclosure, quarantine, and the Color Tools example. | Complete registry update/compatibility UX, richer diagnostics, generated parameter controls, and the capability broker. | M4    |
 | Release confidence                       | Automated Rust and React suites cover core contracts.                                                                                                                       | Signed installed builds and the full Windows/macOS/Linux matrix have not been certified.                                                          | M5    |
 
 ### Intentional V2 differences — not gaps
@@ -171,11 +171,14 @@ Make the isolated extension runtime usable without weakening its host boundary.
 - Add local package installation in Developer Mode with persistent warnings.
 - Expose contribution diagnostics, bounded errors, quarantine state, recovery,
   and package provenance.
-- Run extension renderer output through the typed presentation fallback path and
-  extension transformers through the M3 preview/output workflow.
-- Add end-to-end detector, renderer, and transformer package fixtures.
-- Keep extensions capability-free: no filesystem, network, clipboard, history,
-  database, shell, environment, credential, provider, or frontend-code access.
+- Maintain the Extension API v2 typed-presentation and contextual-action contract.
+- Complete registry update/compatibility UX and richer contribution diagnostics.
+- Generate transformer/action parameter controls from declared schemas.
+- Add end-to-end installed package fixtures beyond the buildable Color Tools example.
+- Implement the audited HTTP/credential broker only for explicit actions and
+  capability-backed transformers. Detectors and renderers stay permanently offline.
+- Keep raw filesystem, clipboard, history, database, shell, environment,
+  credential values, provider handles, and frontend-code access prohibited.
 
 ### Exit gate
 

@@ -542,7 +542,8 @@ pub async fn update_preferences(
     repo: &HistoryRepository,
     preferences: &TransformPreferences,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES('transform_preferences',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(serde_json::to_string(preferences)?).bind(crate::history::now_ms()).execute(&repo.pool).await?;
+    let now = crate::history::now_ms();
+    sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES('transform_preferences',?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(serde_json::to_string(preferences)?).bind(now).bind(now).execute(&repo.pool).await?;
     Ok(())
 }
 

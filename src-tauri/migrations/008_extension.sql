@@ -15,7 +15,8 @@ CREATE TABLE extension_installs (
 CREATE TABLE extension_runtime_state (
     extension_id TEXT PRIMARY KEY NOT NULL REFERENCES extension_installs(id) ON DELETE CASCADE,
     status TEXT NOT NULL CHECK (status IN ('ready', 'quarantined', 'incompatible')),
-    updated_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000)
 );
 
 CREATE TABLE extension_contribution_runtime_state (
@@ -25,7 +26,8 @@ CREATE TABLE extension_contribution_runtime_state (
     last_error_code TEXT,
     last_error_message TEXT,
     last_failed_at INTEGER,
-    updated_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     PRIMARY KEY (extension_id, contribution_id)
 );
 
@@ -33,3 +35,12 @@ CREATE INDEX idx_extension_installs_enabled
     ON extension_installs(enabled, package_id);
 CREATE INDEX idx_extension_contribution_runtime_state_extension
     ON extension_contribution_runtime_state(extension_id);
+
+CREATE TABLE extension_action_shortcuts (
+    extension_id TEXT NOT NULL REFERENCES extension_installs(id) ON DELETE CASCADE,
+    action_id TEXT NOT NULL UNIQUE,
+    accelerator TEXT NOT NULL UNIQUE CHECK (length(accelerator) BETWEEN 1 AND 80),
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    PRIMARY KEY (extension_id, action_id)
+);

@@ -38,8 +38,8 @@ CREATE TABLE artifact_binary_files (
         CHECK (relative_path NOT LIKE '/%' AND relative_path NOT LIKE '%..%' AND relative_path NOT LIKE '%\%'),
     lifecycle_state TEXT NOT NULL
         CHECK (lifecycle_state IN ('pending', 'ready', 'missing', 'quarantined')),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     UNIQUE (artifact_id, sha256)
 );
 
@@ -55,6 +55,8 @@ CREATE TABLE artifact_jobs (
         CHECK (status IN ('pending', 'running', 'completed', 'failed', 'unsupported', 'cancelled')),
     attempt_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     requested_at INTEGER NOT NULL,
     started_at INTEGER,
     completed_at INTEGER

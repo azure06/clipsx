@@ -1,4 +1,8 @@
-# Extension API v1
+# Extension API v1 (retired)
+
+Extension API v1 is no longer accepted. Rebuild packages against [Extension API v2](EXTENSION_API_V2.md); ClipsX intentionally provides no dual ABI or compatibility storage.
+
+Everything below is retained only as a historical description of the rejected contract.
 
 **Delivery status:** the package format, runtime isolation, validation,
 resource limits, quarantine, service, and registry backend are implemented.

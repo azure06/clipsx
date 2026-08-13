@@ -95,8 +95,8 @@ pub async fn upsert_projection(repo: &HistoryRepository, clip_id: &str) -> Resul
     let manifest = build_manifest(repo, clip_id).await?;
     let now = now_ms();
     sqlx::query(
-        "INSERT INTO search_documents(clip_id,search_text,projection_version,source_manifest_json,updated_at) \
-         VALUES(?,?,?,?,?) \
+        "INSERT INTO search_documents(clip_id,search_text,projection_version,source_manifest_json,created_at,updated_at) \
+         VALUES(?,?,?,?,?,?) \
          ON CONFLICT(clip_id) DO UPDATE SET \
            search_text = excluded.search_text, \
            projection_version = excluded.projection_version, \
@@ -107,6 +107,7 @@ pub async fn upsert_projection(repo: &HistoryRepository, clip_id: &str) -> Resul
     .bind(&text)
     .bind(PROJECTION_VERSION)
     .bind(&manifest)
+    .bind(now)
     .bind(now)
     .execute(&repo.pool)
     .await?;
@@ -347,6 +348,7 @@ pub async fn search(
         let snippet = fts_query
             .as_deref()
             .and_then(|query| build_snippet(query, row.get::<Option<String>, _>(9).as_deref()));
+        let compact_presentation = repo.compact_presentation(&clip_id).await?;
         items.push(SearchResult {
             clip: ClipSummary {
                 id: clip_id,
@@ -363,6 +365,7 @@ pub async fn search(
                 thumbnail_asset_id: row.get(11),
                 has_embedding: row.get::<i64, _>(13) != 0,
                 ocr_status: row.get(14),
+                compact_presentation,
                 tags,
             },
             snippet,
@@ -464,10 +467,11 @@ pub async fn get_settings(pool: &SqlitePool) -> Result<SearchSettings> {
 pub async fn update_settings(pool: &SqlitePool, settings: &SearchSettings) -> Result<()> {
     let value = serde_json::to_string(&settings.syntax_mode)?;
     sqlx::query(
-        "INSERT INTO config_profile_values(key,value_json,updated_at) VALUES('search.syntax_mode',?,?) \
+        "INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES('search.syntax_mode',?,?,?) \
          ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
     )
     .bind(&value)
+    .bind(now_ms())
     .bind(now_ms())
     .execute(pool)
     .await?;

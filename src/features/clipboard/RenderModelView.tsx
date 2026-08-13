@@ -21,6 +21,7 @@ import {
   KeyRound,
   MessageSquare,
   Music,
+  Palette,
   Phone,
   Send,
   ShieldAlert,
@@ -1070,6 +1071,48 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
           <KeyValueView entries={model.entries} />
         </div>
       )
+    case 'card': {
+      const leading = model.leading
+      const swatch =
+        leading.kind === 'swatch'
+          ? `rgba(${leading.red}, ${leading.green}, ${leading.blue}, ${leading.alpha / 255})`
+          : null
+      const CardIcon = leading.kind === 'host_icon' && leading.name === 'palette' ? Palette : File
+      return (
+        <div className={`${SCROLL_AREA} p-6`}>
+          <div className="mx-auto max-w-xl rounded-2xl border border-slate-200/70 bg-white/60 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+            <div className="flex items-center gap-4">
+              {swatch && (
+                <div
+                  aria-label={model.title}
+                  className="h-14 w-14 shrink-0 rounded-full border border-black/15 shadow-inner dark:border-white/25"
+                  style={{ backgroundColor: swatch }}
+                />
+              )}
+              {leading.kind === 'monogram' && (
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-200 font-semibold dark:bg-slate-700">
+                  {leading.text}
+                </div>
+              )}
+              {leading.kind === 'host_icon' && (
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-white/10">
+                  <CardIcon className="h-7 w-7 text-gray-500" aria-hidden="true" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <h3 className="truncate text-lg font-semibold">{model.title}</h3>
+                {model.subtitle && <p className="text-sm text-gray-500">{model.subtitle}</p>}
+              </div>
+            </div>
+            {model.fields.length > 0 && (
+              <div className="mt-5">
+                <KeyValueView entries={model.fields} />
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    }
     case 'image':
       return <ImageView model={model} />
     case 'html':

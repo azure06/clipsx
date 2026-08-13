@@ -1,22 +1,138 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Context, Result};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
 
 use super::API_VERSION;
 
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
+const MAX_SELECTOR_VALUES: usize = 32;
+const MAX_HTTP_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionKind {
     Detector,
     Renderer,
     Transformer,
+    Action,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewPurpose {
+    Faithful,
+    Structured,
+    Semantic,
+    Source,
+    Diagnostic,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderSurface {
+    Detail,
+    Compact,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionClass {
+    #[default]
+    Local,
+    CapabilityBacked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionEffect {
+    Preview,
+    Copy,
+    Paste,
+    SaveAsClip,
+    OpenHttpsUrl,
+    Notification,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionDisposition {
+    Preview,
+    Copy,
+    Paste,
+    SaveAsClip,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ActionHandler {
+    Guest,
+    TransformerPreset {
+        transformer_id: String,
+        #[serde(default = "empty_object")]
+        parameters: Value,
+        disposition: ActionDisposition,
+    },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContributionMatcher {
+    pub mime_types: Vec<String>,
+    pub format_keys: Vec<String>,
+    pub capability_ids: Vec<String>,
+    pub format_families: Vec<String>,
+    pub facet_ids: Vec<String>,
+    pub storage_kinds: Vec<String>,
+}
+
+impl ContributionMatcher {
+    pub fn is_empty(&self) -> bool {
+        self.mime_types.is_empty()
+            && self.format_keys.is_empty()
+            && self.capability_ids.is_empty()
+            && self.format_families.is_empty()
+            && self.facet_ids.is_empty()
+            && self.storage_kinds.is_empty()
+    }
+
+    fn validate(&self) -> Result<()> {
+        for values in [
+            &self.mime_types,
+            &self.format_keys,
+            &self.capability_ids,
+            &self.format_families,
+            &self.facet_ids,
+            &self.storage_kinds,
+        ] {
+            if values.len() > MAX_SELECTOR_VALUES
+                || values
+                    .iter()
+                    .any(|value| value.is_empty() || value.len() > 256)
+            {
+                bail!("extension matcher exceeds its limits");
+            }
+        }
+        if self
+            .storage_kinds
+            .iter()
+            .any(|value| !matches!(value.as_str(), "text" | "binary_asset" | "file_list"))
+        {
+            bail!("extension matcher contains an unsupported storage kind");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManifestContribution {
     pub id: String,
     pub kind: ContributionKind,
@@ -24,19 +140,44 @@ pub struct ManifestContribution {
     #[serde(default = "default_version")]
     pub version: String,
     #[serde(default)]
-    pub mime_types: Vec<String>,
+    pub matchers: Vec<ContributionMatcher>,
     #[serde(default)]
-    pub format_keys: Vec<String>,
+    pub emits_facet_ids: Vec<String>,
+    pub purpose: Option<ViewPurpose>,
     #[serde(default)]
-    pub capability_ids: Vec<String>,
+    pub surfaces: Vec<RenderSurface>,
     #[serde(default)]
-    pub format_families: Vec<String>,
+    pub execution: ExecutionClass,
+    pub icon: Option<String>,
     #[serde(default)]
-    pub facet_ids: Vec<String>,
-    #[serde(default)]
-    pub priority: i32,
+    pub effects: Vec<ActionEffect>,
+    pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionPermissions {
+    pub http: Vec<HttpPermission>,
+    pub credentials: Vec<CredentialPermission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HttpPermission {
+    pub origin: String,
+    #[serde(default)]
+    pub methods: Vec<String>,
+    pub max_response_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CredentialPermission {
+    pub id: String,
+    pub label: String,
+    pub placement: String,
 }
 
 fn default_version() -> String {
@@ -47,7 +188,7 @@ fn empty_object() -> Value {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionManifest {
     pub schema_version: u32,
     pub package_id: String,
@@ -59,6 +200,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub license: String,
     #[serde(default)]
+    pub permissions: ExtensionPermissions,
+    #[serde(default)]
     pub contributions: Vec<ManifestContribution>,
 }
 
@@ -67,15 +210,24 @@ impl ExtensionManifest {
         if bytes.len() > MAX_MANIFEST_BYTES {
             bail!("extension manifest exceeds 256 KiB");
         }
-        let manifest: Self = toml::from_str(std::str::from_utf8(bytes)?)
-            .context("extension manifest is not valid TOML")?;
+        let source = std::str::from_utf8(bytes)?;
+        let value: toml::Value =
+            toml::from_str(source).context("extension manifest is not valid TOML")?;
+        if value.get("schemaVersion").and_then(toml::Value::as_integer) == Some(1) {
+            bail!("Extension API v1 packages are incompatible; rebuild this package for API v2");
+        }
+        let manifest: Self = toml::from_str(source)
+            .context("extension manifest is not valid Extension API v2 TOML")?;
         manifest.validate()?;
         Ok(manifest)
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.schema_version != 1 {
-            bail!("unsupported extension manifest schema");
+        if self.schema_version == 1 {
+            bail!("Extension API v1 packages are incompatible; rebuild this package for API v2");
+        }
+        if self.schema_version != 2 {
+            bail!("unsupported extension manifest schema; expected schemaVersion = 2");
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -94,7 +246,9 @@ impl ExtensionManifest {
         if self.contributions.is_empty() || self.contributions.len() > 32 {
             bail!("extension must declare between one and 32 contributions");
         }
-        let mut ids = std::collections::BTreeSet::new();
+        self.validate_permissions()?;
+
+        let mut ids = BTreeSet::new();
         for contribution in &self.contributions {
             valid_id(&contribution.id, "contribution")?;
             if !ids.insert(&contribution.id) {
@@ -104,18 +258,146 @@ impl ExtensionManifest {
                 .context("extension contribution version is not semantic version")?;
             if contribution.display_name.trim().is_empty()
                 || contribution.display_name.len() > 120
-                || contribution.mime_types.len() > 32
-                || contribution.format_keys.len() > 32
-                || contribution.capability_ids.len() > 32
-                || contribution.format_families.len() > 32
-                || contribution.facet_ids.len() > 32
+                || contribution.matchers.len() > 16
+                || contribution.emits_facet_ids.len() > 32
             {
                 bail!("extension contribution declaration exceeds its limits");
+            }
+            for matcher in &contribution.matchers {
+                matcher.validate()?;
             }
             if !contribution.parameter_schema.is_object()
                 || contribution.parameter_schema.to_string().len() > 64 * 1024
             {
                 bail!("extension parameter schema must be a bounded JSON object");
+            }
+            self.validate_contribution(contribution)?;
+        }
+        Ok(())
+    }
+
+    fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
+        let has_matcher = contribution
+            .matchers
+            .iter()
+            .any(|matcher| !matcher.is_empty());
+        if matches!(
+            contribution.kind,
+            ContributionKind::Renderer | ContributionKind::Action
+        ) && !has_matcher
+        {
+            bail!("renderer and action contributions require a non-empty matcher");
+        }
+        match contribution.kind {
+            ContributionKind::Renderer => {
+                if contribution.purpose.is_none() || contribution.surfaces.is_empty() {
+                    bail!("renderer contributions require purpose and at least one surface");
+                }
+                if contribution.handler.is_some() || !contribution.effects.is_empty() {
+                    bail!("renderer contributions cannot declare action handlers or effects");
+                }
+            }
+            ContributionKind::Action => {
+                if contribution.handler.is_none() || contribution.effects.is_empty() {
+                    bail!("action contributions require a handler and at least one effect");
+                }
+                if contribution.purpose.is_some() || !contribution.surfaces.is_empty() {
+                    bail!("action contributions cannot declare renderer purpose or surfaces");
+                }
+                if let Some(ActionHandler::TransformerPreset { transformer_id, .. }) =
+                    &contribution.handler
+                {
+                    valid_id(transformer_id, "transformer reference")?;
+                    let valid = self.contributions.iter().any(|candidate| {
+                        candidate.id == *transformer_id
+                            && candidate.kind == ContributionKind::Transformer
+                    });
+                    if !valid {
+                        bail!("action references an unknown local transformer");
+                    }
+                }
+            }
+            ContributionKind::Detector | ContributionKind::Transformer => {
+                if contribution.purpose.is_some()
+                    || !contribution.surfaces.is_empty()
+                    || contribution.handler.is_some()
+                    || !contribution.effects.is_empty()
+                {
+                    bail!("detector and transformer contributions contain unrelated fields");
+                }
+                if contribution.kind == ContributionKind::Detector
+                    && contribution.emits_facet_ids.is_empty()
+                {
+                    bail!("detector contributions must declare emitted facet IDs");
+                }
+            }
+        }
+        if contribution.kind != ContributionKind::Detector
+            && !contribution.emits_facet_ids.is_empty()
+        {
+            bail!("only detector contributions may declare emitted facet IDs");
+        }
+        if contribution.execution == ExecutionClass::CapabilityBacked
+            && self.permissions.http.is_empty()
+        {
+            bail!("capability-backed contributions require an HTTP permission declaration");
+        }
+        if contribution.execution == ExecutionClass::CapabilityBacked
+            && matches!(
+                contribution.kind,
+                ContributionKind::Detector | ContributionKind::Renderer
+            )
+        {
+            bail!("detectors and renderers must remain local and offline");
+        }
+        if let Some(icon) = &contribution.icon {
+            valid_host_icon(icon)?;
+        }
+        Ok(())
+    }
+
+    fn validate_permissions(&self) -> Result<()> {
+        if self.permissions.http.len() > 16 || self.permissions.credentials.len() > 16 {
+            bail!("extension permission declaration exceeds its limits");
+        }
+        let allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        let mut origins = BTreeSet::new();
+        for permission in &self.permissions.http {
+            let parsed =
+                Url::parse(&permission.origin).context("HTTP permission origin is invalid")?;
+            if parsed.scheme() != "https"
+                || parsed.host_str().is_none()
+                || parsed.username() != ""
+                || parsed.password().is_some()
+                || parsed.path() != "/"
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || permission.methods.is_empty()
+                || permission.methods.len() > 8
+                || permission
+                    .methods
+                    .iter()
+                    .any(|method| !allowed_methods.contains(&method.as_str()))
+                || permission.max_response_bytes == 0
+                || permission.max_response_bytes > MAX_HTTP_RESPONSE_BYTES
+                || !origins.insert(permission.origin.to_ascii_lowercase())
+            {
+                bail!("HTTP permissions require unique exact HTTPS origins, approved methods, and bounded responses");
+            }
+        }
+        let mut credentials = BTreeSet::new();
+        for credential in &self.permissions.credentials {
+            valid_id(&credential.id, "credential")?;
+            if credential.label.trim().is_empty()
+                || credential.label.len() > 120
+                || credential.placement.len() > 120
+                || !matches!(
+                    credential.placement.as_str(),
+                    "authorization_bearer" | "header" | "query"
+                )
+                || !credentials.insert(&credential.id)
+            {
+                bail!("credential permission is invalid");
             }
         }
         Ok(())
@@ -124,6 +406,27 @@ impl ExtensionManifest {
     pub fn qualified_contribution_id(&self, local_id: &str) -> String {
         format!("{}/{}", self.package_id, local_id)
     }
+}
+
+pub fn valid_host_icon(value: &str) -> Result<()> {
+    if !matches!(
+        value,
+        "braces"
+            | "code"
+            | "database"
+            | "file"
+            | "globe"
+            | "hash"
+            | "key"
+            | "link"
+            | "palette"
+            | "table"
+            | "terminal"
+            | "text"
+    ) {
+        bail!("extension icon is not in the ClipsX host icon catalog");
+    }
+    Ok(())
 }
 
 fn valid_id(value: &str, label: &str) -> Result<()> {
@@ -143,30 +446,76 @@ fn valid_id(value: &str, label: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn manifest_rejects_builtin_namespace() {
-        let manifest = ExtensionManifest {
-            schema_version: 1,
-            package_id: "builtin.evil".into(),
+    fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
+        ExtensionManifest {
+            schema_version: 2,
+            package_id: "example.colors".into(),
             version: "1.0.0".into(),
-            api_version: "^1.0".into(),
-            display_name: "Nope".into(),
+            api_version: "^2.0".into(),
+            display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
-            contributions: vec![ManifestContribution {
-                id: "demo".into(),
-                kind: ContributionKind::Detector,
-                display_name: "Demo".into(),
-                version: "1.0.0".into(),
-                mime_types: vec![],
-                format_keys: vec![],
-                capability_ids: vec![],
-                format_families: vec![],
-                facet_ids: vec![],
-                priority: 0,
-                parameter_schema: empty_object(),
+            permissions: ExtensionPermissions::default(),
+            contributions: vec![contribution],
+        }
+    }
+
+    fn contribution(kind: ContributionKind) -> ManifestContribution {
+        ManifestContribution {
+            id: "color".into(),
+            kind,
+            display_name: "Color".into(),
+            version: "1.0.0".into(),
+            matchers: vec![ContributionMatcher {
+                mime_types: vec!["text/plain".into()],
+                ..Default::default()
             }],
-        };
-        assert!(manifest.validate().is_err());
+            emits_facet_ids: if kind == ContributionKind::Detector {
+                vec!["color".into()]
+            } else {
+                vec![]
+            },
+            purpose: None,
+            surfaces: vec![],
+            execution: ExecutionClass::Local,
+            icon: Some("palette".into()),
+            effects: vec![],
+            handler: None,
+            parameter_schema: empty_object(),
+        }
+    }
+
+    #[test]
+    fn v1_is_rejected_with_upgrade_message() {
+        let error = ExtensionManifest::parse(b"schemaVersion = 1").unwrap_err();
+        assert!(error.to_string().contains("API v1"));
+    }
+
+    #[test]
+    fn renderer_requires_matcher_purpose_and_surface() {
+        let mut value = contribution(ContributionKind::Renderer);
+        value.purpose = Some(ViewPurpose::Semantic);
+        value.surfaces = vec![RenderSurface::Detail, RenderSurface::Compact];
+        assert!(manifest(value).validate().is_ok());
+
+        let mut wildcard = contribution(ContributionKind::Renderer);
+        wildcard.purpose = Some(ViewPurpose::Semantic);
+        wildcard.surfaces = vec![RenderSurface::Detail];
+        wildcard.matchers = vec![ContributionMatcher::default()];
+        assert!(manifest(wildcard).validate().is_err());
+    }
+
+    #[test]
+    fn permissions_require_exact_https_origins() {
+        let mut value = manifest(contribution(ContributionKind::Transformer));
+        value.contributions[0].execution = ExecutionClass::CapabilityBacked;
+        value.permissions.http.push(HttpPermission {
+            origin: "https://translation.googleapis.com".into(),
+            methods: vec!["POST".into()],
+            max_response_bytes: 1_048_576,
+        });
+        assert!(value.validate().is_ok());
+        value.permissions.http[0].origin = "http://localhost:8080".into();
+        assert!(value.validate().is_err());
     }
 }

@@ -73,7 +73,7 @@ impl RegistryIndex {
         let mut entries = BTreeMap::new();
         for package in &index.packages {
             ExtensionManifest::parse(format!(
-                "schemaVersion = 1\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\n",
+                "schemaVersion = 2\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
                 package.package_id, package.version, package.api_version, package.display_name
             ).as_bytes())?;
             if package.sha256.len() != 64
@@ -213,6 +213,19 @@ impl ExtensionPackageStore {
             relative_path: relative_path.clone(),
             component_path: self.root.join(relative_path).join("component.wasm"),
         })
+    }
+
+    pub fn inspect(&self, archive: &[u8]) -> Result<ExtensionManifest> {
+        if archive.len() > MAX_ARCHIVE_BYTES {
+            bail!("extension archive exceeds 16 MiB");
+        }
+        let contents = unpack(archive)?;
+        let manifest = ExtensionManifest::parse(required(&contents, "clipsx-extension.toml")?)?;
+        let component = required(&contents, "component.wasm")?;
+        if component.len() > MAX_COMPONENT_BYTES || !component.starts_with(b"\0asm") {
+            bail!("extension package does not contain a valid bounded WebAssembly component");
+        }
+        Ok(manifest)
     }
 
     pub fn load(&self, relative_path: &Path) -> Result<ExtensionPackage> {

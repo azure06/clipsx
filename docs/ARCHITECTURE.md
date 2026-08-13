@@ -36,14 +36,15 @@ Architecture gives React and Rust distinct responsibilities. The data model pres
 | **Provider** | Trusted host-owned embedding, generation, or OCR integration; never a community extension. |
 | **Embedding** | Fixed-size semantic-search vector in one compatible embedding space. |
 | **Embedding space** | Immutable provider/model/modality/dimensions/normalization/metric identity. |
-| **Extension** | Detector, renderer, or transformer contribution; built-ins are trusted Rust and community packages are capability-free WASM components. |
+| **Extension** | Detector, renderer, transformer, or action contribution; built-ins are trusted Rust and community packages are host-governed WASM components. |
 | **Renderer** | Contribution returning a structured model rendered by ClipsX-owned React UI. |
 | **Transformer** | Contribution that produces representations from source data and validated parameters. |
+| **Action** | Explicit contextual command returning only host-audited output, URL, or notification effects. |
 | **Canonical / derived / ephemeral** | Preserved capture or durable user data / rebuildable output / session or in-memory state. |
 
 ## Rules to keep in mind
 
-- Raw representations are canonical; facets, artifacts, search documents, chunks, embeddings are derived; render models/previews are ephemeral unless a transformation is explicitly saved as a new clip.
+- Raw representations are canonical; facets, artifacts, search documents, chunks, embeddings, and compact presentation caches are derived; detail render models/previews are ephemeral unless a transformation is explicitly saved as a new clip.
 - Binary payloads live in managed app files. SQLite contains metadata/validated relative paths, never generic payload BLOBs or JSON metadata.
 - Platform adapters alone interpret native clipboard types; never guess UTI, OLE, or equivalent identifiers. Renderer selection is UI policy, not clip state.
 - Use the fresh domain-prefixed schema and reset flow. Do not add v1 migrations, compatibility reads/writes, or dual schemas.
@@ -85,7 +86,7 @@ flowchart TB
     IPC["ipc: command handlers and current orchestration"]
     Services["history, contributions, artifacts, search, output"]
     Providers["host-owned provider contracts and adapters"]
-    ExtensionHost["Capability-free WASM extension host"]
+    ExtensionHost["Host-governed WASM extension host"]
     Repository["HistoryRepository and SQLx"]
     Clipboard["ClipboardAdapter and platform implementations"]
   end
@@ -95,7 +96,7 @@ flowchart TB
   Services --> Repository
   Services --> Clipboard
   Services --> Providers
-  ExtensionHost -. "detector, renderer, transformer contributions" .-> Services
+  ExtensionHost -. "detector, renderer, transformer, action contributions" .-> Services
   Repository --> SQLite[(SQLite)]
   Repository --> Managed["Managed immutable files"]
   Clipboard <--> OS["OS clipboard and paste APIs"]
@@ -178,7 +179,7 @@ Intended flow is `React -> Tauri adapter -> domain capability -> storage/platfor
 
 ## Rendering, transformation, and output
 
-Renderer choice is computed from ready representations, facets, installed contributions, and global preferences—never stored per clip. Resolver order is global MIME/facet preference, rich/native representation (Office/image/HTML/PDF), facet (JSON/JWT/Markdown/table/date/math), then original `text/plain`; active renderer is UI session state, so policy or installed-renderer changes need no migration and new detectors can re-detect history.
+Renderer choice is computed from ready representations, facets, installed contributions, and global preferences—never stored as canonical clip state. Saved overrides apply facet, then capability, then MIME scope. Otherwise image, file, document, and Office clips prefer faithful views; text-centric clips prefer structured, semantic, faithful, source, then diagnostic views. Within a purpose, matcher specificity, capture priority, native ordinal, and stable contribution ID decide order. This lets a valid JSON facet outrank an application-added HTML alternative while rich HTML leads when no more-specific meaning exists. Active detail renderer remains UI session state.
 
 `TransformService` runs a built-in transformer from one representation plus validated parameters, caches exact outputs/preview under a short-lived result ID, and reuses exactly those bytes for preview/copy/paste/save. Save makes a new clip with `clip_transform_provenance`; it never overwrites source. Original output reconstructs every explicitly supported capture, plain output selects supported text, transformed output uses cached result representations; self-write suppression, focus restoration, synthetic paste, and `[RECONSTRUCT]` helper logs apply.
 
@@ -203,20 +204,23 @@ contracts, never through `ClipItem`, legacy IPC shapes, or the legacy schema.
 
 The frontend list uses lightweight `ClipSummary` rows. Selecting an item builds
 an ephemeral `ClipPresentation` from `ClipDetail`, `ClipViewSet`, and the chosen
-`RenderModel`; it does not persist a UI-selected content type. The restored v1
-row components consume `ClipSummary` directly. Summary rows expose only the
-canonical `primaryPresentationKind` and optional `thumbnailAssetId` needed by
-the history chrome; no `ClipItem` adapter or facet payload crosses this path.
-This avoids loading every representation for history rows and keeps renderer
-policy outside canonical storage.
+`RenderModel`; it does not persist a UI-selected content type. A summary may
+include one bounded cached compact presentation with a host icon, RGBA swatch,
+managed input thumbnail, monogram, title, subtitle, badge, and accessibility
+label. Compact models are versioned derived data computed after capture or
+redetection; scrolling never invokes WASM or network activity. Invalid or absent
+models use the core summary/icon fallback. This avoids loading every
+representation for history rows and keeps renderer policy outside canonical
+storage.
 
 `ClipViewSet.primaryViewId` is the authoritative default. Each view declares a
 stable `presentationKind` and `placement` (`primary`, `alternate`, or
 `advanced`); React never infers behavior from a translated label. Resolver
 preferences apply only when the requested renderer is actually available.
-Otherwise candidates are ordered by the platform adapter's capture priority,
-renderer priority, representation ordinal, and the archived semantic priority
-for facets over plain text. MIME/native identity always remains adapter-owned.
+Otherwise candidates follow purpose and specificity policy, then the platform
+adapter's capture priority, representation ordinal, and stable ID. Extensions
+cannot buy primary placement with numeric priority. MIME/native identity always
+remains adapter-owned.
 
 A Source view is a useful human-readable alternate for formats such as HTML or
 RTF. The complete representation inventory is a separate advanced inspector;
@@ -257,7 +261,7 @@ the document and queues re-embedding when a text provider is configured.
 
 ## Invariants and code map
 
-Canonical capture commits before detector/artifact/index work; derived data may be cleared/rebuilt. FTS works with providers disabled; hosted calls require explicit consent; secrets stay in OS secure storage and never logs/SQLite. Community code runs only as capability-free WASM components; trusted provider adapters receive explicit immutable inputs.
+Canonical capture commits before detector/artifact/index work; derived data may be cleared/rebuilt. FTS works with providers disabled; hosted calls require explicit consent; secrets stay in OS secure storage and never logs/SQLite. Community code runs only as host-governed WASM components with no ambient imports; trusted provider adapters receive explicit immutable inputs.
 
 | Concept | Start here |
 | --- | --- |
@@ -342,12 +346,14 @@ erDiagram
   search_embedding_spaces ||--o{ search_chunks : versions
   search_chunks ||--o| search_embeddings : embedded_as
 
+  clip_items ||--o{ content_compact_presentations : caches_row_model
   extension_installs ||--|| extension_runtime_state : has_state
+  extension_installs ||--o{ extension_action_shortcuts : owns_shortcuts
 ```
 
 `clip_items`, representations, and typed children are canonical. Text is normalized UTF-8, file lists are ordered external references, binary bytes are immutable managed files; facets/artifacts/search preserve source and producer/version provenance, while job tables record resumable work rather than content. Tags, notes, pins/favorites, and transform provenance are durable; an unsaved transform is in-memory, but a saved transform makes a new linked canonical clip.
 
-`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. The fresh physical schema is version 2 and is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history. A database from the earlier V2 development baseline is rejected and must use the explicit factory-reset flow.
+`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. Compact presentation JSON is bounded, renderer/version keyed, disposable, and excluded from fingerprints. The fresh physical schema is version 3 and is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history. A database from an earlier V2 development baseline is rejected and must use the explicit factory-reset flow; there is no dual extension schema or v1 compatibility path.
 
 ## Files and database tables
 
@@ -371,11 +377,11 @@ The two-character directory is filesystem fan-out, not an abbreviated identity: 
 | --- | --- | --- |
 | System | `system_schema_meta` | Fresh-schema identity/version; rejects legacy databases. |
 | Clip | `clip_items`, `clip_representations`, `clip_text_values`, `clip_binary_files`, `clip_file_list_entries`, `clip_format_observations` | Canonical catalog, raw references, capability metadata, managed-file metadata, and bounded capture diagnostics. |
-| Content | `content_facet_definitions`, `content_clip_facets`, `content_detection_jobs` | Facets and detection scheduling. |
+| Content | `content_facet_definitions`, `content_clip_facets`, `content_detection_jobs`, `content_compact_presentations` | Facets, detection scheduling, and rebuildable compact row models. |
 | Catalog | `catalog_tags`, `catalog_clip_tags` | User organization. |
 | Artifact | `artifact_records`, `artifact_inputs`, `artifact_text_values`, `artifact_binary_files`, `artifact_jobs` | OCR/previews/approved output, provenance, derived files/invalidation. |
 | Search | `search_documents`, `search_documents_fts`, `search_embedding_spaces`, `search_embeddings`, `search_index_jobs` | FTS and semantic retrieval. |
-| Extension | `extension_installs`, `extension_runtime_state`, `extension_contribution_runtime_state` | Packages, activation, per-contribution failure streaks, and quarantine. |
+| Extension | `extension_installs`, `extension_runtime_state`, `extension_contribution_runtime_state`, `extension_action_shortcuts` | Packages, activation, failure streaks, quarantine, and device-local action shortcuts. |
 | Config | `config_profile_values`, `config_device_values` | Local non-secret configuration. |
 
 Binary capture writes unique staging bytes, hashes/fsyncs them, transactionally inserts/fetches a pending binary row and clip references, atomically renames to final hash path/fsyncs its parent, then marks ready. Startup reconciliation is idempotent across pending rows, stale staging, missing/unreferenced files, and empty bucket directories. It preserves every ready canonical and derived reference. Identical bytes may share one binary row/file across clips; deletion waits for the final canonical or derived reference.
@@ -411,19 +417,20 @@ Detection follows raw capture and never selects a global type. Detectors declare
 
 ## Extensions: contributions without privilege
 
-Extensions add semantic understanding, views, and transformations while preserving canonical capture. Built-ins are trusted Rust; community packages are untrusted WebAssembly Components in a capability-free sandbox. Providers are deliberately not extensions because credentials, consent, model runtimes, and vector-space integrity need a host-owned boundary.
+Extensions add semantic understanding, typed presentations, transformations, and explicit contextual actions while preserving canonical capture. Built-ins are trusted Rust; community packages are untrusted WebAssembly Components behind host-owned policy. Providers are deliberately not extensions because credentials, consent, model runtimes, and vector-space integrity need a host-owned boundary.
 
 ## Built-in contribution system
 
-Built-ins use the same contracts intended for public extensions. A detector adds meaning; a renderer describes a view; a transformer produces explicit new representations.
+Built-ins use the same conceptual contribution model. A detector adds meaning; a renderer describes a view; a transformer produces explicit new representations; an action exposes a bounded command.
 
 - **Detector:** receives bounded immutable text after capture, uses candidate routing plus concurrency/timeout limits, and emits source-provenanced additive facets—not a global content type.
-- **Renderer:** returns host-owned `RenderModel`; failure falls back to original representation. Supported models are `text`, `code`, `markdown`, `table`, `tree`, `key/value`, `image`, `error`; ClipsX owns React UI.
+- **Renderer:** returns a host-owned typed detail or compact model; failure falls back to the original representation or core row. Detail includes text, code, Markdown, table, tree, key/value, image, card, and error. ClipsX owns React UI.
 - **Transformer:** takes explicit user action and validated parameters, creates bounded cached results, and becomes canonical only after explicit save.
+- **Action:** binds a transformer preset or runs bounded guest logic and requests only a declared preview, copy, paste, save, validated HTTPS URL, or notification effect.
 
-Built-ins are enabled by default. Renderer selection is computed UI policy: user MIME/facet preference, rich/native representation, facet, then plain text. See [runtime architecture](#runtime-architecture-capture-and-output) for output behavior and [data model](#data-model-preserve-first-derive-later) for persistence.
+Built-ins are enabled by default. Renderer tab categorization and primary selection use purpose, matcher specificity, capture order, and scoped preferences as described above. See [runtime architecture](#runtime-architecture-capture-and-output) for output behavior and [data model](#data-model-preserve-first-derive-later) for persistence.
 
-## Extension API v1 WASM boundary
+## Extension API v2 WASM boundary
 
 This diagram shows how community contributions participate without receiving privileged handles.
 
@@ -437,23 +444,32 @@ flowchart LR
 
   Capture["Ready representation"] --> DetectHook["Detector hook"]
   Select["Selected clip/view"] --> RenderHook["Renderer hook"]
-  Action["Explicit user action"] --> TransformHook["Transformer hook"]
+  Capture --> CompactHook["Cached compact-render hook"]
+  Action["Explicit user action"] --> ExecuteHook["Transform or action hook"]
 
   DetectHook --> WASM
   RenderHook --> WASM
-  TransformHook --> WASM
+  CompactHook --> WASM
+  ExecuteHook --> WASM
   WASM --> Validate["Host validates bounded structured output"]
   Validate --> Facets["Persist derived facets"]
-  Validate --> Model["Ephemeral RenderModel"]
-  Validate --> Result["Ephemeral representations; optional save"]
+  Validate --> Model["Typed detail model"]
+  Validate --> Compact[("Derived compact model")]
+  Validate --> Result["Exact transform result / audited effect"]
   WASM -. "trap, timeout, or repeated failure" .-> Quarantine[("extension_runtime_state")]
 ```
 
-Normal installation will accept checksum-pinned reviewed GitHub releases with package ID/version, release URL, SHA-256, compatibility, permissions, contribution metadata. Developer Mode permits local packages only with a persistent warning; packages use app-owned storage and relative `extension_installs` paths, while enabled/runtime/quarantine state is SQLite.
+Normal installation accepts checksum-pinned reviewed GitHub releases with package ID/version, release URL, SHA-256, compatibility, permissions, and contribution metadata. Developer Mode accepts only validated `.clipsx` packages and discloses manifest permissions before confirmation. Packages use app-owned storage and relative `extension_installs` paths, while enabled/runtime/quarantine state is SQLite.
 
-WASM gets only host-approved captured representation/facet data and explicit hook context: no history, native clipboard, SQLite/database, filesystem, network, shell, environment, React/frontend code/components, secrets, or providers. Manifest matching may use capability IDs and format families in addition to compatible MIME and format-key selectors. This does not change the component ABI or its 1 MiB input limit. Native format resolution and codecs remain core-owned. Host owns scheduling, size/time/memory limits, validation, retries, and quarantine. Detection is post-capture derived work; rendering is on-demand; transforms use built-in preview/copy/paste/save and cannot mutate clips in place.
+The v2 manifest uses clauses that are ORed, fields within a clause that are ANDed, and values within a field that are ORed. Fields are facet ID, capability ID, format family, format key, MIME, and storage kind. Renderers and actions require a non-empty matcher. Renderers declare a purpose (`faithful`, `structured`, `semantic`, `source`, or `diagnostic`) and detail/compact surfaces rather than numeric priority. Compact outputs are cached after capture/redetection and invalidated for source, contribution-version, enablement, or relevant preference changes.
 
-Extension API v1 is defined by [`EXTENSION_API_V1.md`](EXTENSION_API_V1.md) and its WIT world. Packages are validated before installation, run with bounded memory/fuel/epoch interruption, and are quarantined after repeated contribution failures. The Extensions UI manages reviewed-registry and explicitly enabled Developer Mode packages; live reload remains unsupported.
+WASM gets only host-approved captured representation/facet data and explicit hook context: no history, native clipboard, SQLite/database, filesystem, shell, environment, React/frontend code/components, secrets, providers, or raw network. The v2 world imports no APIs and retains the 1 MiB input boundary plus fresh stores, fuel, memory, stack, transfer, deadline, validation, failure-streak, and quarantine controls. Native format resolution and codecs remain core-owned. Actions cannot mutate existing clips, tags, or notes or launch arbitrary programs.
+
+Manifests may declare exact HTTPS origins, methods, response limits, and named credential slots for the future capability broker. Only explicitly invoked actions and capability-backed transformers are eligible; detectors and renderers remain permanently offline. Until the broker exists, these contributions are visible but unavailable without disabling local contributions. The future host owns origin/method/redirect/timeout/size/private-network enforcement, approval renewal, OS-secure credential storage, and credential injection; WASM never receives credential values.
+
+Extension API v2 is defined by [`EXTENSION_API_V2.md`](EXTENSION_API_V2.md) and its WIT world; the v1 document is historical only. V1 packages are rejected rather than loaded through a dual ABI. Typed action outputs reuse the exact transform-result pipeline for preview, Copy, Paste, and Save. User-assigned shortcuts are app-local, device-scoped, target the selected clip, and are checked against other action assignments, core history commands, and the configured global ClipsX shortcut; system-global action shortcuts remain deferred.
+
+The repository includes a generated-binding Rust template and buildable Color Tools package that exercises HEX/RGB/HSL detection, a semantic card, a cached row swatch, format transformers, and Copy preset actions. The app-owned packaging tool validates and creates `.clipsx` archives.
 
 ## Provider separation
 

@@ -27,9 +27,12 @@ const presentation: ClipPresentation = {
     label: 'URL',
     sourceId: 'rep-1',
     mimeType: 'text/plain',
+    capabilityId: 'test.text',
     facetId: 'facet-1',
     isOriginal: false,
     presentationKind: 'url',
+    purpose: 'semantic',
+    matchSpecificity: 0,
     placement: 'primary',
   },
   model: {
