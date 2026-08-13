@@ -125,24 +125,11 @@ const ClipboardListItemComponent = ({
                 <ScanText className="h-3 w-3 animate-pulse text-sky-400" strokeWidth={2.5} />
               )}
               {clip.hasEmbedding && (
-                <svg
-                  className="h-3 w-3 shrink-0"
-                  viewBox="0 0 12 12"
-                  fill="none"
+                <Sparkles
+                  className="h-3 w-3 shrink-0 text-violet-400"
+                  strokeWidth={2}
                   aria-label="Embedded"
-                >
-                  <defs>
-                    <linearGradient id={`emb-${clip.id}`} x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="#3b82f6" />
-                      <stop offset="50%" stopColor="#8b5cf6" />
-                      <stop offset="100%" stopColor="#ec4899" />
-                    </linearGradient>
-                  </defs>
-                  <path
-                    d="M6 1L7.5 4.5H11L8.25 6.75L9.5 10.5L6 8.25L2.5 10.5L3.75 6.75L1 4.5H4.5Z"
-                    fill={`url(#emb-${clip.id})`}
-                  />
-                </svg>
+                />
               )}
               {hasScore && (
                 <span className="flex items-center gap-0.5 rounded-full border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-pink-500 dark:border-pink-500/30 dark:text-pink-400">

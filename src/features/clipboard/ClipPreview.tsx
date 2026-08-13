@@ -1,12 +1,13 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Database, ScanText } from 'lucide-react'
+import { ScanText } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { presentationTextStats } from './presentationModel'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
 import { V2ViewPanel, type ViewTabControls } from './V2ViewPanel'
+import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
 
 const KIND_COLOR: Record<string, string> = {
@@ -37,6 +38,7 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const { t, i18n } = useTranslation()
   const [presentation, setPresentation] = useState<ClipPresentation | null>(null)
   const [tabControls, setTabControls] = useState<ViewTabControls | null>(null)
+  const [transformControls, setTransformControls] = useState<TransformControls | null>(null)
   const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
   const currentPresentation = useMemo(
     () =>
@@ -50,8 +52,9 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
       onDelete: (id: string) => deleteClip(id),
       onTogglePin: (id: string) => togglePin(id),
       onToggleFavorite: (id: string) => toggleFavorite(id),
+      onShowInspector: tabControls ? () => tabControls.onShowInspector() : undefined,
     }),
-    [deleteClip, toggleFavorite, togglePin]
+    [deleteClip, toggleFavorite, togglePin, tabControls]
   )
   const handlePresentation = useCallback(
     (value: ClipPresentation | null) => setPresentation(value),
@@ -59,6 +62,10 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   )
   const handleTabControls = useCallback(
     (controls: ViewTabControls | null) => setTabControls(controls),
+    []
+  )
+  const handleTransformControls = useCallback(
+    (controls: TransformControls | null) => setTransformControls(controls),
     []
   )
   const typeLabel = currentPresentation?.activeView.presentationKind ?? clip.primaryPresentationKind
@@ -70,7 +77,7 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
 
   return (
     <div className="flex flex-col h-full rounded-2xl overflow-hidden my-0.5 mr-2 bg-slate-100/25 dark:bg-slate-100/5 backdrop-blur-xl border border-slate-200/70 dark:border-white/5">
-      {/* Header: row 1 — type badge + timestamp + actions */}
+      {/* Header: row 1 — type badge + actions */}
       <div className="flex shrink-0 flex-col border-b border-slate-100/10 bg-slate-100/40 dark:border-slate-100/5 dark:bg-slate-100/5">
         <div className="flex items-center gap-2 px-3 py-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -80,23 +87,14 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
                 {typeLabel.replaceAll('_', ' ')}
               </span>
             </div>
-            <span className="hidden truncate text-xs tabular-nums text-gray-500 dark:text-gray-500 sm:block">
-              {new Date(clip.capturedAt).toLocaleString(i18n.resolvedLanguage)}
-            </span>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
-            {tabControls && (
-              <button
-                aria-label="Open representation inspector"
-                title="Representations"
-                className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-100 dark:hover:bg-white/10"
-                onClick={tabControls.onShowInspector}
-              >
-                <Database className="h-4 w-4" />
-              </button>
-            )}
             {currentPresentation && (
-              <ClipActionsToolbar presentation={currentPresentation} context={actionContext} />
+              <ClipActionsToolbar
+                presentation={currentPresentation}
+                context={actionContext}
+                transformControls={transformControls}
+              />
             )}
           </div>
         </div>
@@ -104,19 +102,38 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
         {/* Row 2: view tabs (only when multiple views exist) */}
         {visibleTabs && (
           <div className="flex gap-1 overflow-x-auto px-3 pb-1.5 no-scrollbar">
-            {visibleTabs.views.map(item => (
-              <button
-                key={item.id}
-                onClick={() => visibleTabs.onTabChange(item.id)}
-                className={`shrink-0 rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  visibleTabs.activeId === item.id
-                    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
-                    : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
+            {visibleTabs.views.map(item => {
+              const isOcr = item.id === '__ocr__'
+              const isTransform = item.id === '__transform__'
+              const ocrState =
+                isOcr && currentPresentation?.model.kind === 'image'
+                  ? currentPresentation.model.ocr.state
+                  : null
+              const dot =
+                ocrState === 'pending' || ocrState === 'running'
+                  ? 'bg-sky-400 animate-pulse'
+                  : ocrState === 'ready'
+                    ? 'bg-emerald-400'
+                    : ocrState === 'failed'
+                      ? 'bg-red-400'
+                      : isTransform
+                        ? 'bg-violet-400 animate-pulse'
+                        : null
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => visibleTabs.onTabChange(item.id)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${
+                    visibleTabs.activeId === item.id
+                      ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+                      : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'
+                  }`}
+                >
+                  {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+                  {item.label}
+                </button>
+              )
+            })}
           </div>
         )}
       </div>
@@ -127,6 +144,7 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
           clipId={clip.id}
           onPresentation={handlePresentation}
           onTabControls={handleTabControls}
+          onTransformControls={handleTransformControls}
         />
       </div>
 
@@ -137,6 +155,9 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
 
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-100/60 dark:bg-black/20 border-t border-slate-200/70 dark:border-slate-100/5 text-[10px] text-gray-600 dark:text-gray-500 font-mono">
         <div className="flex items-center gap-4">
+          <span className="tabular-nums">
+            {new Date(clip.capturedAt).toLocaleString(i18n.resolvedLanguage)}
+          </span>
           {stats && <span>{t('clipboard.characters', { count: stats.characters })}</span>}
           {stats && <span>{t('clipboard.lines', { count: stats.lines })}</span>}
           {stats?.language && <span>{stats.language}</span>}

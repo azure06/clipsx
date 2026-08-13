@@ -1,21 +1,25 @@
 import { invoke } from '@tauri-apps/api/core'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   Check,
   Copy,
+  Database,
   ExternalLink,
   Mail,
   Phone,
   Pin,
-  SquareArrowOutUpRight,
+  PenLine,
   Star,
   Trash2,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { formatShortcut, getPlatform, type ShortcutDef } from '../../shared/keyboard/shortcuts'
+import type { TransformControls } from './useTransformState'
 
 const platform = getPlatform()
 
@@ -23,6 +27,7 @@ export interface PresentationActionContext {
   onDelete: (id: string) => void
   onTogglePin: (id: string) => void
   onToggleFavorite: (id: string) => void
+  onShowInspector?: () => void
 }
 
 type ToolbarAction = {
@@ -30,6 +35,7 @@ type ToolbarAction = {
   label: string
   icon: LucideIcon
   active?: boolean
+  activeColor?: string
   shortcut?: ShortcutDef
   separator?: boolean
   run: () => Promise<void> | void
@@ -65,9 +71,11 @@ const editorExtension = (presentation: ClipPresentation): string | null => {
 export const ClipActionsToolbar = ({
   presentation,
   context,
+  transformControls,
 }: {
   presentation: ClipPresentation
   context: PresentationActionContext
+  transformControls?: TransformControls | null
 }) => {
   const [copied, setCopied] = useState(false)
   const performCopy = useClipboardStore(state => state.performCopy)
@@ -77,6 +85,9 @@ export const ClipActionsToolbar = ({
         id: 'copy',
         label: copied ? 'Copied!' : 'Copy',
         icon: copied ? Check : Copy,
+        active: copied,
+        activeColor:
+          'bg-emerald-500/20 text-emerald-600 ring-1 ring-emerald-500/40 dark:text-emerald-400 dark:bg-emerald-500/15',
         shortcut: { modifiers: ['primary'], key: 'C' },
         run: async () => {
           await performCopy('', presentation.id)
@@ -90,7 +101,7 @@ export const ClipActionsToolbar = ({
       values.push({
         id: 'open-editor',
         label: 'Open in Editor',
-        icon: SquareArrowOutUpRight,
+        icon: PenLine,
         run: () => invoke('open_clip_text_in_editor', { clipId: presentation.id, extension }),
       })
     }
@@ -123,12 +134,21 @@ export const ClipActionsToolbar = ({
         })
       }
     }
+    if (context.onShowInspector) {
+      values.push({
+        id: 'inspector',
+        label: 'Representations',
+        icon: Database,
+        run: () => context.onShowInspector?.(),
+      })
+    }
     values.push(
       {
         id: 'favorite',
         label: 'Favorite',
         icon: Star,
         active: presentation.isFavorite,
+        activeColor: 'bg-amber-500/10 text-amber-500 dark:text-amber-400',
         shortcut: { modifiers: ['primary'], key: 'F' },
         separator: true,
         run: () => context.onToggleFavorite(presentation.id),
@@ -138,6 +158,7 @@ export const ClipActionsToolbar = ({
         label: 'Pin',
         icon: Pin,
         active: presentation.isPinned,
+        activeColor: 'bg-amber-500/10 text-amber-500 dark:text-amber-400',
         shortcut: { modifiers: ['primary'], key: 'P' },
         run: () => context.onTogglePin(presentation.id),
       },
@@ -160,6 +181,9 @@ export const ClipActionsToolbar = ({
             <ActionButton action={action} key={action.id} />
           </>
         ))}
+        {transformControls && transformControls.items.length > 0 && (
+          <TransformDropdown controls={transformControls} />
+        )}
       </div>
     </Tooltip.Provider>
   )
@@ -168,16 +192,19 @@ export const ClipActionsToolbar = ({
 const ActionButton = ({ action }: { action: ToolbarAction }) => {
   const Icon = action.icon
   const shortcutLabel = action.shortcut ? formatShortcut(action.shortcut, platform) : null
+  const activeClass = action.active
+    ? (action.activeColor ?? 'bg-amber-500/10 text-amber-500 dark:text-amber-400')
+    : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <button
           aria-label={action.label}
-          className={`rounded-md p-1.5 transition-colors ${action.active ? 'bg-amber-500/10 text-amber-500 dark:text-amber-400' : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'}`}
+          className={`rounded-md p-1.5 transition-all duration-150 ${activeClass} ${action.active ? 'scale-110' : ''}`}
           onClick={() => void action.run()}
         >
           <Icon
-            className={`h-4 w-4 ${action.id === 'favorite' && action.active ? 'fill-amber-500' : ''}`}
+            className={`h-4 w-4 ${action.id === 'favorite' && action.active ? 'fill-amber-500' : ''} ${action.id === 'copy' && action.active ? 'stroke-[2.5]' : ''}`}
           />
         </button>
       </Tooltip.Trigger>
@@ -197,3 +224,45 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
     </Tooltip.Root>
   )
 }
+
+const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
+  <Tooltip.Root>
+    <DropdownMenu.Root>
+      <Tooltip.Trigger asChild>
+        <DropdownMenu.Trigger asChild>
+          <button
+            aria-label="Transform"
+            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+        </DropdownMenu.Trigger>
+      </Tooltip.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="z-50 min-w-[160px] rounded-lg border border-slate-200/60 bg-white/95 py-1 shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/95"
+          sideOffset={6}
+          align="end"
+        >
+          {controls.items.map(item => (
+            <DropdownMenu.Item
+              key={item.id}
+              className="flex cursor-pointer select-none items-center px-3 py-1.5 text-sm text-gray-700 outline-none hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-white/10"
+              onSelect={() => void controls.run(item.id)}
+            >
+              {item.label}
+            </DropdownMenu.Item>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+    <Tooltip.Portal>
+      <Tooltip.Content
+        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+        sideOffset={5}
+      >
+        Transform
+      </Tooltip.Content>
+    </Tooltip.Portal>
+  </Tooltip.Root>
+)

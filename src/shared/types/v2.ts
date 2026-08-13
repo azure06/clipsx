@@ -7,6 +7,8 @@ export type TextEmbeddingStatus = {
   diagnostic: string | null
   indexedClips: number
   pendingJobs: number
+  endpoint: string | null
+  model: string | null
 }
 
 export type ClipSummary = {

@@ -49,6 +49,8 @@ pub struct ProviderStatus {
     pub diagnostic: Option<String>,
     pub indexed_clips: u64,
     pub pending_jobs: u64,
+    pub endpoint: Option<String>,
+    pub model: Option<String>,
 }
 
 /// Stable host contribution contract. WASM packages may consume this shape in
@@ -283,10 +285,14 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
             diagnostic: None,
             indexed_clips: 0,
             pending_jobs: 0,
+            endpoint: None,
+            model: None,
         });
     };
     let pending = value["pendingSpaceId"].as_str().map(str::to_string);
     let active = value["activeSpaceId"].as_str().map(str::to_string);
+    let endpoint = value["endpoint"].as_str().map(str::to_string);
+    let model = value["model"].as_str().map(str::to_string);
     let indexed: i64 =
         sqlx::query_scalar("SELECT count(DISTINCT clip_id) FROM search_chunks WHERE space_id=?")
             .bind(active.as_ref().or(pending.as_ref()))
@@ -300,6 +306,8 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         diagnostic: None,
         indexed_clips: indexed as u64,
         pending_jobs: jobs as u64,
+        endpoint,
+        model,
     })
 }
 
@@ -418,6 +426,29 @@ pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
         .or(config["pendingSpaceId"].as_str())
         .context("no space")?;
     enqueue_all(repo, space, 2).await
+}
+pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
+    let config = get_config(&repo.pool)
+        .await?
+        .context("embeddings are disabled")?;
+    let space = config["activeSpaceId"]
+        .as_str()
+        .or(config["pendingSpaceId"].as_str())
+        .context("no space")?;
+    // Only enqueue clips that have no chunks in this space yet
+    let clips: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM clip_items WHERE lifecycle_state='ready' \
+         AND NOT EXISTS (SELECT 1 FROM search_chunks sc WHERE sc.clip_id=clip_items.id AND sc.space_id=?)"
+    )
+    .bind(space)
+    .fetch_all(&repo.pool)
+    .await?;
+    for clip in clips {
+        sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)")
+            .bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(1_i64).bind(CHUNKER_VERSION)
+            .execute(&repo.pool).await?;
+    }
+    Ok(())
 }
 pub async fn enqueue_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()> {
     let config = match get_config(&repo.pool).await? {

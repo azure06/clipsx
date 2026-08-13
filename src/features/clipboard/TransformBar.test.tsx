@@ -1,7 +1,7 @@
 import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ClipPresentation } from '../../shared/types/v2'
-import { TransformBar } from './TransformBar'
+import { useTransformState } from './useTransformState'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 
@@ -40,14 +40,27 @@ const presentation: ClipPresentation = {
   },
 }
 
-describe('TransformBar', () => {
+const HookHarness = ({
+  clipId,
+  sourceId,
+  basePresentation,
+}: {
+  clipId: string
+  sourceId: string
+  basePresentation: ClipPresentation
+}) => {
+  useTransformState({ clipId, sourceId, basePresentation, onControls: undefined })
+  return null
+}
+
+describe('useTransformState', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     invokeMock.mockResolvedValue([])
   })
 
   it('discovers transforms for the active source and presentation only', async () => {
-    render(<TransformBar clipId="clip-1" sourceId="rep-1" basePresentation={presentation} />)
+    render(<HookHarness clipId="clip-1" sourceId="rep-1" basePresentation={presentation} />)
 
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith('list_transformer_contributions', {

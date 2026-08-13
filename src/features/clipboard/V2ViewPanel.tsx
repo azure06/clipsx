@@ -1,16 +1,148 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Database, RotateCw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import { Copy, Database, FolderInput, RotateCw, ScanText, Sparkles, X } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   ClipDetail,
   ClipPresentation,
   ClipViewDescriptor,
   ClipViewSet,
+  OcrPresentation,
   RenderModel,
 } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
-import { TransformBar } from './TransformBar'
+import { useTransformState, type TransformControls } from './useTransformState'
+
+const OCR_TAB_ID = '__ocr__'
+const TRANSFORM_TAB_ID = '__transform__'
+
+const OcrPanel = ({
+  ocr,
+  retrying,
+  onRetry,
+}: {
+  ocr: OcrPresentation
+  retrying: boolean
+  onRetry: () => void
+}) => (
+  <div className="custom-scrollbar h-full min-h-0 overflow-auto overscroll-contain p-4 text-sm">
+    {(ocr.state === 'pending' || ocr.state === 'running') && (
+      <div className="flex items-center gap-2 text-gray-500">
+        <ScanText className="h-4 w-4 animate-pulse text-sky-400" />
+        {ocr.state === 'pending' ? 'Text recognition is queued…' : 'Text recognition is running…'}
+      </div>
+    )}
+    {ocr.state === 'failed' && (
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-xs text-red-500">{ocr.message}</span>
+        <button
+          className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
+          disabled={retrying}
+          onClick={onRetry}
+        >
+          <RotateCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
+          Retry
+        </button>
+      </div>
+    )}
+    {ocr.state === 'ready' &&
+      (ocr.text.trim() ? (
+        <pre className="whitespace-pre-wrap leading-relaxed text-gray-800 dark:text-gray-200">
+          {ocr.text}
+        </pre>
+      ) : (
+        <span className="text-gray-500">No text found in image.</span>
+      ))}
+  </div>
+)
+
+const TransformAction = ({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) => (
+  <Tooltip.Root>
+    <Tooltip.Trigger asChild>
+      <button
+        aria-label={label}
+        className="rounded p-1 text-gray-500 transition-colors hover:bg-slate-100 dark:hover:bg-white/10"
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </Tooltip.Trigger>
+    <Tooltip.Portal>
+      <Tooltip.Content
+        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+        sideOffset={5}
+      >
+        {label}
+      </Tooltip.Content>
+    </Tooltip.Portal>
+  </Tooltip.Root>
+)
+
+const TransformResultTab = ({
+  label,
+  presentation,
+  busy,
+  error,
+  applyResult,
+  onDismiss,
+}: {
+  label: string
+  presentation: ClipPresentation | null
+  busy: boolean
+  error: string | null
+  applyResult: (command: string) => Promise<void>
+  onDismiss: () => void
+}) => (
+  <Tooltip.Provider delayDuration={300}>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200/60 px-3 py-1.5 dark:border-white/5">
+        <Sparkles className="h-3.5 w-3.5 text-violet-400" />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-gray-500">
+          {label}
+        </span>
+        {presentation && (
+          <div className="flex items-center gap-0.5">
+            <TransformAction label="Copy" onClick={() => void applyResult('copy_clip_output')}>
+              <Copy className="h-3.5 w-3.5" />
+            </TransformAction>
+            <TransformAction
+              label="Save as new clip"
+              onClick={() => void applyResult('save_transform_result')}
+            >
+              <FolderInput className="h-3.5 w-3.5" />
+            </TransformAction>
+          </div>
+        )}
+        <TransformAction label="Dismiss" onClick={onDismiss}>
+          <X className="h-3.5 w-3.5 text-gray-400" />
+        </TransformAction>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {busy && (
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-gray-500">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-violet-500" />
+            Running transform…
+          </div>
+        )}
+        {error && !busy && (
+          <div className="flex h-full items-center justify-center p-4 text-sm text-red-500">
+            {error}
+          </div>
+        )}
+        {presentation && !busy && <RenderModelView presentation={presentation} />}
+      </div>
+    </div>
+  </Tooltip.Provider>
+)
 
 type ArtifactUpdate = { clipId: string; sourceId: string }
 
@@ -21,46 +153,106 @@ export type ViewTabControls = {
   onShowInspector: () => void
 }
 
+const STORAGE_KIND_STYLE: Record<string, string> = {
+  text: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 ring-1 ring-sky-500/25',
+  binary_asset: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 ring-1 ring-violet-500/25',
+  file_list: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/25',
+}
+
+const formatBytes = (n: number) => {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`
+}
+
 const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => void }) => (
   <div className="absolute inset-0 z-20 flex flex-col bg-white/95 backdrop-blur-xl dark:bg-slate-950/95">
-    <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 dark:border-white/10">
-      <div className="flex items-center gap-2 text-xs font-semibold">
-        <Database className="h-4 w-4" />
-        Representations
+    <div className="flex items-center justify-between border-b border-slate-200/60 px-4 py-2.5 dark:border-white/10">
+      <div className="flex items-center gap-2">
+        <Database className="h-4 w-4 text-gray-500" />
+        <span className="text-xs font-semibold">Representations</span>
+        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums dark:bg-white/10">
+          {detail.representations.length}
+        </span>
       </div>
       <button
         aria-label="Close inspector"
-        className="rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-white/10"
+        className="rounded-md p-1.5 text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10"
         onClick={onClose}
       >
         <X className="h-4 w-4" />
       </button>
     </div>
-    <div className="custom-scrollbar flex-1 overflow-auto p-4 text-xs">
-      {detail.representations.map(rep => (
-        <article
-          className="mb-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700"
-          key={rep.id}
-        >
-          <div className="font-medium">
-            {rep.canonicalMimeType ?? rep.nativeType ?? rep.formatKey}
-          </div>
-          <div className="mt-1 text-gray-500">
-            {rep.storageKind} · {rep.byteLength.toLocaleString()} bytes · priority{' '}
-            {rep.capturePriority}
-          </div>
-          {rep.textValue !== null && (
-            <pre className="custom-scrollbar mt-2 max-h-40 overflow-auto whitespace-pre-wrap">
-              {rep.textValue}
-            </pre>
-          )}
-          {rep.fileReferences.map(file => (
-            <div className="mt-1 break-all" key={file}>
-              {file}
+    <div className="custom-scrollbar flex-1 overflow-auto p-3 space-y-2">
+      {detail.representations.map((rep, index) => {
+        const title = rep.canonicalMimeType ?? rep.nativeType ?? rep.formatKey
+        const kindStyle =
+          STORAGE_KIND_STYLE[rep.storageKind] ?? 'bg-slate-100 text-gray-500 dark:bg-white/10'
+        return (
+          <article
+            className="rounded-xl border border-slate-200/70 bg-white/60 dark:border-white/8 dark:bg-white/4"
+            key={rep.id}
+          >
+            {/* Card header */}
+            <div className="flex items-start gap-3 px-3 pt-3 pb-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 break-all">
+                    {title}
+                  </span>
+                  {rep.nativeType && rep.nativeType !== title && (
+                    <span className="rounded border border-slate-200/80 bg-slate-100/80 px-1.5 py-0.5 text-[10px] text-gray-500 dark:border-white/10 dark:bg-white/5">
+                      {rep.nativeType}
+                    </span>
+                  )}
+                </div>
+                <code className="text-[10px] text-gray-400">{rep.formatKey}</code>
+              </div>
+              <span className="shrink-0 mt-0.5 text-[10px] font-medium tabular-nums text-gray-500">
+                #{index + 1}
+              </span>
             </div>
-          ))}
-        </article>
-      ))}
+
+            {/* Meta chips */}
+            <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${kindStyle}`}>
+                {rep.storageKind.replace('_', ' ')}
+              </span>
+              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-white/8 dark:text-gray-400">
+                {formatBytes(rep.byteLength)}
+              </span>
+              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
+                priority {rep.capturePriority}
+              </span>
+              {rep.sha256 && (
+                <code className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] text-gray-400 dark:bg-white/8">
+                  {rep.sha256.slice(0, 8)}…
+                </code>
+              )}
+            </div>
+
+            {/* Text preview */}
+            {rep.textValue !== null && rep.textValue.trim() && (
+              <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2">
+                <pre className="custom-scrollbar max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed text-gray-600 dark:text-gray-400">
+                  {rep.textValue}
+                </pre>
+              </div>
+            )}
+
+            {/* File references */}
+            {rep.fileReferences.length > 0 && (
+              <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2 space-y-1">
+                {rep.fileReferences.map(file => (
+                  <div className="break-all text-[10px] font-mono text-gray-500" key={file}>
+                    {file}
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        )
+      })}
     </div>
   </div>
 )
@@ -69,10 +261,12 @@ export const V2ViewPanel = ({
   clipId,
   onPresentation,
   onTabControls,
+  onTransformControls,
 }: {
   clipId: string
   onPresentation?: (presentation: ClipPresentation | null) => void
   onTabControls?: (info: ViewTabControls | null) => void
+  onTransformControls?: (controls: TransformControls | null) => void
 }) => {
   const [detail, setDetail] = useState<ClipDetail | null>(null)
   const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
@@ -102,16 +296,22 @@ export const V2ViewPanel = ({
     }
   }, [clipId, retry])
 
+  const [lastRealView, setLastRealView] = useState<ClipViewDescriptor | null>(null)
+  const isSyntheticTab = active === OCR_TAB_ID || active === TRANSFORM_TAB_ID
   const view = useMemo(
-    () => viewSet?.views.find(item => item.id === active) ?? null,
-    [active, viewSet]
+    () => (isSyntheticTab ? null : (viewSet?.views.find(item => item.id === active) ?? null)),
+    [active, isSyntheticTab, viewSet]
   )
+  useEffect(() => {
+    if (view) setLastRealView(view)
+  }, [view])
 
   useEffect(() => {
     let disposed = false
     let stop: (() => void) | undefined
     void listen<ArtifactUpdate>('clip-artifacts-updated', event => {
-      if (event.payload.clipId !== clipId || event.payload.sourceId !== view?.sourceId) return
+      const sourceId = view?.sourceId ?? lastRealView?.sourceId
+      if (event.payload.clipId !== clipId || event.payload.sourceId !== sourceId) return
       setModel(null)
       setRenderRevision(value => value + 1)
     }).then(unlisten => {
@@ -122,11 +322,11 @@ export const V2ViewPanel = ({
       disposed = true
       stop?.()
     }
-  }, [clipId, view?.sourceId])
+  }, [clipId, view?.sourceId, lastRealView?.sourceId])
 
   useEffect(() => {
     let alive = true
-    if (!view) return
+    if (!view || isSyntheticTab) return
     void invoke<RenderModel>('render_clip_view', {
       clipId,
       rendererId: view.rendererId,
@@ -158,36 +358,22 @@ export const V2ViewPanel = ({
     }
   }, [clipId, renderRevision, view, viewSet])
 
+  const effectiveView = view ?? (isSyntheticTab ? lastRealView : null)
   const presentation = useMemo<ClipPresentation | null>(
-    () => (detail && view && model ? { ...detail.clip, activeView: view, model } : null),
-    [detail, model, view]
+    () =>
+      detail && effectiveView && model
+        ? { ...detail.clip, activeView: effectiveView, model }
+        : null,
+    [detail, effectiveView, model]
   )
   useEffect(() => onPresentation?.(presentation), [onPresentation, presentation])
 
   const handleTabChange = useCallback((id: string) => {
-    setModel(null)
+    if (id !== OCR_TAB_ID && id !== TRANSFORM_TAB_ID) setModel(null)
     setActive(id)
   }, [])
 
   const handleShowInspector = useCallback(() => setInspecting(true), [])
-
-  // Lift tab controls to parent so it can render them in its unified header row
-  useEffect(() => {
-    if (!viewSet || !active) {
-      onTabControls?.(null)
-      return
-    }
-    const visible = viewSet.views.filter(item => item.placement !== 'advanced')
-    onTabControls?.({
-      views: visible,
-      activeId: active,
-      onTabChange: handleTabChange,
-      onShowInspector: handleShowInspector,
-    })
-  }, [viewSet, active, onTabControls, handleTabChange, handleShowInspector])
-
-  // Clear controls when unmounted
-  useEffect(() => () => onTabControls?.(null), [onTabControls])
 
   const retryOcr = async () => {
     if (!presentation || presentation.model.kind !== 'image') return
@@ -203,6 +389,72 @@ export const V2ViewPanel = ({
       setRetryingOcr(false)
     }
   }
+
+  const transformState = useTransformState({
+    clipId,
+    sourceId: view?.sourceId ?? lastRealView?.sourceId ?? '',
+    basePresentation: presentation,
+    onControls: onTransformControls,
+  })
+
+  // Lift tab controls to parent so it can render them in its unified header row
+  useEffect(() => {
+    if (!viewSet || !active) {
+      onTabControls?.(null)
+      return
+    }
+    const visible = viewSet.views.filter(item => item.placement !== 'advanced')
+    const ocrTab: ClipViewDescriptor | null =
+      model?.kind === 'image' && model.ocr.state !== 'disabled' && model.ocr.state !== 'unsupported'
+        ? {
+            id: OCR_TAB_ID,
+            rendererId: '',
+            label: 'Text',
+            sourceId: '',
+            mimeType: null,
+            facetId: null,
+            isOriginal: false,
+            presentationKind: 'text',
+            placement: 'alternate',
+          }
+        : null
+    const transformTab: ClipViewDescriptor | null = transformState.activeTransformer
+      ? {
+          id: TRANSFORM_TAB_ID,
+          rendererId: '',
+          label: transformState.activeTransformer.label,
+          sourceId: '',
+          mimeType: null,
+          facetId: null,
+          isOriginal: false,
+          presentationKind: 'text',
+          placement: 'alternate',
+        }
+      : null
+    const views = [...visible, ...(ocrTab ? [ocrTab] : []), ...(transformTab ? [transformTab] : [])]
+    onTabControls?.({
+      views,
+      activeId: active,
+      onTabChange: handleTabChange,
+      onShowInspector: handleShowInspector,
+    })
+  }, [
+    viewSet,
+    active,
+    model,
+    transformState.activeTransformer,
+    onTabControls,
+    handleTabChange,
+    handleShowInspector,
+  ])
+
+  // Clear controls when unmounted
+  useEffect(() => () => onTabControls?.(null), [onTabControls])
+
+  // Auto-switch to transform tab as soon as a transform is initiated
+  useEffect(() => {
+    if (transformState.activeTransformer) setActive(TRANSFORM_TAB_ID)
+  }, [transformState.activeTransformer])
 
   if (error)
     return (
@@ -230,20 +482,44 @@ export const V2ViewPanel = ({
         Loading preview...
       </div>
     )
+
+  const isOcrTab = active === OCR_TAB_ID
+  const isTransformTab = active === TRANSFORM_TAB_ID
+  const transformPresentation: ClipPresentation | null =
+    transformState.preview && presentation
+      ? { ...presentation, model: transformState.preview.model }
+      : null
+
+  const handleDismissTransform = () => {
+    transformState.dismissPreview()
+    transformState.dismissError()
+    // Return to the previous real tab
+    const fallback = viewSet?.views.find(v => v.id !== OCR_TAB_ID) ?? null
+    if (fallback) setActive(fallback.id)
+  }
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-hidden">
-        <RenderModelView
-          presentation={presentation}
-          retryingOcr={retryingOcr}
-          onRetryOcr={() => void retryOcr()}
-        />
+        {isTransformTab ? (
+          <TransformResultTab
+            label={transformState.activeTransformer?.label ?? 'Transform'}
+            presentation={transformPresentation}
+            busy={!!transformState.busy}
+            error={transformState.error}
+            applyResult={transformState.applyResult}
+            onDismiss={handleDismissTransform}
+          />
+        ) : isOcrTab && presentation?.model.kind === 'image' ? (
+          <OcrPanel
+            ocr={presentation.model.ocr}
+            retrying={retryingOcr}
+            onRetry={() => void retryOcr()}
+          />
+        ) : (
+          <RenderModelView presentation={presentation} />
+        )}
       </div>
-      <TransformBar
-        clipId={clipId}
-        sourceId={presentation.activeView.sourceId}
-        basePresentation={presentation}
-      />
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}
     </div>
   )

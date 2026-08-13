@@ -22,7 +22,6 @@ import {
   MessageSquare,
   Music,
   Phone,
-  RotateCw,
   Send,
   ShieldAlert,
 } from 'lucide-react'
@@ -139,7 +138,7 @@ const iframeDocument = (html: string, theme: 'light' | 'dark', richText = false)
   const dark = theme === 'dark'
   const style = `<style data-clipsx-preview-theme>html{color-scheme:${theme}}html,body{${
     richText ? 'margin:0;padding:12px;font-family:system-ui,sans-serif;font-size:13px;' : ''
-  }background:${dark ? '#0f172a' : '#ffffff'};color:${dark ? '#f1f5f9' : '#111827'}}a{color:#3b82f6}*{scrollbar-width:thin;scrollbar-color:${
+  }background:transparent;color:${dark ? '#f1f5f9' : '#111827'}}a{color:#3b82f6}*{scrollbar-width:thin;scrollbar-color:${
     dark ? '#475569' : '#cbd5e1'
   } transparent}*::-webkit-scrollbar{width:8px;height:8px}*::-webkit-scrollbar-track{background:transparent}*::-webkit-scrollbar-thumb{background:${
     dark ? '#475569' : '#cbd5e1'
@@ -317,49 +316,15 @@ const KeyValueView = ({ entries }: { entries: [string, string][] }) => (
   </dl>
 )
 
-const ImageView = ({
-  model,
-  retrying,
-  onRetryOcr,
-}: {
-  model: Extract<RenderModel, { kind: 'image' }>
-  retrying: boolean
-  onRetryOcr: () => void
-}) => (
-  <div className={`${SCROLL_AREA} flex flex-col`}>
-    <div className="flex min-h-56 shrink-0 items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20">
-      <img
-        className="max-h-80 max-w-full rounded object-contain"
-        src={assetUrl(model.assetId)}
-        alt="Clipboard image"
-      />
-    </div>
-    <div className="border-t border-slate-200 p-3 text-xs dark:border-white/10">
-      {model.ocr.state === 'disabled' && <span>Text recognition is disabled.</span>}
-      {model.ocr.state === 'pending' && <span>Text recognition is queued.</span>}
-      {model.ocr.state === 'running' && <span>Text recognition is running…</span>}
-      {model.ocr.state === 'unsupported' && (
-        <span>Text recognition is unavailable on this platform.</span>
-      )}
-      {model.ocr.state === 'failed' && (
-        <div className="flex items-center justify-between gap-3">
-          <span>{model.ocr.message}</span>
-          <button
-            className="flex items-center gap-1 rounded border px-2 py-1"
-            disabled={retrying}
-            onClick={onRetryOcr}
-          >
-            <RotateCw className="h-3 w-3" /> Retry
-          </button>
-        </div>
-      )}
-      {model.ocr.state === 'ready' &&
-        (model.ocr.text.trim() ? (
-          <pre className="whitespace-pre-wrap pt-2 text-sm leading-relaxed">{model.ocr.text}</pre>
-        ) : (
-          <span>No text found.</span>
-        ))}
-    </div>
+const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => (
+  <div
+    className={`${SCROLL_AREA} flex items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20`}
+  >
+    <img
+      className="max-h-full max-w-full rounded object-contain"
+      src={assetUrl(model.assetId)}
+      alt="Clipboard image"
+    />
   </div>
 )
 
@@ -415,43 +380,49 @@ const semanticScalar = (payload: Record<string, unknown>, key: string): string |
     : null
 }
 
-// Extracted so it can hold its own copy-result state
-const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }> }) => {
+const CopyButton = ({ text, className = '' }: { text: string; className?: string }) => {
   const [copied, setCopied] = useState(false)
-  const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
   const handleCopy = () => {
-    if (!result) return
-    void navigator.clipboard.writeText(result)
+    void navigator.clipboard.writeText(text)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
   }
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <Calculator className="h-8 w-8 text-indigo-400" />
-      <div className="flex w-full max-w-sm flex-col gap-3">
-        <code className="rounded-xl bg-slate-100/60 px-4 py-3 text-lg dark:bg-slate-100/10">
+    <button
+      title="Copy"
+      className={`rounded p-1 text-gray-400 transition-colors hover:bg-slate-100 dark:hover:bg-white/10 ${copied ? 'text-emerald-500' : ''} ${className}`}
+      onClick={handleCopy}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
+  )
+}
+
+// Extracted so it can hold its own copy-result state
+const MathView = ({ model }: { model: Extract<RenderModel, { kind: 'semantic' }> }) => {
+  const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
+  return (
+    <div className={`${SCROLL_AREA} flex flex-col gap-px p-3`}>
+      {/* Expression row */}
+      <div className="flex items-center gap-2 rounded-lg bg-slate-100/60 px-3 py-2.5 dark:bg-white/5">
+        <div className="shrink-0 rounded bg-indigo-500/20 p-1 text-indigo-400 ring-1 ring-indigo-500/30">
+          <Calculator className="h-3.5 w-3.5" />
+        </div>
+        <code className="min-w-0 flex-1 break-all text-sm text-gray-700 dark:text-gray-300">
           {model.text}
         </code>
-        {result && result !== model.text && (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-4">
-            <span className="text-[10px] uppercase tracking-widest text-gray-500">= result</span>
-            <code className="text-3xl font-bold text-indigo-700 dark:text-indigo-300">
-              {result}
-            </code>
-            <button
-              className="flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
-              onClick={handleCopy}
-            >
-              {copied ? (
-                <Check className="h-3 w-3 text-emerald-500" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-              {copied ? 'Copied' : 'Copy result'}
-            </button>
-          </div>
-        )}
+        <CopyButton text={model.text} />
       </div>
+      {/* Result row */}
+      {result !== null && (
+        <div className="flex items-center gap-2 rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-3 py-2.5">
+          <span className="shrink-0 text-[11px] font-semibold text-indigo-400">=</span>
+          <code className="min-w-0 flex-1 break-all text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+            {result}
+          </code>
+          <CopyButton text={result} />
+        </div>
+      )}
     </div>
   )
 }
@@ -679,9 +650,17 @@ const SemanticView = ({
     const dir = parts.length > 1 ? parts.slice(0, -1).join(separator) + separator : separator
     return (
       <div className={`${SCROLL_AREA} flex flex-col`}>
-        <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
-          <FolderOpen className="h-8 w-8 shrink-0 text-amber-500" />
-          <code className="min-w-0 break-all text-sm">{path}</code>
+        <div className="flex items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
+          <div className="rounded-lg bg-amber-500/20 p-2 text-amber-500 ring-1 ring-amber-500/30 shrink-0">
+            <FolderOpen className="h-4 w-4" />
+          </div>
+          <code className="min-w-0 break-all text-sm flex-1">{path}</code>
+          <button
+            className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
+            onClick={() => void invoke('open_detected_path', { clipId, path })}
+          >
+            Open
+          </button>
         </div>
         <div className="p-2">
           <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
@@ -690,14 +669,6 @@ const SemanticView = ({
           <CopyableRow label="Full path" value={path} />
           <CopyableRow label="Directory" value={dir} />
           {filename && <CopyableRow label="File name" value={filename} />}
-        </div>
-        <div className="px-3 pt-1">
-          <button
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
-            onClick={() => void invoke('open_detected_path', { clipId, path })}
-          >
-            Open in Finder
-          </button>
         </div>
       </div>
     )
@@ -798,11 +769,32 @@ const SemanticView = ({
     const parsed = new Date(raw)
     const valid = !isNaN(parsed.getTime())
     const DateIcon = kind === 'date' ? CalendarDays : Clock
+    const relativeTime = valid
+      ? (() => {
+          const diffMs = Date.now() - parsed.getTime()
+          const diffSec = Math.round(diffMs / 1000)
+          const diffMin = Math.round(diffSec / 60)
+          const diffHour = Math.round(diffMin / 60)
+          const diffDay = Math.round(diffHour / 24)
+          if (Math.abs(diffSec) < 60) return 'just now'
+          if (Math.abs(diffMin) < 60) return diffMin > 0 ? `${diffMin}m ago` : `in ${-diffMin}m`
+          if (Math.abs(diffHour) < 24) return diffHour > 0 ? `${diffHour}h ago` : `in ${-diffHour}h`
+          if (Math.abs(diffDay) < 30) return diffDay > 0 ? `${diffDay}d ago` : `in ${-diffDay}d`
+          return null
+        })()
+      : null
     return (
       <div className={`${SCROLL_AREA} flex flex-col`}>
-        <div className="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-white/5">
-          <DateIcon className="h-7 w-7 shrink-0 text-yellow-500" />
-          <code className="min-w-0 break-all text-sm">{raw}</code>
+        <div className="flex items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
+          <div className="rounded-lg bg-yellow-500/20 p-2 text-yellow-500 ring-1 ring-yellow-500/30 shrink-0">
+            <DateIcon className="h-4 w-4" />
+          </div>
+          <code className="min-w-0 break-all text-sm flex-1">{raw}</code>
+          {relativeTime && (
+            <span className="shrink-0 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
+              {relativeTime}
+            </span>
+          )}
         </div>
         {valid && (
           <div className="p-2">
@@ -810,8 +802,10 @@ const SemanticView = ({
               Formats
             </div>
             <CopyableRow label="Local" value={parsed.toLocaleString()} />
+            <CopyableRow label="Date" value={parsed.toLocaleDateString()} />
             <CopyableRow label="ISO 8601" value={parsed.toISOString()} />
             <CopyableRow label="Unix epoch" value={String(Math.floor(parsed.getTime() / 1000))} />
+            <CopyableRow label="UTC" value={parsed.toUTCString()} />
           </div>
         )}
       </div>
@@ -1036,15 +1030,7 @@ const JsonView = ({ value }: { value: unknown }) => {
   )
 }
 
-export const RenderModelView = ({
-  presentation,
-  retryingOcr = false,
-  onRetryOcr = () => undefined,
-}: {
-  presentation: ClipPresentation
-  retryingOcr?: boolean
-  onRetryOcr?: () => void
-}) => {
+export const RenderModelView = ({ presentation }: { presentation: ClipPresentation }) => {
   const model = presentation.model
   const appliedTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
   switch (model.kind) {
@@ -1072,10 +1058,11 @@ export const RenderModelView = ({
         </div>
       )
     case 'image':
-      return <ImageView model={model} retrying={retryingOcr} onRetryOcr={onRetryOcr} />
+      return <ImageView model={model} />
     case 'html':
       return model.sanitizedHtml ? (
         <iframe
+          allowTransparency={true}
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme)}
@@ -1089,6 +1076,7 @@ export const RenderModelView = ({
     case 'rich_text':
       return model.sanitizedHtml ? (
         <iframe
+          allowTransparency={true}
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme, true)}

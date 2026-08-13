@@ -1378,6 +1378,17 @@ async fn reindex_text_embeddings(
     Ok(())
 }
 #[tauri::command]
+async fn index_missing_text_embeddings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    embeddings::index_missing(&state.history)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("embedding-index-progress", ());
+    Ok(())
+}
+#[tauri::command]
 async fn clear_text_embedding_space(
     space_id: String,
     state: State<'_, AppState>,
@@ -1794,6 +1805,7 @@ pub(crate) fn run() {
             disable_text_embedding_provider,
             get_text_embedding_status,
             reindex_text_embeddings,
+            index_missing_text_embeddings,
             clear_text_embedding_space
         ])
         .on_window_event(|window, event| {

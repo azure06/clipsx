@@ -51,10 +51,6 @@ describe('RenderModelView', () => {
     [{ kind: 'table', columns: ['Name'], rows: [['Ada']] }, 'Ada'],
     [{ kind: 'tree', value: { answer: 42 } }, 'answer:'],
     [{ kind: 'key_value', entries: [['Host', 'example.com']] }, 'example.com'],
-    [
-      { kind: 'image', assetId: 'image-1', ocr: { state: 'ready', text: 'recognized' } },
-      'recognized',
-    ],
     [{ kind: 'files', entries: [{ path: 'C:\\missing\\a.txt', name: 'a.txt' }] }, 'a.txt'],
     [
       { kind: 'document', assetId: 'document-1', mimeType: 'application/pdf' },
@@ -192,42 +188,17 @@ describe('RenderModelView', () => {
     })
   })
 
-  it('shows every OCR terminal state without fabricating OCR text', () => {
-    const onRetry = vi.fn()
-    const { rerender } = render(
-      <RenderModelView
-        presentation={presentation({
-          kind: 'image',
-          assetId: 'image-1',
-          ocr: { state: 'failed', message: 'Text recognition failed' },
-        })}
-        onRetryOcr={onRetry}
-      />
-    )
-    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
-    expect(onRetry).toHaveBeenCalledOnce()
-    rerender(
-      <RenderModelView
-        presentation={presentation({
-          kind: 'image',
-          assetId: 'image-1',
-          ocr: { state: 'ready', text: '' },
-        })}
-      />
-    )
-    expect(screen.getByText('No text found.')).toBeInTheDocument()
-  })
-
-  it.each([
-    [{ state: 'disabled' } as const, 'Text recognition is disabled.'],
-    [{ state: 'pending' } as const, 'Text recognition is queued.'],
-    [{ state: 'running' } as const, 'Text recognition is running'],
-    [{ state: 'unsupported' } as const, 'Text recognition is unavailable on this platform.'],
-  ])('renders the %s OCR lifecycle state', (ocr, expected) => {
+  it('renders the image element for image clips', () => {
     render(
-      <RenderModelView presentation={presentation({ kind: 'image', assetId: 'image-1', ocr })} />
+      <RenderModelView
+        presentation={presentation({
+          kind: 'image',
+          assetId: 'image-1',
+          ocr: { state: 'ready', text: 'hello' },
+        })}
+      />
     )
-    expect(screen.getByText(expected, { exact: false })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /clipboard image/i })).toBeInTheDocument()
   })
 
   it('derives text statistics only from models that actually contain text', () => {
