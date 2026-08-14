@@ -1,4 +1,6 @@
 //! Semantic chunking, indexing, and hybrid vector ranking.
+mod chunking;
+
 use crate::history::{new_id, now_ms, sha256, HistoryRepository};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -9,10 +11,11 @@ use std::collections::HashSet;
 use std::{collections::VecDeque, fmt, net::IpAddr, time::Duration};
 use url::Url;
 
-const CHUNKER_ID: &str = "builtin.chunker.text-window";
-const CHUNKER_VERSION: &str = "2";
-const MAX_CHUNK_BYTES: usize = 2_048;
-const CHUNK_OVERLAP_BYTES: usize = 256;
+use chunking::{
+    deduplicate_inputs, SemanticChunk, SemanticFacet, SemanticInput, MAX_EMBED_BYTES,
+    PIPELINE_VERSION,
+};
+
 const MAX_EMBED_BATCH: usize = 16;
 const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
@@ -215,10 +218,10 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
     async fn embed_documents(&self, input: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut vectors = Vec::with_capacity(input.len());
         for batch in input.chunks(MAX_EMBED_BATCH) {
-            if let Some(oversized) = batch.iter().find(|value| value.len() > MAX_CHUNK_BYTES) {
+            if let Some(oversized) = batch.iter().find(|value| value.len() > MAX_EMBED_BYTES) {
                 bail!(
                     "internal embedding chunk exceeds the {}-byte limit ({} bytes)",
-                    MAX_CHUNK_BYTES,
+                    MAX_EMBED_BYTES,
                     oversized.len()
                 )
             }
@@ -500,10 +503,11 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
         let generation: i64 = row.get(2);
         sqlx::query("UPDATE search_index_jobs SET status='running',started_at=?,updated_at=?,attempt_count=attempt_count+1 WHERE id=?").bind(now_ms()).bind(now_ms()).bind(&id).execute(&repo.pool).await?;
         match index_clip(repo, &provider, &space, &clip, generation).await {
-            Ok(()) => {
+            Ok(projection) => {
                 sqlx::query(
-                    "UPDATE search_index_jobs SET status='completed',completed_at=?,updated_at=? WHERE id=?",
+                    "UPDATE search_index_jobs SET status='completed',projection_sha256=?,completed_at=?,updated_at=? WHERE id=?",
                 )
+                .bind(projection)
                 .bind(now_ms())
                 .bind(now_ms())
                 .bind(&id)
@@ -550,27 +554,21 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     Ok(count)
 }
 
-async fn index_clip(
+async fn index_clip<P: TextEmbeddingProvider>(
     repo: &HistoryRepository,
-    provider: &OllamaTextEmbeddingProvider,
+    provider: &P,
     space: &str,
     clip: &str,
     generation: i64,
-) -> Result<()> {
-    let text: String =
-        sqlx::query_scalar("SELECT search_text FROM search_documents WHERE clip_id=?")
-            .bind(clip)
-            .fetch_optional(&repo.pool)
-            .await?
-            .unwrap_or_default();
-    let manifest: String =
-        sqlx::query_scalar("SELECT source_manifest_json FROM search_documents WHERE clip_id=?")
-            .bind(clip)
-            .fetch_optional(&repo.pool)
-            .await?
-            .unwrap_or_else(|| "[]".into());
-    let projection = sha256(format!("{CHUNKER_VERSION}:{manifest}:{text}").as_bytes());
-    let chunks = chunk_text(&text);
+) -> Result<String> {
+    let inputs = load_semantic_inputs(repo, clip).await?;
+    let mut chunks = Vec::<(SemanticInput, SemanticChunk)>::new();
+    for input in deduplicate_inputs(inputs) {
+        for chunk in chunking::chunk_input(&input)? {
+            chunks.push((input.clone(), chunk));
+        }
+    }
+    let projection = semantic_projection_hash(&chunks)?;
     if chunks.is_empty() {
         sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=? AND generation=?")
             .bind(space)
@@ -578,7 +576,7 @@ async fn index_clip(
             .bind(generation)
             .execute(&repo.pool)
             .await?;
-        return Ok(());
+        return Ok(projection);
     }
     let embedded = embed_chunks_adaptively(provider, chunks).await?;
     let dimensions: i64 =
@@ -593,14 +591,189 @@ async fn index_clip(
         .bind(generation)
         .execute(&mut *tx)
         .await?;
-    for (ordinal, (text, vector)) in embedded.into_iter().enumerate() {
+    for (ordinal, (input, chunk, vector)) in embedded.into_iter().enumerate() {
         validate_vector(&vector, Some(dimensions as usize))?;
         let chunk_id = new_id();
-        sqlx::query("INSERT INTO search_chunks(id,clip_id,space_id,ordinal,chunk_kind,text_value,text_sha256,source_manifest_json,projection_sha256,chunker_id,chunker_version,generation,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(&chunk_id).bind(clip).bind(space).bind(ordinal as i64).bind("text").bind(&text).bind(sha256(text.as_bytes())).bind(&manifest).bind(&projection).bind(CHUNKER_ID).bind(CHUNKER_VERSION).bind(generation).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO search_embeddings(id,space_id,clip_id,representation_id,artifact_id,vector,created_at,chunk_id) VALUES(?,?,?,?,?,?,?,?)").bind(new_id()).bind(space).bind(clip).bind(Option::<String>::None).bind(Option::<String>::None).bind(vector_blob(&vector)).bind(now_ms()).bind(&chunk_id).execute(&mut *tx).await?;
+        let manifest = chunk_manifest(&input, &chunk)?;
+        let chunk_projection = sha256(
+            format!(
+                "{}:{}:{}:{}",
+                PIPELINE_VERSION, chunk.strategy_id, manifest, chunk.embedding_text
+            )
+            .as_bytes(),
+        );
+        sqlx::query("INSERT INTO search_chunks(id,clip_id,space_id,ordinal,chunk_kind,text_value,text_sha256,source_manifest_json,projection_sha256,chunker_id,chunker_version,generation,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(&chunk_id).bind(clip).bind(space).bind(ordinal as i64).bind(&chunk.kind).bind(&chunk.display_text).bind(sha256(chunk.display_text.as_bytes())).bind(&manifest).bind(&chunk_projection).bind(&chunk.strategy_id).bind(&chunk.strategy_version).bind(generation).bind(now_ms()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO search_embeddings(id,space_id,clip_id,representation_id,artifact_id,vector,created_at,chunk_id) VALUES(?,?,?,?,?,?,?,?)").bind(new_id()).bind(space).bind(clip).bind(&input.representation_id).bind(&input.artifact_id).bind(vector_blob(&vector)).bind(now_ms()).bind(&chunk_id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(projection)
+}
+
+async fn load_semantic_inputs(
+    repo: &HistoryRepository,
+    clip_id: &str,
+) -> Result<Vec<SemanticInput>> {
+    let mut inputs = Vec::new();
+    let note: Option<String> = sqlx::query_scalar("SELECT note FROM clip_items WHERE id=?")
+        .bind(clip_id)
+        .fetch_optional(&repo.pool)
+        .await?
+        .flatten();
+    if let Some(note) = note.filter(|note| !note.trim().is_empty()) {
+        inputs.push(SemanticInput {
+            source_kind: "note".into(),
+            source_id: format!("{clip_id}:note"),
+            representation_id: None,
+            artifact_id: None,
+            mime_type: Some("text/plain".into()),
+            format_family: Some("metadata".into()),
+            facets: Vec::new(),
+            text: note,
+            source_ordinal: -2,
+        });
+    }
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name",
+    )
+    .bind(clip_id)
+    .fetch_all(&repo.pool)
+    .await?;
+    if !tags.is_empty() {
+        inputs.push(SemanticInput {
+            source_kind: "tags".into(),
+            source_id: format!("{clip_id}:tags"),
+            representation_id: None,
+            artifact_id: None,
+            mime_type: Some("text/plain".into()),
+            format_family: Some("metadata".into()),
+            facets: Vec::new(),
+            text: tags.join(", "),
+            source_ordinal: -1,
+        });
+    }
+
+    let rows = sqlx::query(
+        "SELECT r.id,r.canonical_mime_type,r.format_family,r.capture_priority,r.ordinal,t.text_value \
+         FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id \
+         WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal,r.id",
+    )
+    .bind(clip_id)
+    .fetch_all(&repo.pool)
+    .await?;
+    for row in rows {
+        let representation_id: String = row.get(0);
+        let facet_rows = sqlx::query(
+            "SELECT facet_id,payload_json FROM content_clip_facets WHERE source_representation_id=? ORDER BY facet_id,detector_id,detector_version",
+        )
+        .bind(&representation_id)
+        .fetch_all(&repo.pool)
+        .await?;
+        let facets = facet_rows
+            .into_iter()
+            .map(|facet| {
+                let raw: Option<String> = facet.get(1);
+                Ok(SemanticFacet {
+                    id: facet.get(0),
+                    payload: raw
+                        .as_deref()
+                        .map(serde_json::from_str)
+                        .transpose()?
+                        .unwrap_or_else(|| serde_json::json!({})),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let capture_priority: i64 = row.get(3);
+        let ordinal: i64 = row.get(4);
+        inputs.push(SemanticInput {
+            source_kind: "representation".into(),
+            source_id: representation_id.clone(),
+            representation_id: Some(representation_id),
+            artifact_id: None,
+            mime_type: row.get(1),
+            format_family: Some(row.get(2)),
+            facets,
+            text: row.get(5),
+            source_ordinal: capture_priority
+                .saturating_mul(1_000)
+                .saturating_add(ordinal),
+        });
+    }
+
+    let ocr_rows = sqlx::query(
+        "SELECT ar.id,ai.representation_id,atv.text_value \
+         FROM artifact_records ar JOIN artifact_inputs ai ON ai.artifact_id=ar.id \
+         JOIN artifact_text_values atv ON atv.artifact_id=ar.id \
+         JOIN clip_representations r ON r.id=ai.representation_id \
+         WHERE r.clip_id=? AND ar.producer_id='builtin.artifact.ocr' AND ar.lifecycle_state='ready' \
+         ORDER BY ar.created_at,ar.id",
+    )
+    .bind(clip_id)
+    .fetch_all(&repo.pool)
+    .await?;
+    for (ordinal, row) in ocr_rows.into_iter().enumerate() {
+        let artifact_id: String = row.get(0);
+        inputs.push(SemanticInput {
+            source_kind: "ocr".into(),
+            source_id: artifact_id.clone(),
+            representation_id: row.get(1),
+            artifact_id: Some(artifact_id),
+            mime_type: Some("text/plain".into()),
+            format_family: Some("artifact".into()),
+            facets: Vec::new(),
+            text: row.get(2),
+            source_ordinal: 1_000_000 + ordinal as i64,
+        });
+    }
+    Ok(inputs)
+}
+
+fn semantic_projection_hash(chunks: &[(SemanticInput, SemanticChunk)]) -> Result<String> {
+    let values = chunks
+        .iter()
+        .map(|(input, chunk)| {
+            serde_json::json!({
+                "sourceId": input.source_id,
+                "strategyId": chunk.strategy_id,
+                "strategyVersion": chunk.strategy_version,
+                "kind": chunk.kind,
+                "contextPath": chunk.context_path,
+                "displaySha256": sha256(chunk.display_text.as_bytes()),
+                "embeddingSha256": sha256(chunk.embedding_text.as_bytes()),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(sha256(
+        serde_json::to_string(&(PIPELINE_VERSION, values))?.as_bytes(),
+    ))
+}
+
+fn chunk_manifest(input: &SemanticInput, chunk: &SemanticChunk) -> Result<String> {
+    let value = serde_json::json!({
+        "pipelineVersion": PIPELINE_VERSION,
+        "sourceKind": input.source_kind,
+        "sourceId": input.source_id,
+        "representationId": input.representation_id,
+        "artifactId": input.artifact_id,
+        "mimeType": input.mime_type,
+        "formatFamily": input.format_family,
+        "facetIds": input.facets.iter().map(|facet| &facet.id).collect::<Vec<_>>(),
+        "contextPath": chunk.context_path,
+        "strategyId": chunk.strategy_id,
+        "strategyVersion": chunk.strategy_version,
+        "fallbackReason": chunk.fallback_reason,
+    });
+    let encoded = serde_json::to_string(&value)?;
+    if encoded.len() <= 4_096 {
+        return Ok(encoded);
+    }
+    Ok(serde_json::to_string(&serde_json::json!({
+        "pipelineVersion": PIPELINE_VERSION,
+        "sourceKind": input.source_kind,
+        "sourceId": input.source_id,
+        "strategyId": chunk.strategy_id,
+        "strategyVersion": chunk.strategy_version,
+        "manifestTruncated": true,
+    }))?)
 }
 async fn enqueue_all(repo: &HistoryRepository, space: &str, generation: i64) -> Result<()> {
     let clips: Vec<String> =
@@ -608,7 +781,7 @@ async fn enqueue_all(repo: &HistoryRepository, space: &str, generation: i64) -> 
             .fetch_all(&repo.pool)
             .await?;
     for clip in clips {
-        sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)").bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(generation).bind(CHUNKER_VERSION).execute(&repo.pool).await?;
+        sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)").bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(generation).bind(PIPELINE_VERSION).execute(&repo.pool).await?;
     }
     Ok(())
 }
@@ -665,7 +838,7 @@ pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     .await?;
     for clip in clips {
         sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)")
-            .bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(generation).bind(CHUNKER_VERSION)
+            .bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(generation).bind(PIPELINE_VERSION)
             .execute(&repo.pool).await?;
     }
     Ok(())
@@ -686,7 +859,7 @@ pub async fn enqueue_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()>
         return Ok(());
     };
     sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)")
-        .bind(new_id()).bind(space).bind(clip_id).bind(now_ms()).bind(generation).bind(CHUNKER_VERSION).execute(&repo.pool).await?;
+        .bind(new_id()).bind(space).bind(clip_id).bind(now_ms()).bind(generation).bind(PIPELINE_VERSION).execute(&repo.pool).await?;
     Ok(())
 }
 pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
@@ -724,7 +897,7 @@ pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
         )
         .bind(config["pendingSpaceId"].as_str())
         .bind(config["pendingGeneration"].as_i64())
-        .bind(CHUNKER_VERSION)
+        .bind(PIPELINE_VERSION)
         .fetch_one(&repo.pool)
         .await?;
         if current_pending > 0 {
@@ -738,12 +911,16 @@ pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
         return Ok(false);
     };
     let stale: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM search_chunks WHERE space_id=? AND generation=? AND (chunker_id<>? OR chunker_version<>?)",
+        "SELECT \
+           (SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND chunker_version<>?) + \
+           (SELECT count(*) FROM search_chunks WHERE space_id=? AND generation=? AND COALESCE(json_extract(source_manifest_json,'$.pipelineVersion'),'')<>?)",
     )
     .bind(space)
     .bind(generation)
-    .bind(CHUNKER_ID)
-    .bind(CHUNKER_VERSION)
+    .bind(PIPELINE_VERSION)
+    .bind(space)
+    .bind(generation)
+    .bind(PIPELINE_VERSION)
     .fetch_one(&repo.pool)
     .await?;
     if stale == 0 {
@@ -855,74 +1032,14 @@ async fn provider_for_space(
     OllamaTextEmbeddingProvider::new(&descriptor.endpoint, descriptor.model).await
 }
 
+#[cfg(test)]
 fn chunk_text(text: &str) -> Vec<String> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    split_text_windows(&normalized, MAX_CHUNK_BYTES, CHUNK_OVERLAP_BYTES)
-}
-
-fn split_text_windows(text: &str, max_bytes: usize, overlap_bytes: usize) -> Vec<String> {
-    debug_assert!(max_bytes > 0);
-    debug_assert!(overlap_bytes < max_bytes);
-    let text = text.trim();
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        let hard_end = floor_char_boundary(text, (start + max_bytes).min(text.len()));
-        let mut end = hard_end;
-        if hard_end < text.len() {
-            let window = &text[start..hard_end];
-            let minimum = window.len() / 2;
-            end = window
-                .rfind("\n\n")
-                .map(|index| index + start + 2)
-                .filter(|index| *index - start >= minimum)
-                .or_else(|| {
-                    window
-                        .rfind('\n')
-                        .map(|index| index + start + 1)
-                        .filter(|index| *index - start >= minimum)
-                })
-                .or_else(|| {
-                    window
-                        .char_indices()
-                        .rev()
-                        .find(|(index, value)| *index >= minimum && value.is_whitespace())
-                        .map(|(index, value)| index + start + value.len_utf8())
-                })
-                .unwrap_or(hard_end);
-        }
-        if end <= start {
-            end = hard_end;
-        }
-        let chunk = text[start..end].trim();
-        if !chunk.is_empty() {
-            chunks.push(chunk.to_string());
-        }
-        if end >= text.len() {
-            break;
-        }
-        let proposed = end.saturating_sub(overlap_bytes).max(start + 1);
-        let next = ceil_char_boundary(text, proposed);
-        start = if next >= end { end } else { next };
-    }
-    chunks
-}
-
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
+    chunking::split_text_windows(
+        &normalized,
+        MAX_EMBED_BYTES,
+        chunking::FALLBACK_OVERLAP_BYTES,
+    )
 }
 
 fn is_context_length_error(error: &anyhow::Error) -> bool {
@@ -931,37 +1048,52 @@ fn is_context_length_error(error: &anyhow::Error) -> bool {
         .is_some_and(OllamaRequestError::is_context_length)
 }
 
-async fn embed_chunks_adaptively(
-    provider: &OllamaTextEmbeddingProvider,
-    chunks: Vec<String>,
-) -> Result<Vec<(String, Vec<f32>)>> {
-    match provider.embed_documents(&chunks).await {
-        Ok(vectors) => return Ok(chunks.into_iter().zip(vectors).collect()),
+async fn embed_chunks_adaptively<P: TextEmbeddingProvider>(
+    provider: &P,
+    chunks: Vec<(SemanticInput, SemanticChunk)>,
+) -> Result<Vec<(SemanticInput, SemanticChunk, Vec<f32>)>> {
+    let texts = chunks
+        .iter()
+        .map(|(_, chunk)| chunk.embedding_text.clone())
+        .collect::<Vec<_>>();
+    match provider.embed_documents(&texts).await {
+        Ok(vectors) => {
+            return Ok(chunks
+                .into_iter()
+                .zip(vectors)
+                .map(|((input, chunk), vector)| (input, chunk, vector))
+                .collect())
+        }
         Err(error) if !is_context_length_error(&error) => return Err(error),
         Err(_) => {}
     }
 
-    let mut queue: VecDeque<(String, u8)> = chunks.into_iter().map(|chunk| (chunk, 0)).collect();
+    let mut queue: VecDeque<(SemanticInput, SemanticChunk, u8)> = chunks
+        .into_iter()
+        .map(|(input, chunk)| (input, chunk, 0))
+        .collect();
     let mut embedded = Vec::new();
-    while let Some((chunk, depth)) = queue.pop_front() {
-        match provider.embed_documents(std::slice::from_ref(&chunk)).await {
+    while let Some((input, chunk, depth)) = queue.pop_front() {
+        match provider
+            .embed_documents(std::slice::from_ref(&chunk.embedding_text))
+            .await
+        {
             Ok(mut vectors) => {
                 let vector = vectors.pop().context("missing chunk embedding")?;
-                embedded.push((chunk, vector));
+                embedded.push((input, chunk, vector));
             }
             Err(error)
                 if is_context_length_error(&error)
                     && depth < MAX_FALLBACK_DEPTH
-                    && chunk.len() > MIN_FALLBACK_BYTES =>
+                    && chunk.display_text.len() > MIN_FALLBACK_BYTES =>
             {
-                let target = (chunk.len() / 2).max(MIN_FALLBACK_BYTES);
-                let overlap = (target / 8).min(CHUNK_OVERLAP_BYTES);
-                let split = split_text_windows(&chunk, target, overlap);
+                let target = (chunk.display_text.len() / 2).max(MIN_FALLBACK_BYTES);
+                let split = chunking::subdivide_chunk(&chunk, target);
                 if split.len() < 2 {
                     return Err(error);
                 }
                 for child in split.into_iter().rev() {
-                    queue.push_front((child, depth + 1));
+                    queue.push_front((input.clone(), child, depth + 1));
                 }
             }
             Err(error) => return Err(error),
@@ -1121,6 +1253,45 @@ async fn validated_endpoint(raw: &str) -> Result<Url> {
 mod tests {
     use super::*;
     use crate::foundation::AppRoots;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct RecordingProvider {
+        inputs: Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl TextEmbeddingProvider for RecordingProvider {
+        fn id(&self) -> &'static str {
+            "test.embedding"
+        }
+        fn version(&self) -> &'static str {
+            "1"
+        }
+        async fn describe(&self, _: &str) -> Result<EmbeddingProviderDescriptor> {
+            Ok(EmbeddingProviderDescriptor {
+                provider_kind: self.id().into(),
+                provider_version: self.version().into(),
+                endpoint: "http://localhost".into(),
+                model: "test".into(),
+                model_digest: "test".into(),
+                dimensions: 2,
+                normalization: "l2".into(),
+                modality: "text".into(),
+                distance_metric: "cosine".into(),
+            })
+        }
+        async fn discover_models(&self) -> Result<Vec<OllamaModelDescriptor>> {
+            Ok(Vec::new())
+        }
+        async fn embed_documents(&self, input: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.inputs.lock().unwrap().push(input.to_vec());
+            Ok(input.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+        async fn embed_query(&self, _: &str) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0])
+        }
+    }
 
     async fn repository() -> (tempfile::TempDir, HistoryRepository) {
         let temp = tempfile::TempDir::new().unwrap();
@@ -1135,12 +1306,49 @@ mod tests {
         (temp, repo)
     }
 
+    async fn insert_text_clip(repo: &HistoryRepository) {
+        let now = now_ms();
+        sqlx::query("INSERT INTO clip_items(id,captured_at,updated_at,lifecycle_state) VALUES('clip',?,?,'ready')")
+            .bind(now)
+            .bind(now)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        for (id, format, mime, family, priority, ordinal, text) in [
+            (
+                "html",
+                "test:html",
+                "text/html",
+                "rich_text",
+                30_i64,
+                0_i64,
+                "<h1>Guide</h1><p>First paragraph.</p><p>Second paragraph.</p>",
+            ),
+            (
+                "plain",
+                "test:plain",
+                "text/plain",
+                "text",
+                100_i64,
+                1_i64,
+                "Guide First paragraph. Second paragraph.",
+            ),
+        ] {
+            sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,capability_id,format_family,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,'clip',?,?,'test.capability',?,'windows','text',?,?,'ready',?,?)")
+                .bind(id).bind(format).bind(mime).bind(family).bind(ordinal).bind(priority).bind(now).bind(now)
+                .execute(&repo.pool).await.unwrap();
+            sqlx::query("INSERT INTO clip_text_values(representation_id,text_value,utf8_byte_length,sha256) VALUES(?,?,?,?)")
+                .bind(id).bind(text).bind(text.len() as i64).bind(sha256(text.as_bytes()))
+                .execute(&repo.pool).await.unwrap();
+        }
+    }
+
     #[test]
     fn chunks_are_hard_bounded_even_without_breaks() {
-        let text = format!("<div>{}</div>", "a".repeat(MAX_CHUNK_BYTES * 4));
+        let text = format!("<div>{}</div>", "a".repeat(MAX_EMBED_BYTES * 4));
         let chunks = chunk_text(&text);
         assert!(chunks.len() > 4);
-        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_EMBED_BYTES));
         assert_eq!(chunks.first().map(|chunk| &chunk[..5]), Some("<div>"));
         assert!(chunks.last().is_some_and(|chunk| chunk.ends_with("</div>")));
     }
@@ -1150,7 +1358,7 @@ mod tests {
         let text = format!("{}{}", "文".repeat(1_500), "🙂".repeat(1_500));
         let chunks = chunk_text(&text);
         assert!(chunks.len() > 2);
-        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_EMBED_BYTES));
         assert!(chunks
             .iter()
             .all(|chunk| std::str::from_utf8(chunk.as_bytes()).is_ok()));
@@ -1164,7 +1372,7 @@ mod tests {
         assert!(chunks.len() >= 2);
         assert!(chunks[0].ends_with('a'));
         assert!(!chunks.iter().any(|chunk| chunk.contains('\r')));
-        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_EMBED_BYTES));
     }
 
     #[test]
@@ -1198,6 +1406,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn index_clip_embeds_context_but_persists_clean_text_and_source_provenance() {
+        let (_temp, repo) = repository().await;
+        insert_text_clip(&repo).await;
+        sqlx::query("INSERT INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('space','test.embedding','{}',?,'text',2,'l2','cosine',?)")
+            .bind("c".repeat(64)).bind(now_ms()).execute(&repo.pool).await.unwrap();
+        let provider = RecordingProvider::default();
+
+        let projection = index_clip(&repo, &provider, "space", "clip", 3)
+            .await
+            .unwrap();
+
+        assert_eq!(projection.len(), 64);
+        let requests = provider.inputs.lock().unwrap().clone();
+        assert!(requests
+            .iter()
+            .flatten()
+            .all(|input| input.len() <= MAX_EMBED_BYTES));
+        assert!(requests
+            .iter()
+            .flatten()
+            .any(|input| input.contains("Section: Guide")));
+        let rows = sqlx::query("SELECT sc.text_value,sc.source_manifest_json,sc.chunker_id,se.representation_id,length(se.vector) FROM search_chunks sc JOIN search_embeddings se ON se.chunk_id=sc.id WHERE sc.clip_id='clip' AND sc.generation=3")
+            .fetch_all(&repo.pool).await.unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let text: String = row.get(0);
+            let manifest: String = row.get(1);
+            let strategy: String = row.get(2);
+            let representation: Option<String> = row.get(3);
+            let vector_bytes: i64 = row.get(4);
+            assert!(!text.contains("Section:"));
+            assert!(manifest.contains("\"pipelineVersion\":\"3\""));
+            assert_eq!(strategy, "builtin.chunker.html-dom");
+            assert_eq!(representation.as_deref(), Some("html"));
+            assert_eq!(vector_bytes, 8);
+        }
+    }
+
+    #[tokio::test]
     async fn status_and_retry_are_scoped_to_the_pending_generation() {
         let (_temp, repo) = repository().await;
         sqlx::query("INSERT INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('space','builtin.embedding.ollama','{}',?,'text',2,'l2','cosine',?)")
@@ -1219,7 +1466,7 @@ mod tests {
         .unwrap();
         for generation in [1_i64, 2] {
             sqlx::query("INSERT INTO search_index_jobs(id,space_id,status,attempt_count,last_error,requested_at,generation,chunker_version) VALUES(?,?,'failed',3,'context error',?,?,?)")
-                .bind(format!("job-{generation}")).bind("space").bind(now_ms()).bind(generation).bind(CHUNKER_VERSION).execute(&repo.pool).await.unwrap();
+                .bind(format!("job-{generation}")).bind("space").bind(now_ms()).bind(generation).bind(PIPELINE_VERSION).execute(&repo.pool).await.unwrap();
         }
 
         let before = status(&repo).await.unwrap();
@@ -1237,6 +1484,39 @@ mod tests {
                 .unwrap();
         assert_eq!(old_status, "failed");
         assert_eq!(current_status, "pending");
+    }
+
+    #[tokio::test]
+    async fn old_pipeline_jobs_trigger_a_generation_three_rebuild() {
+        let (_temp, repo) = repository().await;
+        insert_text_clip(&repo).await;
+        sqlx::query("INSERT INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('space','builtin.embedding.ollama','{}',?,'text',2,'l2','cosine',?)")
+            .bind("d".repeat(64)).bind(now_ms()).execute(&repo.pool).await.unwrap();
+        put_device_config(
+            &repo.pool,
+            &serde_json::json!({"enabled":true,"endpoint":"http://localhost:11434","model":"test"}),
+        )
+        .await
+        .unwrap();
+        put_space_state(
+            &repo.pool,
+            &serde_json::json!({
+                "activeSpaceId":"space","activeGeneration":1,
+                "pendingSpaceId":null,"pendingGeneration":null
+            }),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES('old','space','clip','completed',?,1,'2')")
+            .bind(now_ms()).execute(&repo.pool).await.unwrap();
+
+        assert!(ensure_current_chunker(&repo).await.unwrap());
+        let state = get_space_state(&repo.pool).await.unwrap().unwrap();
+        assert_eq!(state["pendingSpaceId"].as_str(), Some("space"));
+        assert_eq!(state["pendingGeneration"].as_i64(), Some(2));
+        let version: String = sqlx::query_scalar("SELECT chunker_version FROM search_index_jobs WHERE space_id='space' AND generation=2 AND clip_id='clip'")
+            .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(version, PIPELINE_VERSION);
     }
 
     #[tokio::test]

@@ -259,9 +259,11 @@ useful table/HTML, PDF/SVG/image, plain-text, and opaque Office detail classes,
 while capture priority is retained within each class and every representation
 remains available as an alternate and to Original output.
 
-Search documents are derived from canonical textual representations, safe
-extractions/artifacts, notes, and tag names. A note or tag mutation refreshes
-the document and queues re-embedding when a text provider is configured.
+FTS search documents are derived from canonical textual representations, safe
+extractions/artifacts, notes, and tag names. Semantic indexing independently
+routes the same eligible source records through versioned structure-aware
+strategies. A note or tag mutation refreshes FTS and queues re-embedding when a
+text provider is configured.
 
 ## Invariants and code map
 
@@ -493,9 +495,10 @@ This diagram shows ingestion-time indexes and provider-agnostic query planning. 
 ```mermaid
 flowchart LR
   subgraph Ingest["Ingestion-time derived data"]
-    Sources["Ready text + note + completed OCR"] --> Projection["Versioned search_documents projection"]
+    Sources["Ready text + note + completed OCR"] --> Projection["Versioned FTS projection"]
     Projection --> FTS[(FTS5 external-content index)]
-    Projection --> Chunker["Hard-bounded text chunker"]
+    Sources --> SemanticInputs["Per-source semantic inputs + facets"]
+    SemanticInputs --> Chunker["Registered structure-aware strategies"]
     Chunker --> DocEmbed["Ollama embed_documents"]
     DocEmbed --> Vectors[("Space-scoped chunk vectors")]
   end
@@ -515,9 +518,13 @@ flowchart LR
   end
 ```
 
-Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection.
+The FTS projection uses user note, ready plain/HTML/RTF, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection.
 
-The current generic text chunker normalizes line endings and produces ordered, overlapping windows capped at 2,048 UTF-8 bytes. It prefers paragraph, line, and whitespace boundaries but always falls back to a Unicode-safe hard boundary, so minified markup and long unbroken text cannot bypass the cap. Ollama receives no more than 16 chunks per request with truncation disabled. A reported context overflow isolates the failing chunk and recursively subdivides it within bounded depth; unrelated provider errors are not misclassified. Format-specific semantic extraction and chunking for Markdown, visible HTML, RTF, code, and tables are deferred behind this versioned chunker boundary.
+Semantic indexing builds independent inputs for notes, tags, each ready text representation, and each completed OCR artifact. Exact MIME routes JSON, Markdown, CSV/TSV, HTML, and RTF; facets inferred on plain-text representations can route JSON, Markdown, tables, or code; OCR and remaining text use their bounded fallbacks. Equivalent normalized visible text is embedded once, preferring the source with richer successfully parsed structure, while genuinely different representations remain searchable. Parser rejection is recorded as chunk provenance and falls through without failing the clip job.
+
+Each registered strategy emits ordered semantic blocks: HTML/Markdown headings, paragraphs, lists, code and table rows; RTF paragraphs; JSON subtrees and array ranges; delimited rows; declaration-aware code blocks; or plain/OCR paragraphs. Blocks sharing structural context are packed toward 1,536 UTF-8 bytes without crossing a 2,048-byte hard limit. Heading paths, JSON pointers, table headers, languages, and metadata labels are bounded and prepended only to the Ollama input; `search_chunks.text_value` remains clean snippet text. Normal structural boundaries do not overlap. Only an oversized block uses the Unicode-safe fallback with up to 256 bytes of overlap.
+
+Ollama receives no more than 16 chunks per request with truncation disabled. A reported context overflow isolates the failing chunk and recursively subdivides its clean body within bounded depth, rebuilding the same structural prefix for each child; unrelated provider errors are not misclassified. `search_chunks` records the concrete strategy/version and a bounded source manifest, while `search_embeddings` references its source representation or artifact. Global semantic pipeline version 3 invalidates older routing/chunk behavior without coupling FTS to embeddings.
 
 Enabling/changing Ollama creates an immutable space and a pending index generation. Reindexing stores the replacement generation alongside the active one; semantic queries continue using only the active generation. Promotion occurs only after every job in the pending space and generation succeeds, after which superseded chunks and jobs are removed. Failed work remains retryable without poisoning later generations or partially replacing the active index.
 
