@@ -357,7 +357,7 @@ erDiagram
 
 `clip_items`, representations, and typed children are canonical. Text is normalized UTF-8, file lists are ordered external references, binary bytes are immutable managed files; facets/artifacts/search preserve source and producer/version provenance, while job tables record resumable work rather than content. Tags, notes, pins/favorites, and transform provenance are durable; an unsaved transform is in-memory, but a saved transform makes a new linked canonical clip.
 
-`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. Compact presentation JSON is bounded, renderer/version keyed, disposable, and excluded from fingerprints. The fresh physical schema is version 3 and is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history. A database from an earlier V2 development baseline is rejected and must use the explicit factory-reset flow; there is no dual extension schema or v1 compatibility path.
+`artifact_inputs` references raw representations or other artifacts. Search chunks instead reference clip, immutable embedding space, projection hash, chunker version, and generation. Compact presentation JSON is bounded, renderer/version keyed, disposable, and excluded from fingerprints. The fresh physical schema is version 6 and is organized by database ownership domain in `001_system.sql` through `008_extension.sql`; these are initialization files, not an upgrade history. A database from an earlier V2 development baseline is rejected and must use the explicit factory-reset flow; there is no dual extension schema or v1 compatibility path.
 
 ## Files and database tables
 
@@ -495,7 +495,7 @@ flowchart LR
   subgraph Ingest["Ingestion-time derived data"]
     Sources["Ready text + note + completed OCR"] --> Projection["Versioned search_documents projection"]
     Projection --> FTS[(FTS5 external-content index)]
-    Projection --> Chunker["Format-aware chunker"]
+    Projection --> Chunker["Hard-bounded text chunker"]
     Chunker --> DocEmbed["Ollama embed_documents"]
     DocEmbed --> Vectors[("Space-scoped chunk vectors")]
   end
@@ -515,11 +515,15 @@ flowchart LR
   end
 ```
 
-Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection. Enabling/changing Ollama creates an immutable space, chunks current projections, queues `search_index_jobs`, promotes only after completion; failure degrades to FTS with diagnostics and spaces never mix.
+Projection uses user note, ready plain/HTML/RTF in priority order, completed OCR, and tag names. Facets, binary bytes, and unsaved/generated previews are not independently indexed as result documents; tags can also be applied as SQL filters. Simple syntax escapes whitespace tokens as FTS5 prefix terms and uses implicit AND, so `doc` matches `document`; advanced mode passes FTS syntax unchanged, while scope/tag/representation/facet filters are SQL and filter-only queries do not depend on a completed search projection.
+
+The current generic text chunker normalizes line endings and produces ordered, overlapping windows capped at 2,048 UTF-8 bytes. It prefers paragraph, line, and whitespace boundaries but always falls back to a Unicode-safe hard boundary, so minified markup and long unbroken text cannot bypass the cap. Ollama receives no more than 16 chunks per request with truncation disabled. A reported context overflow isolates the failing chunk and recursively subdivides it within bounded depth; unrelated provider errors are not misclassified. Format-specific semantic extraction and chunking for Markdown, visible HTML, RTF, code, and tables are deferred behind this versioned chunker boundary.
+
+Enabling/changing Ollama creates an immutable space and a pending index generation. Reindexing stores the replacement generation alongside the active one; semantic queries continue using only the active generation. Promotion occurs only after every job in the pending space and generation succeeds, after which superseded chunks and jobs are removed. Failed work remains retryable without poisoning later generations or partially replacing the active index.
 
 ## Candidate-source contract
 
-Search sources are trusted host capabilities that accept a typed query plus the shared eligible clip set and return an independently ranked, bounded candidate list. Sources do not hydrate UI models, paginate independently, or decide global rank. The planner unions results, applies equal-weight reciprocal-rank fusion, and only then paginates and hydrates clips. A source failure is isolated: optional failures produce diagnostics and FTS results, while invalid advanced FTS syntax is a correctable query error. The 5,000-candidate per-source bound is disclosed through `isExhaustive`.
+Search sources are trusted host capabilities that accept a typed query plus the shared eligible clip set and return an independently ranked, bounded candidate list. Sources do not hydrate UI models, paginate independently, or decide global rank. A match records its source rank and may expose a source-local display score; the text-semantic source uses its normalized cosine score for the result percentage, but source-local scores never affect cross-source fusion. The planner unions results, applies equal-weight reciprocal-rank fusion, and only then paginates and hydrates clips. A source failure is isolated: optional failures produce diagnostics and FTS results, while invalid advanced FTS syntax is a correctable query error. The 5,000-candidate per-source bound is disclosed through `isExhaustive`.
 
 `builtin.search.fts` is mandatory. `builtin.search.semantic_text` can return semantic-only clips and is independently enabled for querying; disabling it does not stop its rebuildable index. Future visual sources register through the same internal planner contract but remain host-owned provider capabilities rather than community extensions.
 

@@ -27,4 +27,4 @@ INSERT INTO config_profile_values (key, value_json, created_at, updated_at) VALU
     ('search.syntax_mode', '"simple"', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('search.enabled_sources', '["builtin.search.fts"]', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('artifacts.ocr.enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
-    ('search.embedding.state', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ('search.embedding.state', '{"activeSpaceId":null,"activeGeneration":null,"pendingSpaceId":null,"pendingGeneration":null}', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);

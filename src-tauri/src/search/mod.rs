@@ -26,11 +26,13 @@ pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchMatch {
     pub source_id: String,
     pub source_rank: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +248,7 @@ async fn build_manifest(repo: &HistoryRepository, clip_id: &str) -> Result<Strin
 struct RankedCandidate {
     clip_id: String,
     snippet: Option<String>,
+    source_score: Option<f64>,
 }
 
 struct SourceCandidates {
@@ -311,6 +314,7 @@ impl SearchSource for FtsSearchSource {
                     .map(|clip_id| RankedCandidate {
                         clip_id,
                         snippet: None,
+                        source_score: None,
                     })
                     .collect(),
                 truncated,
@@ -330,6 +334,7 @@ impl SearchSource for FtsSearchSource {
                     RankedCandidate {
                         clip_id: row.get(0),
                         snippet: build_snippet(query, Some(&text)),
+                        source_score: None,
                     }
                 })
                 .collect(),
@@ -364,9 +369,10 @@ impl SearchSource for SemanticTextSearchSource {
             items: rows
                 .into_iter()
                 .take(SOURCE_CANDIDATE_LIMIT)
-                .map(|(clip_id, _, text)| RankedCandidate {
+                .map(|(clip_id, score, text)| RankedCandidate {
                     clip_id,
                     snippet: Some(text.chars().take(160).collect()),
+                    source_score: Some(score),
                 })
                 .collect(),
             truncated,
@@ -419,6 +425,7 @@ fn fuse_source(
         entry.matches.push(SearchMatch {
             source_id: source_id.into(),
             source_rank: rank,
+            source_score: candidate.source_score,
         });
         if entry.snippet.is_none() {
             entry.snippet = candidate.snippet;
@@ -800,10 +807,12 @@ mod tests {
                 RankedCandidate {
                     clip_id: "keyword".into(),
                     snippet: None,
+                    source_score: None,
                 },
                 RankedCandidate {
                     clip_id: "meaning".into(),
                     snippet: None,
+                    source_score: None,
                 },
             ],
             &eligible,
@@ -815,10 +824,12 @@ mod tests {
                 RankedCandidate {
                     clip_id: "meaning".into(),
                     snippet: None,
+                    source_score: Some(0.82),
                 },
                 RankedCandidate {
                     clip_id: "visual".into(),
                     snippet: None,
+                    source_score: Some(0.74),
                 },
             ],
             &eligible,
@@ -829,11 +840,13 @@ mod tests {
             vec![RankedCandidate {
                 clip_id: "visual".into(),
                 snippet: None,
+                source_score: None,
             }],
             &eligible,
         );
         assert_eq!(fused.len(), 3);
         assert_eq!(fused["meaning"].matches.len(), 2);
+        assert_eq!(fused["meaning"].matches[1].source_score, Some(0.82));
         assert_eq!(fused["visual"].matches.len(), 2);
         assert!(fused["meaning"].score > fused["keyword"].score);
     }

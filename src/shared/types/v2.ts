@@ -43,7 +43,7 @@ export type SearchSourceDescriptor = {
   diagnostic: string | null
 }
 
-export type SearchMatch = { sourceId: string; sourceRank: number }
+export type SearchMatch = { sourceId: string; sourceRank: number; sourceScore?: number }
 export type SearchSourceOutcome = {
   sourceId: string
   status: 'used' | 'unavailable' | 'failed'

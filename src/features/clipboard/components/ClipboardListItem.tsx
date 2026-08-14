@@ -57,10 +57,16 @@ const ClipboardListItemComponent = ({
   const isFavorite = Boolean(clip.isFavorite)
   const tags = clip.tags ?? []
   const hasScore = (clip.similarityScore ?? 0) > 0
-  const isMeaningOnly = Boolean(
-    clip.searchMatches?.some(match => match.sourceId === 'builtin.search.semantic_text') &&
-    !clip.searchMatches?.some(match => match.sourceId === 'builtin.search.fts')
+  const semanticMatch = clip.searchMatches?.find(
+    match => match.sourceId === 'builtin.search.semantic_text'
   )
+  const isMeaningOnly = Boolean(
+    semanticMatch && !clip.searchMatches?.some(match => match.sourceId === 'builtin.search.fts')
+  )
+  const semanticPercent =
+    isMeaningOnly && typeof semanticMatch?.sourceScore === 'number'
+      ? Math.round(Math.min(1, Math.max(0, semanticMatch.sourceScore)) * 100)
+      : null
   const ocrActive = clip.ocrStatus === 'pending' || clip.ocrStatus === 'running'
   const hasAttributes =
     isPinned ||
@@ -148,6 +154,16 @@ const ClipboardListItemComponent = ({
               <div className="truncate text-[10px] text-gray-400">{compact.subtitle}</div>
             )}
           </div>
+          {semanticPercent !== null && (
+            <span
+              className="ml-1 flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-px text-[10px] font-bold text-pink-500 shadow-sm dark:border-pink-500/30 dark:text-pink-400"
+              title={t('clipboard.semanticScore', { score: semanticPercent })}
+              aria-label={t('clipboard.semanticScore', { score: semanticPercent })}
+            >
+              <Sparkles className="mr-0.5 h-2.5 w-2.5" strokeWidth={3} />
+              {semanticPercent}%
+            </span>
+          )}
         </div>
 
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
@@ -177,12 +193,6 @@ const ClipboardListItemComponent = ({
                   strokeWidth={2}
                   aria-label="Embedded"
                 />
-              )}
-              {isMeaningOnly && (
-                <span className="flex items-center gap-0.5 rounded-full border border-pink-300/60 bg-linear-to-r from-violet-500/10 to-pink-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-pink-500 dark:border-pink-500/30 dark:text-pink-400">
-                  <Sparkles className="h-2 w-2" strokeWidth={2.5} />
-                  {t('search.meaningMatch')}
-                </span>
               )}
             </div>
           )}

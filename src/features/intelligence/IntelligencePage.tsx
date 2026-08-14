@@ -309,6 +309,12 @@ export const IntelligencePage = () => {
                   <span>
                     <span className="font-semibold">Meaning Search needs attention. </span>
                     {explainOllamaDiagnostic(status.diagnostic)}
+                    {status.failedJobs > 0 && (
+                      <span className="mt-1 block">
+                        {status.failedJobs.toLocaleString()} indexing job
+                        {status.failedJobs === 1 ? '' : 's'} can be retried.
+                      </span>
+                    )}
                   </span>
                   <button className="font-semibold underline" onClick={() => void handleRetry()}>
                     Retry

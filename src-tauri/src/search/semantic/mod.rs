@@ -6,13 +6,16 @@ use reqwest::{redirect::Policy, Client};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashSet;
-use std::{net::IpAddr, time::Duration};
+use std::{collections::VecDeque, fmt, net::IpAddr, time::Duration};
 use url::Url;
 
-const CHUNKER_ID: &str = "builtin.chunker.format-aware";
-const CHUNKER_VERSION: &str = "1";
-const MAX_CHARS: usize = 2_048; // approximately 512 tokens
-const OVERLAP_CHARS: usize = 307; // 15 percent
+const CHUNKER_ID: &str = "builtin.chunker.text-window";
+const CHUNKER_VERSION: &str = "2";
+const MAX_CHUNK_BYTES: usize = 2_048;
+const CHUNK_OVERLAP_BYTES: usize = 256;
+const MAX_EMBED_BATCH: usize = 16;
+const MIN_FALLBACK_BYTES: usize = 128;
+const MAX_FALLBACK_DEPTH: u8 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,10 +145,7 @@ impl OllamaTextEmbeddingProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            bail!(
-                "{}",
-                ollama_request_error(status.as_u16(), path, &self.model, &body)
-            )
+            return Err(OllamaRequestError::new(status.as_u16(), path, &self.model, &body).into());
         }
         Ok(response.json().await?)
     }
@@ -168,10 +168,7 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            bail!(
-                "{}",
-                ollama_request_error(status.as_u16(), "api/tags", "", &body)
-            )
+            return Err(OllamaRequestError::new(status.as_u16(), "api/tags", "", &body).into());
         }
         let json: serde_json::Value = response.json().await?;
         Ok(json["models"]
@@ -216,14 +213,25 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
         })
     }
     async fn embed_documents(&self, input: &[String]) -> Result<Vec<Vec<f32>>> {
-        let value = self
-            .request(
-                "api/embed",
-                serde_json::json!({"model": self.model, "input": input, "truncate": false}),
-                Duration::from_secs(60),
-            )
-            .await?;
-        parse_vectors(&value, input.len())
+        let mut vectors = Vec::with_capacity(input.len());
+        for batch in input.chunks(MAX_EMBED_BATCH) {
+            if let Some(oversized) = batch.iter().find(|value| value.len() > MAX_CHUNK_BYTES) {
+                bail!(
+                    "internal embedding chunk exceeds the {}-byte limit ({} bytes)",
+                    MAX_CHUNK_BYTES,
+                    oversized.len()
+                )
+            }
+            let value = self
+                .request(
+                    "api/embed",
+                    serde_json::json!({"model": self.model, "input": batch, "truncate": false}),
+                    Duration::from_secs(60),
+                )
+                .await?;
+            vectors.extend(parse_vectors(&value, batch.len())?);
+        }
+        Ok(vectors)
     }
     async fn embed_query(&self, input: &str) -> Result<Vec<f32>> {
         Ok(self
@@ -235,25 +243,74 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
     }
 }
 
-fn ollama_request_error(status: u16, path: &str, model: &str, body: &str) -> String {
-    let detail = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|value| value["error"].as_str().map(str::to_owned))
-        .or_else(|| (!body.trim().is_empty()).then(|| body.trim().to_owned()))
-        .map(|detail| detail.chars().take(300).collect::<String>());
-    let target = format!("/{}", path.trim_start_matches('/'));
-    let detail = detail
-        .map(|detail| format!(": {detail}"))
-        .unwrap_or_default();
-    let guidance = if status == 400 && path == "api/embed" {
-        format!(
-            " Check that {} is an installed text-embedding model and that Ollama is up to date; the response above may also identify input that exceeds the model context.",
-            if model.is_empty() { "the selected model" } else { model }
+#[derive(Debug)]
+struct OllamaRequestError {
+    status: u16,
+    path: String,
+    model: String,
+    detail: Option<String>,
+}
+
+impl OllamaRequestError {
+    fn new(status: u16, path: &str, model: &str, body: &str) -> Self {
+        let detail = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| value["error"].as_str().map(str::to_owned))
+            .or_else(|| (!body.trim().is_empty()).then(|| body.trim().to_owned()))
+            .map(|detail| detail.chars().take(300).collect::<String>());
+        Self {
+            status,
+            path: path.into(),
+            model: model.into(),
+            detail,
+        }
+    }
+
+    fn is_context_length(&self) -> bool {
+        self.status == 400
+            && self.path == "api/embed"
+            && self.detail.as_deref().is_some_and(|detail| {
+                let detail = detail.to_ascii_lowercase();
+                detail.contains("context length")
+                    || detail.contains("context window")
+                    || detail.contains("too long")
+            })
+    }
+}
+
+impl fmt::Display for OllamaRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let target = format!("/{}", self.path.trim_start_matches('/'));
+        let detail = self
+            .detail
+            .as_deref()
+            .map(|detail| format!(": {detail}"))
+            .unwrap_or_default();
+        let guidance = if self.status == 400 && self.path == "api/embed" {
+            format!(
+                " Check that {} is an installed text-embedding model and that Ollama is up to date; the response above may also identify input that exceeds the model context.",
+                if self.model.is_empty() {
+                    "the selected model"
+                } else {
+                    &self.model
+                }
+            )
+        } else {
+            String::new()
+        };
+        write!(
+            formatter,
+            "Ollama rejected {target} (HTTP {}){detail}.{guidance}",
+            self.status
         )
-    } else {
-        String::new()
-    };
-    format!("Ollama rejected {target} (HTTP {status}){detail}.{guidance}")
+    }
+}
+
+impl std::error::Error for OllamaRequestError {}
+
+#[cfg(test)]
+fn ollama_request_error(status: u16, path: &str, model: &str, body: &str) -> String {
+    OllamaRequestError::new(status, path, model, body).to_string()
 }
 
 pub async fn probe_endpoint(endpoint: String) -> OllamaEndpointStatus {
@@ -308,7 +365,12 @@ pub async fn configure(
     let previous = get_space_state(&repo.pool).await?;
     let active = previous
         .as_ref()
-        .and_then(|value| value["activeSpaceId"].as_str());
+        .and_then(|value| value["activeSpaceId"].as_str())
+        .map(str::to_string);
+    let active_generation = previous
+        .as_ref()
+        .and_then(|value| value["activeGeneration"].as_i64());
+    let generation = next_generation(repo, &space_id).await?;
     put_device_config(
         &repo.pool,
         &serde_json::json!({"endpoint": endpoint, "model": model, "enabled": true}),
@@ -316,14 +378,13 @@ pub async fn configure(
     .await?;
     put_space_state(
         &repo.pool,
-        &serde_json::json!({"pendingSpaceId": space_id, "activeSpaceId": active}),
+        &serde_json::json!({
+            "pendingSpaceId": space_id,
+            "pendingGeneration": generation,
+            "activeSpaceId": active,
+            "activeGeneration": active_generation
+        }),
     )
-    .await?;
-    let generation: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(generation),0)+1 FROM search_index_jobs WHERE space_id=?",
-    )
-    .bind(&space_id)
-    .fetch_one(&repo.pool)
     .await?;
     enqueue_all(repo, &space_id, generation).await?;
     status(repo).await
@@ -357,26 +418,33 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
     };
     let enabled = value["enabled"].as_bool().unwrap_or(false);
     let pending = state["pendingSpaceId"].as_str().map(str::to_string);
+    let pending_generation = state["pendingGeneration"].as_i64();
     let active = state["activeSpaceId"].as_str().map(str::to_string);
+    let active_generation = state["activeGeneration"].as_i64();
     let endpoint = value["endpoint"].as_str().map(str::to_string);
     let model = value["model"].as_str().map(str::to_string);
-    let indexed: i64 =
-        sqlx::query_scalar("SELECT count(DISTINCT clip_id) FROM search_chunks WHERE space_id=?")
-            .bind(pending.as_ref().or(active.as_ref()))
-            .fetch_one(&repo.pool)
-            .await?;
-    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status IN ('pending','running')").bind(pending.as_ref().or(active.as_ref())).fetch_one(&repo.pool).await?;
-    let failed: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status='failed'",
+    let target_space = pending.as_ref().or(active.as_ref());
+    let target_generation = pending_generation.or(active_generation);
+    let indexed: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT clip_id) FROM search_index_jobs WHERE space_id=? AND generation=? AND status='completed'",
     )
-    .bind(pending.as_ref().or(active.as_ref()))
+    .bind(target_space)
+    .bind(target_generation)
+    .fetch_one(&repo.pool)
+    .await?;
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND status IN ('pending','running')").bind(target_space).bind(target_generation).fetch_one(&repo.pool).await?;
+    let failed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND status='failed'",
+    )
+    .bind(target_space)
+    .bind(target_generation)
     .fetch_one(&repo.pool)
     .await?;
     let total: i64 =
         sqlx::query_scalar("SELECT count(*) FROM clip_items WHERE lifecycle_state='ready'")
             .fetch_one(&repo.pool)
             .await?;
-    let job_diagnostic: Option<String> = sqlx::query_scalar("SELECT last_error FROM search_index_jobs WHERE space_id=? AND status='failed' AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1").bind(pending.as_ref().or(active.as_ref())).fetch_optional(&repo.pool).await?;
+    let job_diagnostic: Option<String> = sqlx::query_scalar("SELECT last_error FROM search_index_jobs WHERE space_id=? AND generation=? AND status='failed' AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 1").bind(target_space).bind(target_generation).fetch_optional(&repo.pool).await?;
     let diagnostic = value["lastDiagnostic"]
         .as_str()
         .map(str::to_string)
@@ -414,12 +482,16 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
         .or(config["activeSpaceId"].as_str())
         .context("no embedding space")?
         .to_string();
+    let generation = config["pendingGeneration"]
+        .as_i64()
+        .or(config["activeGeneration"].as_i64())
+        .context("no embedding generation")?;
     let provider = OllamaTextEmbeddingProvider::new(
         config["endpoint"].as_str().context("missing endpoint")?,
         config["model"].as_str().context("missing model")?.into(),
     )
     .await?;
-    let rows = sqlx::query("SELECT id,clip_id,generation FROM search_index_jobs WHERE space_id=? AND status='pending' ORDER BY requested_at LIMIT 16").bind(&space).fetch_all(&repo.pool).await?;
+    let rows = sqlx::query("SELECT id,clip_id,generation FROM search_index_jobs WHERE space_id=? AND generation=? AND status='pending' ORDER BY requested_at LIMIT 16").bind(&space).bind(generation).fetch_all(&repo.pool).await?;
     let mut count = 0;
     for row in rows {
         count += 1;
@@ -443,21 +515,36 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
             }
         }
     }
-    let pending:i64=sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status IN ('pending','running')").bind(&space).fetch_one(&repo.pool).await?;
+    let pending:i64=sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND status IN ('pending','running')").bind(&space).bind(generation).fetch_one(&repo.pool).await?;
     if pending == 0 {
         let failed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND status='failed'",
+            "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND status='failed'",
         )
         .bind(&space)
+        .bind(generation)
         .fetch_one(&repo.pool)
         .await?;
-        if failed == 0 {
-            let mut promoted = get_space_state(&repo.pool)
-                .await?
-                .unwrap_or_else(|| serde_json::json!({}));
-            promoted["activeSpaceId"] = serde_json::Value::String(space);
+        let mut promoted = get_space_state(&repo.pool)
+            .await?
+            .unwrap_or_else(|| serde_json::json!({}));
+        let is_pending_generation = promoted["pendingSpaceId"].as_str() == Some(space.as_str())
+            && promoted["pendingGeneration"].as_i64() == Some(generation);
+        if failed == 0 && is_pending_generation {
+            promoted["activeSpaceId"] = serde_json::Value::String(space.clone());
+            promoted["activeGeneration"] = serde_json::Value::Number(generation.into());
             promoted["pendingSpaceId"] = serde_json::Value::Null;
+            promoted["pendingGeneration"] = serde_json::Value::Null;
             put_space_state(&repo.pool, &promoted).await?;
+            sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND generation<>?")
+                .bind(&space)
+                .bind(generation)
+                .execute(&repo.pool)
+                .await?;
+            sqlx::query("DELETE FROM search_index_jobs WHERE space_id=? AND generation<>?")
+                .bind(&space)
+                .bind(generation)
+                .execute(&repo.pool)
+                .await?;
         }
     }
     Ok(count)
@@ -485,29 +572,28 @@ async fn index_clip(
     let projection = sha256(format!("{CHUNKER_VERSION}:{manifest}:{text}").as_bytes());
     let chunks = chunk_text(&text);
     if chunks.is_empty() {
-        sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=?")
+        sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=? AND generation=?")
             .bind(space)
             .bind(clip)
+            .bind(generation)
             .execute(&repo.pool)
             .await?;
         return Ok(());
     }
-    let vectors = provider.embed_documents(&chunks).await?;
-    if vectors.len() != chunks.len() {
-        bail!("provider returned wrong number of embeddings")
-    }
+    let embedded = embed_chunks_adaptively(provider, chunks).await?;
     let dimensions: i64 =
         sqlx::query_scalar("SELECT dimensions FROM search_embedding_spaces WHERE id=?")
             .bind(space)
             .fetch_one(&repo.pool)
             .await?;
     let mut tx = repo.pool.begin().await?;
-    sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=?")
+    sqlx::query("DELETE FROM search_chunks WHERE space_id=? AND clip_id=? AND generation=?")
         .bind(space)
         .bind(clip)
+        .bind(generation)
         .execute(&mut *tx)
         .await?;
-    for (ordinal, (text, vector)) in chunks.into_iter().zip(vectors).enumerate() {
+    for (ordinal, (text, vector)) in embedded.into_iter().enumerate() {
         validate_vector(&vector, Some(dimensions as usize))?;
         let chunk_id = new_id();
         sqlx::query("INSERT INTO search_chunks(id,clip_id,space_id,ordinal,chunk_kind,text_value,text_sha256,source_manifest_json,projection_sha256,chunker_id,chunker_version,generation,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(&chunk_id).bind(clip).bind(space).bind(ordinal as i64).bind("text").bind(&text).bind(sha256(text.as_bytes())).bind(&manifest).bind(&projection).bind(CHUNKER_ID).bind(CHUNKER_VERSION).bind(generation).bind(now_ms()).execute(&mut *tx).await?;
@@ -526,41 +612,60 @@ async fn enqueue_all(repo: &HistoryRepository, space: &str, generation: i64) -> 
     }
     Ok(())
 }
-pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
-    let config = get_config(&repo.pool)
-        .await?
-        .context("embeddings are disabled")?;
-    let space = config["activeSpaceId"]
-        .as_str()
-        .or(config["pendingSpaceId"].as_str())
-        .context("no space")?;
-    let generation: i64 = sqlx::query_scalar(
+
+async fn next_generation(repo: &HistoryRepository, space: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(
         "SELECT COALESCE(MAX(generation),0)+1 FROM search_index_jobs WHERE space_id=?",
     )
     .bind(space)
     .fetch_one(&repo.pool)
-    .await?;
-    enqueue_all(repo, space, generation).await
+    .await?)
+}
+
+pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
+    let config = get_config(&repo.pool)
+        .await?
+        .context("embeddings are disabled")?;
+    let space = config["pendingSpaceId"]
+        .as_str()
+        .or(config["activeSpaceId"].as_str())
+        .context("no space")?
+        .to_string();
+    let generation = next_generation(repo, &space).await?;
+    sqlx::query("UPDATE search_index_jobs SET status='cancelled',updated_at=? WHERE status IN ('pending','running')")
+        .bind(now_ms()).execute(&repo.pool).await?;
+    let mut state = get_space_state(&repo.pool)
+        .await?
+        .unwrap_or_else(|| serde_json::json!({}));
+    state["pendingSpaceId"] = serde_json::Value::String(space.clone());
+    state["pendingGeneration"] = serde_json::Value::Number(generation.into());
+    put_space_state(&repo.pool, &state).await?;
+    enqueue_all(repo, &space, generation).await
 }
 pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     let config = get_config(&repo.pool)
         .await?
         .context("embeddings are disabled")?;
+    if config["pendingSpaceId"].is_string() {
+        return Ok(());
+    }
     let space = config["activeSpaceId"]
         .as_str()
-        .or(config["pendingSpaceId"].as_str())
-        .context("no space")?;
-    // Only enqueue clips that have no chunks in this space yet
+        .context("no active space")?;
+    let generation = config["activeGeneration"]
+        .as_i64()
+        .context("no active generation")?;
     let clips: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM clip_items WHERE lifecycle_state='ready' \
-         AND NOT EXISTS (SELECT 1 FROM search_chunks sc WHERE sc.clip_id=clip_items.id AND sc.space_id=?)"
+         AND NOT EXISTS (SELECT 1 FROM search_chunks sc WHERE sc.clip_id=clip_items.id AND sc.space_id=? AND sc.generation=?)"
     )
     .bind(space)
+    .bind(generation)
     .fetch_all(&repo.pool)
     .await?;
     for clip in clips {
         sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)")
-            .bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(1_i64).bind(CHUNKER_VERSION)
+            .bind(new_id()).bind(space).bind(clip).bind(now_ms()).bind(generation).bind(CHUNKER_VERSION)
             .execute(&repo.pool).await?;
     }
     Ok(())
@@ -570,14 +675,18 @@ pub async fn enqueue_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()>
         Some(value) => value,
         None => return Ok(()),
     };
-    let Some(space) = config["pendingSpaceId"]
-        .as_str()
-        .or(config["activeSpaceId"].as_str())
-    else {
+    let (Some(space), Some(generation)) = (
+        config["pendingSpaceId"]
+            .as_str()
+            .or(config["activeSpaceId"].as_str()),
+        config["pendingGeneration"]
+            .as_i64()
+            .or(config["activeGeneration"].as_i64()),
+    ) else {
         return Ok(());
     };
     sqlx::query("INSERT OR IGNORE INTO search_index_jobs(id,space_id,clip_id,status,requested_at,generation,chunker_version) VALUES(?,?,?,'pending',?,?,?)")
-        .bind(new_id()).bind(space).bind(clip_id).bind(now_ms()).bind(1_i64).bind(CHUNKER_VERSION).execute(&repo.pool).await?;
+        .bind(new_id()).bind(space).bind(clip_id).bind(now_ms()).bind(generation).bind(CHUNKER_VERSION).execute(&repo.pool).await?;
     Ok(())
 }
 pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
@@ -588,9 +697,11 @@ pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
     if let Some(mut state) = get_space_state(&repo.pool).await? {
         if state["activeSpaceId"].as_str() == Some(space) {
             state["activeSpaceId"] = serde_json::Value::Null;
+            state["activeGeneration"] = serde_json::Value::Null;
         }
         if state["pendingSpaceId"].as_str() == Some(space) {
             state["pendingSpaceId"] = serde_json::Value::Null;
+            state["pendingGeneration"] = serde_json::Value::Null;
         }
         put_space_state(&repo.pool, &state).await?;
     }
@@ -603,9 +714,59 @@ pub async fn recover_interrupted(repo: &HistoryRepository) -> Result<()> {
     Ok(())
 }
 
+pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
+    let Some(config) = get_config(&repo.pool).await? else {
+        return Ok(false);
+    };
+    if config["pendingSpaceId"].is_string() {
+        let current_pending: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM search_index_jobs WHERE space_id=? AND generation=? AND chunker_version=? AND status IN ('pending','running','completed')",
+        )
+        .bind(config["pendingSpaceId"].as_str())
+        .bind(config["pendingGeneration"].as_i64())
+        .bind(CHUNKER_VERSION)
+        .fetch_one(&repo.pool)
+        .await?;
+        if current_pending > 0 {
+            return Ok(false);
+        }
+    }
+    let (Some(space), Some(generation)) = (
+        config["activeSpaceId"].as_str(),
+        config["activeGeneration"].as_i64(),
+    ) else {
+        return Ok(false);
+    };
+    let stale: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM search_chunks WHERE space_id=? AND generation=? AND (chunker_id<>? OR chunker_version<>?)",
+    )
+    .bind(space)
+    .bind(generation)
+    .bind(CHUNKER_ID)
+    .bind(CHUNKER_VERSION)
+    .fetch_one(&repo.pool)
+    .await?;
+    if stale == 0 {
+        return Ok(false);
+    }
+    reindex(repo).await?;
+    Ok(true)
+}
+
 pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
-    sqlx::query("UPDATE search_index_jobs SET status='pending',attempt_count=0,last_error=NULL,completed_at=NULL,updated_at=? WHERE status='failed'")
-        .bind(now_ms()).execute(&repo.pool).await?;
+    let config = get_config(&repo.pool)
+        .await?
+        .context("embeddings are disabled")?;
+    let space = config["pendingSpaceId"]
+        .as_str()
+        .or(config["activeSpaceId"].as_str())
+        .context("no embedding space")?;
+    let generation = config["pendingGeneration"]
+        .as_i64()
+        .or(config["activeGeneration"].as_i64())
+        .context("no embedding generation")?;
+    sqlx::query("UPDATE search_index_jobs SET status='pending',attempt_count=0,last_error=NULL,completed_at=NULL,updated_at=? WHERE space_id=? AND generation=? AND status='failed'")
+        .bind(now_ms()).bind(space).bind(generation).execute(&repo.pool).await?;
     Ok(())
 }
 
@@ -650,9 +811,12 @@ pub async fn semantic_matches(
     let space = config["activeSpaceId"]
         .as_str()
         .context("semantic index is still building")?;
+    let generation = config["activeGeneration"]
+        .as_i64()
+        .context("semantic index generation is unavailable")?;
     let provider = provider_for_space(repo, space).await?;
     let query_vector = provider.embed_query(query).await?;
-    let rows=sqlx::query("SELECT sc.clip_id,se.vector,sc.text_value FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE se.space_id=? ORDER BY sc.clip_id").bind(space).fetch_all(&repo.pool).await?;
+    let rows=sqlx::query("SELECT sc.clip_id,se.vector,sc.text_value FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE se.space_id=? AND sc.generation=? ORDER BY sc.clip_id").bind(space).bind(generation).fetch_all(&repo.pool).await?;
     let mut best = std::collections::HashMap::<String, (f64, String)>::new();
     for row in rows {
         let clip: String = row.get(0);
@@ -692,27 +856,118 @@ async fn provider_for_space(
 }
 
 fn chunk_text(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    for paragraph in text.split("\n\n") {
-        let p = paragraph.trim();
-        if p.is_empty() {
-            continue;
-        }
-        if current.len() + p.len() + 1 > MAX_CHARS && !current.is_empty() {
-            out.push(current.clone());
-            let start = current.len().saturating_sub(OVERLAP_CHARS);
-            current = current[start..].to_string();
-        }
-        if !current.is_empty() {
-            current.push('\n')
-        }
-        current.push_str(p);
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    split_text_windows(&normalized, MAX_CHUNK_BYTES, CHUNK_OVERLAP_BYTES)
+}
+
+fn split_text_windows(text: &str, max_bytes: usize, overlap_bytes: usize) -> Vec<String> {
+    debug_assert!(max_bytes > 0);
+    debug_assert!(overlap_bytes < max_bytes);
+    let text = text.trim();
+    if text.is_empty() {
+        return Vec::new();
     }
-    if !current.is_empty() {
-        out.push(current)
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let hard_end = floor_char_boundary(text, (start + max_bytes).min(text.len()));
+        let mut end = hard_end;
+        if hard_end < text.len() {
+            let window = &text[start..hard_end];
+            let minimum = window.len() / 2;
+            end = window
+                .rfind("\n\n")
+                .map(|index| index + start + 2)
+                .filter(|index| *index - start >= minimum)
+                .or_else(|| {
+                    window
+                        .rfind('\n')
+                        .map(|index| index + start + 1)
+                        .filter(|index| *index - start >= minimum)
+                })
+                .or_else(|| {
+                    window
+                        .char_indices()
+                        .rev()
+                        .find(|(index, value)| *index >= minimum && value.is_whitespace())
+                        .map(|(index, value)| index + start + value.len_utf8())
+                })
+                .unwrap_or(hard_end);
+        }
+        if end <= start {
+            end = hard_end;
+        }
+        let chunk = text[start..end].trim();
+        if !chunk.is_empty() {
+            chunks.push(chunk.to_string());
+        }
+        if end >= text.len() {
+            break;
+        }
+        let proposed = end.saturating_sub(overlap_bytes).max(start + 1);
+        let next = ceil_char_boundary(text, proposed);
+        start = if next >= end { end } else { next };
     }
-    out
+    chunks
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn is_context_length_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<OllamaRequestError>()
+        .is_some_and(OllamaRequestError::is_context_length)
+}
+
+async fn embed_chunks_adaptively(
+    provider: &OllamaTextEmbeddingProvider,
+    chunks: Vec<String>,
+) -> Result<Vec<(String, Vec<f32>)>> {
+    match provider.embed_documents(&chunks).await {
+        Ok(vectors) => return Ok(chunks.into_iter().zip(vectors).collect()),
+        Err(error) if !is_context_length_error(&error) => return Err(error),
+        Err(_) => {}
+    }
+
+    let mut queue: VecDeque<(String, u8)> = chunks.into_iter().map(|chunk| (chunk, 0)).collect();
+    let mut embedded = Vec::new();
+    while let Some((chunk, depth)) = queue.pop_front() {
+        match provider.embed_documents(std::slice::from_ref(&chunk)).await {
+            Ok(mut vectors) => {
+                let vector = vectors.pop().context("missing chunk embedding")?;
+                embedded.push((chunk, vector));
+            }
+            Err(error)
+                if is_context_length_error(&error)
+                    && depth < MAX_FALLBACK_DEPTH
+                    && chunk.len() > MIN_FALLBACK_BYTES =>
+            {
+                let target = (chunk.len() / 2).max(MIN_FALLBACK_BYTES);
+                let overlap = (target / 8).min(CHUNK_OVERLAP_BYTES);
+                let split = split_text_windows(&chunk, target, overlap);
+                if split.len() < 2 {
+                    return Err(error);
+                }
+                for child in split.into_iter().rev() {
+                    queue.push_front((child, depth + 1));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(embedded)
 }
 fn validate_vector(v: &[f32], dimension: Option<usize>) -> Result<()> {
     if v.is_empty() || dimension.is_some_and(|d| d != v.len()) || v.iter().any(|n| !n.is_finite()) {
@@ -776,7 +1031,8 @@ async fn get_config(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
         .unwrap_or_else(|| serde_json::json!({}));
     Ok(Some(serde_json::json!({
         "endpoint": device["endpoint"], "model": device["model"],
-        "activeSpaceId": state["activeSpaceId"], "pendingSpaceId": state["pendingSpaceId"]
+        "activeSpaceId": state["activeSpaceId"], "activeGeneration": state["activeGeneration"],
+        "pendingSpaceId": state["pendingSpaceId"], "pendingGeneration": state["pendingGeneration"]
     })))
 }
 async fn get_device_config(pool: &SqlitePool) -> Result<Option<serde_json::Value>> {
@@ -864,14 +1120,51 @@ async fn validated_endpoint(raw: &str) -> Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::foundation::AppRoots;
+
+    async fn repository() -> (tempfile::TempDir, HistoryRepository) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        (temp, repo)
+    }
 
     #[test]
-    fn chunks_preserve_order_and_overlap() {
-        let text = format!("{}\n\n{}", "a".repeat(MAX_CHARS), "b".repeat(32));
+    fn chunks_are_hard_bounded_even_without_breaks() {
+        let text = format!("<div>{}</div>", "a".repeat(MAX_CHUNK_BYTES * 4));
         let chunks = chunk_text(&text);
-        assert_eq!(chunks.len(), 2);
-        assert!(chunks[1].starts_with(&"a".repeat(OVERLAP_CHARS)));
-        assert!(chunks[1].ends_with(&"b".repeat(32)));
+        assert!(chunks.len() > 4);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
+        assert_eq!(chunks.first().map(|chunk| &chunk[..5]), Some("<div>"));
+        assert!(chunks.last().is_some_and(|chunk| chunk.ends_with("</div>")));
+    }
+
+    #[test]
+    fn chunks_unicode_without_splitting_code_points() {
+        let text = format!("{}{}", "文".repeat(1_500), "🙂".repeat(1_500));
+        let chunks = chunk_text(&text);
+        assert!(chunks.len() > 2);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
+        assert!(chunks
+            .iter()
+            .all(|chunk| std::str::from_utf8(chunk.as_bytes()).is_ok()));
+    }
+
+    #[test]
+    fn chunks_prefer_paragraph_boundaries_and_normalize_lines() {
+        let first = "a".repeat(1_700);
+        let second = "b".repeat(700);
+        let chunks = chunk_text(&format!("{first}\r\n\r\n{second}"));
+        assert!(chunks.len() >= 2);
+        assert!(chunks[0].ends_with('a'));
+        assert!(!chunks.iter().any(|chunk| chunk.contains('\r')));
+        assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_CHUNK_BYTES));
     }
 
     #[test]
@@ -902,5 +1195,82 @@ mod tests {
         assert!(message.contains("/api/embed (HTTP 400)"));
         assert!(message.contains("input length exceeds the context length"));
         assert!(message.contains("nomic-embed-text:latest"));
+    }
+
+    #[tokio::test]
+    async fn status_and_retry_are_scoped_to_the_pending_generation() {
+        let (_temp, repo) = repository().await;
+        sqlx::query("INSERT INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('space','builtin.embedding.ollama','{}',?,'text',2,'l2','cosine',?)")
+            .bind("a".repeat(64)).bind(now_ms()).execute(&repo.pool).await.unwrap();
+        put_device_config(
+            &repo.pool,
+            &serde_json::json!({"enabled":true,"endpoint":"http://localhost:11434","model":"test"}),
+        )
+        .await
+        .unwrap();
+        put_space_state(
+            &repo.pool,
+            &serde_json::json!({
+                "activeSpaceId":"space","activeGeneration":1,
+                "pendingSpaceId":"space","pendingGeneration":2
+            }),
+        )
+        .await
+        .unwrap();
+        for generation in [1_i64, 2] {
+            sqlx::query("INSERT INTO search_index_jobs(id,space_id,status,attempt_count,last_error,requested_at,generation,chunker_version) VALUES(?,?,'failed',3,'context error',?,?,?)")
+                .bind(format!("job-{generation}")).bind("space").bind(now_ms()).bind(generation).bind(CHUNKER_VERSION).execute(&repo.pool).await.unwrap();
+        }
+
+        let before = status(&repo).await.unwrap();
+        assert_eq!(before.failed_jobs, 1);
+        retry_failed(&repo).await.unwrap();
+        let old_status: String =
+            sqlx::query_scalar("SELECT status FROM search_index_jobs WHERE id='job-1'")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM search_index_jobs WHERE id='job-2'")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(old_status, "failed");
+        assert_eq!(current_status, "pending");
+    }
+
+    #[tokio::test]
+    async fn historical_failure_does_not_block_pending_generation_promotion() {
+        let (_temp, repo) = repository().await;
+        sqlx::query("INSERT INTO search_embedding_spaces(id,provider_kind,descriptor_json,descriptor_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('space','builtin.embedding.ollama','{}',?,'text',2,'l2','cosine',?)")
+            .bind("b".repeat(64)).bind(now_ms()).execute(&repo.pool).await.unwrap();
+        put_device_config(
+            &repo.pool,
+            &serde_json::json!({"enabled":true,"endpoint":"http://localhost:11434","model":"test"}),
+        )
+        .await
+        .unwrap();
+        put_space_state(
+            &repo.pool,
+            &serde_json::json!({
+                "activeSpaceId":"space","activeGeneration":1,
+                "pendingSpaceId":"space","pendingGeneration":2
+            }),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO search_index_jobs(id,space_id,status,attempt_count,last_error,requested_at,generation,chunker_version) VALUES('old-failure','space','failed',3,'old error',?,1,'1')")
+            .bind(now_ms()).execute(&repo.pool).await.unwrap();
+
+        assert_eq!(index_pending(&repo).await.unwrap(), 0);
+        let state = get_space_state(&repo.pool).await.unwrap().unwrap();
+        assert_eq!(state["activeGeneration"].as_i64(), Some(2));
+        assert!(state["pendingGeneration"].is_null());
+        let old_jobs: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE generation=1")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(old_jobs, 0);
     }
 }

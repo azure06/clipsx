@@ -141,30 +141,33 @@ describe('ClipboardListItem', () => {
     expect(listItem).toHaveClass('gap-3') // spacing is maintained
   })
 
-  it('labels only semantic-only search results as meaning matches', () => {
+  it('shows the semantic percentage only for semantic-only search results', () => {
     const { rerender } = render(
       <ClipboardListItem
         clip={createTextClip({
-          searchMatches: [{ sourceId: 'builtin.search.semantic_text', sourceRank: 1 }],
-        })}
-        onCopy={vi.fn()}
-        onSelect={vi.fn()}
-      />
-    )
-    expect(screen.getByText('Meaning match')).toBeInTheDocument()
-    rerender(
-      <ClipboardListItem
-        clip={createTextClip({
           searchMatches: [
-            { sourceId: 'builtin.search.fts', sourceRank: 1 },
-            { sourceId: 'builtin.search.semantic_text', sourceRank: 2 },
+            { sourceId: 'builtin.search.semantic_text', sourceRank: 1, sourceScore: 0.824 },
           ],
         })}
         onCopy={vi.fn()}
         onSelect={vi.fn()}
       />
     )
-    expect(screen.queryByText('Meaning match')).not.toBeInTheDocument()
+    expect(screen.getByText('82%')).toBeInTheDocument()
+    expect(screen.getByLabelText('Semantic Match Score: 82%')).toBeInTheDocument()
+    rerender(
+      <ClipboardListItem
+        clip={createTextClip({
+          searchMatches: [
+            { sourceId: 'builtin.search.fts', sourceRank: 1 },
+            { sourceId: 'builtin.search.semantic_text', sourceRank: 2, sourceScore: 0.824 },
+          ],
+        })}
+        onCopy={vi.fn()}
+        onSelect={vi.fn()}
+      />
+    )
+    expect(screen.queryByText('82%')).not.toBeInTheDocument()
   })
 
   it('renders a cached compact swatch without invoking extension code', () => {

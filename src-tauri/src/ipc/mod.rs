@@ -1948,6 +1948,7 @@ pub(crate) fn run() {
                 tauri::async_runtime::spawn(async move {
                     let _ = search::rebuild_stale_projections(&fts_history).await;
                     let _ = embeddings::recover_interrupted(&fts_history).await;
+                    let _ = embeddings::ensure_current_chunker(&fts_history).await;
                     wake_embedding_worker(fts_app, fts_history);
                 });
                 let redetect_history = history.clone();
