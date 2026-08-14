@@ -55,7 +55,7 @@ The revision must also pass command-registration drift, schema/reset,
 managed-file recovery, render-model, artifact/OCR, extension-sandbox, and output
 policy tests.
 
-## Current M1 automated evidence
+## Current automated evidence
 
 The repository includes an executable capture → SQLite/managed files → process
 restart → reconstruction harness. It currently proves:

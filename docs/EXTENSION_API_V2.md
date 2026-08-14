@@ -8,7 +8,7 @@ The canonical ABI is [`src-tauri/wit/clipsx-extension.wit`](../src-tauri/wit/cli
 
 A `.clipsx` file is a ZIP archive with root-level `clipsx-extension.toml` and `component.wasm`; `README.md` and `LICENSE` are optional. Other paths and files are rejected. Manifests use `schemaVersion = 2` and an `apiVersion` semver requirement compatible with the host's `2.0.0` API. V1 packages are rejected with an explicit rebuild message.
 
-Registry installs are checksum-pinned. Local packages require Developer Mode, are inspected before installation, and disclose declared HTTP origins, credential slots, and unavailable capability-backed contributions. Installed bytes live in app-owned storage. Enablement, runtime failures, and quarantine state live in SQLite.
+Registry installs are checksum-pinned. Local packages require Developer Mode, are inspected before installation, and disclose declared HTTP origins, credential slots, and unavailable capability-backed contributions. Installed bytes live in app-owned storage. Enablement, runtime failures, and quarantine state live in SQLite. The current Plugins UI supports registry/local installation, permission disclosure, enable/disable, uninstall, quarantine recovery, and app-local action shortcuts. Registry update/compatibility presentation and richer diagnostics remain roadmap work.
 
 Build and package the example with:
 
@@ -60,7 +60,7 @@ Primary detail selection first honors saved facet, capability, then MIME prefere
 
 ## Transformers and actions
 
-Transformers declare `local` or `capability_backed` execution. Local transforms are offline and reproducible. Capability-backed transforms validate today but remain unavailable until the broker is implemented.
+Transformers declare `local` or `capability_backed` execution. Local transforms are offline and reproducible. Capability-backed transforms validate today but remain unavailable until the broker is implemented. Contribution schemas are persisted and validated by the host; generated parameter controls are still roadmap work, so the current UI invokes parameterless flows.
 
 Actions declare a host icon, matchers, parameter schema, effects, and execution class. A transformer preset names a transformer, parameters, and `preview`, `copy`, `paste`, or `save_as_clip` disposition. A guest action returns one audited result:
 

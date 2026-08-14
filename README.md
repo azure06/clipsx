@@ -12,15 +12,17 @@ Ollama text embeddings.
 
 ## Current work
 
-ClipsX has a V2 multi-representation foundation, but it is not release-verified.
-The current focus is native clipboard fidelity across capture, persistence,
-restart, reconstruction, and real target-application paste.
+The multi-representation foundation, typed previews, local search, extension
+runtime, and settings workflows are implemented. ClipsX is not yet
+release-certified: active work is installed-build platform validation,
+transform parameter UX, extension update/diagnostics, settings/OCR hardening,
+and packaging/signing.
 
 The maintained documentation is:
 
 - [Architecture](docs/ARCHITECTURE.md) — stable design and invariants.
-- [Extension API](docs/EXTENSION_API_V1.md) — package, WIT, and sandbox contract.
-- [Roadmap](docs/ROADMAP.md) — unfinished work and milestone acceptance criteria.
+- [Extension API v2](docs/EXTENSION_API_V2.md) — package, WIT, and sandbox contract.
+- [Roadmap](docs/ROADMAP.md) — unfinished work and release gates.
 - [Release](docs/RELEASE.md) — native validation, packaging, and publication gates.
 
 ## Architecture invariants
@@ -76,5 +78,5 @@ src-tauri/src/ipc/           Tauri commands and runtime orchestration
 docs/                        Architecture, extension API, roadmap, and release gates
 ```
 
-Future feature candidates and the archived V1 reference policy are maintained
-in the [Roadmap](docs/ROADMAP.md#post-release-feature-candidates).
+Future candidates and the archived V1 reference policy are maintained in the
+[Roadmap](docs/ROADMAP.md#post-release-candidates).
