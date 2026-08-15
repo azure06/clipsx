@@ -12,6 +12,16 @@ CREATE TABLE config_device_values (
     updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000)
 );
 
+CREATE TABLE provider_runtime_diagnostics (
+    provider_id TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    last_checked_at INTEGER,
+    last_success_at INTEGER,
+    last_error_code TEXT,
+    last_error_message TEXT CHECK (last_error_message IS NULL OR length(last_error_message) <= 512),
+    PRIMARY KEY (provider_id, capability)
+);
+
 INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUES
     ('capture.max_ordinary_clips', '1000', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('capture.max_age_days', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
@@ -20,11 +30,10 @@ INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUE
     ('capture.max_snapshot_bytes', '104857600', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
 
 INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUES
-    ('search.ollama.text_embedding', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ('providers.text_embedding.active', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
 
 INSERT INTO config_profile_values (key, value_json, created_at, updated_at) VALUES
     ('renderer.preferences', '{}', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('search.syntax_mode', '"simple"', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('search.enabled_sources', '["builtin.search.fts"]', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
-    ('artifacts.ocr.enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
-    ('search.embedding.state', '{"activeSpaceId":null,"activeGeneration":null,"pendingSpaceId":null,"pendingGeneration":null}', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ('artifacts.ocr.enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);

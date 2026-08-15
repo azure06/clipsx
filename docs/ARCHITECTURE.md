@@ -6,7 +6,7 @@ ClipsX is a local-first programmable clipboard:
 Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
-This is the stable reference for the system that exists today. [ROADMAP.md](ROADMAP.md) contains only unfinished work; [RELEASE.md](RELEASE.md) contains the installed-build certification matrix.
+This is the stable reference for the system that exists today. [MODELS.md](MODELS.md) explains the complete SQLite model and its trade-offs, [ROADMAP.md](ROADMAP.md) contains only unfinished work, and [RELEASE.md](RELEASE.md) contains the installed-build certification matrix.
 
 ## System at a glance
 
@@ -35,14 +35,14 @@ React owns interaction and renders typed presentation models. Rust owns native c
 - Platform adapters alone interpret native clipboard identifiers. ClipsX never guesses UTI, OLE, or equivalent native types.
 - Renderer selection is ephemeral UI policy. It never changes canonical data or Original/Plain Text clipboard output.
 - Binary payloads live in managed application files; SQLite stores metadata and relative references, never a generic clipboard BLOB.
-- The schema is fresh and currently version 6. Older V2 databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
+- The schema is fresh and currently version 7. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
 - Community extensions are untrusted WebAssembly Components. Providers are host-owned because credentials, consent, scheduling, and vector-space integrity are privileged concerns.
 
 ## Capture and persistence
 
 The platform-format matrix is executable capture and reconstruction policy. It defines supported selectors, format families, storage contracts, capture/write priorities, codecs, limits, and settings gates for Windows, macOS, and X11.
 
-On a clipboard change, the adapter reads a stable snapshot with bounded retries. The repository either deduplicates a ready capture or creates canonical rows. Binary bytes are staged, hashed, fsynced, atomically moved to managed storage, and marked ready in transaction order. Startup reconciliation repairs pending, staged, missing, and unreferenced managed-file state without exposing incomplete clips.
+On a clipboard change, the adapter reads a stable snapshot with bounded retries. The repository either deduplicates a ready capture or creates canonical rows. Binary bytes are staged, hashed, fsynced, atomically moved to managed storage, and marked ready in transaction order. Clip deletion, clear-history, and retention share one transactional cascade. Final binary-reference deletion enqueues a durable path; an application-owned worker rechecks references, removes the file and empty directories, and retries failures after mutations and startup.
 
 | Storage kind   | Canonical storage                    | Typical examples                 |
 | -------------- | ------------------------------------ | -------------------------------- |
@@ -116,13 +116,11 @@ Semantic inputs are independently built from notes, tags, every ready text repre
 
 Blocks sharing structural context pack toward 1,536 UTF-8 bytes. A contextual Ollama input never exceeds 2,048 bytes; structural prefixes are bounded to 384 bytes and stored only in the embedding input. Normal structural chunks do not overlap. An oversized atom is split Unicode-safely with at most 256 bytes of overlap, and a reported provider overflow recursively subdivides only the failing chunk.
 
-`search_chunks` stores clean snippet text plus strategy/version and bounded provenance. `search_embeddings` references the source representation or artifact. Pipeline version 3 invalidates old routing/chunk behavior. Reindexing creates a pending immutable embedding space and generation; the old active generation remains searchable until every replacement job succeeds, then promotion is atomic.
+`search_chunks` stores clean snippet text plus strategy/version and representation/artifact provenance; `search_embeddings` stores only one vector per chunk. Pipeline version 3 invalidates old routing/chunk behavior. Relational, monotonic generations allow one active and one building generation per source. The old active generation remains searchable until every replacement job succeeds, then promotion is atomic.
 
-### Providers and current debt
+### Providers
 
-Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Ollama is the implemented local text-embedding provider and is configured device-locally with endpoint, model, enablement, probing, retry, and status reporting. It is optional: FTS remains usable without it.
-
-The operational Ollama text implementation still lives in `search/semantic` behind a behavior-compatible local `TextEmbeddingProvider`, while the general provider contracts are being established under `providers/`. This is transitional debt: future provider work must move the operational adapter behind the host-owned provider boundary without changing search IPC, persisted spaces, or the search planner.
+Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Ollama endpoint validation, model discovery, HTTP transport, wire types, and typed errors implement the general `TextEmbeddingProvider` boundary under `providers/ollama`. Search owns chunking, generations, jobs, indexing, and retrieval; application state owns its background worker. Device configuration stores endpoint/model/enablement, runtime diagnostics are relational, and immutable embedding spaces store only provider/model vector compatibility.
 
 Hosted providers, generation, and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data.
 
@@ -140,7 +138,9 @@ Hosted providers, generation, and visual embedding runtimes are not implemented.
 | Extensions        | `extensions/`, `wit/`        | manifests, packages, WASM runtime, registry and quarantine                  |
 | Providers         | `providers/`                 | host-owned capability contracts and future adapters                         |
 
-SQLite keeps canonical clip tables separate from derived `artifact_*`, `search_*`, and extension runtime/cache tables. Managed files are shared only by hash and are removed only after their final canonical or derived reference disappears. Do not persist renderer trees, JSON ASTs, decoded tokens, parsed URLs, generic metadata blobs, or unsaved transform output as canonical clip metadata.
+SQLite keeps canonical clip tables separate from derived `artifact_*`, `search_*`, and extension runtime/cache tables. Artifacts have an explicit owning clip; input edges are same-clip provenance. Saved transformed clips survive source deletion because live links are nullable and bounded provenance snapshots remain. Managed files are removed only after their final canonical or derived reference disappears. Do not persist renderer trees, JSON ASTs, decoded tokens, parsed URLs, generic metadata blobs, or unsaved transform output as canonical clip metadata.
+
+Semantic retrieval uses exact cosine ranking for release portability: SQL filters eligible clips before Float32 vectors stream through a best-chunk-per-clip bounded heap. ANN is deferred until an active space exceeds 50,000 chunks or local ranking p95 exceeds 100 ms, excluding provider latency; SQLite `vec1` is preferred only once its testing and desktop packaging are release-ready.
 
 ## Legacy reference policy
 

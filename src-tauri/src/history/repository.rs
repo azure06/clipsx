@@ -104,11 +104,23 @@ impl HistoryRepository {
         settings: &CaptureSettings,
         provenance: &TransformProvenance,
     ) -> Result<String> {
+        let source: (String, String, Option<String>) = sqlx::query_as(
+            "SELECT c.capture_sha256,r.format_key,r.canonical_mime_type \
+             FROM clip_items c JOIN clip_representations r ON r.clip_id=c.id \
+             WHERE c.id=? AND r.id=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready'",
+        )
+        .bind(&provenance.source_clip_id)
+        .bind(&provenance.source_representation_id)
+        .fetch_one(&self.pool)
+        .await?;
         let (id, _) = self.capture_inner(snapshot, settings, true).await?;
-        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,transformer_id,transformer_version,parameter_sha256,created_at) VALUES(?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,source_capture_sha256,source_format_key,source_mime_type,transformer_id,transformer_version,parameter_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&id)
             .bind(&provenance.source_clip_id)
             .bind(&provenance.source_representation_id)
+            .bind(source.0)
+            .bind(source.1)
+            .bind(source.2)
             .bind(&provenance.transformer_id)
             .bind(&provenance.transformer_version)
             .bind(&provenance.parameter_sha256)
@@ -242,7 +254,7 @@ impl HistoryRepository {
     pub async fn list(&self, request: ListRequest) -> Result<ClipPage> {
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
-        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
+        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
         }
@@ -304,7 +316,7 @@ impl HistoryRepository {
     }
 
     pub async fn summary(&self, id: &str) -> Result<ClipSummary> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'")
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -340,7 +352,7 @@ impl HistoryRepository {
             .collect())
     }
     pub async fn detail(&self, id: &str) -> Result<ClipDetail> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se WHERE se.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
         let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,r.capture_priority,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256,r.capability_id,r.format_family FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
         let mut representations = Vec::new();
         for r in reps {
@@ -503,11 +515,14 @@ impl HistoryRepository {
         Ok(())
     }
     pub async fn delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM clip_items WHERE id=?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-        self.cleanup_orphans().await
+        tx.commit().await?;
+        self.drain_managed_file_deletions().await?;
+        Ok(())
     }
     pub async fn clear_history(&self) -> Result<Vec<String>> {
         let ids = sqlx::query_scalar::<_, String>(
@@ -515,9 +530,12 @@ impl HistoryRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        for id in &ids {
-            self.delete(id).await?;
-        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM clip_items WHERE lifecycle_state='ready'")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        self.drain_managed_file_deletions().await?;
         Ok(ids)
     }
     pub async fn clips_for_tag(&self, tag_id: &str) -> Result<Vec<String>> {
@@ -825,19 +843,70 @@ impl HistoryRepository {
         Ok(())
     }
     async fn cleanup_orphans(&self) -> Result<()> {
-        let files=sqlx::query("SELECT id,relative_path FROM clip_binary_files WHERE NOT EXISTS(SELECT 1 FROM clip_representations r WHERE r.binary_file_id=clip_binary_files.id)").fetch_all(&self.pool).await?;
-        for f in files {
-            let id: String = f.get(0);
-            let relative: String = f.get(1);
-            if safe_relative(&relative) {
-                let _ = fs::remove_file(self.managed_root.join(relative));
-            }
-            sqlx::query("DELETE FROM clip_binary_files WHERE id=?")
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
-        }
+        sqlx::query("DELETE FROM clip_binary_files WHERE NOT EXISTS(SELECT 1 FROM clip_representations r WHERE r.binary_file_id=clip_binary_files.id)")
+            .execute(&self.pool)
+            .await?;
         Ok(())
+    }
+
+    pub async fn drain_managed_file_deletions(&self) -> Result<u64> {
+        let rows = sqlx::query(
+            "SELECT relative_path FROM system_managed_file_deletions ORDER BY queued_at,relative_path",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut removed = 0;
+        for row in rows {
+            let relative: String = row.get(0);
+            let referenced: i64 = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM clip_binary_files WHERE relative_path=? UNION ALL SELECT 1 FROM artifact_binary_files WHERE relative_path=?)",
+            )
+            .bind(&relative)
+            .bind(&relative)
+            .fetch_one(&self.pool)
+            .await?;
+            if referenced != 0 {
+                sqlx::query("DELETE FROM system_managed_file_deletions WHERE relative_path=?")
+                    .bind(&relative)
+                    .execute(&self.pool)
+                    .await?;
+                continue;
+            }
+            let result = if safe_relative(&relative) {
+                match fs::remove_file(self.managed_root.join(&relative)) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error),
+                }
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "unsafe managed-file deletion path",
+                ))
+            };
+            match result {
+                Ok(()) => {
+                    sqlx::query("DELETE FROM system_managed_file_deletions WHERE relative_path=?")
+                        .bind(&relative)
+                        .execute(&self.pool)
+                        .await?;
+                    removed += 1;
+                }
+                Err(error) => {
+                    sqlx::query("UPDATE system_managed_file_deletions SET attempt_count=attempt_count+1,last_attempt_at=?,last_error=? WHERE relative_path=?")
+                        .bind(now_ms())
+                        .bind(error.to_string().chars().take(512).collect::<String>())
+                        .bind(&relative)
+                        .execute(&self.pool)
+                        .await?;
+                }
+            }
+        }
+        let managed = self.managed_root.join("managed");
+        if managed.exists() {
+            remove_empty_directories(&managed)?;
+        }
+        Ok(removed)
     }
     async fn recover_managed_files(&self) -> Result<()> {
         let staging = self.managed_root.join("staging");
@@ -895,6 +964,7 @@ impl HistoryRepository {
             .await?;
         }
         self.cleanup_orphans().await?;
+        self.drain_managed_file_deletions().await?;
         let known: std::collections::HashSet<String> =
             sqlx::query_scalar("SELECT relative_path FROM clip_binary_files UNION SELECT relative_path FROM artifact_binary_files")
                 .fetch_all(&self.pool)
@@ -1146,5 +1216,181 @@ mod tests {
             detail.format_observations[0].reason,
             "refreshed_observation"
         );
+    }
+
+    #[tokio::test]
+    async fn deletion_cascades_owned_rows_files_and_preserves_saved_transform() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let binary = vec![7, 8, 9, 10];
+        let source = CapturedSnapshot {
+            token: 1,
+            source_app_name: None,
+            source_app_id: None,
+            format_observations: Vec::new(),
+            representations: vec![CapturedRepresentation {
+                format_key: "windows:PNG".into(),
+                canonical_mime_type: Some("image/png".into()),
+                native_type: Some("PNG".into()),
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Binary(binary),
+            }],
+        };
+        let (source_id, _) = repo
+            .capture(source, &CaptureSettings::default())
+            .await
+            .unwrap();
+        let source_representation = repo.detail(&source_id).await.unwrap().representations[0]
+            .id
+            .clone();
+        let canonical_relative: String = sqlx::query_scalar(
+            "SELECT b.relative_path FROM clip_binary_files b JOIN clip_representations r ON r.binary_file_id=b.id WHERE r.id=?",
+        )
+        .bind(&source_representation)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        let shared = CapturedSnapshot {
+            token: 2,
+            source_app_name: None,
+            source_app_id: None,
+            format_observations: Vec::new(),
+            representations: vec![
+                CapturedRepresentation {
+                    format_key: "text/plain".into(),
+                    canonical_mime_type: Some("text/plain".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 2,
+                    payload: CapturedPayload::Text("distinct capture".into()),
+                },
+                CapturedRepresentation {
+                    format_key: "windows:PNG".into(),
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type: Some("PNG".into()),
+                    platform: "windows".into(),
+                    capture_priority: 1,
+                    payload: CapturedPayload::Binary(vec![7, 8, 9, 10]),
+                },
+            ],
+        };
+        let (shared_id, _) = repo
+            .capture(shared, &CaptureSettings::default())
+            .await
+            .unwrap();
+
+        let saved = CapturedSnapshot {
+            token: 2,
+            source_app_name: Some("ClipsX".into()),
+            source_app_id: Some("clipsx.transform".into()),
+            format_observations: Vec::new(),
+            representations: vec![CapturedRepresentation {
+                format_key: "text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("saved output".into()),
+            }],
+        };
+        let saved_id = repo
+            .capture_forced(
+                saved,
+                &CaptureSettings::default(),
+                &TransformProvenance {
+                    source_clip_id: source_id.clone(),
+                    source_representation_id: source_representation.clone(),
+                    transformer_id: "test.transform".into(),
+                    transformer_version: "1".into(),
+                    parameter_sha256: "a".repeat(64),
+                },
+            )
+            .await
+            .unwrap();
+
+        let artifact_relative = "managed/derived/test-artifact";
+        let artifact_path = repo.managed_root.join(artifact_relative);
+        fs::create_dir_all(artifact_path.parent().unwrap()).unwrap();
+        fs::write(&artifact_path, b"derived").unwrap();
+        let now = now_ms();
+        sqlx::query("INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) VALUES('owned-artifact',?,'thumbnail','test','1',?,?,'ready',?,?)")
+            .bind(&source_id).bind("b".repeat(64)).bind("c".repeat(64)).bind(now).bind(now)
+            .execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO artifact_inputs(artifact_id,ordinal,representation_id,input_sha256) VALUES('owned-artifact',0,?,?)")
+            .bind(&source_representation).bind("d".repeat(64)).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO artifact_binary_files(id,artifact_id,sha256,byte_length,relative_path,lifecycle_state,created_at,updated_at) VALUES('owned-file','owned-artifact',?,7,?,'ready',?,?)")
+            .bind("e".repeat(64)).bind(artifact_relative).bind(now).bind(now)
+            .execute(&repo.pool).await.unwrap();
+
+        repo.delete(&source_id).await.unwrap();
+
+        assert!(repo.detail(&saved_id).await.is_ok());
+        let provenance = sqlx::query("SELECT source_clip_id,source_representation_id,source_capture_sha256,source_format_key FROM clip_transform_provenance WHERE clip_id=?")
+            .bind(&saved_id).fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(provenance.get::<Option<String>, _>(0), None);
+        assert_eq!(provenance.get::<Option<String>, _>(1), None);
+        assert_eq!(provenance.get::<String, _>(2).len(), 64);
+        assert_eq!(provenance.get::<String, _>(3), "windows:PNG");
+        assert!(repo.managed_root.join(&canonical_relative).exists());
+        assert!(!artifact_path.exists());
+        let owned: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM artifact_records WHERE owner_clip_id=?")
+                .bind(&source_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM system_managed_file_deletions")
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(owned, 0);
+        assert_eq!(queued, 0);
+        repo.delete(&shared_id).await.unwrap();
+        assert!(!repo.managed_root.join(canonical_relative).exists());
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&repo.pool)
+            .await
+            .unwrap();
+        assert!(violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn managed_file_gc_records_retryable_failure_and_recovers_missing_files() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        fs::create_dir_all(repo.managed_root.join("managed/not-a-file")).unwrap();
+        sqlx::query("INSERT INTO system_managed_file_deletions(relative_path,queued_at) VALUES('managed/not-a-file',?)")
+            .bind(now_ms()).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO system_managed_file_deletions(relative_path,queued_at) VALUES('managed/missing',?)")
+            .bind(now_ms()).execute(&repo.pool).await.unwrap();
+
+        repo.drain_managed_file_deletions().await.unwrap();
+
+        let failure: (i64, Option<String>) = sqlx::query_as(
+            "SELECT attempt_count,last_error FROM system_managed_file_deletions WHERE relative_path='managed/not-a-file'",
+        )
+        .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(failure.0, 1);
+        assert!(failure.1.is_some());
+        let missing: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM system_managed_file_deletions WHERE relative_path='managed/missing'",
+        )
+        .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(missing, 0);
     }
 }

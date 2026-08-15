@@ -22,10 +22,7 @@ use crate::{
 };
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -145,88 +142,8 @@ async fn detect_with_extensions(
     Ok(())
 }
 
-static EMBEDDING_WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
-
 fn wake_embedding_worker(app: tauri::AppHandle, history: HistoryRepository) {
-    if EMBEDDING_WORKER_RUNNING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    tauri::async_runtime::spawn(async move {
-        let retry_delays = [5_u64, 15, 30, 60];
-        let mut retry = 0_usize;
-        let mut validated = false;
-        loop {
-            if !validated {
-                match embeddings::validate_configured_provider(&history).await {
-                    Ok(()) => {
-                        validated = true;
-                        retry = 0;
-                        let _ = app.emit(
-                            "search-source-status-changed",
-                            search::SEMANTIC_TEXT_SOURCE_ID,
-                        );
-                    }
-                    Err(error) => {
-                        let enabled = embeddings::status(&history)
-                            .await
-                            .map(|status| status.enabled)
-                            .unwrap_or(false);
-                        if !enabled {
-                            break;
-                        }
-                        let _ = app.emit("embedding-index-failed", error.to_string());
-                        let _ = app.emit(
-                            "search-source-status-changed",
-                            search::SEMANTIC_TEXT_SOURCE_ID,
-                        );
-                        let delay = retry_delays[retry.min(retry_delays.len() - 1)];
-                        retry = (retry + 1).min(retry_delays.len() - 1);
-                        tokio::time::sleep(Duration::from_secs(delay)).await;
-                        continue;
-                    }
-                }
-            }
-            match embeddings::index_pending(&history).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    retry = 0;
-                    let _ = app.emit("search-index-progress", search::SEMANTIC_TEXT_SOURCE_ID);
-                }
-                Err(error) => {
-                    validated = false;
-                    let _ = app.emit(
-                        "search-source-status-changed",
-                        search::SEMANTIC_TEXT_SOURCE_ID,
-                    );
-                    let _ = app.emit("embedding-index-failed", error.to_string());
-                    let enabled = embeddings::status(&history)
-                        .await
-                        .map(|status| status.enabled)
-                        .unwrap_or(false);
-                    if !enabled {
-                        break;
-                    }
-                    let delay = retry_delays[retry.min(retry_delays.len() - 1)];
-                    retry = (retry + 1).min(retry_delays.len() - 1);
-                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                }
-            }
-        }
-        EMBEDDING_WORKER_RUNNING.store(false, Ordering::SeqCst);
-        // Close the enqueue race between the worker's final empty poll and
-        // releasing the single-worker guard.
-        if embeddings::status(&history)
-            .await
-            .is_ok_and(|status| status.pending_jobs > 0)
-        {
-            wake_embedding_worker(app.clone(), history.clone());
-        }
-        let _ = app.emit(
-            "search-source-status-changed",
-            search::SEMANTIC_TEXT_SOURCE_ID,
-        );
-        let _ = app.emit("embedding-space-changed", ());
-    });
+    crate::app::workers::wake_text_index(&app, history);
 }
 
 async fn refresh_search_for_clip(
@@ -829,6 +746,7 @@ async fn capture_clipboard(
     }
     match state.history.capture(snapshot, &app_settings.capture).await {
         Ok((id, duplicate)) => {
+            crate::app::workers::wake_managed_files(&app, state.history.clone());
             let history = state.history.clone();
             let extensions = state.extensions.clone();
             let event_app = app.clone();
@@ -1223,6 +1141,7 @@ async fn delete_clip(
         .delete(&clip_id)
         .await
         .map_err(|e| e.to_string())?;
+    crate::app::workers::wake_managed_files(&app, state.history.clone());
     let _ = app.emit("clip-deleted", clip_id);
     Ok(())
 }
@@ -1233,6 +1152,7 @@ async fn clear_history(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         .clear_history()
         .await
         .map_err(|e| e.to_string())?;
+    crate::app::workers::wake_managed_files(&app, state.history.clone());
     for id in &ids {
         let _ = app.emit("clip-deleted", id);
     }
@@ -1939,6 +1859,13 @@ pub(crate) fn run() {
                     .expect("Failed to initialize ClipsX extension storage");
                 tauri::async_runtime::block_on(contributions::initialize(&history))
                     .expect("Failed to initialize ClipsX facet registry");
+                app.manage(AppState {
+                    roots: roots.clone(),
+                    history: history.clone(),
+                    transforms: transformers::TransformService::default(),
+                    extensions: extensions.clone(),
+                    workers: crate::app::workers::BackgroundWorkers::default(),
+                });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
                 let _ = crate::providers::provider_capabilities();
@@ -1949,7 +1876,8 @@ pub(crate) fn run() {
                     let _ = search::rebuild_stale_projections(&fts_history).await;
                     let _ = embeddings::recover_interrupted(&fts_history).await;
                     let _ = embeddings::ensure_current_chunker(&fts_history).await;
-                    wake_embedding_worker(fts_app, fts_history);
+                    wake_embedding_worker(fts_app.clone(), fts_history.clone());
+                    crate::app::workers::wake_managed_files(&fts_app, fts_history);
                 });
                 let redetect_history = history.clone();
                 let redetect_extensions = extensions.clone();
@@ -2020,6 +1948,10 @@ pub(crate) fn run() {
                         let settings = app_settings.capture;
                         match monitor_history.capture(snapshot, &settings).await {
                             Ok((id, duplicate)) => {
+                                crate::app::workers::wake_managed_files(
+                                    &monitor_app,
+                                    monitor_history.clone(),
+                                );
                                 let _ = monitor_app.emit(
                                     if duplicate {
                                         "clip-updated"
@@ -2067,12 +1999,6 @@ pub(crate) fn run() {
                             }
                         }
                     }
-                });
-                app.manage(AppState {
-                    roots,
-                    history,
-                    transforms: transformers::TransformService::default(),
-                    extensions,
                 });
             }
             if !std::env::args().any(|argument| argument == "--hidden") {

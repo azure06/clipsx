@@ -21,6 +21,7 @@ and packaging/signing.
 The maintained documentation is:
 
 - [Architecture](docs/ARCHITECTURE.md) — stable design and invariants.
+- [Data model](docs/MODELS.md) — SQLite domains, tables, data flow, and design trade-offs.
 - [Extension API v2](docs/EXTENSION_API_V2.md) — package, WIT, and sandbox contract.
 - [Roadmap](docs/ROADMAP.md) — unfinished work and release gates.
 - [Release](docs/RELEASE.md) — native validation, packaging, and publication gates.

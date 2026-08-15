@@ -214,7 +214,7 @@ pub async fn artifact_binary(
 
 async fn produce_thumbnail(
     repo: &HistoryRepository,
-    _clip_id: &str,
+    clip_id: &str,
     rep_id: &str,
     binary_id: &str,
 ) -> Result<()> {
@@ -254,11 +254,12 @@ async fn produce_thumbnail(
             let now = now_ms();
             let mut tx = repo.pool.begin().await?;
             sqlx::query(
-                "INSERT INTO artifact_records(id,artifact_kind,producer_id,producer_version,\
+                "INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,\
                  parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) \
-                 VALUES(?,?,?,?,?,?,'pending',?,?)",
+                 VALUES(?,?,?,?,?,?,?,'pending',?,?)",
             )
             .bind(&art_id)
+            .bind(clip_id)
             .bind("thumbnail")
             .bind(THUMBNAIL_PRODUCER_ID)
             .bind(THUMBNAIL_PRODUCER_VERSION)
@@ -333,7 +334,7 @@ fn make_thumbnail(bytes: &[u8]) -> Result<Vec<u8>> {
 
 async fn produce_ocr(
     repo: &HistoryRepository,
-    _clip_id: &str,
+    clip_id: &str,
     rep_id: &str,
     binary_id: &str,
 ) -> Result<()> {
@@ -366,11 +367,12 @@ async fn produce_ocr(
             let now = now_ms();
             let mut tx = repo.pool.begin().await?;
             sqlx::query(
-                "INSERT INTO artifact_records(id,artifact_kind,producer_id,producer_version,\
+                "INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,\
                  parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) \
-                 VALUES(?,?,?,?,?,?,'pending',?,?)",
+                 VALUES(?,?,?,?,?,?,?,'pending',?,?)",
             )
             .bind(&art_id)
+            .bind(clip_id)
             .bind("ocr")
             .bind(OCR_PRODUCER_ID)
             .bind(OCR_PRODUCER_VERSION)
@@ -749,13 +751,14 @@ mod tests {
             ocr_presentation(&repo, &representation_id).await.unwrap(),
             OcrPresentation::Running
         );
-        sqlx::query("INSERT INTO artifact_records(id,artifact_kind,producer_id,producer_version,parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) VALUES('artifact','ocr',?,? ,?,?,'ready',?,?)")
+        sqlx::query("INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) SELECT 'artifact',clip_id,'ocr',?,? ,?,?,'ready',?,? FROM clip_representations WHERE id=?")
             .bind(OCR_PRODUCER_ID)
             .bind(OCR_PRODUCER_VERSION)
             .bind("0".repeat(64))
             .bind("1".repeat(64))
             .bind(now)
             .bind(now)
+            .bind(&representation_id)
             .execute(&repo.pool)
             .await
             .unwrap();

@@ -1,5 +1,6 @@
 CREATE TABLE artifact_records (
     id TEXT PRIMARY KEY NOT NULL,
+    owner_clip_id TEXT NOT NULL REFERENCES clip_items(id) ON DELETE CASCADE,
     artifact_kind TEXT NOT NULL,
     producer_id TEXT NOT NULL,
     producer_version TEXT NOT NULL,
@@ -68,3 +69,40 @@ CREATE UNIQUE INDEX idx_artifact_jobs_one_active
 CREATE INDEX idx_artifact_jobs_status ON artifact_jobs(status, requested_at);
 CREATE INDEX idx_artifact_records_ready_producer
     ON artifact_records(producer_id, producer_version, lifecycle_state);
+CREATE INDEX idx_artifact_records_owner
+    ON artifact_records(owner_clip_id, artifact_kind, lifecycle_state);
+
+CREATE TRIGGER artifact_inputs_representation_owner
+BEFORE INSERT ON artifact_inputs
+WHEN NEW.representation_id IS NOT NULL
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM artifact_records a
+        JOIN clip_representations r ON r.id = NEW.representation_id
+        WHERE a.id = NEW.artifact_id AND a.owner_clip_id = r.clip_id
+    ) THEN RAISE(ABORT, 'artifact representation input must belong to its owning clip') END;
+END;
+
+CREATE TRIGGER artifact_inputs_artifact_owner
+BEFORE INSERT ON artifact_inputs
+WHEN NEW.input_artifact_id IS NOT NULL
+BEGIN
+    SELECT CASE WHEN NOT EXISTS (
+        SELECT 1 FROM artifact_records output
+        JOIN artifact_records input ON input.id = NEW.input_artifact_id
+        WHERE output.id = NEW.artifact_id
+          AND output.owner_clip_id = input.owner_clip_id
+    ) THEN RAISE(ABORT, 'artifact input must belong to its owning clip') END;
+END;
+
+CREATE TRIGGER artifact_binary_files_enqueue_deletion
+AFTER DELETE ON artifact_binary_files
+BEGIN
+    INSERT INTO system_managed_file_deletions(relative_path, queued_at)
+    VALUES (OLD.relative_path, CAST(strftime('%s', 'now') AS INTEGER) * 1000)
+    ON CONFLICT(relative_path) DO UPDATE SET
+        queued_at = excluded.queued_at,
+        attempt_count = 0,
+        last_attempt_at = NULL,
+        last_error = NULL;
+END;

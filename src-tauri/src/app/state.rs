@@ -38,4 +38,5 @@ pub struct AppState {
     pub history: HistoryRepository,
     pub transforms: TransformService,
     pub extensions: ExtensionService,
+    pub workers: super::workers::BackgroundWorkers,
 }

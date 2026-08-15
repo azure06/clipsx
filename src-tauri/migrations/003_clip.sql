@@ -88,8 +88,11 @@ CREATE TABLE clip_file_list_entries (
 
 CREATE TABLE clip_transform_provenance (
     clip_id TEXT PRIMARY KEY NOT NULL REFERENCES clip_items(id) ON DELETE CASCADE,
-    source_clip_id TEXT NOT NULL REFERENCES clip_items(id) ON DELETE RESTRICT,
-    source_representation_id TEXT NOT NULL REFERENCES clip_representations(id) ON DELETE RESTRICT,
+    source_clip_id TEXT REFERENCES clip_items(id) ON DELETE SET NULL,
+    source_representation_id TEXT REFERENCES clip_representations(id) ON DELETE SET NULL,
+    source_capture_sha256 TEXT NOT NULL CHECK (length(source_capture_sha256) = 64),
+    source_format_key TEXT NOT NULL,
+    source_mime_type TEXT,
     transformer_id TEXT NOT NULL,
     transformer_version TEXT NOT NULL,
     parameter_sha256 TEXT NOT NULL CHECK (length(parameter_sha256) = 64),
@@ -145,3 +148,27 @@ CREATE INDEX idx_clip_format_observations_clip
 CREATE INDEX idx_clip_binary_files_state ON clip_binary_files(lifecycle_state);
 CREATE INDEX idx_clip_transform_provenance_source
     ON clip_transform_provenance(source_clip_id, source_representation_id);
+
+CREATE TRIGGER clip_binary_files_enqueue_deletion
+AFTER DELETE ON clip_binary_files
+BEGIN
+    INSERT INTO system_managed_file_deletions(relative_path, queued_at)
+    VALUES (OLD.relative_path, CAST(strftime('%s', 'now') AS INTEGER) * 1000)
+    ON CONFLICT(relative_path) DO UPDATE SET
+        queued_at = excluded.queued_at,
+        attempt_count = 0,
+        last_attempt_at = NULL,
+        last_error = NULL;
+END;
+
+CREATE TRIGGER clip_representations_remove_unreferenced_binary
+AFTER DELETE ON clip_representations
+WHEN OLD.binary_file_id IS NOT NULL
+BEGIN
+    DELETE FROM clip_binary_files
+    WHERE id = OLD.binary_file_id
+      AND NOT EXISTS (
+          SELECT 1 FROM clip_representations
+          WHERE binary_file_id = OLD.binary_file_id
+      );
+END;

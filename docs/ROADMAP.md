@@ -6,7 +6,7 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 
 1. Certify native clipboard and desktop behavior in installed builds.
 2. Complete parameter-driven transforms and extension contribution UX.
-3. Harden local search/OCR/settings workflows and close provider-boundary debt.
+3. Harden local search, OCR, and settings workflows.
 4. Ship only after the release matrix and signing gates are complete.
 
 ## Remaining work
@@ -27,7 +27,6 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 - Implement the periodic `auto_clear_minutes` worker with safe cancellation and reset semantics.
 - Resolve the conflicting representation-size defaults: 10 MiB in the frontend reset defaults versus 50 MiB in the Rust capture default; document and test one product default.
 - Validate settings import/export, autostart, clear-on-exit, updater, account callback, and restart effects.
-- Move the operational Ollama adapter from `search/semantic` behind the general host-owned provider contract without changing planner behavior or stored embedding-space semantics.
 
 **Exit gate:** users can configure, understand, recover, and disable local search/OCR/settings without logs or storage edits; all retained settings have their documented runtime effect.
 
@@ -60,6 +59,7 @@ These are not release requirements:
 - layout-aware OCR once artifacts expose page/layout contracts;
 - AST code chunking after language detection and supported-language policy are designed;
 - user-configurable search weights or new input kinds.
+- approximate nearest-neighbor search when an active space exceeds 50,000 chunks or local ranking p95 exceeds 100 ms, excluding provider latency; evaluate official SQLite `vec1` only when testing and Windows/macOS/Linux packaging are release-ready.
 
 Every candidate requires a separate design covering privacy, storage, provider/contribution boundary, UX, tests, and reset/rebuild behavior.
 

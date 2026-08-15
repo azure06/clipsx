@@ -1,6 +1,8 @@
-//! Ollama implementations. Text embeddings currently live in the semantic host
-//! and will migrate here behind `TextEmbeddingProvider` without changing IPC.
+//! Host-owned Ollama transport and text-embedding adapter.
 
 pub mod client;
 pub mod models;
 pub mod text_embedding;
+
+pub use models::{OllamaEndpointStatus, OllamaModelDescriptor};
+pub use text_embedding::{list_models, probe_endpoint, probe_model, OllamaTextEmbeddingProvider};

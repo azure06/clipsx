@@ -1,8 +1,10 @@
 use super::ProviderDescriptor;
 use crate::providers::error::ProviderResult;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct TextEmbeddingSpace {
     pub provider: ProviderDescriptor,
     pub dimensions: usize,

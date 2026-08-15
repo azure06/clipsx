@@ -7,4 +7,7 @@ pub mod error;
 pub mod ollama;
 pub mod registry;
 
-pub use registry::provider_capabilities;
+pub use registry::{
+    provider_capabilities, text_embedding_provider, TextEmbeddingProviderConfig,
+    OLLAMA_TEXT_EMBEDDING_ID,
+};
