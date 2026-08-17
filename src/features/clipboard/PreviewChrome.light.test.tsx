@@ -185,8 +185,42 @@ describe('preview chrome light theme styling', () => {
     await user.click(screen.getByRole('button', { name: /tag/i }))
     await user.type(screen.getByPlaceholderText('tag name...'), 'u')
 
-    const suggestion = await screen.findByRole('button', { name: /urgent/i })
+    const suggestion = await screen.findByRole('option', { name: /urgent/i })
     expect(suggestion.parentElement).toHaveClass('bg-white/95')
-    expect(suggestion).toHaveClass('text-gray-700')
+    expect(suggestion).toHaveClass('text-violet-700')
+  })
+
+  it('navigates and selects tag suggestions from the keyboard', async () => {
+    const user = userEvent.setup()
+    render(<TagChips clipId="clip-1" tags={[]} />)
+
+    await user.click(screen.getByRole('button', { name: /tag/i }))
+    const input = screen.getByRole('combobox')
+    await user.type(input, 'u')
+
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
+
+    expect(clipboardStoreState.addClipTag).toHaveBeenCalledWith(
+      'clip-1',
+      expect.objectContaining({ id: 'tag-urgent' })
+    )
+  })
+
+  it('supports keyboard tag creation and Escape dismissal', async () => {
+    const user = userEvent.setup()
+    render(<TagChips clipId="clip-1" tags={[]} />)
+
+    await user.click(screen.getByRole('button', { name: /tag/i }))
+    const input = screen.getByRole('combobox')
+    await user.type(input, 'new')
+    await user.keyboard('{Enter}')
+    expect(clipboardStoreState.createTagAndAttach).toHaveBeenCalledWith('clip-1', 'new')
+
+    await user.type(input, 'u')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 })

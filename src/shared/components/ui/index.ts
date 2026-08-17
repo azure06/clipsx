@@ -8,6 +8,17 @@ export type { SwitchProps } from './Switch'
 export { Select } from './Select'
 export type { SelectProps, SelectOption } from './Select'
 
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuItemIndicator,
+  DropdownMenuSeparator,
+} from './DropdownMenu'
+export { dropdownSurfaceClass, dropdownItemClass, suggestionItemClass } from './dropdownStyles'
+
 export { Input } from './Input'
 export type { InputProps } from './Input'
 

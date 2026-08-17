@@ -20,7 +20,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
-import { Switch } from '../../shared/components/ui'
+import { Select, Switch } from '../../shared/components/ui'
 
 type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
 type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
@@ -433,18 +433,15 @@ export const IntelligencePage = () => {
                       Loading models…
                     </div>
                   ) : models.length > 0 ? (
-                    <select
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-100/5"
+                    <Select
+                      className="w-full py-2"
                       value={selectedModel}
-                      onChange={e => setSelectedModel(e.target.value)}
-                    >
-                      {models.map(m => (
-                        <option key={m.name} value={m.name}>
-                          {m.name}
-                          {m.size ? ` (${formatBytes(m.size)})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setSelectedModel}
+                      options={models.map(model => ({
+                        value: model.name,
+                        label: `${model.name}${model.size ? ` (${formatBytes(model.size)})` : ''}`,
+                      }))}
+                    />
                   ) : (
                     <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
                       <input

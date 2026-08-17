@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
+import userEvent from '@testing-library/user-event'
 import { SearchBar } from './SearchBar'
 
 const ScopeHarness = ({
@@ -36,6 +37,67 @@ const ScopeHarness = ({
 }
 
 describe('SearchBar scope slash commands', () => {
+  it('exposes slash suggestions as a keyboard-navigable listbox', async () => {
+    const user = userEvent.setup()
+    render(<ScopeHarness />)
+
+    const input = screen.getByRole('combobox')
+    await user.type(input, '/')
+
+    const listbox = screen.getByRole('listbox')
+    expect(listbox).toBeInTheDocument()
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true')
+
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  })
+
+  it('uses accessible source checkboxes and keeps the menu open after toggling', async () => {
+    const user = userEvent.setup()
+    const onToggleSource = vi.fn()
+    render(
+      <SearchBar
+        value=""
+        onChange={vi.fn()}
+        onClear={vi.fn()}
+        searchSources={[
+          {
+            id: 'builtin.search.fts',
+            label: 'Text search',
+            mandatory: true,
+            inputKinds: ['text'],
+            indexingRequired: false,
+            enabled: true,
+            state: 'ready',
+            diagnostic: null,
+          },
+          {
+            id: 'builtin.search.semantic',
+            label: 'Meaning search',
+            mandatory: false,
+            inputKinds: ['text'],
+            indexingRequired: true,
+            enabled: false,
+            state: 'ready',
+            diagnostic: null,
+          },
+        ]}
+        onToggleSource={onToggleSource}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /sources/i }))
+    const mandatory = screen.getByRole('menuitemcheckbox', { name: /text search/i })
+    const optional = screen.getByRole('menuitemcheckbox', { name: /meaning search/i })
+    expect(mandatory).toHaveAttribute('aria-disabled', 'true')
+
+    await user.click(optional)
+    expect(onToggleSource).toHaveBeenCalledWith('builtin.search.semantic')
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+  })
+
   it('applies /favorites as a scope command and strips it from the query', async () => {
     const onScopeChange = vi.fn()
     render(<ScopeHarness onScopeChange={onScopeChange} />)
@@ -120,7 +182,7 @@ describe('SearchBar scope slash commands', () => {
     const onScopeChange = vi.fn()
     render(<ScopeHarness initialScope="pinned" onScopeChange={onScopeChange} />)
 
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     expect(input).toHaveValue('')
 
     fireEvent.keyDown(input, { key: 'Backspace' })
@@ -136,7 +198,7 @@ describe('SearchBar scope slash commands', () => {
       <ScopeHarness initialScope="favorites" initialValue="hello" onScopeChange={onScopeChange} />
     )
 
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     fireEvent.keyDown(input, { key: 'Backspace' })
 
     // onScopeChange should not be called since input is not empty
@@ -149,7 +211,7 @@ describe('SearchBar scope slash commands', () => {
     const onChange = vi.fn()
     render(<SearchBar value="/image" onChange={onChange} onClear={vi.fn()} />)
 
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     // input shows empty (displayValue strips the /image prefix)
     expect(input).toHaveValue('')
     fireEvent.keyDown(input, { key: 'Backspace' })
@@ -162,7 +224,7 @@ describe('SearchBar scope slash commands', () => {
   it('blurs the search input when Escape is pressed', () => {
     render(<SearchBar value="hello" onChange={vi.fn()} onClear={vi.fn()} />)
 
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     input.focus()
     expect(document.activeElement).toBe(input)
 
@@ -175,7 +237,7 @@ describe('SearchBar scope slash commands', () => {
     const onClear = vi.fn()
     render(<SearchBar value="hello" onChange={vi.fn()} onClear={onClear} />)
 
-    const input = screen.getByRole('textbox')
+    const input = screen.getByRole('combobox')
     fireEvent.keyDown(input, { key: 'Escape' })
 
     expect(onClear).not.toHaveBeenCalled()

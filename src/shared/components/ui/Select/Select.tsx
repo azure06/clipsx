@@ -1,5 +1,7 @@
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { ChevronRight } from 'lucide-react'
+import { cn } from '../../../utils/cn'
+import { dropdownItemClass, dropdownSurfaceClass } from '../dropdownStyles'
 
 export type SelectOption<T extends string = string> = {
   readonly value: T
@@ -27,7 +29,10 @@ export const Select = <T extends string = string>({
   return (
     <SelectPrimitive.Root value={value} onValueChange={onChange} disabled={disabled}>
       <SelectPrimitive.Trigger
-        className={`inline-flex items-center justify-between gap-2 rounded-lg border border-gray-300/70 dark:border-gray-700 bg-slate-100/70 dark:bg-slate-800 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 hover:bg-slate-200/60 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={cn(
+          'inline-flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-1.5 text-sm text-gray-900 transition-colors hover:bg-slate-100/80 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-slate-100/5 dark:text-gray-100 dark:hover:bg-white/10',
+          className
+        )}
       >
         <SelectPrimitive.Value placeholder={placeholder} />
         <SelectPrimitive.Icon>
@@ -37,7 +42,10 @@ export const Select = <T extends string = string>({
 
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="overflow-hidden rounded-lg border border-gray-200/80 dark:border-gray-800 bg-slate-100/90 dark:bg-slate-900/95 backdrop-blur-xl shadow-lg"
+          className={cn(
+            dropdownSurfaceClass,
+            'max-h-[var(--radix-select-content-available-height)] w-[var(--radix-select-trigger-width)]'
+          )}
           position="popper"
           sideOffset={4}
         >
@@ -47,12 +55,14 @@ export const Select = <T extends string = string>({
                 key={option.value}
                 value={option.value}
                 disabled={option.disabled}
-                className="relative flex cursor-pointer select-none items-center rounded px-8 py-1.5 text-sm text-gray-900 dark:text-gray-100 outline-none data-highlighted:bg-slate-100 dark:data-highlighted:bg-slate-800 data-disabled:opacity-50 data-disabled:cursor-not-allowed"
+                className={cn(dropdownItemClass, 'px-8 py-1.5')}
               >
-                <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemText className="truncate">
+                  {option.label}
+                </SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className="absolute left-2 inline-flex items-center">
                   <svg
-                    className="h-4 w-4 text-blue-500"
+                    className="h-4 w-4 text-violet-500"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"

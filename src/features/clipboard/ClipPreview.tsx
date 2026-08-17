@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScanText } from 'lucide-react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { presentationTextStats } from './presentationModel'
@@ -10,6 +9,12 @@ import { NoteField } from './components/NoteField'
 import { V2ViewPanel, type ViewTabControls } from './V2ViewPanel'
 import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../shared/components/ui'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -136,30 +141,24 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
               )
             })}
             {visibleTabs.preferenceScopes.length > 0 && !visibleTabs.activeId.startsWith('__') && (
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <button className="ml-auto shrink-0 rounded-md px-2 py-1 text-[10px] text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10">
                     Use by default…
                   </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    align="end"
-                    sideOffset={4}
-                    className="z-50 min-w-44 rounded-lg border border-slate-200 bg-white p-1 text-xs shadow-lg dark:border-white/10 dark:bg-slate-900"
-                  >
-                    {visibleTabs.preferenceScopes.map(scope => (
-                      <DropdownMenu.Item
-                        key={scope}
-                        className="cursor-pointer rounded px-2 py-1.5 outline-none hover:bg-slate-100 dark:hover:bg-white/10"
-                        onSelect={() => void visibleTabs.onPreferActive(scope)}
-                      >
-                        Always for this {scope}
-                      </DropdownMenu.Item>
-                    ))}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" sideOffset={4} className="min-w-44 text-xs">
+                  {visibleTabs.preferenceScopes.map(scope => (
+                    <DropdownMenuItem
+                      key={scope}
+                      className="px-2 py-1.5 text-xs"
+                      onSelect={() => void visibleTabs.onPreferActive(scope)}
+                    >
+                      Always for this {scope}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         )}

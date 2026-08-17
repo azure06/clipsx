@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   Check,
@@ -22,6 +21,13 @@ import { useClipboardStore } from '../../stores/clipboardStore'
 import { formatShortcut, getPlatform, type ShortcutDef } from '../../shared/keyboard/shortcuts'
 import type { TransformControls } from './useTransformState'
 import { useToast } from '../../shared/contexts/ToastContext'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../../shared/components/ui'
 
 const platform = getPlatform()
 
@@ -254,52 +260,44 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
 
 const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
   <Tooltip.Root>
-    <DropdownMenu.Root>
+    <DropdownMenu>
       <Tooltip.Trigger asChild>
-        <DropdownMenu.Trigger asChild>
+        <DropdownMenuTrigger asChild>
           <button
             aria-label="Transform"
             className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
           >
             <Sparkles className="h-4 w-4" />
           </button>
-        </DropdownMenu.Trigger>
+        </DropdownMenuTrigger>
       </Tooltip.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          className="z-50 min-w-[160px] rounded-lg border border-slate-200/60 bg-white/95 py-1 shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/95"
-          sideOffset={6}
-          align="end"
-        >
-          {controls.items.map(item => (
-            <DropdownMenu.Item
-              key={item.id}
-              className="flex cursor-pointer select-none items-center px-3 py-1.5 text-sm text-gray-700 outline-none hover:bg-slate-100 dark:text-gray-300 dark:hover:bg-white/10"
-              onSelect={() => void controls.run(item.id)}
-            >
-              {item.label}
-            </DropdownMenu.Item>
-          ))}
-          {controls.items.length > 0 && controls.actions.length > 0 && (
-            <DropdownMenu.Separator className="my-1 h-px bg-slate-200 dark:bg-white/10" />
-          )}
-          {controls.actions.map(action => (
-            <DropdownMenu.Item
-              key={action.id}
-              disabled={!action.available}
-              title={action.unavailableReason ?? undefined}
-              className="flex cursor-pointer select-none items-center justify-between gap-4 px-3 py-1.5 text-sm text-gray-700 outline-none hover:bg-slate-100 data-disabled:cursor-not-allowed data-disabled:opacity-40 dark:text-gray-300 dark:hover:bg-white/10"
-              onSelect={() => void controls.runAction(action.id)}
-            >
-              <span>{action.label}</span>
-              {action.shortcut && (
-                <span className="text-[10px] text-gray-400">{action.shortcut}</span>
-              )}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      <DropdownMenuContent className="min-w-40 p-1" align="end">
+        {controls.items.map(item => (
+          <DropdownMenuItem
+            key={item.id}
+            className="py-1.5"
+            onSelect={() => void controls.run(item.id)}
+          >
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+        {controls.items.length > 0 && controls.actions.length > 0 && <DropdownMenuSeparator />}
+        {controls.actions.map(action => (
+          <DropdownMenuItem
+            key={action.id}
+            disabled={!action.available}
+            title={action.unavailableReason ?? undefined}
+            className="justify-between gap-4 py-1.5"
+            onSelect={() => void controls.runAction(action.id)}
+          >
+            <span>{action.label}</span>
+            {action.shortcut && (
+              <span className="text-[10px] text-gray-400">{action.shortcut}</span>
+            )}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
     <Tooltip.Portal>
       <Tooltip.Content
         className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"

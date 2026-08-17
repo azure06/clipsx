@@ -1,4 +1,3 @@
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   Search,
   Command,
@@ -24,6 +23,16 @@ import type {
   TextEmbeddingStatus,
 } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItemIndicator,
+  DropdownMenuTrigger,
+  dropdownSurfaceClass,
+  suggestionItemClass,
+} from '../../shared/components/ui'
+import { cn } from '../../shared/utils/cn'
 
 const FILTER_OPTIONS = [
   {
@@ -176,6 +185,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     : COMMAND_OPTIONS
 
   const showFilterMenu = isInputFocused && currentSlash !== null && filteredOptions.length > 0
+  const activeFilterIndex = Math.min(selectedFilterIndex, Math.max(filteredOptions.length - 1, 0))
 
   // Calculate Active Pill Information from typed value (filter commands only)
   const trimmedValue = value.trimStart()
@@ -223,10 +233,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         setSelectedFilterIndex(prev => Math.max(prev - 1, 0))
         return
       } else if (e.key === 'Enter' || e.key === 'Tab') {
-        if (filteredOptions[selectedFilterIndex]) {
+        if (filteredOptions[activeFilterIndex]) {
           e.preventDefault()
           e.stopPropagation()
-          const selected = filteredOptions[selectedFilterIndex]
+          const selected = filteredOptions[activeFilterIndex]
           const rest = value.replace(/^\/\S*/, '').trim()
           if (selected.kind === 'scope') {
             onScopeChange?.(selected.scope)
@@ -298,6 +308,11 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         <input
           ref={inputRef}
           type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showFilterMenu}
+          aria-controls={showFilterMenu ? 'search-command-listbox' : undefined}
+          aria-activedescendant={showFilterMenu ? `search-command-${activeFilterIndex}` : undefined}
           value={displayValue}
           onChange={e => {
             if (activeCommand) {
@@ -327,51 +342,44 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
         <div className="pr-4 flex items-center gap-2">
           {/* Search sources */}
           {searchSources.length > 0 ? (
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <button
                   className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-all ${isSemanticActive ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400' : 'text-gray-500 hover:bg-black/5 dark:hover:bg-white/5'}`}
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                   {t('search.sources')}
                 </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  className="z-50 w-64 rounded-xl border border-slate-200/60 bg-white/95 p-2 shadow-lg backdrop-blur dark:border-white/10 dark:bg-slate-900/95"
-                  sideOffset={6}
-                  align="end"
-                >
-                  {searchSources.map(source => (
-                    <DropdownMenu.Item
-                      key={source.id}
-                      disabled={source.mandatory}
-                      onSelect={event => {
-                        event.preventDefault()
-                        onToggleSource?.(source.id)
-                      }}
-                      className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-left outline-none data-highlighted:bg-slate-100 data-disabled:cursor-not-allowed data-disabled:opacity-60 dark:data-highlighted:bg-white/5"
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-64 p-2" align="end">
+                {searchSources.map(source => (
+                  <DropdownMenuCheckboxItem
+                    key={source.id}
+                    checked={source.enabled}
+                    disabled={source.mandatory}
+                    onCheckedChange={() => onToggleSource?.(source.id)}
+                    onSelect={event => event.preventDefault()}
+                    className="items-start gap-2 pl-2"
+                  >
+                    <span
+                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${source.enabled ? 'border-violet-500 bg-violet-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
                     >
-                      <span
-                        className={`mt-0.5 flex h-4 w-4 items-center justify-center rounded border ${source.enabled ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
-                      >
-                        {source.enabled && <Check className="h-3 w-3" />}
+                      <DropdownMenuItemIndicator>
+                        <Check className="h-3 w-3" />
+                      </DropdownMenuItemIndicator>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-medium">{source.label}</span>
+                      <span className="block text-[10px] text-gray-500">
+                        {source.mandatory
+                          ? t('search.alwaysOn')
+                          : t(`search.sourceState.${source.state}`)}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">
-                          {source.label}
-                        </span>
-                        <span className="block text-[10px] text-gray-500">
-                          {source.mandatory
-                            ? t('search.alwaysOn')
-                            : t(`search.sourceState.${source.state}`)}
-                        </span>
-                      </span>
-                    </DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+                    </span>
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : isSemanticAvailable ? (
             <button
               onClick={onToggleSemantic}
@@ -418,7 +426,14 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
       {/* Slash-Command Filter Menu */}
       {showFilterMenu && (
-        <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-gray-200/60 dark:border-white/10 bg-slate-100/80 dark:bg-slate-900/95 backdrop-blur-2xl shadow-xl shadow-black/5 dark:shadow-2xl overflow-hidden z-50 animate-fade-in">
+        <div
+          id="search-command-listbox"
+          role="listbox"
+          className={cn(
+            dropdownSurfaceClass,
+            'animate-fade-in absolute top-full right-0 left-0 mt-2'
+          )}
+        >
           <div className="p-1.5">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
               {t('search.commands')}
@@ -428,12 +443,17 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               return (
                 <button
                   key={option.prefix}
+                  id={`search-command-${index}`}
+                  role="option"
+                  aria-selected={index === activeFilterIndex}
                   onClick={() => handleFilterClick(option)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                    index === selectedFilterIndex
-                      ? 'bg-slate-100/80 dark:bg-slate-100/10 text-gray-900 dark:text-white'
-                      : 'text-gray-500 dark:text-gray-400 hover:bg-slate-100/60 dark:hover:bg-slate-100/5 hover:text-gray-900 dark:hover:text-gray-200'
-                  }`}
+                  className={cn(
+                    suggestionItemClass,
+                    'w-full gap-3',
+                    index === activeFilterIndex
+                      ? 'bg-violet-500/10 text-violet-700 dark:bg-violet-500/15 dark:text-violet-200'
+                      : 'text-gray-500 dark:text-gray-400'
+                  )}
                 >
                   <Icon className="w-4 h-4 shrink-0" />
                   <div className="flex-1 min-w-0">
