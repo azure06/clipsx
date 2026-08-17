@@ -199,7 +199,7 @@ export const ClipboardHistory = ({
     [deleteClip]
   )
 
-  const itemActivationMode = settings?.item_activation_mode ?? 'single_click_copy'
+  const itemActivationMode = settings?.item_activation_mode ?? 'double_click_primary'
 
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(

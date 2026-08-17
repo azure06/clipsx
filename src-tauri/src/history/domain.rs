@@ -79,11 +79,11 @@ impl Default for AppSettings {
             theme: "system".into(),
             language: "en".into(),
             language_initialized: false,
-            activation_mode: ActivationMode::SingleClickCopy,
+            activation_mode: ActivationMode::DoubleClickPrimary,
             default_output_format: DefaultOutputFormat::Original,
-            paste_on_enter: true,
+            paste_on_enter: false,
             hide_on_copy: false,
-            hide_on_blur: true,
+            hide_on_blur: false,
             always_on_top: false,
             show_copy_toast: true,
             auto_clear_minutes: None,
@@ -111,6 +111,24 @@ impl Default for CaptureSettings {
             managed_bytes_used: 0,
             retention_warning: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_settings_defaults_to_copy_only_double_click_activation() {
+        let settings = AppSettings::default();
+
+        assert!(matches!(
+            settings.activation_mode,
+            ActivationMode::DoubleClickPrimary
+        ));
+        assert!(!settings.paste_on_enter);
+        assert!(!settings.hide_on_copy);
+        assert!(!settings.hide_on_blur);
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

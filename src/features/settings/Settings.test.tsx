@@ -10,11 +10,11 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   theme: 'system',
   language: 'en',
   languageInitialized: true,
-  activationMode: 'single_click_copy',
+  activationMode: 'double_click_primary',
   defaultOutputFormat: 'original',
-  pasteOnEnter: true,
+  pasteOnEnter: false,
   hideOnCopy: false,
-  hideOnBlur: true,
+  hideOnBlur: false,
   alwaysOnTop: false,
   showCopyToast: true,
   globalShortcut: 'Ctrl+Shift+V',
@@ -93,14 +93,20 @@ describe('useSettingsStore', () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       settings: expect.objectContaining({
         globalShortcut: DEFAULT_SETTINGS.global_shortcut,
-        activationMode: 'single_click_copy',
+        activationMode: 'double_click_primary',
+        pasteOnEnter: false,
+        hideOnCopy: false,
+        hideOnBlur: false,
       }),
     })
     expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
 
-  it('uses single_click_copy as the frontend default activation mode', () => {
-    expect(DEFAULT_SETTINGS.item_activation_mode).toBe('single_click_copy')
+  it('uses copy-only double-click behavior as the frontend defaults', () => {
+    expect(DEFAULT_SETTINGS.item_activation_mode).toBe('double_click_primary')
+    expect(DEFAULT_SETTINGS.paste_on_enter).toBe(false)
+    expect(DEFAULT_SETTINGS.hide_on_copy).toBe(false)
+    expect(DEFAULT_SETTINGS.hide_on_blur).toBe(false)
   })
 })

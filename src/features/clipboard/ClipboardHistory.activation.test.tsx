@@ -116,14 +116,10 @@ describe('ClipboardHistory activation modes', () => {
     })
   })
 
-  it('preserves select-then-double-click activation when mode is double_click_primary', async () => {
+  it('defaults to select-then-double-click activation while settings load', async () => {
     useSettingsStore.setState({
-      settings: {
-        ...DEFAULT_SETTINGS,
-        item_activation_mode: 'double_click_primary',
-        show_copy_toast: false,
-      },
-      isLoading: false,
+      settings: null,
+      isLoading: true,
       error: null,
       loadSettings: vi.fn(),
       updateSettings: vi.fn(),

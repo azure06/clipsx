@@ -23,7 +23,7 @@ pub struct WindowBehaviorState {
 impl Default for WindowBehaviorState {
     fn default() -> Self {
         Self {
-            hide_on_blur: AtomicBool::new(true),
+            hide_on_blur: AtomicBool::new(false),
             always_on_top: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             interaction_until: Mutex::new(Instant::now()),
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn defaults_match_product_window_behavior() {
         let state = WindowBehaviorState::default();
-        assert!(state.hide_on_blur.load(Ordering::SeqCst));
+        assert!(!state.hide_on_blur.load(Ordering::SeqCst));
         assert!(!state.always_on_top.load(Ordering::SeqCst));
     }
 

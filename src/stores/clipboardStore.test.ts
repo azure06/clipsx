@@ -82,6 +82,26 @@ describe('useClipboardStore.performCopy', () => {
   })
 })
 
+describe('useClipboardStore.performPrimaryAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS },
+      isLoading: false,
+      error: null,
+    })
+  })
+
+  it('copies without pasting or hiding with the default settings', async () => {
+    await useClipboardStore.getState().performPrimaryAction('copied text', 'clip-1')
+
+    expect(mockInvoke).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: { disposition: 'copy', source: { kind: 'original', clipId: 'clip-1' } },
+    })
+    expect(mockHide).not.toHaveBeenCalled()
+  })
+})
+
 describe('useClipboardStore.mergeClipUpdate', () => {
   beforeEach(() => {
     vi.clearAllMocks()
