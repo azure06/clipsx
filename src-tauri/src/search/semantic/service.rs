@@ -522,8 +522,8 @@ async fn load_semantic_inputs(
         });
     }
     let ocr_rows = sqlx::query(
-        "SELECT ar.id,ai.representation_id,atv.text_value
-         FROM artifact_records ar JOIN artifact_inputs ai ON ai.artifact_id=ar.id
+        "SELECT ar.id,atv.text_value
+         FROM artifact_records ar
          JOIN artifact_text_values atv ON atv.artifact_id=ar.id
          WHERE ar.owner_clip_id=? AND ar.producer_id='builtin.artifact.ocr'
          AND ar.lifecycle_state='ready' ORDER BY ar.created_at,ar.id",
@@ -536,12 +536,12 @@ async fn load_semantic_inputs(
         inputs.push(SemanticInput {
             source_kind: "ocr".into(),
             source_id: artifact_id.clone(),
-            representation_id: row.get(1),
+            representation_id: None,
             artifact_id: Some(artifact_id),
             mime_type: Some("text/plain".into()),
             format_family: Some("artifact".into()),
             facets: Vec::new(),
-            text: row.get(2),
+            text: row.get(1),
             source_ordinal: 1_000_000 + ordinal as i64,
         });
     }
