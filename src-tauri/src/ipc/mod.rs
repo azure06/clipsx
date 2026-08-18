@@ -1628,12 +1628,15 @@ async fn retry_text_embedding_provider(
 }
 #[tauri::command]
 async fn clear_text_embedding_space(
+    app: tauri::AppHandle,
     space_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     embeddings::clear_space(&state.history, &space_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("embedding-space-changed", ());
+    Ok(())
 }
 
 #[tauri::command]

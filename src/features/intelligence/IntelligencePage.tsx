@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -20,7 +20,8 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
-import { Select, Switch } from '../../shared/components/ui'
+import { Button, Select, Switch } from '../../shared/components/ui'
+import { useToast } from '../../shared/contexts/ToastContext'
 
 type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
 type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
@@ -39,6 +40,16 @@ const explainOllamaDiagnostic = (diagnostic: string): string => {
   return diagnostic
 }
 
+const toErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+type IndexAction = 'reindex' | 'index_missing' | 'retry'
+
+const indexActionLabel: Record<IndexAction, string> = {
+  reindex: 'Reindex',
+  index_missing: 'Index missing',
+  retry: 'Retry',
+}
+
 export const IntelligencePage = () => {
   const [endpoint, setEndpoint] = useState('http://localhost:11434')
   const [probing, setProbing] = useState(false)
@@ -50,12 +61,15 @@ export const IntelligencePage = () => {
   const [configError, setConfigError] = useState<string | null>(null)
   const [status, setStatus] = useState<TextEmbeddingStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
-  const [reindexing, setReindexing] = useState(false)
-  const [indexingMissing, setIndexingMissing] = useState(false)
+  const [activeIndexAction, setActiveIndexAction] = useState<IndexAction | null>(null)
+  const [disconnecting, setDisconnecting] = useState(false)
   const [clearingIndex, setClearingIndex] = useState(false)
   const [configExpanded, setConfigExpanded] = useState(false)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const { toast } = useToast()
+  const lastFailureToastRef = useRef<string | null>(null)
 
   const isConfigured = Boolean(
     status?.endpoint && status?.model && status.phase !== 'not_configured'
@@ -89,9 +103,20 @@ export const IntelligencePage = () => {
   useEffect(() => {
     const u1 = listen('embedding-provider-status-changed', () => void loadStatus())
     const u2 = listen('embedding-space-changed', () => void loadStatus())
-    const u3 = listen('embedding-index-progress', () => void loadStatus())
-    const u4 = listen('search-source-status-changed', () => void loadStatus())
-    const u5 = listen('search-index-progress', () => void loadStatus())
+    const u3 = listen('search-source-status-changed', () => void loadStatus())
+    const u4 = listen('search-index-progress', () => void loadStatus())
+    const u5 = listen<string>('embedding-index-failed', event => {
+      void loadStatus()
+      const message = event.payload
+      if (lastFailureToastRef.current !== message) {
+        lastFailureToastRef.current = message
+        toast({
+          title: 'Meaning Search needs attention',
+          description: explainOllamaDiagnostic(message),
+          type: 'error',
+        })
+      }
+    })
     return () => {
       void u1.then(f => f())
       void u2.then(f => f())
@@ -99,7 +124,28 @@ export const IntelligencePage = () => {
       void u4.then(f => f())
       void u5.then(f => f())
     }
-  }, [loadStatus])
+  }, [loadStatus, toast])
+
+  // Detect when a background index action (reindex / index missing / retry)
+  // has actually settled, since the invoke() call itself resolves almost
+  // instantly while the real work continues in the background worker.
+  useEffect(() => {
+    if (!activeIndexAction || !status) return
+    if (status.phase === 'indexing' || status.pendingJobs > 0) return
+    const label = indexActionLabel[activeIndexAction]
+    if (status.failedJobs > 0 || status.diagnostic) {
+      toast({
+        title: `${label} completed with issues`,
+        description: status.diagnostic
+          ? explainOllamaDiagnostic(status.diagnostic)
+          : `${status.failedJobs} job${status.failedJobs === 1 ? '' : 's'} failed.`,
+        type: 'warning',
+      })
+    } else {
+      toast({ title: `${label} complete`, type: 'success' })
+    }
+    setActiveIndexAction(null)
+  }, [status, activeIndexAction, toast])
 
   const handleProbe = async () => {
     setProbing(true)
@@ -145,42 +191,44 @@ export const IntelligencePage = () => {
       setStatus(next)
       setConfigExpanded(false)
     } catch (e) {
-      setConfigError(e instanceof Error ? e.message : String(e))
+      setConfigError(toErrorMessage(e))
     } finally {
       setConnecting(false)
     }
   }
 
   const handleDisconnect = async () => {
+    setDisconnecting(true)
     try {
       await invoke('disable_text_embedding_provider')
       setConfigExpanded(true)
-    } catch {
-      /* silent */
+    } catch (e) {
+      toast({ title: 'Disconnect failed', description: toErrorMessage(e), type: 'error' })
+    } finally {
+      setDisconnecting(false)
     }
   }
 
-  const handleReindex = async () => {
-    setReindexing(true)
+  const startIndexAction = async (action: IndexAction, command: string) => {
+    if (activeIndexAction) return
+    setActiveIndexAction(action)
     try {
-      await invoke('reindex_text_embeddings')
-    } catch {
-      /* silent */
-    } finally {
-      setReindexing(false)
+      await invoke(command)
+      await loadStatus()
+    } catch (e) {
+      toast({
+        title: `${indexActionLabel[action]} failed`,
+        description: toErrorMessage(e),
+        type: 'error',
+      })
+      setActiveIndexAction(null)
     }
   }
 
-  const handleIndexMissing = async () => {
-    setIndexingMissing(true)
-    try {
-      await invoke('index_missing_text_embeddings')
-    } catch {
-      /* silent */
-    } finally {
-      setIndexingMissing(false)
-    }
-  }
+  const handleReindex = () => startIndexAction('reindex', 'reindex_text_embeddings')
+  const handleIndexMissing = () =>
+    startIndexAction('index_missing', 'index_missing_text_embeddings')
+  const handleRetry = () => startIndexAction('retry', 'retry_text_embedding_provider')
 
   const handleClearIndex = async () => {
     if (!status?.activeSpaceId) return
@@ -189,22 +237,31 @@ export const IntelligencePage = () => {
     try {
       await invoke('clear_text_embedding_space', { spaceId: status.activeSpaceId })
       await loadStatus()
-    } catch {
-      /* silent */
+      toast({ title: 'Index cleared', type: 'success' })
+    } catch (e) {
+      toast({ title: 'Clear index failed', description: toErrorMessage(e), type: 'error' })
     } finally {
       setClearingIndex(false)
     }
   }
 
-  const handleRetry = async () => {
-    await invoke('retry_text_embedding_provider')
-    await loadStatus()
-  }
-
   const updateSearchSettings = async (next: SearchSettings) => {
+    const previous = searchSettings
     setSearchSettings(next)
-    await invoke('update_search_settings', { settings: next })
-    await loadStatus()
+    setSettingsSaving(true)
+    try {
+      await invoke('update_search_settings', { settings: next })
+      await loadStatus()
+    } catch (e) {
+      setSearchSettings(previous)
+      toast({
+        title: 'Could not update search settings',
+        description: toErrorMessage(e),
+        type: 'error',
+      })
+    } finally {
+      setSettingsSaving(false)
+    }
   }
 
   const toggleSource = async (sourceId: string) => {
@@ -316,49 +373,48 @@ export const IntelligencePage = () => {
                       </span>
                     )}
                   </span>
-                  <button className="font-semibold underline" onClick={() => void handleRetry()}>
+                  <button
+                    className="flex items-center gap-1 font-semibold underline disabled:opacity-50"
+                    disabled={activeIndexAction !== null}
+                    onClick={() => void handleRetry()}
+                  >
+                    {activeIndexAction === 'retry' && <Loader2 className="h-3 w-3 animate-spin" />}
                     Retry
                   </button>
                 </div>
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
-                <button
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                  disabled={reindexing}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+                  isLoading={activeIndexAction === 'reindex'}
+                  disabled={activeIndexAction !== null}
                   onClick={() => void handleReindex()}
                 >
-                  {reindexing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
                   Reindex all
-                </button>
-                <button
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                  disabled={indexingMissing}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                  isLoading={activeIndexAction === 'index_missing'}
+                  disabled={activeIndexAction !== null}
                   onClick={() => void handleIndexMissing()}
                 >
-                  {indexingMissing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
-                  )}
                   Index missing
-                </button>
-                <button
-                  className="flex items-center gap-1.5 rounded-lg border border-red-200/70 px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-500/20 dark:text-red-400 dark:hover:bg-red-500/10"
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                  isLoading={clearingIndex}
                   disabled={clearingIndex}
                   onClick={() => void handleClearIndex()}
                 >
-                  {clearingIndex ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
                   Clear index
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -479,13 +535,15 @@ export const IntelligencePage = () => {
                             : 'Connect'}
                     </button>
                     {isConfigured && status?.phase !== 'disabled' && (
-                      <button
-                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+                      <Button
+                        variant="outline"
+                        leftIcon={<Unplug className="h-3.5 w-3.5" />}
+                        isLoading={disconnecting}
+                        disabled={disconnecting}
                         onClick={() => void handleDisconnect()}
                       >
-                        <Unplug className="h-3.5 w-3.5" />
                         Disconnect
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -528,7 +586,7 @@ export const IntelligencePage = () => {
                   <Switch
                     size="sm"
                     checked={source.enabled}
-                    disabled={source.mandatory}
+                    disabled={source.mandatory || settingsSaving}
                     onChange={() => void toggleSource(source.id)}
                   />
                 </div>
@@ -552,6 +610,7 @@ export const IntelligencePage = () => {
               size="sm"
               className="shrink-0"
               checked={searchSettings?.syntaxMode === 'advanced'}
+              disabled={settingsSaving}
               onChange={checked =>
                 searchSettings &&
                 void updateSearchSettings({
