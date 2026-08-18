@@ -18,7 +18,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
-import { formatShortcut, getPlatform, type ShortcutDef } from '../../shared/keyboard/shortcuts'
+import {
+  formatShortcut,
+  getDeleteShortcut,
+  getPlatform,
+  type ShortcutDef,
+} from '../../shared/keyboard/shortcuts'
 import type { TransformControls } from './useTransformState'
 import { useToast } from '../../shared/contexts/ToastContext'
 import {
@@ -30,6 +35,8 @@ import {
 } from '../../shared/components/ui'
 
 const platform = getPlatform()
+const representationsShortcut: ShortcutDef = { modifiers: ['primary'], key: 'I' }
+const transformShortcut: ShortcutDef = { modifiers: ['primary'], key: 'T' }
 
 export interface PresentationActionContext {
   onDelete: (id: string) => void
@@ -134,6 +141,7 @@ export const ClipActionsToolbar = ({
         id: 'open-editor',
         label: 'Open in Editor',
         icon: PenLine,
+        shortcut: { modifiers: ['primary', 'shift'], key: 'O' },
         run: () => invoke('open_clip_text_in_editor', { clipId: presentation.id, extension }),
       })
     }
@@ -171,6 +179,7 @@ export const ClipActionsToolbar = ({
         id: 'inspector',
         label: 'Representations',
         icon: Database,
+        shortcut: representationsShortcut,
         run: () => context.onShowInspector?.(),
       })
     }
@@ -187,14 +196,20 @@ export const ClipActionsToolbar = ({
       },
       {
         id: 'pin',
-        label: 'Pin',
+        label: 'Pin / Unpin',
         icon: Pin,
         active: presentation.isPinned,
         activeColor: 'bg-amber-500/10 text-amber-500 dark:text-amber-400',
         shortcut: { modifiers: ['primary'], key: 'P' },
         run: () => context.onTogglePin(presentation.id),
       },
-      { id: 'delete', label: 'Delete', icon: Trash2, run: () => context.onDelete(presentation.id) }
+      {
+        id: 'delete',
+        label: 'Delete',
+        icon: Trash2,
+        shortcut: getDeleteShortcut(platform),
+        run: () => context.onDelete(presentation.id),
+      }
     )
     return values
   }, [context, copied, performCopy, presentation, t, toast])
@@ -243,15 +258,12 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content
-          className="z-100 flex items-center gap-1.5 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+          className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
           sideOffset={5}
         >
           {action.label}
-          {shortcutLabel && (
-            <span className="rounded border border-gray-300/60 px-1 font-mono text-gray-400 dark:border-white/20">
-              {shortcutLabel}
-            </span>
-          )}
+          {shortcutLabel && <span className="ml-1.5 font-mono text-gray-400">{shortcutLabel}</span>}
+          <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>
@@ -304,6 +316,10 @@ const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
         sideOffset={5}
       >
         Transform
+        <span className="ml-1.5 font-mono text-gray-400">
+          {formatShortcut(transformShortcut, platform)}
+        </span>
+        <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
       </Tooltip.Content>
     </Tooltip.Portal>
   </Tooltip.Root>

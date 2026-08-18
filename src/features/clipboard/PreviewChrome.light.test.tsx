@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ClipPresentation } from '../../shared/types/v2'
+import {
+  formatShortcut,
+  getDeleteShortcut,
+  getPlatform,
+  type ShortcutDef,
+} from '../../shared/keyboard/shortcuts'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { TagChips } from './components/TagChips'
 const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
@@ -22,6 +29,43 @@ vi.mock('../../stores/clipboardStore', () => ({
 vi.mock('../../shared/contexts/ToastContext', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
+
+const textPresentation: ClipPresentation = {
+  id: 'clip-1',
+  sourceAppName: null,
+  sourceAppId: null,
+  capturedAt: 1,
+  updatedAt: 1,
+  isPinned: false,
+  isFavorite: false,
+  note: null,
+  tags: [],
+  safeSummary: 'sample',
+  representationCount: 1,
+  primaryPresentationKind: 'text',
+  thumbnailAssetId: null,
+  activeView: {
+    id: 'view',
+    rendererId: 'builtin.text',
+    label: 'Text',
+    sourceId: 'rep',
+    mimeType: 'text/plain',
+    capabilityId: 'test.text',
+    facetId: null,
+    isOriginal: false,
+    presentationKind: 'text',
+    purpose: 'faithful',
+    matchSpecificity: 0,
+    placement: 'primary',
+  },
+  model: { kind: 'text', text: 'sample' },
+}
+
+const actionContext = {
+  onDelete: vi.fn(),
+  onTogglePin: vi.fn(),
+  onToggleFavorite: vi.fn(),
+}
 
 describe('preview chrome light theme styling', () => {
   beforeEach(() => {
@@ -175,6 +219,67 @@ describe('preview chrome light theme styling', () => {
     const tooltip = await screen.findByRole('tooltip', { hidden: true })
     expect(tooltip).toHaveClass('text-gray-900')
     expect(tooltip).toHaveClass('bg-white/95')
+    expect(tooltip.querySelector('svg')).toHaveClass('fill-white')
+  })
+
+  it.each<{ label: string; shortcut: ShortcutDef }>([
+    { label: 'Copy', shortcut: { modifiers: ['primary'], key: 'C' } },
+    { label: 'Open in Editor', shortcut: { modifiers: ['primary', 'shift'], key: 'O' } },
+    { label: 'Favorite', shortcut: { modifiers: ['primary'], key: 'F' } },
+    { label: 'Pin / Unpin', shortcut: { modifiers: ['primary'], key: 'P' } },
+    { label: 'Delete', shortcut: getDeleteShortcut(getPlatform()) },
+  ])('shows the existing shortcut in the $label tooltip', async ({ label, shortcut }) => {
+    const user = userEvent.setup()
+    render(<ClipActionsToolbar presentation={textPresentation} context={actionContext} />)
+
+    await user.hover(screen.getByRole('button', { name: label }))
+
+    const tooltip = await screen.findByRole('tooltip', { hidden: true })
+    expect(tooltip).toHaveTextContent(label)
+    expect(tooltip).toHaveTextContent(formatShortcut(shortcut, getPlatform()))
+  })
+
+  it('previews the deferred Representations shortcut', async () => {
+    const user = userEvent.setup()
+    render(
+      <ClipActionsToolbar
+        presentation={textPresentation}
+        context={{ ...actionContext, onShowInspector: vi.fn() }}
+      />
+    )
+
+    await user.hover(screen.getByRole('button', { name: 'Representations' }))
+
+    const tooltip = await screen.findByRole('tooltip', { hidden: true })
+    expect(tooltip).toHaveTextContent('Representations')
+    expect(tooltip).toHaveTextContent(
+      formatShortcut({ modifiers: ['primary'], key: 'I' }, getPlatform())
+    )
+  })
+
+  it('previews the deferred Transform shortcut and renders its themed arrow', async () => {
+    const user = userEvent.setup()
+    render(
+      <ClipActionsToolbar
+        presentation={textPresentation}
+        context={actionContext}
+        transformControls={{
+          items: [{ id: 'format', label: 'Format', version: '1' }],
+          actions: [],
+          run: vi.fn(),
+          runAction: vi.fn(),
+        }}
+      />
+    )
+
+    await user.hover(screen.getByRole('button', { name: 'Transform' }))
+
+    const tooltip = await screen.findByRole('tooltip', { hidden: true })
+    expect(tooltip).toHaveTextContent('Transform')
+    expect(tooltip).toHaveTextContent(
+      formatShortcut({ modifiers: ['primary'], key: 'T' }, getPlatform())
+    )
+    expect(tooltip.querySelector('svg')).toHaveClass('fill-white')
   })
 
   it('renders tag suggestions with light-safe dropdown classes', async () => {
