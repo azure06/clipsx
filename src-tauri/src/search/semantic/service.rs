@@ -1292,6 +1292,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ocr_chunks_are_owned_only_by_the_artifact() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "source representation").await;
+        let representation_id: String =
+            sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let now = now_ms();
+        sqlx::query(
+            "INSERT INTO artifact_records(
+                id,owner_clip_id,artifact_kind,producer_id,producer_version,parameter_sha256,
+                input_manifest_sha256,lifecycle_state,created_at,updated_at
+             ) VALUES('ocr-artifact',?,'ocr','builtin.artifact.ocr','1',?,?,'ready',?,?)",
+        )
+        .bind(&clip_id)
+        .bind("a".repeat(64))
+        .bind("b".repeat(64))
+        .bind(now)
+        .bind(now)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO artifact_inputs(artifact_id,ordinal,representation_id,input_sha256)
+             VALUES('ocr-artifact',0,?,?)",
+        )
+        .bind(&representation_id)
+        .bind("c".repeat(64))
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO artifact_text_values(artifact_id,text_value,utf8_byte_length,sha256)
+             VALUES('ocr-artifact','recognized words',16,?)",
+        )
+        .bind(sha256(b"recognized words"))
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        let generation = insert_generation(&repo).await;
+
+        index_clip(&repo, &FakeProvider, &generation, &clip_id)
+            .await
+            .unwrap();
+
+        let row = sqlx::query(
+            "SELECT representation_id,artifact_id FROM search_chunks
+             WHERE generation_id=? AND artifact_id='ocr-artifact'",
+        )
+        .bind(&generation)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<Option<String>, _>(0), None);
+        assert_eq!(
+            row.get::<Option<String>, _>(1).as_deref(),
+            Some("ocr-artifact")
+        );
+    }
+
+    #[tokio::test]
     async fn schema_rejects_two_active_generations() {
         let (_temp, repo) = repository().await;
         insert_generation(&repo).await;

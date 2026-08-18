@@ -43,6 +43,10 @@ const explainOllamaDiagnostic = (diagnostic: string): string => {
 const toErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 type IndexAction = 'reindex' | 'index_missing' | 'retry'
+type ActiveIndexAction = {
+  kind: IndexAction
+  stage: 'submitting' | 'tracking'
+}
 
 const indexActionLabel: Record<IndexAction, string> = {
   reindex: 'Reindex',
@@ -61,7 +65,7 @@ export const IntelligencePage = () => {
   const [configError, setConfigError] = useState<string | null>(null)
   const [status, setStatus] = useState<TextEmbeddingStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
-  const [activeIndexAction, setActiveIndexAction] = useState<IndexAction | null>(null)
+  const [activeIndexAction, setActiveIndexAction] = useState<ActiveIndexAction | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
   const [clearingIndex, setClearingIndex] = useState(false)
   const [configExpanded, setConfigExpanded] = useState(false)
@@ -75,7 +79,7 @@ export const IntelligencePage = () => {
     status?.endpoint && status?.model && status.phase !== 'not_configured'
   )
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
       const [s, sources, settings] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
@@ -87,14 +91,21 @@ export const IntelligencePage = () => {
       setSearchSettings(settings)
       if (s.endpoint) setEndpoint(s.endpoint)
       if (s.model) setSelectedModel(s.model)
+      if (s.phase === 'ready') lastFailureToastRef.current = null
       // Auto-expand config form when not yet configured
       if (!s.endpoint) setConfigExpanded(true)
-    } catch {
-      /* silent */
+      return s
+    } catch (e) {
+      toast({
+        title: 'Could not refresh Intelligence status',
+        description: toErrorMessage(e),
+        type: 'error',
+      })
+      return null
     } finally {
       setLoadingStatus(false)
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     void loadStatus()
@@ -130,9 +141,9 @@ export const IntelligencePage = () => {
   // has actually settled, since the invoke() call itself resolves almost
   // instantly while the real work continues in the background worker.
   useEffect(() => {
-    if (!activeIndexAction || !status) return
+    if (!activeIndexAction || activeIndexAction.stage !== 'tracking' || !status) return
     if (status.phase === 'indexing' || status.pendingJobs > 0) return
-    const label = indexActionLabel[activeIndexAction]
+    const label = indexActionLabel[activeIndexAction.kind]
     if (status.failedJobs > 0 || status.diagnostic) {
       toast({
         title: `${label} completed with issues`,
@@ -202,6 +213,7 @@ export const IntelligencePage = () => {
     try {
       await invoke('disable_text_embedding_provider')
       setConfigExpanded(true)
+      toast({ title: 'Meaning Search disconnected', type: 'success' })
     } catch (e) {
       toast({ title: 'Disconnect failed', description: toErrorMessage(e), type: 'error' })
     } finally {
@@ -211,10 +223,17 @@ export const IntelligencePage = () => {
 
   const startIndexAction = async (action: IndexAction, command: string) => {
     if (activeIndexAction) return
-    setActiveIndexAction(action)
+    setActiveIndexAction({ kind: action, stage: 'submitting' })
     try {
       await invoke(command)
-      await loadStatus()
+      const nextStatus = await loadStatus()
+      if (!nextStatus) {
+        setActiveIndexAction(null)
+        return
+      }
+      setActiveIndexAction(current =>
+        current?.kind === action ? { kind: action, stage: 'tracking' } : current
+      )
     } catch (e) {
       toast({
         title: `${indexActionLabel[action]} failed`,
@@ -378,7 +397,9 @@ export const IntelligencePage = () => {
                     disabled={activeIndexAction !== null}
                     onClick={() => void handleRetry()}
                   >
-                    {activeIndexAction === 'retry' && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {activeIndexAction?.kind === 'retry' && (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    )}
                     Retry
                   </button>
                 </div>
@@ -389,7 +410,7 @@ export const IntelligencePage = () => {
                   variant="outline"
                   size="sm"
                   leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
-                  isLoading={activeIndexAction === 'reindex'}
+                  isLoading={activeIndexAction?.kind === 'reindex'}
                   disabled={activeIndexAction !== null}
                   onClick={() => void handleReindex()}
                 >
@@ -399,7 +420,7 @@ export const IntelligencePage = () => {
                   variant="outline"
                   size="sm"
                   leftIcon={<Plus className="h-3.5 w-3.5" />}
-                  isLoading={activeIndexAction === 'index_missing'}
+                  isLoading={activeIndexAction?.kind === 'index_missing'}
                   disabled={activeIndexAction !== null}
                   onClick={() => void handleIndexMissing()}
                 >
