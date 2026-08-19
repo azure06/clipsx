@@ -405,10 +405,13 @@ export const V2ViewPanel = ({
   )
   useEffect(() => onPresentation?.(presentation), [onPresentation, presentation])
 
-  const handleTabChange = useCallback((id: string) => {
-    if (id !== OCR_TAB_ID && id !== TRANSFORM_TAB_ID) setModel(null)
-    setActive(id)
-  }, [])
+  const handleTabChange = useCallback(
+    (id: string) => {
+      if (id !== active && id !== OCR_TAB_ID && id !== TRANSFORM_TAB_ID) setModel(null)
+      setActive(id)
+    },
+    [active]
+  )
 
   const handleShowInspector = useCallback(() => setInspecting(true), [])
 
