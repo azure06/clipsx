@@ -83,12 +83,28 @@ const rgbToHsl = (r: number, g: number, b: number): { h: number; s: number; l: n
 
 // ── File-type icon dispatch ────────────────────────────────────────────────
 type LucideIcon = typeof File
-const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
-  { exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'], icon: Image },
-  { exts: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'], icon: Film },
-  { exts: ['mp3', 'aac', 'wav', 'flac', 'm4a', 'ogg'], icon: Music },
-  { exts: ['zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar', 'tgz'], icon: Archive },
-  { exts: ['pdf'], icon: FileText },
+const FILE_ICONS: { exts: string[]; icon: LucideIcon; chip: string }[] = [
+  {
+    exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'],
+    icon: Image,
+    chip: 'bg-pink-500/15 text-pink-500',
+  },
+  {
+    exts: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v'],
+    icon: Film,
+    chip: 'bg-fuchsia-500/15 text-fuchsia-500',
+  },
+  {
+    exts: ['mp3', 'aac', 'wav', 'flac', 'm4a', 'ogg'],
+    icon: Music,
+    chip: 'bg-amber-500/15 text-amber-500',
+  },
+  {
+    exts: ['zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar', 'tgz'],
+    icon: Archive,
+    chip: 'bg-orange-500/15 text-orange-500',
+  },
+  { exts: ['pdf'], icon: FileText, chip: 'bg-red-500/15 text-red-500' },
   {
     exts: [
       'js',
@@ -119,9 +135,15 @@ const FILE_ICONS: { exts: string[]; icon: LucideIcon }[] = [
       'scss',
     ],
     icon: Code2,
+    chip: 'bg-violet-500/15 text-violet-500',
   },
-  { exts: ['txt', 'md', 'rtf', 'doc', 'docx', 'odt'], icon: FileText },
+  {
+    exts: ['txt', 'md', 'rtf', 'doc', 'docx', 'odt'],
+    icon: FileText,
+    chip: 'bg-sky-500/15 text-sky-500',
+  },
 ]
+const DEFAULT_FILE_CHIP = 'bg-slate-500/15 text-slate-500'
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'])
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v'])
@@ -147,12 +169,12 @@ const iframeDocument = (html: string, theme: 'light' | 'dark', richText = false)
   return html.includes('</head>') ? html.replace('</head>', `${style}</head>`) : `${style}${html}`
 }
 
-const getFileIcon = (name: string): LucideIcon => {
+const getFileIcon = (name: string): { icon: LucideIcon; chip: string } => {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  for (const { exts, icon } of FILE_ICONS) {
-    if (exts.includes(ext)) return icon
+  for (const { exts, icon, chip } of FILE_ICONS) {
+    if (exts.includes(ext)) return { icon, chip }
   }
-  return File
+  return { icon: File, chip: DEFAULT_FILE_CHIP }
 }
 
 const TextBlock = ({ children }: { children: string }) => (
@@ -354,37 +376,56 @@ const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }
   )
 }
 
-const FilesView = ({ entries }: Extract<RenderModel, { kind: 'files' }>) => (
+const FilesView = ({
+  entries,
+  clipId,
+}: Extract<RenderModel, { kind: 'files' }> & { clipId: string }) => (
   <ul className="space-y-2 p-4">
     {entries.map((entry, index) => {
-      const Icon = getFileIcon(entry.name)
+      const { icon: Icon, chip } = getFileIcon(entry.name)
       const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
       const isImage = IMAGE_EXTS.has(ext)
+      const openFile = () => void invoke('open_clip_file', { clipId, path: entry.path })
       return (
         <li
-          className="flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 dark:border-slate-700/60 dark:bg-slate-100/5"
+          className="group flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 transition-colors hover:border-blue-300/70 hover:bg-blue-50/40 dark:border-slate-700/60 dark:bg-slate-100/5 dark:hover:border-blue-500/40 dark:hover:bg-blue-500/10"
           key={`${index}:${entry.path}`}
         >
-          <div className="flex items-center gap-3">
-            <Icon className="h-5 w-5 shrink-0 text-gray-400" />
+          <div
+            className="flex cursor-pointer items-center gap-3"
+            onClick={openFile}
+            role="button"
+            tabIndex={0}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') openFile()
+            }}
+          >
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105 ${chip}`}
+            >
+              <Icon className="h-5 w-5" />
+            </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{entry.name}</div>
               <div className="break-all text-xs text-gray-500">{entry.path}</div>
             </div>
             <button
               aria-label={`Open ${entry.name}`}
-              title="Open in Finder"
-              className="rounded p-2 text-gray-400 transition-colors hover:bg-slate-100 hover:text-gray-700 dark:hover:bg-white/10"
-              onClick={() => void invoke('open_clip_file', { path: entry.path })}
+              title="Open file"
+              className="shrink-0 rounded p-2 text-gray-400 transition-colors hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-white/10"
+              onClick={event => {
+                event.stopPropagation()
+                openFile()
+              }}
             >
               <FolderOpen className="h-4 w-4" />
             </button>
           </div>
           {isImage && (
-            <div className="overflow-hidden rounded-lg bg-slate-100/60 dark:bg-black/20">
+            <div className="flex items-center justify-center overflow-hidden rounded-lg border border-slate-200/60 bg-slate-100/60 p-2 dark:border-white/5 dark:bg-black/20">
               <img
                 alt={entry.name}
-                className="max-h-48 w-auto object-contain"
+                className="max-h-48 w-auto rounded object-contain"
                 src={convertFileSrc(entry.path)}
                 onError={e => {
                   const el = e.currentTarget.parentElement
@@ -1177,7 +1218,7 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
     case 'files':
       return (
         <div className={SCROLL_AREA}>
-          <FilesView {...model} />
+          <FilesView {...model} clipId={presentation.id} />
         </div>
       )
     case 'document':
