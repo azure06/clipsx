@@ -18,6 +18,7 @@ vi.mock('lucide-react', () => ({
   Command: () => <div data-testid="command-icon" />,
   CornerDownLeft: () => <div data-testid="corner-icon" />,
   ScanText: () => <div data-testid="scan-icon" />,
+  AlignLeft: () => <div data-testid="text-icon" />,
   Braces: () => <div data-testid="braces-icon" />,
   Code2: () => <div data-testid="code-icon" />,
   Database: () => <div data-testid="database-icon" />,
@@ -28,14 +29,6 @@ vi.mock('lucide-react', () => ({
   Palette: () => <div data-testid="palette-icon" />,
   Table2: () => <div data-testid="table-icon" />,
   Terminal: () => <div data-testid="terminal-icon" />,
-  Text: () => <div data-testid="text-icon" />,
-}))
-
-// Mock ContentIcon
-vi.mock('../../content/icons', () => ({
-  ContentIcon: ({ presentationKind }: { presentationKind: string }) => (
-    <div data-testid="content-icon">{presentationKind}</div>
-  ),
 }))
 
 // Mock keyboard shortcuts
@@ -57,7 +50,13 @@ const createTextClip = (overrides?: Partial<ClipSummary>): ClipSummary => ({
   isPinned: false,
   isFavorite: false,
   tags: [],
-  safeSummary: 'Hello world',
+  historyPreview: {
+    leading: { kind: 'none' },
+    title: 'Hello world',
+    subtitle: null,
+    badge: null,
+    accessibilityLabel: 'Hello world',
+  },
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
@@ -68,17 +67,22 @@ const createImageClip = (overrides?: Partial<ClipSummary>): ClipSummary =>
   createTextClip({
     primaryPresentationKind: 'image',
     thumbnailAssetId: 'asset-image',
-    safeSummary: '[Image: image.png]',
+    historyPreview: {
+      leading: { kind: 'input_thumbnail' },
+      title: '[Image: image.png]',
+      subtitle: null,
+      badge: null,
+      accessibilityLabel: '[Image: image.png]',
+    },
     ...overrides,
   })
 
 describe('ClipboardListItem', () => {
-  it('should render content icon for text clips', () => {
+  it('should render a fallback icon for text clips with no explicit leading visual', () => {
     const clip = createTextClip()
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
-    expect(screen.getByTestId('content-icon')).toBeInTheDocument()
-    expect(screen.getByTestId('content-icon')).toHaveTextContent('text')
+    expect(screen.getByTestId('file-icon')).toBeInTheDocument()
   })
 
   it('should render image thumbnail for image clips', () => {
@@ -94,18 +98,18 @@ describe('ClipboardListItem', () => {
     expect(thumbnail.className).toContain('object-cover')
   })
 
-  it('falls back to the content icon when a thumbnail cannot load', () => {
+  it('falls back to the plain icon when a thumbnail cannot load', () => {
     render(<ClipboardListItem clip={createImageClip()} onCopy={vi.fn()} onSelect={vi.fn()} />)
     const thumbnail = screen.getByRole('img', { name: /thumbnail/i })
     fireEvent.error(thumbnail)
-    expect(screen.getByTestId('content-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('file-icon')).toBeInTheDocument()
   })
 
-  it('should fallback to content icon when image path is missing', () => {
+  it('should fallback to the plain icon when image path is missing', () => {
     const clip = createImageClip({ thumbnailAssetId: null })
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
-    expect(screen.getByTestId('content-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('file-icon')).toBeInTheDocument()
   })
 
   it('should display preview text for both image and text clips', () => {
@@ -122,15 +126,16 @@ describe('ClipboardListItem', () => {
     expect(screen.getByText(/Image:/)).toBeInTheDocument()
   })
 
-  it('should render properly sized thumbnail (6x6 with h-6 w-6 classes)', () => {
+  it('should render a compact circular thumbnail in the list row', () => {
     const clip = createImageClip()
     render(<ClipboardListItem clip={clip} onCopy={vi.fn()} onSelect={vi.fn()} />)
 
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
     })
-    expect(thumbnail.className).toContain('h-6')
-    expect(thumbnail.className).toContain('w-6')
+    expect(thumbnail.className).toContain('h-7')
+    expect(thumbnail.className).toContain('w-7')
+    expect(thumbnail.className).toContain('rounded-full')
   })
 
   it('should maintain list item layout with thumbnail', () => {
@@ -172,7 +177,7 @@ describe('ClipboardListItem', () => {
 
   it('renders a cached compact swatch without invoking extension code', () => {
     const clip = createTextClip({
-      compactPresentation: {
+      historyPreview: {
         leading: { kind: 'swatch', red: 255, green: 0, blue: 64, alpha: 255 },
         title: '#FF0040',
         subtitle: 'rgb(255, 0, 64)',
@@ -187,6 +192,6 @@ describe('ClipboardListItem', () => {
     expect(screen.getByText('#FF0040')).toBeInTheDocument()
     expect(screen.getByText('rgb(255, 0, 64)')).toBeInTheDocument()
     expect(screen.getByText('HEX')).toBeInTheDocument()
-    expect(screen.queryByTestId('content-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('file-icon')).not.toBeInTheDocument()
   })
 })

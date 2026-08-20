@@ -117,7 +117,13 @@ describe('useClipboardStore.mergeClipUpdate', () => {
           isPinned: false,
           isFavorite: false,
           tags: [{ id: 'tag-saved', name: 'saved', color: '#fff' }],
-          safeSummary: 'hello',
+          historyPreview: {
+            leading: { kind: 'none' },
+            title: 'hello',
+            subtitle: null,
+            badge: null,
+            accessibilityLabel: 'hello',
+          },
           representationCount: 1,
           primaryPresentationKind: 'text',
           thumbnailAssetId: null,
@@ -137,7 +143,13 @@ describe('useClipboardStore.mergeClipUpdate', () => {
       isPinned: false,
       isFavorite: false,
       tags: [{ id: 'tag-saved', name: 'saved', color: '#fff' }],
-      safeSummary: 'hello',
+      historyPreview: {
+        leading: { kind: 'none' },
+        title: 'hello',
+        subtitle: null,
+        badge: null,
+        accessibilityLabel: 'hello',
+      },
       representationCount: 1,
       primaryPresentationKind: 'text',
       thumbnailAssetId: null,
@@ -161,7 +173,13 @@ const makeClip = (overrides: Partial<ClipSummary> = {}): ClipSummary => ({
   isPinned: false,
   isFavorite: false,
   tags: [],
-  safeSummary: 'hello',
+  historyPreview: {
+    leading: { kind: 'none' },
+    title: 'hello',
+    subtitle: null,
+    badge: null,
+    accessibilityLabel: 'hello',
+  },
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
@@ -342,13 +360,21 @@ describe('useClipboardStore authoritative summary updates', () => {
   })
 
   it('merges rebuilt search summary text without loading representations into the store', () => {
-    useClipboardStore
-      .getState()
-      .mergeClipUpdate(
-        makeClip({ id: 'img-1', primaryPresentationKind: 'image', safeSummary: 'extracted text' })
-      )
+    useClipboardStore.getState().mergeClipUpdate(
+      makeClip({
+        id: 'img-1',
+        primaryPresentationKind: 'image',
+        historyPreview: {
+          leading: { kind: 'none' },
+          title: 'extracted text',
+          subtitle: null,
+          badge: null,
+          accessibilityLabel: 'extracted text',
+        },
+      })
+    )
 
-    expect(useClipboardStore.getState().clips[0]!.safeSummary).toBe('extracted text')
+    expect(useClipboardStore.getState().clips[0]!.historyPreview.title).toBe('extracted text')
   })
 
   it('does not add an update for a clip outside the current list', () => {

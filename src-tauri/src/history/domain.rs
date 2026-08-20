@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::contracts::CompactPresentation;
+use crate::contracts::HistoryPreview;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,13 +143,12 @@ pub struct ClipSummary {
     pub is_favorite: bool,
     pub note: Option<String>,
     pub tags: Vec<Tag>,
-    pub safe_summary: String,
+    pub history_preview: HistoryPreview,
     pub representation_count: i64,
     pub primary_presentation_kind: String,
     pub thumbnail_asset_id: Option<String>,
     pub has_embedding: bool,
     pub ocr_status: Option<String>,
-    pub compact_presentation: Option<CompactPresentation>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

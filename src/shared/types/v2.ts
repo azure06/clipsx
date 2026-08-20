@@ -60,13 +60,12 @@ export type ClipSummary = {
   isFavorite: boolean
   note: string | null
   tags: V2Tag[]
-  safeSummary: string
+  historyPreview: HistoryPreview
   representationCount: number
   primaryPresentationKind: string
   thumbnailAssetId: string | null
   hasEmbedding?: boolean
   ocrStatus?: string | null
-  compactPresentation?: CompactPresentation | null
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */
   similarityScore?: number
   searchMatches?: SearchMatch[]
@@ -176,9 +175,9 @@ export type LeadingVisual =
   | { kind: 'input_thumbnail' }
   | { kind: 'monogram'; text: string }
 
-export type CompactPresentation = {
+export type HistoryPreview = {
   leading: LeadingVisual
-  title: string | null
+  title: string
   subtitle: string | null
   badge: string | null
   accessibilityLabel: string

@@ -323,7 +323,7 @@ export const ClipboardHistory = ({
         const index = parseInt(e.key, 10) - 1
         const clip = clips[index]
         if (clip) {
-          void handleAction(clip.safeSummary, clip.id)
+          void handleAction(clip.historyPreview.title, clip.id)
         }
         return
       }
@@ -331,7 +331,7 @@ export const ClipboardHistory = ({
       if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'C' }, platform)) {
         if (hasNativeCopySelection()) return
         e.preventDefault()
-        void handleExplicitCopy(selectedClip.safeSummary, selectedClip.id)
+        void handleExplicitCopy(selectedClip.historyPreview.title, selectedClip.id)
         return
       }
       if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'F' }, platform)) {
@@ -394,7 +394,7 @@ export const ClipboardHistory = ({
         case 'Enter': {
           e.preventDefault()
           if (selectedClip) {
-            void handleAction(selectedClip.safeSummary, selectedClip.id)
+            void handleAction(selectedClip.historyPreview.title, selectedClip.id)
           }
           break
         }

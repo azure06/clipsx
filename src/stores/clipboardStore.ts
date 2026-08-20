@@ -142,6 +142,8 @@ const parseSearch = (input: string): ParsedSearch => {
   return { query, representationFamilies: [...representationFamilies], facetIds: [...facetIds] }
 }
 
+type ArtifactUpdate = { clipId: string; sourceId: string }
+
 const refreshVisibleClip = async (id: string) => {
   const state = useClipboardStore.getState()
   if (!state.clips.some(clip => clip.id === id)) return
@@ -163,6 +165,9 @@ const ensureEvents = () => {
     }),
     listen<string>('clip-facets-updated', event => {
       if (event.payload) void refreshVisibleClip(event.payload).catch(() => undefined)
+    }),
+    listen<ArtifactUpdate>('clip-artifacts-updated', event => {
+      void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
     }),
     listen<string>('clip-deleted', event =>
       useClipboardStore.setState(state => ({

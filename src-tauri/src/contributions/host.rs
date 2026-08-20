@@ -1056,7 +1056,7 @@ pub fn renderers() -> Vec<RendererDescriptor> {
         .collect()
 }
 
-fn image_view_label(mime: &str) -> &'static str {
+pub(crate) fn image_view_label(mime: &str) -> &'static str {
     match mime {
         "image/png" => "PNG",
         "image/svg+xml" => "SVG",

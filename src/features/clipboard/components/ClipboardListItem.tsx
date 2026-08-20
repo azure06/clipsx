@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
 import {
   Command,
@@ -9,23 +9,10 @@ import {
   ScanText,
   Sparkles,
   Star,
-  Braces,
-  Code2,
-  Database,
-  File,
-  Globe,
-  KeyRound,
-  Link,
-  Palette,
-  Table2,
-  Terminal,
-  Text,
-  type LucideIcon,
 } from 'lucide-react'
-import { ContentIcon } from '../../content/icons'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
-import { managedAssetUrl } from '../../../shared/utils/assetUrl'
+import { PreviewLeadingVisual } from './PreviewLeadingVisual'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -47,11 +34,8 @@ const ClipboardListItemComponent = ({
   const { t } = useTranslation()
   const platform = getPlatform()
   const isMac = platform === 'macos'
-  const [failedThumbnailId, setFailedThumbnailId] = useState<string | null>(null)
-  const thumbnailFailed = failedThumbnailId === clip.thumbnailAssetId
-  const compact = clip.compactPresentation
-  const summary = compact?.title ?? clip.safeSummary
-  const preview = summary.length > 100 ? `${summary.slice(0, 100)}...` : summary
+  const preview = clip.historyPreview
+  const title = preview.title.length > 100 ? `${preview.title.slice(0, 100)}...` : preview.title
 
   const isPinned = Boolean(clip.isPinned)
   const isFavorite = Boolean(clip.isFavorite)
@@ -80,9 +64,9 @@ const ClipboardListItemComponent = ({
 
   const handleClick = () => {
     if (onSelect) {
-      onSelect(clip.safeSummary, clip.id)
+      onSelect(preview.title, clip.id)
     } else {
-      onCopy(clip.safeSummary, clip.id)
+      onCopy(preview.title, clip.id)
     }
   }
 
@@ -90,7 +74,7 @@ const ClipboardListItemComponent = ({
     <>
       <div
         onClick={handleClick}
-        onDoubleClick={() => onDoubleClick?.(clip.safeSummary, clip.id)}
+        onDoubleClick={() => onDoubleClick?.(preview.title, clip.id)}
         data-clip-index={index}
         className={`group relative flex items-center gap-3 py-2 px-3 transition-all duration-200 cursor-pointer mx-2 my-0.5 rounded-lg border ${
           isSelected
@@ -107,38 +91,7 @@ const ClipboardListItemComponent = ({
 
         {/* Type icon or thumbnail */}
         <div className="shrink-0">
-          {compact?.leading.kind === 'swatch' ? (
-            <div
-              aria-label={compact.accessibilityLabel}
-              className="h-6 w-6 rounded-full border border-black/15 shadow-sm dark:border-white/25"
-              style={{
-                backgroundColor: `rgba(${compact.leading.red}, ${compact.leading.green}, ${compact.leading.blue}, ${compact.leading.alpha / 255})`,
-              }}
-            />
-          ) : compact?.leading.kind === 'monogram' ? (
-            <div
-              aria-label={compact.accessibilityLabel}
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-[9px] font-semibold dark:bg-slate-700"
-            >
-              {compact.leading.text}
-            </div>
-          ) : compact?.leading.kind === 'host_icon' ? (
-            <HostIcon name={compact.leading.name} label={compact.accessibilityLabel} />
-          ) : (compact?.leading.kind === 'input_thumbnail' ||
-              (!compact && clip.primaryPresentationKind === 'image')) &&
-            clip.thumbnailAssetId &&
-            !thumbnailFailed ? (
-            <img
-              src={managedAssetUrl(clip.thumbnailAssetId, platform)}
-              alt={t('clipboard.thumbnail')}
-              className="h-6 w-6 rounded-full object-cover ring-2 ring-gray-200/50 dark:ring-gray-700/50 shadow-sm"
-              onError={() => setFailedThumbnailId(clip.thumbnailAssetId)}
-            />
-          ) : (
-            <div className="text-gray-500 dark:text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors">
-              <ContentIcon presentationKind={clip.primaryPresentationKind} size="sm" />
-            </div>
-          )}
+          <PreviewLeadingVisual clip={clip} preview={preview} size="sm" />
         </div>
 
         {/* Main content area - Horizontal Flow */}
@@ -148,10 +101,10 @@ const ClipboardListItemComponent = ({
             <div
               className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
             >
-              {preview}
+              {title}
             </div>
-            {compact?.subtitle && (
-              <div className="truncate text-[10px] text-gray-400">{compact.subtitle}</div>
+            {preview.subtitle && (
+              <div className="truncate text-[10px] text-gray-400">{preview.subtitle}</div>
             )}
           </div>
           {semanticPercent !== null && (
@@ -168,9 +121,9 @@ const ClipboardListItemComponent = ({
 
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
         <div className="flex items-center gap-2 shrink-0 ml-auto pl-2">
-          {compact?.badge && (
-            <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] text-gray-500 dark:bg-white/10">
-              {compact.badge}
+          {preview.badge && (
+            <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
+              {preview.badge}
             </span>
           )}
           {/* Attributes - Right Aligned */}
@@ -231,23 +184,3 @@ const ClipboardListItemComponent = ({
   )
 } // Memoize the component to prevent re-renders when other items change
 export const ClipboardListItem = memo(ClipboardListItemComponent)
-
-const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
-  braces: Braces,
-  code: Code2,
-  database: Database,
-  file: File,
-  globe: Globe,
-  hash: Hash,
-  key: KeyRound,
-  link: Link,
-  palette: Palette,
-  table: Table2,
-  terminal: Terminal,
-  text: Text,
-}
-
-const HostIcon = ({ name, label }: { name: string; label: string }) => {
-  const Icon = HOST_ICON_CATALOG[name] ?? File
-  return <Icon aria-label={label} className="h-5 w-5 text-gray-500" />
-}

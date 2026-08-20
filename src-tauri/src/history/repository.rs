@@ -1,4 +1,5 @@
 use super::domain::*;
+use super::preview::{resolve_history_preview, PreviewContext};
 use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
@@ -254,7 +255,7 @@ impl HistoryRepository {
     pub async fn list(&self, request: ListRequest) -> Result<ClipPage> {
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
-        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.lifecycle_state='ready'");
+        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
         }
@@ -295,6 +296,52 @@ impl HistoryRepository {
         let id: String = row.get(0);
         let tags = self.tags_for(&id).await?;
         let compact_presentation = self.compact_presentation(&id).await?;
+        let primary_presentation_kind: String = row.get(10);
+        let thumbnail_asset_id: Option<String> = row.get(11);
+        let ocr_status: Option<String> = row.get(13);
+        let text_snippet: Option<String> = row.get(9);
+        let leading_representation_id: Option<String> = row.get(14);
+        let leading_mime: Option<String> = row.get(15);
+        let leading_format_family: Option<String> = row.get(16);
+        let plain_text_fallback: Option<String> = row.get(17);
+
+        let ocr_text = if primary_presentation_kind == "image"
+            && ocr_status.as_deref() == Some("completed")
+        {
+            crate::artifacts::ocr_text(self, &id).await
+        } else {
+            None
+        };
+        let (file_name, file_count) = if primary_presentation_kind == "files" {
+            self.leading_file_entry(leading_representation_id.as_deref())
+                .await?
+        } else {
+            (None, 0)
+        };
+        let (facet_id, facet_display_name) =
+            if matches!(primary_presentation_kind.as_str(), "text" | "html") {
+                self.leading_facet(leading_representation_id.as_deref())
+                    .await?
+            } else {
+                (None, None)
+            };
+        let history_preview = resolve_history_preview(
+            PreviewContext {
+                presentation_kind: &primary_presentation_kind,
+                leading_mime: leading_mime.as_deref(),
+                leading_format_family: leading_format_family.as_deref(),
+                text_snippet: text_snippet.as_deref(),
+                plain_text_fallback: plain_text_fallback.as_deref(),
+                has_thumbnail: thumbnail_asset_id.is_some(),
+                ocr_text: ocr_text.as_deref(),
+                file_name: file_name.as_deref(),
+                file_count,
+                facet_id: facet_id.as_deref(),
+                facet_display_name: facet_display_name.as_deref(),
+            },
+            compact_presentation,
+        );
+
         Ok(ClipSummary {
             id,
             source_app_name: row.get(1),
@@ -305,18 +352,58 @@ impl HistoryRepository {
             is_favorite: row.get::<i64, _>(6) != 0,
             note: row.get(7),
             representation_count: row.get(8),
-            safe_summary: row.get(9),
-            primary_presentation_kind: row.get(10),
-            thumbnail_asset_id: row.get(11),
+            primary_presentation_kind,
+            thumbnail_asset_id,
             has_embedding: row.get::<i64, _>(12) != 0,
-            ocr_status: row.get(13),
-            compact_presentation,
+            ocr_status,
+            history_preview,
             tags,
+        })
+    }
+    async fn leading_file_entry(
+        &self,
+        representation_id: Option<&str>,
+    ) -> Result<(Option<String>, i64)> {
+        let Some(representation_id) = representation_id else {
+            return Ok((None, 0));
+        };
+        let files: Vec<String> = sqlx::query_scalar(
+            "SELECT file_reference FROM clip_file_list_entries WHERE representation_id=? ORDER BY ordinal",
+        )
+        .bind(representation_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let name = files.first().map(|reference| {
+            Path::new(reference)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| reference.clone())
+        });
+        Ok((name, files.len() as i64))
+    }
+    async fn leading_facet(
+        &self,
+        representation_id: Option<&str>,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let Some(representation_id) = representation_id else {
+            return Ok((None, None));
+        };
+        let row = sqlx::query(
+            "SELECT f.facet_id,d.display_name FROM content_clip_facets f \
+             JOIN content_facet_definitions d ON d.id=f.facet_id \
+             WHERE f.source_representation_id=? ORDER BY f.facet_id LIMIT 1",
+        )
+        .bind(representation_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row {
+            Some(row) => (Some(row.get(0)), Some(row.get(1))),
+            None => (None, None),
         })
     }
 
     pub async fn summary(&self, id: &str) -> Result<ClipSummary> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'")
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id WHERE c.id=? AND c.lifecycle_state='ready'")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -352,7 +439,7 @@ impl HistoryRepository {
             .collect())
     }
     pub async fn detail(&self, id: &str) -> Result<ClipDetail> {
-        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),COALESCE((SELECT substr(t.text_value,1,180) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'Binary or file content'),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1) FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
+        let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id WHERE sc.clip_id=c.id),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
         let reps=sqlx::query("SELECT r.id,r.format_key,r.canonical_mime_type,r.native_type,r.storage_kind,r.ordinal,r.capture_priority,COALESCE(t.utf8_byte_length,b.byte_length,0),t.text_value,b.id,b.sha256,r.capability_id,r.format_family FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.ordinal").bind(id).fetch_all(&self.pool).await?;
         let mut representations = Vec::new();
         for r in reps {
@@ -1360,6 +1447,108 @@ mod tests {
             .await
             .unwrap();
         assert!(violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn history_preview_is_never_generic_and_reflects_leading_representation() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+
+        let (text_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![CapturedRepresentation {
+                        format_key: "text/plain".into(),
+                        canonical_mime_type: Some("text/plain".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Text("  hello   world  ".into()),
+                    }],
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let text_summary = repo.summary(&text_id).await.unwrap();
+        assert_eq!(text_summary.history_preview.title, "hello world");
+        assert_ne!(
+            text_summary.history_preview.title,
+            "Binary or file content"
+        );
+
+        let (image_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 2,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![CapturedRepresentation {
+                        format_key: "windows:PNG".into(),
+                        canonical_mime_type: Some("image/png".into()),
+                        native_type: Some("PNG".into()),
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Binary(vec![1, 2, 3]),
+                    }],
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let image_detail = repo.detail(&image_id).await.unwrap();
+        assert_eq!(image_detail.clip.history_preview.title, "PNG image");
+        assert_ne!(
+            image_detail.clip.history_preview.title,
+            "Binary or file content"
+        );
+
+        let (html_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 3,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![
+                        CapturedRepresentation {
+                            format_key: "text/html".into(),
+                            canonical_mime_type: Some("text/html".into()),
+                            native_type: None,
+                            platform: "windows".into(),
+                            capture_priority: 1,
+                            payload: CapturedPayload::Text(
+                                "<div><span>markup text</span></div>".into(),
+                            ),
+                        },
+                        CapturedRepresentation {
+                            format_key: "text/plain".into(),
+                            canonical_mime_type: Some("text/plain".into()),
+                            native_type: None,
+                            platform: "windows".into(),
+                            capture_priority: 2,
+                            payload: CapturedPayload::Text("real plain-text sibling".into()),
+                        },
+                    ],
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let html_summary = repo.summary(&html_id).await.unwrap();
+        assert_eq!(html_summary.history_preview.title, "real plain-text sibling");
     }
 
     #[tokio::test]

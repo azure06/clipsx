@@ -2,8 +2,8 @@ import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
 import { formatTimestamp } from '../../../shared/types'
 import { Star, Pin, Hash } from 'lucide-react'
-import { ContentIcon } from '../../content/icons'
 import { useTranslation } from 'react-i18next'
+import { PreviewLeadingVisual } from './PreviewLeadingVisual'
 
 type ClipboardGridItemProps = {
   readonly clip: ClipSummary
@@ -24,6 +24,7 @@ const ClipboardGridItemComponent = ({
 }: ClipboardGridItemProps) => {
   const { t, i18n } = useTranslation()
   const timestamp = formatTimestamp(Math.floor(clip.capturedAt / 1000), i18n.resolvedLanguage)
+  const preview = clip.historyPreview
 
   const isFavorite = Boolean(clip.isFavorite)
   const isPinned = Boolean(clip.isPinned)
@@ -32,16 +33,16 @@ const ClipboardGridItemComponent = ({
 
   const handleClick = () => {
     if (onSelect) {
-      onSelect(clip.safeSummary, clip.id)
+      onSelect(preview.title, clip.id)
     } else {
-      onCopy(clip.safeSummary, clip.id)
+      onCopy(preview.title, clip.id)
     }
   }
 
   return (
     <div
       onClick={handleClick}
-      onDoubleClick={() => onDoubleClick?.(clip.safeSummary, clip.id)}
+      onDoubleClick={() => onDoubleClick?.(preview.title, clip.id)}
       data-clip-index={index}
       className={`group relative rounded-xl border transition-all duration-200 shadow-sm hover:shadow-md ${
         isSelected
@@ -57,12 +58,27 @@ const ClipboardGridItemComponent = ({
       )}
 
       {/* Content Preview */}
-      <div className="p-2.5 pb-0 flex items-center justify-center aspect-square">
-        <ContentIcon presentationKind={clip.primaryPresentationKind} size="lg" />
+      <div className="p-2.5 pb-0 flex items-center justify-center aspect-square overflow-hidden">
+        <PreviewLeadingVisual clip={clip} preview={preview} size="lg" />
       </div>
 
       {/* Bottom section with metadata and attributes */}
       <div className="p-2.5 pt-2 space-y-1.5">
+        {/* Preview title / subtitle / badge */}
+        <div className="space-y-0.5">
+          <p className="line-clamp-2 text-xs font-medium leading-snug text-gray-800 dark:text-gray-100">
+            {preview.title}
+          </p>
+          {preview.subtitle && (
+            <p className="truncate text-[10px] text-gray-400">{preview.subtitle}</p>
+          )}
+          {preview.badge && (
+            <span className="inline-flex rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
+              {preview.badge}
+            </span>
+          )}
+        </div>
+
         {/* Attributes badges - always visible */}
         {hasAttributes && (
           <div className="flex items-center gap-1 flex-wrap">

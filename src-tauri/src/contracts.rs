@@ -141,6 +141,19 @@ pub struct CompactPresentation {
     pub accessibility_label: String,
 }
 
+/// The host-resolved, always-useful history-row presentation. Unlike
+/// `CompactPresentation` (which an extension may return with no title),
+/// `title` here is guaranteed non-empty.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPreview {
+    pub leading: LeadingVisual,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub badge: Option<String>,
+    pub accessibility_label: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum OcrPresentation {
@@ -334,6 +347,34 @@ mod tests {
         assert!(files["entries"][0].get("size").is_none());
         assert!(files["entries"][0].get("created").is_none());
         assert!(files["entries"][0].get("modified").is_none());
+    }
+
+    #[test]
+    fn history_preview_wire_contract_is_camel_case_and_lossless() {
+        use serde_json::json;
+
+        let preview = HistoryPreview {
+            leading: LeadingVisual::HostIcon {
+                name: "globe".into(),
+            },
+            title: "example.com".into(),
+            subtitle: Some("https://example.com/path".into()),
+            badge: Some("URL".into()),
+            accessibility_label: "Link: example.com".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&preview).unwrap(),
+            json!({
+                "leading": {"kind": "host_icon", "name": "globe"},
+                "title": "example.com",
+                "subtitle": "https://example.com/path",
+                "badge": "URL",
+                "accessibilityLabel": "Link: example.com",
+            })
+        );
+        let round_tripped: HistoryPreview =
+            serde_json::from_value(serde_json::to_value(&preview).unwrap()).unwrap();
+        assert_eq!(round_tripped, preview);
     }
 
     #[test]

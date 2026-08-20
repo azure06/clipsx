@@ -509,7 +509,7 @@ fn html_blocks(input: &str) -> Vec<SemanticBlock> {
         }
         if tag.starts_with('h') && tag.len() == 2 {
             let level = tag.as_bytes()[1].saturating_sub(b'1') as usize;
-            let text = visible_element_text(element);
+            let text = crate::text::visible_node_text(element);
             if level < headings.len() && !text.is_empty() {
                 headings[level] = text.clone();
                 headings.iter_mut().skip(level + 1).for_each(String::clear);
@@ -526,7 +526,7 @@ fn html_blocks(input: &str) -> Vec<SemanticBlock> {
                 .select(&row_selector)
                 .map(|row| {
                     row.select(&cell_selector)
-                        .map(visible_element_text)
+                        .map(crate::text::visible_node_text)
                         .filter(|cell| !cell.is_empty())
                         .collect::<Vec<_>>()
                 })
@@ -546,7 +546,7 @@ fn html_blocks(input: &str) -> Vec<SemanticBlock> {
             }
             continue;
         }
-        let content = visible_element_text(element);
+        let content = crate::text::visible_node_text(element);
         if !content.is_empty() {
             blocks.push(SemanticBlock {
                 kind: match tag {
@@ -570,27 +570,6 @@ fn has_selected_ancestor(element: ElementRef<'_>, tags: &[&str]) -> bool {
     })
 }
 
-fn visible_element_text(element: ElementRef<'_>) -> String {
-    let mut parts = Vec::new();
-    for node in element.descendants() {
-        let Some(text) = node.value().as_text() else {
-            continue;
-        };
-        let hidden = node.ancestors().any(|ancestor| {
-            ElementRef::wrap(ancestor).is_some_and(|element| {
-                matches!(
-                    element.value().name(),
-                    "script" | "style" | "template" | "noscript" | "svg"
-                )
-            })
-        });
-        if !hidden {
-            parts.push(text.as_ref());
-        }
-    }
-    collapse_whitespace(&parts.join(" "))
-}
-
 impl SemanticChunkStrategy for RtfStrategy {
     fn id(&self) -> &'static str {
         "builtin.chunker.rtf-blocks"
@@ -599,19 +578,8 @@ impl SemanticChunkStrategy for RtfStrategy {
         mime_is(input, &["text/rtf", "application/rtf"])
     }
     fn extract_blocks(&self, input: &SemanticInput) -> Result<Option<Vec<SemanticBlock>>> {
-        let lower = input.text.to_ascii_lowercase();
-        if ["\\bin", "\\object", "\\objdata", "\\field", "\\pict"]
-            .iter()
-            .any(|control| lower.contains(control))
-        {
-            return Ok(None);
-        }
-        let parsed =
-            std::panic::catch_unwind(|| rtf_parser::RtfDocument::try_from(input.text.as_str()));
-        let Ok(Ok(document)) = parsed else {
-            return Ok(None);
-        };
-        Ok(Some(plain_blocks(&document.get_text(), "paragraph")))
+        Ok(crate::text::rtf_visible_text(&input.text)
+            .map(|text| plain_blocks(&text, "paragraph")))
     }
 }
 

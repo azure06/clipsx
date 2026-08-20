@@ -13,6 +13,7 @@ mod output;
 mod providers;
 mod search;
 mod shared;
+mod text;
 
 fn main() {
     app::run();

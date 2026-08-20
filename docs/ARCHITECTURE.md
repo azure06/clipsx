@@ -31,7 +31,7 @@ React owns interaction and renders typed presentation models. Rust owns native c
 ## Core rules
 
 - A clip is one coherent capture with independent raw representations, not one persisted content type.
-- Raw representations are canonical. Facets, artifacts, FTS documents, chunks, embeddings, compact presentations, and transform previews are derived or versioned data.
+- Raw representations are canonical. Facets, artifacts, FTS documents, chunks, embeddings, history previews, and transform previews are derived or versioned data.
 - Platform adapters alone interpret native clipboard identifiers. ClipsX never guesses UTI, OLE, or equivalent native types.
 - Renderer selection is ephemeral UI policy. It never changes canonical data or Original/Plain Text clipboard output.
 - Binary payloads live in managed application files; SQLite stores metadata and relative references, never a generic clipboard BLOB.
@@ -57,6 +57,8 @@ Text normalization preserves semantic content, while adapter-supported binary fo
 After canonical capture, bounded background work may add facets from built-in or extension detectors, artifacts such as thumbnails and local OCR text, FTS/search projections, semantic chunks and embeddings, and compact presentation caches. Every item records bounded producer/input/version provenance where it matters.
 
 Derived failures never roll back a canonical capture. They are retryable or rebuildable and must leave the clip usable.
+
+Every `ClipSummary` carries one `historyPreview`: a bounded, always-useful leading icon/thumbnail, title, optional subtitle/badge, and accessibility label for the history row. The host resolves it deterministically from the clip's leading representation (visible text for HTML/RTF, never markup; OCR text or a format label for images; meaningful labels for files, PDFs, Office, and unsupported content — never a generic "binary" placeholder). A cached extension compact-render result with a non-empty title replaces the built-in result wholesale; otherwise the built-in result is used immediately. History previews refresh automatically as OCR and other artifacts complete.
 
 ## Views, previews, transforms, and output
 
