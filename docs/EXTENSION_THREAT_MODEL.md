@@ -32,8 +32,8 @@ invoked operation -> grant + scoped token -> host broker -> allowed destination
 - HTTPS requests match declared origin, path, method, timeout, and byte limits;
   redirects and private, loopback, link-local, multicast, unspecified, and
   metadata-network destinations are denied after DNS resolution.
-- Credentials are never returned to a guest. A future credential adapter may
-  inject a declared value only inside the Rust broker.
+- Credentials are never returned to a guest. The Rust broker injects a value
+  only into its declared safe header and exact declared HTTP origin.
 - Outputs are bounded new values. They cannot mutate/delete the selected clip,
   inspect history, or directly own clipboard writes.
 - Updating, disabling, replacing, uninstalling, or changing package bytes ends
@@ -58,9 +58,10 @@ invoked operation -> grant + scoped token -> host broker -> allowed destination
 
 Custom UI depends on platform webview behavior. Windows, macOS, and Linux/X11
 installed builds must verify IPC denial, CSP, navigation, popup/download denial,
-focus, sizing, accessibility, teardown, and crash recovery. The HTTPS broker is
-not exposed to guests until checksum grants, invocation binding, cancellation,
-credential redaction, and malicious-message tests pass through the final adapter.
+focus, sizing, accessibility, teardown, and crash recovery. The dialog HTTPS
+bridge is exposed only behind checksum grants, host-created dialog authorization,
+child-label/session binding, bounded responses, and credential isolation. Release
+certification must additionally exercise cancellation and malicious bridge messages
+in installed builds.
 `generation.text` remains unavailable until a host-owned provider adapter meets
 the same invocation and data-egress rules.
-

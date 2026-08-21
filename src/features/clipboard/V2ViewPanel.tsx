@@ -18,7 +18,6 @@ const OCR_TAB_ID = '__ocr__'
 const TRANSFORM_TAB_ID = '__transform__'
 
 type ExtensionCustomViewSession = { token: string; label: string; entryUrl: string }
-type ExtensionBridgeMessage = { token: string; command: 'open-dialog' | 'close' }
 
 const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewDescriptor }) => {
   const container = React.useRef<HTMLDivElement>(null)
@@ -26,9 +25,7 @@ const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewD
   useEffect(() => {
     let disposed = false
     let session: ExtensionCustomViewSession | null = null
-    let dialogSession: ExtensionCustomViewSession | null = null
     let observer: ResizeObserver | null = null
-    let stopBridge: (() => void) | null = null
     const bounds = () => {
       const rect = container.current?.getBoundingClientRect()
       if (!rect || rect.width < 100 || rect.height < 80) return null
@@ -53,43 +50,10 @@ const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewD
           return
         }
         session = opened
-        void listen<ExtensionBridgeMessage>('extension-bridge-message', event => {
-          if (
-            event.payload.token !== session?.token ||
-            event.payload.command !== 'open-dialog' ||
-            dialogSession
-          )
-            return
-          const dialogBounds = bounds()
-          if (!dialogBounds) return
-          void invoke<ExtensionCustomViewSession>('open_extension_custom_view', {
-            rendererId: view.rendererId,
-            clipId,
-            sourceId: view.sourceId,
-            facetId: view.facetId,
-            surface: 'dialog',
-            ...dialogBounds,
-          }).then(openedDialog => {
-            if (disposed) {
-              void invoke('close_extension_custom_view', {
-                label: openedDialog.label,
-                token: openedDialog.token,
-              })
-            } else {
-              dialogSession = openedDialog
-            }
-          })
-        }).then(unlisten => {
-          if (disposed) unlisten()
-          else stopBridge = unlisten
-        })
         observer = new ResizeObserver(() => {
           const next = bounds()
           if (!next || !session) return
           void invoke('sync_extension_custom_view', { label: session.label, ...next })
-          if (dialogSession) {
-            void invoke('sync_extension_custom_view', { label: dialogSession.label, ...next })
-          }
         })
         if (container.current) observer.observe(container.current)
       })
@@ -98,17 +62,10 @@ const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewD
       disposed = true
       window.cancelAnimationFrame(frame)
       observer?.disconnect()
-      stopBridge?.()
       if (session) {
         void invoke('close_extension_custom_view', {
           label: session.label,
           token: session.token,
-        })
-      }
-      if (dialogSession) {
-        void invoke('close_extension_custom_view', {
-          label: dialogSession.label,
-          token: dialogSession.token,
         })
       }
     }

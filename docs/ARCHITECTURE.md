@@ -78,7 +78,7 @@ Packages are checksum-pinned registry or Developer Mode `.clipsx` archives. Inst
 
 The v2 runtime has no WASI or host imports. A guest receives only one host-approved representation and optional facet. Fresh Wasmtime stores enforce memory, stack, transfer, fuel, timeout, output-size, and failure limits. Repeated failures quarantine the package; canonical clip data is unaffected.
 
-Renderers and detectors are permanently offline. Local transformers and actions are offline and reproducible. Capability-backed actions and transformers are visible but unavailable until the host-owned HTTP/credential broker exists.
+Renderers and detectors are permanently offline. Local transformers and actions are offline and reproducible. Explicit host actions may open isolated, checksum/session-bound dialogs whose only IPC is the extension bridge. That bridge enforces declared HTTPS/navigation origins, checksum grants, scoped credential-header injection, and bounded output through the transform/output boundary. Capability-backed WASM transformers and `generation.text` remain unavailable until their host adapters exist.
 
 ## Search
 

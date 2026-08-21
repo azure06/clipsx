@@ -11,7 +11,7 @@ use crate::clipboard::{
 };
 use crate::contracts::{self, FactoryResetResult, StartupStatus};
 use crate::contributions::transformer as transformers;
-use crate::extensions::ExtensionService;
+use crate::extensions::{BridgeOutcome, BridgeRequest, ExtensionService};
 use crate::foundation::AppRoots;
 use crate::history::{CaptureSettings, HistoryRepository, ListRequest};
 use crate::search::semantic as embeddings;
@@ -36,21 +36,20 @@ fn is_extension_webview_label(label: &str) -> bool {
     label.starts_with("extension-")
 }
 
-fn reject_extension_webview_invokes<R, F>(
-    handler: F,
+fn route_webview_invokes<R, F, G>(
+    application_handler: F,
+    extension_handler: G,
 ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
 where
     R: tauri::Runtime,
     F: Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+    G: Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
 {
     move |invoke| {
         if is_extension_webview_label(invoke.message.webview_ref().label()) {
-            invoke
-                .resolver
-                .reject("extension webviews cannot invoke application commands");
-            true
+            extension_handler(invoke)
         } else {
-            handler(invoke)
+            application_handler(invoke)
         }
     }
 }
@@ -929,6 +928,7 @@ async fn list_extension_actions(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn run_context_action(
     app: tauri::AppHandle,
     clip_id: String,
@@ -1080,6 +1080,7 @@ async fn set_extension_credential(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn open_extension_custom_view(
     app: tauri::AppHandle,
     renderer_id: String,
@@ -1137,18 +1138,12 @@ async fn open_extension_custom_view(
             && url.host_str() == Some(bridge_token.as_str())
         {
             let command = url.path().trim_start_matches('/');
-            if matches!(command, "open-dialog" | "close") {
-                let _ = bridge_app.emit(
-                    "extension-bridge-message",
-                    serde_json::json!({ "token": bridge_token, "command": command }),
-                );
-                if command == "close" {
-                    if let Some(webview) = bridge_app.get_webview(&bridge_label) {
-                        let _ = webview.close();
-                    }
-                    if let Some(state) = bridge_app.try_state::<AppState>() {
-                        state.extensions.end_custom_view(&bridge_token);
-                    }
+            if command == "close" {
+                if let Some(webview) = bridge_app.get_webview(&bridge_label) {
+                    let _ = webview.close();
+                }
+                if let Some(state) = bridge_app.try_state::<AppState>() {
+                    state.extensions.end_custom_view(&bridge_token);
                 }
             }
             return false;
@@ -1215,6 +1210,87 @@ async fn sync_extension_custom_view(
         .set_position(tauri::LogicalPosition::new(x, y))
         .and_then(|_| webview.set_size(tauri::LogicalSize::new(width, height)))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+async fn extension_bridge(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    token: String,
+    request: BridgeRequest,
+    state: State<'_, AppState>,
+    host_state: State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    let outcome = state
+        .extensions
+        .bridge_request(&state.history, webview.label(), &token, request)
+        .await
+        .map_err(|error| error.to_string())?;
+    match outcome {
+        BridgeOutcome::Https(response) => {
+            serde_json::to_value(response).map_err(|error| error.to_string())
+        }
+        BridgeOutcome::OpenExternal(url) => {
+            app.shell()
+                .open(&url, None)
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({ "opened": true }))
+        }
+        BridgeOutcome::Output {
+            outputs,
+            disposition,
+            action_id,
+            version,
+            clip_id,
+            source_id,
+            facet_id,
+        } => {
+            let preview = state
+                .transforms
+                .cache_external(
+                    clip_id,
+                    action_id,
+                    version,
+                    source_id,
+                    serde_json::json!({ "facetId": facet_id }),
+                    outputs,
+                )
+                .map_err(|error| error.to_string())?;
+            let mut saved_clip_id = None;
+            match disposition {
+                crate::extensions::ActionDisposition::Preview => {}
+                crate::extensions::ActionDisposition::SaveAsClip => {
+                    saved_clip_id =
+                        Some(save_transform_result_impl(app, &preview.result_id, &state).await?);
+                }
+                crate::extensions::ActionDisposition::Copy
+                | crate::extensions::ActionDisposition::Paste => {
+                    let disposition = if disposition == crate::extensions::ActionDisposition::Copy {
+                        output::ClipboardOutputDisposition::Copy
+                    } else {
+                        output::ClipboardOutputDisposition::Paste
+                    };
+                    execute_clipboard_output_impl(
+                        app,
+                        output::ClipboardOutputRequest {
+                            disposition,
+                            source: output::ClipboardOutputSource::Transformed {
+                                result_id: preview.result_id.clone(),
+                            },
+                        },
+                        &state,
+                        &host_state,
+                    )
+                    .await?;
+                }
+            }
+            Ok(serde_json::json!({
+                "resultId": preview.result_id,
+                "savedClipId": saved_clip_id,
+            }))
+        }
+    }
 }
 
 #[tauri::command]
@@ -1297,6 +1373,15 @@ async fn execute_clipboard_output(
     state: State<'_, AppState>,
     host_state: State<'_, HostState>,
 ) -> Result<(), String> {
+    execute_clipboard_output_impl(app, request, &state, &host_state).await
+}
+
+async fn execute_clipboard_output_impl(
+    app: tauri::AppHandle,
+    request: output::ClipboardOutputRequest,
+    state: &AppState,
+    host_state: &HostState,
+) -> Result<(), String> {
     if let Err(error) =
         output::write_source(&request.source, &state.history, &state.transforms).await
     {
@@ -1342,9 +1427,17 @@ async fn save_transform_result(
     result_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    save_transform_result_impl(app, &result_id, &state).await
+}
+
+async fn save_transform_result_impl(
+    app: tauri::AppHandle,
+    result_id: &str,
+    state: &AppState,
+) -> Result<String, String> {
     let (preview, source_clip_id, parameter_sha256) = state
         .transforms
-        .saved_metadata(&result_id)
+        .saved_metadata(result_id)
         .map_err(|error| error.to_string())?;
     let snapshot = history::CapturedSnapshot {
         token: 0,
@@ -1353,7 +1446,7 @@ async fn save_transform_result(
         format_observations: Vec::new(),
         representations: state
             .transforms
-            .transformed(&result_id)
+            .transformed(result_id)
             .map_err(|error| error.to_string())?,
     };
     let settings = state
@@ -2321,7 +2414,7 @@ pub(crate) fn run() {
             }
             Ok(())
         })
-        .invoke_handler(reject_extension_webview_invokes(tauri::generate_handler![
+        .invoke_handler(route_webview_invokes(tauri::generate_handler![
             show_main_window_command,
             set_tray_labels,
             get_release_info,
@@ -2410,7 +2503,7 @@ pub(crate) fn run() {
             reindex_text_embeddings,
             index_missing_text_embeddings,
             clear_text_embedding_space
-        ]))
+        ], tauri::generate_handler![extension_bridge]))
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -2513,9 +2606,7 @@ mod tests {
             .collect::<BTreeSet<_>>();
         let ipc_source = include_str!("mod.rs");
         let handler = ipc_source
-            .split_once(
-                ".invoke_handler(reject_extension_webview_invokes(tauri::generate_handler![",
-            )
+            .split_once(".invoke_handler(route_webview_invokes(tauri::generate_handler![")
             .and_then(|(_, value)| value.split_once("])"))
             .map(|(value, _)| value)
             .expect("invoke handler block must be present");
@@ -2540,7 +2631,7 @@ mod tests {
         assert!(!is_extension_webview_label("main"));
         let source = include_str!("mod.rs");
         assert!(source.contains(".on_download(|_, _| false)"));
-        assert!(source.contains("reject_extension_webview_invokes(tauri::generate_handler!["));
+        assert!(source.contains("], tauri::generate_handler![extension_bridge]))"));
     }
 
     #[test]

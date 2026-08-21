@@ -43,8 +43,8 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 
 - Add registry refresh/update and compatibility UX, plus richer package/contribution diagnostics and provenance.
 - Generate parameter controls for extension transformers and actions from declared schemas.
-- Add installed end-to-end fixtures beyond the Color Tools package.
-- Implement the audited HTTP/credential capability broker only for explicitly invoked actions and capability-backed transformers.
+- Add installed end-to-end automation for the Ask AI, Mermaid Viewer, and Text API fixtures.
+- Extend the audited dialog HTTP/credential bridge to capability-backed WASM transformers; add the host-owned `generation.text` adapter without exposing localhost or provider configuration.
 - Keep raw filesystem, clipboard, history, database, shell, environment, credential values, provider handles, and frontend-code access unavailable to extensions. V2 packages are checksum-pinned, manually updated with permission-diff review, and may contribute only host-isolated detail/dialog UI.
 
 **Exit gate:** a user can safely install, inspect, use, diagnose, recover, update, disable, and remove a compatible package; invalid or failing packages cannot affect canonical clips.

@@ -8,7 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::{redirect::Policy, Client};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::Row;
 
@@ -44,6 +44,7 @@ pub struct ContextActionDescriptor {
     pub pinned: bool,
     pub consent_required: bool,
     pub external_navigation_origins: Vec<String>,
+    pub http_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -87,6 +88,9 @@ pub struct ActiveContribution {
     pub version: String,
     pub declaration: ManifestContribution,
     pub external_navigation_origins: Vec<String>,
+    pub http_permissions: Vec<super::manifest::HttpPermission>,
+    pub credential_permissions: Vec<super::manifest::CredentialPermission>,
+    pub providers: Vec<String>,
     pub package_relative_path: std::path::PathBuf,
 }
 
@@ -102,9 +106,61 @@ struct PendingInvocation {
 
 #[derive(Debug, Clone)]
 struct PendingCustomView {
+    label: String,
     package_relative_path: std::path::PathBuf,
+    extension_id: String,
+    package_id: String,
+    package_sha256: String,
+    action_id: Option<String>,
+    action_version: Option<String>,
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    effects: Vec<ActionEffect>,
+    http_permissions: Vec<super::manifest::HttpPermission>,
+    credential_permissions: Vec<super::manifest::CredentialPermission>,
+    external_navigation_origins: Vec<String>,
+    providers: Vec<String>,
     context_script: Vec<u8>,
     expires_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum BridgeRequest {
+    Https {
+        request: super::BrokerHttpRequest,
+    },
+    OpenExternal {
+        url: String,
+    },
+    GenerationText {
+        prompt: String,
+    },
+    SubmitOutput {
+        mime_type: String,
+        text: String,
+        disposition: ActionDisposition,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum BridgeOutcome {
+    Https(super::BrokerHttpResponse),
+    OpenExternal(String),
+    Output {
+        outputs: Vec<CapturedRepresentation>,
+        disposition: ActionDisposition,
+        action_id: String,
+        version: String,
+        clip_id: String,
+        source_id: String,
+        facet_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,6 +177,7 @@ pub struct ExtensionService {
     runtime: ExtensionRuntime,
     invocations: Arc<Mutex<HashMap<String, PendingInvocation>>>,
     custom_views: Arc<Mutex<HashMap<String, PendingCustomView>>>,
+    dialog_authorizations: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 impl ExtensionService {
@@ -130,6 +187,7 @@ impl ExtensionService {
             runtime: ExtensionRuntime::new()?,
             invocations: Arc::new(Mutex::new(HashMap::new())),
             custom_views: Arc::new(Mutex::new(HashMap::new())),
+            dialog_authorizations: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -141,6 +199,10 @@ impl ExtensionService {
         self.custom_views
             .lock()
             .expect("extension custom view store poisoned")
+            .clear();
+        self.dialog_authorizations
+            .lock()
+            .expect("extension dialog authorization store poisoned")
             .clear();
     }
 
@@ -344,6 +406,13 @@ impl ExtensionService {
 
     pub async fn uninstall(&self, repo: &HistoryRepository, package_id: &str) -> Result<()> {
         self.invalidate_runtime_sessions();
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
+        for credential in &package.manifest.permissions.credentials {
+            match extension_credential_entry(package_id, &credential.id)?.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         sqlx::query("DELETE FROM content_compact_presentations WHERE renderer_id LIKE ?")
             .bind(format!("{package_id}/%"))
             .execute(&repo.pool)
@@ -385,16 +454,12 @@ impl ExtensionService {
         let mut values = Vec::new();
         for row in rows {
             let package = self.store.load(Path::new(&row.get::<String, _>(3)))?;
-            if self.runtime.component(&package.sha256).is_none() && package.component_path.is_some()
-            {
+            if let (None, Some(component_path)) = (
+                self.runtime.component(&package.sha256),
+                package.component_path.as_ref(),
+            ) {
                 self.runtime
-                    .validate_component(
-                        &package.sha256,
-                        package
-                            .component_path
-                            .as_ref()
-                            .expect("checked component path"),
-                    )
+                    .validate_component(&package.sha256, component_path)
                     .await?;
             }
             for declaration in
@@ -417,6 +482,9 @@ impl ExtensionService {
                         .iter()
                         .map(|permission| permission.origin.clone())
                         .collect(),
+                    http_permissions: package.manifest.permissions.http.clone(),
+                    credential_permissions: package.manifest.permissions.credentials.clone(),
+                    providers: package.manifest.permissions.providers.clone(),
                     package_relative_path: package.relative_path.clone(),
                 });
             }
@@ -732,6 +800,11 @@ impl ExtensionService {
                 parameter_schema: item.declaration.parameter_schema,
                 consent_required,
                 external_navigation_origins: item.external_navigation_origins,
+                http_origins: item
+                    .http_permissions
+                    .iter()
+                    .map(|value| value.origin.clone())
+                    .collect(),
             });
         }
         actions.sort_by(|left, right| left.label.cmp(&right.label).then(left.id.cmp(&right.id)));
@@ -782,6 +855,11 @@ impl ExtensionService {
                     parameter_schema: item.declaration.parameter_schema,
                     consent_required: false,
                     external_navigation_origins: item.external_navigation_origins,
+                    http_origins: item
+                        .http_permissions
+                        .iter()
+                        .map(|value| value.origin.clone())
+                        .collect(),
                 }
             })
             .collect();
@@ -793,6 +871,7 @@ impl ExtensionService {
         Ok(actions)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_action(
         &self,
         repo: &HistoryRepository,
@@ -813,14 +892,20 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
             .context("contextual action is not available for this representation")?;
-        if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
+        if contribution.declaration.execution == ExecutionClass::CapabilityBacked
+            && !matches!(
+                contribution.declaration.handler,
+                Some(ActionHandler::Dialog)
+            )
+        {
             bail!("network capability broker is not available in this build");
         }
-        if contribution
-            .declaration
-            .effects
-            .contains(&ActionEffect::OpenHttpsUrl)
-        {
+        if contribution.declaration.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                ActionEffect::OpenHttpsUrl | ActionEffect::OpenDialog
+            )
+        }) {
             self.consume_invocation(
                 &contribution,
                 action_id,
@@ -892,6 +977,15 @@ impl ExtensionService {
             }
         };
         validate_action_outcome(&contribution, &outcome)?;
+        if matches!(outcome, ActionOutcome::OpenDialog) {
+            let key = dialog_authorization_key(action_id, clip_id, source_id, facet_id);
+            let mut authorizations = self
+                .dialog_authorizations
+                .lock()
+                .expect("extension dialog authorization store poisoned");
+            authorizations.retain(|_, expires_at| *expires_at > now_ms());
+            authorizations.insert(key, now_ms() + 30_000);
+        }
         self.success(repo, &contribution).await?;
         Ok(outcome)
     }
@@ -907,8 +1001,10 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id)
             .context("extension action is not installed and enabled")?;
-        if contribution.external_navigation_origins.is_empty() {
-            bail!("extension action has no grantable external navigation permission");
+        if contribution.external_navigation_origins.is_empty()
+            && contribution.http_permissions.is_empty()
+        {
+            bail!("extension action has no grantable external-data permission");
         }
         let mut transaction = repo.pool.begin().await?;
         for origin in &contribution.external_navigation_origins {
@@ -916,6 +1012,15 @@ impl ExtensionService {
                 .bind(&contribution.extension_id)
                 .bind(&contribution.sha256)
                 .bind(origin)
+                .bind(now_ms())
+                .execute(&mut *transaction)
+                .await?;
+        }
+        for permission in &contribution.http_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'http', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id)
+                .bind(&contribution.sha256)
+                .bind(&permission.origin)
                 .bind(now_ms())
                 .execute(&mut *transaction)
                 .await?;
@@ -992,8 +1097,7 @@ impl ExtensionService {
             .into_iter()
             .chain(
                 self.active_contributions(repo, ContributionKind::Action)
-                    .await?
-                    .into_iter(),
+                    .await?,
             )
             .find(|item| {
                 item.id == renderer_id
@@ -1004,6 +1108,18 @@ impl ExtensionService {
                             && matches!(item.declaration.handler, Some(ActionHandler::Dialog))))
             })
             .context("custom extension detail view is unavailable")?;
+        if contribution.declaration.kind == ContributionKind::Action {
+            let key = dialog_authorization_key(renderer_id, clip_id, source_id, facet_id);
+            let expires_at = self
+                .dialog_authorizations
+                .lock()
+                .expect("extension dialog authorization store poisoned")
+                .remove(&key)
+                .context("dialog action was not authorized by a host invocation")?;
+            if expires_at <= now_ms() {
+                bail!("dialog action authorization expired");
+            }
+        }
         let entry = contribution
             .declaration
             .ui_entry
@@ -1026,9 +1142,25 @@ impl ExtensionService {
         sessions.insert(
             token.clone(),
             PendingCustomView {
+                label: label.clone(),
                 package_relative_path: contribution.package_relative_path,
+                extension_id: contribution.extension_id,
+                package_id: contribution.package_id,
+                package_sha256: contribution.sha256,
+                action_id: (contribution.declaration.kind == ContributionKind::Action)
+                    .then_some(contribution.id),
+                action_version: (contribution.declaration.kind == ContributionKind::Action)
+                    .then_some(contribution.version),
+                clip_id: clip_id.into(),
+                source_id: source_id.into(),
+                facet_id: facet_id.map(str::to_string),
+                effects: contribution.declaration.effects,
+                http_permissions: contribution.http_permissions,
+                credential_permissions: contribution.credential_permissions,
+                external_navigation_origins: contribution.external_navigation_origins,
+                providers: contribution.providers,
                 context_script: (format!(
-                    "window.ClipsX=Object.freeze({{context:Object.freeze({})}});",
+                    "window.ClipsX={{context:Object.freeze({})}};",
                     serde_json::to_string(&json!({
                         "representation": {
                             "formatKey": source.format_key,
@@ -1051,9 +1183,7 @@ impl ExtensionService {
                         "locale": "en",
                     }))?
                 )
-                + &format!(
-                    "window.ClipsX.openDialog=()=>location.assign('clipsx-extension-bridge://{token}/open-dialog');window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');"
-                ))
+                + &format!("const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;window.ClipsX.https=(request)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'https',request}}}});window.ClipsX.openExternal=(url)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'open_external',url}}}});window.ClipsX.generateText=(prompt)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'generation_text',prompt}}}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'submit_output',mimeType,text,disposition}}}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');window.ClipsX=Object.freeze(window.ClipsX);"))
                 .into_bytes(),
                 expires_at: now_ms() + 60 * 60 * 1000,
             },
@@ -1102,6 +1232,160 @@ impl ExtensionService {
             .lock()
             .expect("extension custom view store poisoned")
             .remove(token);
+    }
+
+    pub async fn bridge_request(
+        &self,
+        repo: &HistoryRepository,
+        webview_label: &str,
+        token: &str,
+        request: BridgeRequest,
+    ) -> Result<BridgeOutcome> {
+        let session = self
+            .custom_views
+            .lock()
+            .expect("extension custom view store poisoned")
+            .get(token)
+            .filter(|session| session.expires_at > now_ms() && session.label == webview_label)
+            .cloned()
+            .context("extension bridge session is invalid, expired, or spoofed")?;
+        let action_id = session
+            .action_id
+            .clone()
+            .context("detail views cannot invoke extension capabilities")?;
+        match request {
+            BridgeRequest::Https { request } => {
+                let url =
+                    url::Url::parse(&request.url).context("extension HTTPS URL is invalid")?;
+                let permission = session
+                    .http_permissions
+                    .iter()
+                    .find(|permission| {
+                        url::Url::parse(&permission.origin)
+                            .map(|declared| declared.origin() == url.origin())
+                            .unwrap_or(false)
+                    })
+                    .context("extension HTTPS origin is not declared")?;
+                let granted = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM extension_permission_grants WHERE extension_id=? AND package_sha256=? AND permission_kind='http' AND permission_value=?",
+                )
+                .bind(&session.extension_id)
+                .bind(&session.package_sha256)
+                .bind(&permission.origin)
+                .fetch_one(&repo.pool)
+                .await?;
+                if granted != 1 {
+                    bail!("extension HTTPS consent is missing for this package release");
+                }
+                let mut injected_headers = std::collections::BTreeMap::new();
+                let mut injected_secrets = Vec::new();
+                for credential in session.credential_permissions.iter().filter(|credential| {
+                    credential
+                        .http_origin
+                        .eq_ignore_ascii_case(&permission.origin)
+                }) {
+                    let value =
+                        match extension_credential_entry(&session.package_id, &credential.id)?
+                            .get_password()
+                        {
+                            Ok(value) => value,
+                            Err(keyring::Error::NoEntry) => continue,
+                            Err(error) => return Err(error.into()),
+                        };
+                    injected_secrets.push(value.as_bytes().to_vec());
+                    match credential.placement.as_str() {
+                        "authorization_bearer" => {
+                            injected_headers
+                                .insert("authorization".into(), format!("Bearer {value}"));
+                        }
+                        "header" => {
+                            injected_headers.insert(
+                                credential
+                                    .header_name
+                                    .clone()
+                                    .context("credential header name is missing")?,
+                                value,
+                            );
+                        }
+                        _ => bail!("unsupported credential injection placement"),
+                    }
+                }
+                let response = super::broker::https(permission, request, injected_headers).await?;
+                if contains_protected_secret(&response.body, &injected_secrets) {
+                    bail!("extension HTTPS response reflected a protected credential");
+                }
+                Ok(BridgeOutcome::Https(response))
+            }
+            BridgeRequest::OpenExternal { url } => {
+                let parsed =
+                    url::Url::parse(&url).context("extension navigation URL is invalid")?;
+                let origin = parsed.origin().ascii_serialization();
+                if parsed.scheme() != "https"
+                    || !session
+                        .external_navigation_origins
+                        .iter()
+                        .any(|declared| declared.eq_ignore_ascii_case(&origin))
+                {
+                    bail!("extension navigation is outside its declared origins");
+                }
+                let granted = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM extension_permission_grants WHERE extension_id=? AND package_sha256=? AND permission_kind='external_navigation' AND permission_value=?",
+                )
+                .bind(&session.extension_id)
+                .bind(&session.package_sha256)
+                .bind(&origin)
+                .fetch_one(&repo.pool)
+                .await?;
+                if granted != 1 {
+                    bail!("extension navigation consent is missing for this package release");
+                }
+                Ok(BridgeOutcome::OpenExternal(url))
+            }
+            BridgeRequest::GenerationText { prompt } => {
+                if !session
+                    .providers
+                    .iter()
+                    .any(|value| value == "generation.text")
+                {
+                    bail!("extension did not declare generation.text");
+                }
+                if prompt.len() > 1024 * 1024 {
+                    bail!("generation prompt exceeds 1 MiB");
+                }
+                bail!("generation.text provider is unavailable")
+            }
+            BridgeRequest::SubmitOutput {
+                mime_type,
+                text,
+                disposition,
+            } => {
+                let effect = disposition_effect(disposition);
+                if !session.effects.contains(&effect) || text.len() > 10 * 1024 * 1024 {
+                    bail!("extension output is undeclared or exceeds host limits");
+                }
+                if !valid_output_mime_type(&mime_type) {
+                    bail!("extension output MIME type is invalid");
+                }
+                Ok(BridgeOutcome::Output {
+                    outputs: vec![CapturedRepresentation {
+                        format_key: format!("mime:{mime_type}"),
+                        canonical_mime_type: Some(mime_type),
+                        native_type: None,
+                        platform: platform().into(),
+                        capture_priority: 10,
+                        payload: CapturedPayload::Text(text),
+                    }],
+                    disposition,
+                    action_id,
+                    version: session
+                        .action_version
+                        .context("dialog action version is missing")?,
+                    clip_id: session.clip_id,
+                    source_id: session.source_id,
+                    facet_id: session.facet_id,
+                })
+            }
+        }
     }
 
     pub async fn package_settings(
@@ -1347,27 +1631,36 @@ impl ExtensionService {
         repo: &HistoryRepository,
         contribution: &ActiveContribution,
     ) -> Result<bool> {
-        if !contribution
+        let needs_navigation = contribution
             .declaration
             .effects
-            .contains(&ActionEffect::OpenHttpsUrl)
-        {
+            .contains(&ActionEffect::OpenHttpsUrl);
+        let needs_http = !contribution.http_permissions.is_empty();
+        if !needs_navigation && !needs_http {
             return Ok(false);
         }
-        if contribution.external_navigation_origins.is_empty() {
+        if needs_navigation && contribution.external_navigation_origins.is_empty() {
             return Ok(true);
         }
-        let granted = sqlx::query_scalar::<_, String>(
-            "SELECT permission_value FROM extension_permission_grants WHERE extension_id=? AND package_sha256=? AND permission_kind='external_navigation'",
+        let rows = sqlx::query(
+            "SELECT permission_kind,permission_value FROM extension_permission_grants WHERE extension_id=? AND package_sha256=?",
         )
         .bind(&contribution.extension_id)
         .bind(&contribution.sha256)
         .fetch_all(&repo.pool)
         .await?;
+        let grants = rows
+            .into_iter()
+            .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+            .collect::<std::collections::BTreeSet<_>>();
         Ok(contribution
             .external_navigation_origins
             .iter()
-            .any(|origin| !granted.contains(origin)))
+            .any(|origin| !grants.contains(&("external_navigation".into(), origin.clone())))
+            || contribution
+                .http_permissions
+                .iter()
+                .any(|permission| !grants.contains(&("http".into(), permission.origin.clone()))))
     }
 
     fn consume_invocation(
@@ -1421,7 +1714,21 @@ impl ExtensionService {
         source: &CapturedRepresentation,
         facet: Option<crate::contributions::FacetDescriptor>,
     ) -> Result<ExtensionActionState> {
-        if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
+        if contribution
+            .providers
+            .iter()
+            .any(|provider| provider == "generation.text")
+        {
+            return Ok(ExtensionActionState::Disabled(
+                "Text generation provider is not configured in this build".into(),
+            ));
+        }
+        if contribution.declaration.execution == ExecutionClass::CapabilityBacked
+            && !matches!(
+                contribution.declaration.handler,
+                Some(ActionHandler::Dialog)
+            )
+        {
             return Ok(ExtensionActionState::Disabled(
                 "The extension network broker is not available in this build".into(),
             ));
@@ -1991,6 +2298,32 @@ fn disposition_effect(value: ActionDisposition) -> ActionEffect {
     }
 }
 
+fn valid_output_mime_type(value: &str) -> bool {
+    let Some((kind, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    !kind.is_empty()
+        && !subtype.is_empty()
+        && value.len() <= 200
+        && !subtype.contains('/')
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-' | b'/'
+                )
+        })
+}
+
+fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
+    secrets.iter().any(|secret| {
+        !secret.is_empty()
+            && body
+                .windows(secret.len())
+                .any(|candidate| candidate == secret)
+    })
+}
+
 fn merge_parameters(
     mut preset: serde_json::Value,
     supplied: serde_json::Value,
@@ -2367,6 +2700,21 @@ fn extension_credential_entry(package_id: &str, credential_id: &str) -> Result<k
     .map_err(Into::into)
 }
 
+fn dialog_authorization_key(
+    action_id: &str,
+    clip_id: &str,
+    source_id: &str,
+    facet_id: Option<&str>,
+) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        action_id,
+        clip_id,
+        source_id,
+        facet_id.unwrap_or_default()
+    )
+}
+
 async fn download_release(entry: &RegistryPackage) -> Result<Vec<u8>> {
     super::packages::validate_release_url(&entry.release_url)?;
     let client = Client::builder()
@@ -2480,5 +2828,21 @@ mod tests {
             &input(),
         );
         assert!(invalid_thumbnail.is_err());
+    }
+
+    #[test]
+    fn bridge_outputs_require_strict_mime_types_and_do_not_reflect_secrets() {
+        assert!(valid_output_mime_type("application/json"));
+        assert!(valid_output_mime_type("text/plain"));
+        assert!(!valid_output_mime_type("text/plain\r\nx-evil: yes"));
+        assert!(!valid_output_mime_type("text/plain/extra"));
+        assert!(contains_protected_secret(
+            b"authorization: secret-token",
+            &[b"secret-token".to_vec()]
+        ));
+        assert!(!contains_protected_secret(
+            b"ordinary response",
+            &[b"secret-token".to_vec()]
+        ));
     }
 }

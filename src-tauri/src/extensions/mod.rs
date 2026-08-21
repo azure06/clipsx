@@ -7,6 +7,8 @@ mod packages;
 mod runtime;
 mod service;
 
+pub use broker::{BrokerHttpRequest, BrokerHttpResponse};
+
 #[allow(unused_imports)]
 pub use manifest::{
     ActionDisposition, ActionEffect, ActionHandler, ActionPlacement, ContributionKind,
@@ -24,8 +26,8 @@ pub use runtime::{
     ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
 };
 pub use service::{
-    ActionInvocation, ActionOutcome, ContextActionDescriptor, CredentialStatus, CustomViewSession,
-    ExtensionService,
+    ActionInvocation, ActionOutcome, BridgeOutcome, BridgeRequest, ContextActionDescriptor,
+    CredentialStatus, CustomViewSession, ExtensionService,
 };
 
 use serde::{Deserialize, Serialize};

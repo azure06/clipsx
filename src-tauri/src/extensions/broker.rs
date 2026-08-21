@@ -35,6 +35,7 @@ pub struct BrokerHttpResponse {
 pub async fn https(
     permission: &HttpPermission,
     request: BrokerHttpRequest,
+    injected_headers: BTreeMap<String, String>,
 ) -> Result<BrokerHttpResponse> {
     let url = Url::parse(&request.url).context("extension HTTPS URL is invalid")?;
     validate_request(permission, &request, &url)?;
@@ -58,6 +59,9 @@ pub async fn https(
     let method = Method::from_bytes(request.method.as_bytes())?;
     let mut outgoing = client.request(method, url);
     for (name, value) in request.headers {
+        outgoing = outgoing.header(name, value);
+    }
+    for (name, value) in injected_headers {
         outgoing = outgoing.header(name, value);
     }
     let response = outgoing.body(request.body).send().await?;

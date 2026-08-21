@@ -68,26 +68,32 @@ navigation/popups/downloads/direct network access, no inherited Tauri
 capabilities, and teardown on deselection/close. Compact rows, toolbar chrome,
 and permission prompts remain host-rendered.
 
-The typed bridge exposes selected representation/facet, theme/locale/nonsecret
-settings, declared actions/dialogs, and output submission. Navigation, HTTPS,
+The scoped bridge exposes selected representation/facet, theme/locale/nonsecret
+settings, `https`, `openExternal`, `generateText`, `submitText`, and `close`.
+Only a host-rendered action can create a privileged dialog session; detail views
+cannot invoke capabilities or mint dialog authorization. Navigation, HTTPS,
 credentials, provider generation, settings, and outputs all pass through the
-same host broker. HTTPS is exact-origin HTTPS only; redirects and
+same Rust broker. HTTPS is exact-origin HTTPS only; redirects and
 private/loopback/link-local/metadata destinations are denied. Secrets remain in
-the OS credential store. `generation.text` is an abstract provider capability;
+the OS credential store and may be injected only into a declared header for one
+declared HTTP origin; secret values are never returned to UI or WASM.
+`generation.text` is an abstract provider capability;
 local Ollama support will be supplied by a host-owned adapter, never direct
 localhost access from an extension.
 
 The broker requires both a remembered checksum-bound grant and a short-lived
 host-issued invocation token before selected clip data can leave ClipsX.
 
-The current implementation exposes selected representation/facet context and
-offline detail/dialog lifecycle. External-navigation actions already use
-checksum grants and one-shot invocation tokens. The HTTPS broker policy and
-request executor are implemented and tested, but guest adapters, credential
-injection, nonsecret settings, output submission from custom UI, and
-`generation.text` remain unavailable until their end-to-end authorization tests
-land. Capability-backed contributions therefore report a disabled reason rather
-than receiving partial access. See the [threat model](EXTENSION_THREAT_MODEL.md).
+The implementation routes normal application IPC only to the primary webview;
+extension child webviews receive only the session-authenticated bridge command.
+Dialog-lifetime sessions are bound to package checksum, contribution, selected
+clip/source, child label, and an unguessable token. HTTPS, external navigation,
+credential injection, nonsecret settings, and bounded output submission are
+implemented for explicit dialog actions. Output is cached through the normal
+transform boundary before preview, copy, paste, or save-as-new-clip. The
+`generation.text` contract is declared and reports an unavailable reason until
+the host-owned generation adapter is installed. WASM HTTP/provider adapters are
+not yet exposed. See the [threat model](EXTENSION_THREAT_MODEL.md).
 
 ## Acceptance examples
 
@@ -95,6 +101,8 @@ than receiving partial access. See the [threat model](EXTENSION_THREAT_MODEL.md)
 size-limited actions, SVG icons, declared navigation, and first-use consent.
 `examples/extensions/mermaid-viewer` demonstrates offline detection, bundled
 detail/dialog UI, source fallback, and no network permission.
+`examples/extensions/text-api` demonstrates a consented custom dialog, exact
+origin/path/method HTTPS access, and copy/save output through the host bridge.
 
 Versioned installable archives and checksums are published in
 [`examples/extensions/packages`](../examples/extensions/packages/README.md).

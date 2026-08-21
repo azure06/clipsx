@@ -214,7 +214,10 @@ pub struct HttpPermission {
 pub struct CredentialPermission {
     pub id: String,
     pub label: String,
+    pub http_origin: String,
     pub placement: String,
+    #[serde(default)]
+    pub header_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,8 +424,9 @@ impl ExtensionManifest {
         }
         if contribution.execution == ExecutionClass::CapabilityBacked
             && self.permissions.http.is_empty()
+            && self.permissions.providers.is_empty()
         {
-            bail!("capability-backed contributions require an HTTP permission declaration");
+            bail!("capability-backed contributions require an HTTP or provider permission declaration");
         }
         if contribution.execution == ExecutionClass::CapabilityBacked
             && matches!(
@@ -521,8 +525,16 @@ impl ExtensionManifest {
                 || credential.placement.len() > 120
                 || !matches!(
                     credential.placement.as_str(),
-                    "authorization_bearer" | "header" | "query"
+                    "authorization_bearer" | "header"
                 )
+                || !origins.contains(&credential.http_origin.to_ascii_lowercase())
+                || (credential.placement == "authorization_bearer"
+                    && credential.header_name.is_some())
+                || (credential.placement == "header"
+                    && !credential
+                        .header_name
+                        .as_deref()
+                        .is_some_and(valid_credential_header))
                 || !credentials.insert(&credential.id)
             {
                 bail!("credential permission is invalid");
@@ -557,6 +569,18 @@ impl ExtensionManifest {
     pub fn qualified_contribution_id(&self, local_id: &str) -> String {
         format!("{}/{}", self.package_id, local_id)
     }
+}
+
+fn valid_credential_header(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+        && !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "host" | "cookie" | "content-length" | "content-type" | "accept" | "origin" | "referer"
+        )
 }
 
 fn valid_ui_path(value: &str) -> Result<()> {
@@ -705,6 +729,45 @@ mod tests {
         assert!(value.validate().is_ok());
         value.permissions.http[0].origin = "http://localhost:8080".into();
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn credentials_are_bound_to_declared_origins_and_safe_headers() {
+        let mut value = manifest(contribution(ContributionKind::Transformer));
+        value.permissions.http.push(HttpPermission {
+            origin: "https://api.example.com".into(),
+            path_patterns: vec!["/v1/*".into()],
+            methods: vec!["POST".into()],
+            max_request_bytes: 1024,
+            max_response_bytes: 2048,
+            timeout_ms: 1_000,
+        });
+        value.permissions.credentials.push(CredentialPermission {
+            id: "api-key".into(),
+            label: "API key".into(),
+            http_origin: "https://api.example.com".into(),
+            placement: "header".into(),
+            header_name: Some("x-api-key".into()),
+        });
+        assert!(value.validate().is_ok(), "{:?}", value.validate());
+        value.permissions.credentials[0].header_name = Some("cookie".into());
+        assert!(value.validate().is_err());
+        value.permissions.credentials[0].header_name = Some("x-api-key".into());
+        value.permissions.credentials[0].http_origin = "https://evil.example".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn generation_contract_does_not_require_direct_http_access() {
+        let mut action = contribution(ContributionKind::Action);
+        action.execution = ExecutionClass::CapabilityBacked;
+        action.handler = Some(ActionHandler::Dialog);
+        action.effects = vec![ActionEffect::OpenDialog];
+        action.ui_surfaces = vec![UiSurface::Dialog];
+        action.ui_entry = Some("ui/index.html".into());
+        let mut value = manifest(action);
+        value.permissions.providers.push("generation.text".into());
+        assert!(value.validate().is_ok());
     }
 
     #[test]
