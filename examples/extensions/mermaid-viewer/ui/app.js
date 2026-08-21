@@ -3,13 +3,10 @@
   const source = window.ClipsX?.context?.representation?.text ?? ''
   const sourceElement = document.querySelector('#source')
   const diagram = document.querySelector('#diagram')
-  const expand = document.querySelector('#expand')
   const close = document.querySelector('#close')
   sourceElement.textContent = source
   const isDialog = window.ClipsX?.context?.surface === 'dialog'
-  expand.hidden = isDialog
   close.hidden = !isDialog
-  expand.addEventListener('click', () => window.ClipsX.openDialog())
   close.addEventListener('click', () => window.ClipsX.close())
 
   window.mermaid.initialize({

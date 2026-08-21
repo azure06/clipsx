@@ -28,3 +28,17 @@ uiSurfaces = ["detail", "dialog"]
 
 [[contributions.matchers]]
 facetIds = ["example.mermaid-viewer.mermaid"]
+
+[[contributions]]
+id = "open-mermaid-dialog"
+kind = "action"
+displayName = "Open Mermaid diagram"
+iconAsset = "icons/mermaid.svg"
+placements = ["action_menu"]
+effects = ["open_dialog"]
+handler = { kind = "dialog" }
+uiSurfaces = ["dialog"]
+uiEntry = "ui/index.html"
+
+[[contributions.matchers]]
+facetIds = ["example.mermaid-viewer.mermaid"]

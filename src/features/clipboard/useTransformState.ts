@@ -43,6 +43,7 @@ type ContextActionRunResponse =
     }
   | { kind: 'open_https_url'; url: string }
   | { kind: 'notification'; level: string; message: string }
+  | { kind: 'open_dialog' }
 
 export const useTransformState = ({
   clipId,
@@ -157,6 +158,23 @@ export const useTransformState = ({
           window.dispatchEvent(
             new CustomEvent('clipsx-extension-action-notification', { detail: result })
           )
+          setActiveTransformer(null)
+          return
+        }
+        if (result.kind === 'open_dialog') {
+          const width = Math.min(Math.max(window.innerWidth - 48, 320), 960)
+          const height = Math.min(Math.max(window.innerHeight - 96, 240), 720)
+          await invoke('open_extension_custom_view', {
+            rendererId: action.id,
+            clipId,
+            sourceId,
+            facetId: basePresentation?.activeView.facetId ?? null,
+            surface: 'dialog',
+            x: Math.max(24, (window.innerWidth - width) / 2),
+            y: Math.max(48, (window.innerHeight - height) / 2),
+            width,
+            height,
+          })
           setActiveTransformer(null)
           return
         }

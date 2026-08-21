@@ -82,6 +82,7 @@ enum ContextActionRunResponse {
         level: String,
         message: String,
     },
+    OpenDialog,
 }
 
 #[derive(Clone, Serialize)]
@@ -984,6 +985,7 @@ async fn run_context_action(
             );
             Ok(ContextActionRunResponse::Notification { level, message })
         }
+        crate::extensions::ActionOutcome::OpenDialog => Ok(ContextActionRunResponse::OpenDialog),
     }
 }
 

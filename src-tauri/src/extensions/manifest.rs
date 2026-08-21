@@ -69,6 +69,7 @@ pub enum ActionEffect {
     SaveAsClip,
     OpenHttpsUrl,
     Notification,
+    OpenDialog,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,6 +89,7 @@ pub enum ActionDisposition {
 )]
 pub enum ActionHandler {
     Guest,
+    Dialog,
     TransformerPreset {
         transformer_id: String,
         #[serde(default = "empty_object")]
@@ -374,6 +376,12 @@ impl ExtensionManifest {
                     if !valid {
                         bail!("action references an unknown local transformer");
                     }
+                }
+                if matches!(contribution.handler, Some(ActionHandler::Dialog))
+                    && (!contribution.effects.contains(&ActionEffect::OpenDialog)
+                        || !contribution.ui_surfaces.contains(&UiSurface::Dialog))
+                {
+                    bail!("dialog actions require open_dialog and a dialog UI surface");
                 }
             }
             ContributionKind::Detector | ContributionKind::Transformer => {
@@ -725,5 +733,17 @@ mod tests {
         assert!(value.validate().is_ok());
         value.settings[0].default = Value::Bool(true);
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn dialog_actions_require_the_host_open_dialog_contract() {
+        let mut action = contribution(ContributionKind::Action);
+        action.handler = Some(ActionHandler::Dialog);
+        action.effects = vec![ActionEffect::OpenDialog];
+        action.ui_surfaces = vec![UiSurface::Dialog];
+        action.ui_entry = Some("ui/index.html".into());
+        assert!(manifest(action.clone()).validate().is_ok());
+        action.ui_surfaces.clear();
+        assert!(manifest(action).validate().is_err());
     }
 }

@@ -74,6 +74,7 @@ pub enum ActionOutcome {
         level: String,
         message: String,
     },
+    OpenDialog,
 }
 
 #[derive(Debug, Clone)]
@@ -848,6 +849,7 @@ impl ExtensionService {
             .clone()
             .context("action handler is missing")?
         {
+            ActionHandler::Dialog => ActionOutcome::OpenDialog,
             ActionHandler::TransformerPreset {
                 transformer_id,
                 parameters: preset,
@@ -988,10 +990,18 @@ impl ExtensionService {
             .active_contributions(repo, ContributionKind::Renderer)
             .await?
             .into_iter()
+            .chain(
+                self.active_contributions(repo, ContributionKind::Action)
+                    .await?
+                    .into_iter(),
+            )
             .find(|item| {
                 item.id == renderer_id
                     && accepts(&item.declaration, &source, facet_id)
                     && item.declaration.ui_surfaces.contains(&surface)
+                    && (item.declaration.kind == ContributionKind::Renderer
+                        || (surface == UiSurface::Dialog
+                            && matches!(item.declaration.handler, Some(ActionHandler::Dialog))))
             })
             .context("custom extension detail view is unavailable")?;
         let entry = contribution
@@ -1968,6 +1978,7 @@ fn action_effect_name(value: ActionEffect) -> &'static str {
         ActionEffect::SaveAsClip => "save_as_clip",
         ActionEffect::OpenHttpsUrl => "open_https_url",
         ActionEffect::Notification => "notification",
+        ActionEffect::OpenDialog => "open_dialog",
     }
 }
 
@@ -2051,6 +2062,7 @@ fn validate_action_outcome(
             }
             ActionEffect::Notification
         }
+        ActionOutcome::OpenDialog => ActionEffect::OpenDialog,
     };
     if !contribution.declaration.effects.contains(&effect) {
         bail!("extension action requested an undeclared effect");
