@@ -32,6 +32,10 @@ pub struct TransformerDescriptor {
     pub parameter_schema: Value,
     pub input_limit_bytes: usize,
     pub timeout_ms: u64,
+    pub execution: String,
+    pub consent_required: bool,
+    pub http_origins: Vec<String>,
+    pub providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +138,10 @@ impl TransformerContribution for BuiltinTransformer {
             parameter_schema: self.schema.clone(),
             input_limit_bytes: MAX_INPUT_BYTES,
             timeout_ms: 100,
+            execution: "local".into(),
+            consent_required: false,
+            http_origins: vec![],
+            providers: vec![],
         }
     }
     fn accepts(&self, input: &CapturedRepresentation) -> bool {

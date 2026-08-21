@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -10,7 +10,7 @@ use bindings::Extension;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use wasmtime::{
-    component::{Component, Linker},
+    component::{Component, HasSelf, Linker},
     Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
 };
 
@@ -18,12 +18,18 @@ mod bindings {
     wasmtime::component::bindgen!({
         path: "wit",
         world: "extension",
+        imports: { default: async },
         exports: { default: async },
     });
 }
 
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const TABLE_ELEMENTS_LIMIT: usize = 10_000;
+// wit-component's no-WASI wrapper for this world uses a bounded set of core
+// instances and canonical-ABI tables around one guest memory.
+const CORE_INSTANCE_LIMIT: usize = 5;
+const CORE_TABLE_LIMIT: usize = 2;
+const CORE_MEMORY_LIMIT: usize = 1;
 const DETECT_RENDER_FUEL: u64 = 10_000_000;
 const TRANSFORM_FUEL: u64 = 50_000_000;
 
@@ -137,6 +143,92 @@ pub enum ExtensionActionState {
 
 struct StoreData {
     limits: StoreLimits,
+    broker: Option<RuntimeBrokerContext>,
+}
+
+#[derive(Clone)]
+pub struct RuntimeBrokerContext {
+    pub repo: crate::history::HistoryRepository,
+    pub http_permissions: Vec<super::manifest::HttpPermission>,
+    pub injected_headers: BTreeMap<String, BTreeMap<String, String>>,
+    pub protected_secrets: Vec<Vec<u8>>,
+    pub generation_allowed: bool,
+}
+
+impl bindings::clipsx::extension::broker::Host for StoreData {
+    async fn https(
+        &mut self,
+        request: bindings::clipsx::extension::broker::HttpRequest,
+    ) -> std::result::Result<bindings::clipsx::extension::broker::HttpResponse, String> {
+        let context = self
+            .broker
+            .clone()
+            .ok_or_else(|| "broker capability is unavailable for this invocation".to_string())?;
+        let parsed = url::Url::parse(&request.url)
+            .map_err(|_| "extension HTTPS URL is invalid".to_string())?;
+        let permission = context
+            .http_permissions
+            .iter()
+            .find(|permission| {
+                url::Url::parse(&permission.origin)
+                    .map(|declared| declared.origin() == parsed.origin())
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| "extension HTTPS origin is not declared".to_string())?;
+        let headers = request
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value))
+            .collect();
+        let response = super::broker::https(
+            permission,
+            super::BrokerHttpRequest {
+                url: request.url,
+                method: request.method,
+                headers,
+                body: request.body,
+            },
+            context
+                .injected_headers
+                .get(&permission.origin)
+                .cloned()
+                .unwrap_or_default(),
+        )
+        .await
+        .map_err(|error| bounded_error(&error))?;
+        if contains_protected_secret(&response.body, &context.protected_secrets) {
+            return Err("extension HTTPS response reflected a protected credential".into());
+        }
+        Ok(bindings::clipsx::extension::broker::HttpResponse {
+            status: response.status,
+            content_type: response.content_type,
+            body: response.body,
+        })
+    }
+
+    async fn generate_text(&mut self, prompt: String) -> std::result::Result<String, String> {
+        let context = self
+            .broker
+            .clone()
+            .filter(|context| context.generation_allowed)
+            .ok_or_else(|| "generation.text is unavailable for this invocation".to_string())?;
+        crate::providers::generation::generate(&context.repo, &prompt)
+            .await
+            .map_err(|error| bounded_error(&error))
+    }
+}
+
+fn bounded_error(error: &anyhow::Error) -> String {
+    error.to_string().chars().take(512).collect()
+}
+
+fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
+    secrets.iter().any(|secret| {
+        !secret.is_empty()
+            && body
+                .windows(secret.len())
+                .any(|candidate| candidate == secret.as_slice())
+    })
 }
 
 /// Component runtime with an empty linker. An extension gets no WASI or
@@ -207,7 +299,7 @@ impl ExtensionRuntime {
         input: ExtensionRepresentation,
     ) -> Result<Vec<ExtensionFacet>> {
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100))
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
             .await?;
         let result = timeout(
             Duration::from_millis(100),
@@ -237,7 +329,7 @@ impl ExtensionRuntime {
         facet: Option<ExtensionFacet>,
     ) -> Result<ExtensionRenderModel> {
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(250))
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(250), None)
             .await?;
         let result = timeout(
             Duration::from_millis(250),
@@ -262,7 +354,7 @@ impl ExtensionRuntime {
         facet: Option<ExtensionFacet>,
     ) -> Result<ExtensionCompactModel> {
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100))
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
             .await?;
         let result = timeout(
             Duration::from_millis(100),
@@ -285,12 +377,18 @@ impl ExtensionRuntime {
         contribution_id: &str,
         input: ExtensionRepresentation,
         parameters_json: String,
+        broker: Option<RuntimeBrokerContext>,
     ) -> Result<Vec<ExtensionOutputRepresentation>> {
+        let deadline = if broker.is_some() {
+            Duration::from_secs(125)
+        } else {
+            Duration::from_millis(500)
+        };
         let (mut store, instance) = self
-            .binding_instance(sha256, TRANSFORM_FUEL, Duration::from_millis(500))
+            .binding_instance(sha256, TRANSFORM_FUEL, deadline, broker)
             .await?;
         let result = timeout(
-            Duration::from_millis(500),
+            deadline,
             instance.call_transform(
                 &mut store,
                 contribution_id,
@@ -313,12 +411,18 @@ impl ExtensionRuntime {
         input: ExtensionRepresentation,
         facet: Option<ExtensionFacet>,
         parameters_json: String,
+        broker: Option<RuntimeBrokerContext>,
     ) -> Result<ExtensionActionResult> {
+        let deadline = if broker.is_some() {
+            Duration::from_secs(125)
+        } else {
+            Duration::from_millis(500)
+        };
         let (mut store, instance) = self
-            .binding_instance(sha256, TRANSFORM_FUEL, Duration::from_millis(500))
+            .binding_instance(sha256, TRANSFORM_FUEL, deadline, broker)
             .await?;
         let result = timeout(
-            Duration::from_millis(500),
+            deadline,
             instance.call_run_action(
                 &mut store,
                 contribution_id,
@@ -342,7 +446,7 @@ impl ExtensionRuntime {
         settings_json: String,
     ) -> Result<ExtensionActionState> {
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100))
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
             .await?;
         let result = timeout(
             Duration::from_millis(100),
@@ -365,12 +469,18 @@ impl ExtensionRuntime {
         sha256: &str,
         fuel: u64,
         deadline: Duration,
+        broker: Option<RuntimeBrokerContext>,
     ) -> Result<(Store<StoreData>, Extension)> {
         let component = self
             .component(sha256)
             .context("extension component is not loaded")?;
-        let mut store = new_store(&self.engine, fuel)?;
-        let linker = Linker::<StoreData>::new(&self.engine);
+        let mut store = new_store(&self.engine, fuel, broker)?;
+        let mut linker = Linker::<StoreData>::new(&self.engine);
+        bindings::clipsx::extension::broker::add_to_linker::<StoreData, HasSelf<StoreData>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(wasmtime_error)?;
         let instance = timeout(
             deadline,
             Extension::instantiate_async(&mut store, &component, &linker),
@@ -382,8 +492,13 @@ impl ExtensionRuntime {
     }
 
     async fn instantiate(&self, component: Component, fuel: u64, deadline: Duration) -> Result<()> {
-        let mut store = new_store(&self.engine, fuel)?;
-        let linker = Linker::<StoreData>::new(&self.engine);
+        let mut store = new_store(&self.engine, fuel, None)?;
+        let mut linker = Linker::<StoreData>::new(&self.engine);
+        bindings::clipsx::extension::broker::add_to_linker::<StoreData, HasSelf<StoreData>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(wasmtime_error)?;
         timeout(
             deadline,
             Extension::instantiate_async(&mut store, &component, &linker),
@@ -395,25 +510,33 @@ impl ExtensionRuntime {
     }
 }
 
-fn new_store(engine: &Engine, fuel: u64) -> Result<Store<StoreData>> {
+fn new_store(
+    engine: &Engine,
+    fuel: u64,
+    broker: Option<RuntimeBrokerContext>,
+) -> Result<Store<StoreData>> {
     let mut store = Store::new(
         engine,
         StoreData {
             limits: StoreLimitsBuilder::new()
                 .memory_size(MEMORY_LIMIT)
                 .table_elements(TABLE_ELEMENTS_LIMIT)
-                .memories(1)
-                .tables(1)
-                .instances(1)
+                .memories(CORE_MEMORY_LIMIT)
+                .tables(CORE_TABLE_LIMIT)
+                .instances(CORE_INSTANCE_LIMIT)
                 .trap_on_grow_failure(true)
                 .build(),
+            broker,
         },
     );
     store.limiter(|state| &mut state.limits);
     store.set_fuel(fuel).map_err(wasmtime_error)?;
     store.set_hostcall_fuel(1024 * 1024);
     store.set_epoch_deadline(1);
-    store.epoch_deadline_trap();
+    // Yield every epoch so Tokio can enforce the invocation's outer timeout.
+    // Trapping here would expire while an async broker call is legitimately
+    // waiting and then kill the guest as soon as that host call returns.
+    store.epoch_deadline_async_yield_and_update(1);
     Ok(store)
 }
 
@@ -563,4 +686,78 @@ fn from_wit_action_state(
 
 fn wasmtime_error(error: wasmtime::Error) -> anyhow::Error {
     anyhow!(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{io::Read, time::Duration};
+
+    use super::{
+        contains_protected_secret, to_wit_representation, ExtensionContent,
+        ExtensionRepresentation, ExtensionRuntime, DETECT_RENDER_FUEL,
+    };
+    use wasmtime::component::Component;
+    use zip::ZipArchive;
+
+    #[test]
+    fn credential_reflection_check_is_exact_and_ignores_empty_values() {
+        let secrets = vec![Vec::new(), b"token-value".to_vec()];
+        assert!(contains_protected_secret(
+            b"{\"authorization\":\"token-value\"}",
+            &secrets
+        ));
+        assert!(!contains_protected_secret(b"safe response", &secrets));
+    }
+
+    #[tokio::test]
+    async fn downloadable_no_wasi_component_fits_runtime_limits() {
+        let archive =
+            include_bytes!("../../../examples/extensions/packages/ask-local-ai-1.0.0.clipsx");
+        let mut archive = ZipArchive::new(std::io::Cursor::new(archive)).unwrap();
+        let mut entry = archive.by_name("component.wasm").unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        drop(entry);
+
+        let runtime = ExtensionRuntime::new().unwrap();
+        let component = Component::new(&runtime.engine, bytes).unwrap();
+        runtime
+            .instantiate(
+                component.clone(),
+                DETECT_RENDER_FUEL,
+                Duration::from_millis(250),
+            )
+            .await
+            .unwrap();
+
+        runtime
+            .components
+            .lock()
+            .unwrap()
+            .insert("fixture".into(), component);
+        let (mut store, instance) = runtime
+            .binding_instance(
+                "fixture",
+                DETECT_RENDER_FUEL,
+                Duration::from_millis(250),
+                None,
+            )
+            .await
+            .unwrap();
+        runtime.engine.increment_epoch();
+        let input = to_wit_representation(ExtensionRepresentation {
+            format_key: "mime:text/plain".into(),
+            mime_type: Some("text/plain".into()),
+            storage_kind: "inline_text".into(),
+            content: ExtensionContent::Text("hello".into()),
+        });
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            instance.call_action_state(&mut store, "ask-local-ai", &input, None, "{}"),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    }
 }

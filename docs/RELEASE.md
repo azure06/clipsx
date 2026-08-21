@@ -17,8 +17,10 @@ adapter's supported-format contract changes.
   or compatibility reads for release convenience.
 - Advertise only capabilities demonstrated in installed builds.
 - Treat Windows OCR as unsupported until it is implemented and validated.
-- Do not imply Wayland, hosted providers, visual search, generation, Vault, or
-  remote sync support unless a later roadmap milestone explicitly delivers it.
+- Do not imply Wayland, hosted providers, visual search, additional generation
+  providers, Vault, or remote sync support unless a later roadmap milestone
+  explicitly delivers it. Local Ollama text generation is implemented, but may
+  be advertised only after this checklist validates it in installed builds.
 
 ## Required configuration and secrets
 
@@ -45,10 +47,26 @@ cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
 cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
-cargo build --manifest-path examples/extensions/color-tools/Cargo.toml --target wasm32-wasip2 --release
-cp examples/extensions/color-tools/target/wasm32-wasip2/release/clipsx_color_tools.wasm examples/extensions/color-tools/component.wasm
+cargo build --manifest-path examples/extensions/color-tools/Cargo.toml --target wasm32-unknown-unknown --release
+cargo build --manifest-path examples/extensions/ask-ai/Cargo.toml --target wasm32-unknown-unknown --release
+cargo build --manifest-path examples/extensions/ask-local-ai/Cargo.toml --target wasm32-unknown-unknown --release
+cargo build --manifest-path examples/extensions/mermaid-viewer/Cargo.toml --target wasm32-unknown-unknown --release
+cp examples/extensions/color-tools/target/wasm32-unknown-unknown/release/clipsx_color_tools.wasm examples/extensions/color-tools/component.wasm
+cp examples/extensions/ask-ai/target/wasm32-unknown-unknown/release/clipsx_ask_ai.wasm examples/extensions/ask-ai/component.wasm
+cp examples/extensions/ask-local-ai/target/wasm32-unknown-unknown/release/clipsx_ask_local_ai.wasm examples/extensions/ask-local-ai/component.wasm
+cp examples/extensions/mermaid-viewer/target/wasm32-unknown-unknown/release/clipsx_mermaid_viewer.wasm examples/extensions/mermaid-viewer/component.wasm
 npm run extension:pack -- examples/extensions/color-tools color-tools.clipsx
+npm run extension:pack -- examples/extensions/ask-ai ask-ai.clipsx
+npm run extension:pack -- examples/extensions/ask-local-ai ask-local-ai.clipsx
+npm run extension:pack -- examples/extensions/mermaid-viewer mermaid-viewer.clipsx
 npm run extension:validate -- color-tools.clipsx
+npm run extension:validate -- ask-ai.clipsx
+npm run extension:validate -- ask-local-ai.clipsx
+npm run extension:validate -- mermaid-viewer.clipsx
+npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/ask-local-ai-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/mermaid-viewer-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/text-api-1.0.0.clipsx
 ```
 
 The revision must also pass command-registration drift, schema/reset,
@@ -191,8 +209,18 @@ Wayland is not covered by this matrix.
   WASM; malformed output falls back to the core row.
 - Color Tools detail/compact swatch, HEX/RGB/HSL transforms, contextual Copy
   actions, selected-clip shortcut targeting, conflict handling, and cleanup.
-- Capability-backed contributions are visibly unavailable and local
-  contributions in the same package continue to work.
+- With local generation disabled, Ask Local AI is visibly disabled with a
+  provider reason while local contributions continue to work. After configuring
+  Ollama, consent once, run preview/copy/save, then update/disable the package
+  and verify the checksum-bound grant is revoked.
+- Ask AI enforces Unicode-safe URL limits; Mermaid Viewer renders hostile input
+  offline in isolated detail/dialog views; Text API cannot directly network,
+  redirect, reach private addresses, reflect credentials, open popups/downloads,
+  or retain a child view after deselection/close.
+- On Windows, macOS, and Linux/X11, verify extension child-view bounds, focus,
+  keyboard traversal, screen-reader labels, theme synchronization, teardown,
+  unresponsive-view recovery, and absence of inherited primary-webview Tauri
+  commands using the same signed revision.
 - A renderer, transformer, provider, extension, or OCR failure leaves canonical
   representations usable.
 - Accessibility and keyboard-only operation for history, previews, actions,

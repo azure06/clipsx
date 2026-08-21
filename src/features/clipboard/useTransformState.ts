@@ -3,15 +3,26 @@ import { useCallback, useEffect, useState } from 'react'
 import { executeClipboardOutput } from '../../shared/clipboardOutput'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { getPlatform, matchShortcut, parseAccelerator } from '../../shared/keyboard/shortcuts'
+import type { ParameterRequest } from './ContributionParametersDialog'
+import { schemaHasParameters } from './contributionParameters'
 
-export type Transformer = { id: string; label: string; version: string }
+export type Transformer = {
+  id: string
+  label: string
+  version: string
+  parameterSchema?: Record<string, unknown>
+  execution?: 'local' | 'capability_backed'
+  consentRequired?: boolean
+  httpOrigins?: string[]
+  providers?: string[]
+}
 export type TransformPreview = { resultId: string; model: RenderModel }
 
 export type TransformControls = {
   items: Transformer[]
   actions: ContextAction[]
-  run: (id: string) => Promise<void>
-  runAction: (id: string) => Promise<void>
+  run: (id: string, parameters?: Record<string, unknown>) => Promise<void>
+  runAction: (id: string, parameters?: Record<string, unknown>) => Promise<void>
   pinAction: (id: string, pinned: boolean) => Promise<void>
 }
 
@@ -32,6 +43,7 @@ export type ContextAction = {
   consentRequired: boolean
   externalNavigationOrigins: string[]
   httpOrigins: string[]
+  providers: string[]
 }
 
 type ActionInvocation = { token: string; expiresAt: number }
@@ -63,6 +75,7 @@ export const useTransformState = ({
   const [activeTransformer, setActiveTransformer] = useState<Transformer | null>(null)
   const [preview, setPreview] = useState<TransformPreview | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [parameterRequest, setParameterRequest] = useState<ParameterRequest | null>(null)
   const presentationKind = basePresentation?.activeView.presentationKind
 
   useEffect(() => {
@@ -93,19 +106,48 @@ export const useTransformState = ({
   }, [basePresentation?.activeView.facetId, presentationKind, clipId, sourceId])
 
   const run = useCallback(
-    async (id: string) => {
+    async (id: string, parameters?: Record<string, unknown>) => {
       const item = items.find(t => t.id === id)
       if (!item) return
+      if (parameters === undefined && schemaHasParameters(item.parameterSchema)) {
+        setParameterRequest({
+          kind: 'transformer',
+          id,
+          label: item.label,
+          schema: item.parameterSchema,
+        })
+        return
+      }
       setBusy(item.id)
       setActiveTransformer(item)
       setError(null)
       setPreview(null)
       try {
+        let invocationToken: string | null = null
+        if (item.execution === 'capability_backed') {
+          if (item.consentRequired) {
+            const destinations = [
+              ...(item.httpOrigins ?? []),
+              ...(item.providers ?? []).map(provider => `Host provider: ${provider}`),
+            ].join('\n')
+            const approved = window.confirm(
+              `${item.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
+            )
+            if (!approved) return
+            await invoke('grant_extension_transformer_permissions', { transformerId: item.id })
+          }
+          const invocation = await invoke<ActionInvocation>(
+            'issue_extension_transformer_invocation',
+            { transformerId: item.id, clipId, sourceId }
+          )
+          invocationToken = invocation.token
+        }
         const result = await invoke<TransformPreview>('create_transform_preview', {
           clipId,
           transformerId: item.id,
           sourceId,
-          parameters: {},
+          parameters: parameters ?? {},
+          invocationToken,
         })
         setPreview(result)
       } catch (value) {
@@ -118,20 +160,35 @@ export const useTransformState = ({
   )
 
   const runAction = useCallback(
-    async (id: string) => {
+    async (id: string, parameters?: Record<string, unknown>) => {
       const action = actions.find(item => item.id === id)
       if (!action || !action.available) return
+      if (parameters === undefined && schemaHasParameters(action.parameterSchema)) {
+        setParameterRequest({
+          kind: 'action',
+          id,
+          label: action.label,
+          schema: action.parameterSchema,
+        })
+        return
+      }
       setBusy(action.id)
       setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
       setError(null)
       setPreview(null)
       try {
         let invocationToken: string | null = null
-        if (action.effects.includes('open_https_url') || action.effects.includes('open_dialog')) {
+        if (
+          action.execution === 'capability_backed' ||
+          action.effects.includes('open_https_url') ||
+          action.effects.includes('open_dialog')
+        ) {
           if (action.consentRequired) {
-            const destinations = [...action.externalNavigationOrigins, ...action.httpOrigins].join(
-              '\n'
-            )
+            const destinations = [
+              ...action.externalNavigationOrigins,
+              ...action.httpOrigins,
+              ...action.providers.map(provider => `Host provider: ${provider}`),
+            ].join('\n')
             const approved = window.confirm(
               `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
             )
@@ -154,7 +211,7 @@ export const useTransformState = ({
           sourceId,
           facetId: basePresentation?.activeView.facetId ?? null,
           actionId: action.id,
-          parameters: {},
+          parameters: parameters ?? {},
           invocationToken,
         })
         if (result.kind === 'notification') {
@@ -256,6 +313,16 @@ export const useTransformState = ({
     activeTransformer,
     preview,
     error,
+    parameterRequest,
+    cancelParameterRequest: () => setParameterRequest(null),
+    submitParameters: (parameters: Record<string, unknown>) => {
+      const request = parameterRequest
+      setParameterRequest(null)
+      if (!request) return
+      void (request.kind === 'action'
+        ? runAction(request.id, parameters)
+        : run(request.id, parameters))
+    },
     applyResult,
     dismissPreview: () => {
       setPreview(null)

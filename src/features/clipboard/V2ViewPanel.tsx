@@ -13,6 +13,7 @@ import type {
 } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
 import { useTransformState, type TransformControls } from './useTransformState'
+import { ContributionParametersDialog } from './ContributionParametersDialog'
 
 const OCR_TAB_ID = '__ocr__'
 const TRANSFORM_TAB_ID = '__transform__'
@@ -658,6 +659,13 @@ export const V2ViewPanel = ({
         )}
       </div>
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}
+      {transformState.parameterRequest && (
+        <ContributionParametersDialog
+          request={transformState.parameterRequest}
+          onCancel={transformState.cancelParameterRequest}
+          onSubmit={transformState.submitParameters}
+        />
+      )}
     </div>
   )
 }

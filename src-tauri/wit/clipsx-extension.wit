@@ -64,7 +64,16 @@ interface types {
   }
 }
 
+interface broker {
+  record http-header { name: string, value: string }
+  record http-request { url: string, method: string, headers: list<http-header>, body: list<u8> }
+  record http-response { status: u16, content-type: option<string>, body: list<u8> }
+  https: func(request: http-request) -> result<http-response, string>;
+  generate-text: func(prompt: string) -> result<string, string>;
+}
+
 world extension {
+  import broker;
   use types.{representation, facet, render-model, compact-model, output-representation, action-result, action-state, guest-error};
   export detect: func(contribution-id: string, input: representation) -> result<list<facet>, guest-error>;
   export render-detail: func(contribution-id: string, input: representation, facet: option<facet>) -> result<render-model, guest-error>;

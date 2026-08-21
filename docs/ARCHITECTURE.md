@@ -76,9 +76,9 @@ Built-ins and community packages use one contribution model: detector, renderer,
 
 Packages are checksum-pinned registry or Developer Mode `.clipsx` archives. Installed bytes live in app-owned storage; enablement, runtime state, contribution failure streaks, quarantine, compact caches, and app-local action shortcuts are profile data. The Plugins UI supports registry/local installation, enable/disable, uninstall, recovery, permission disclosure, and shortcuts.
 
-The v2 runtime has no WASI or host imports. A guest receives only one host-approved representation and optional facet. Fresh Wasmtime stores enforce memory, stack, transfer, fuel, timeout, output-size, and failure limits. Repeated failures quarantine the package; canonical clip data is unaffected.
+The v2 runtime has no WASI or ambient host imports. A guest receives only one host-approved representation and optional facet. Fresh Wasmtime stores enforce memory, stack, transfer, fuel, timeout, output-size, and failure limits. Repeated failures quarantine the package; canonical clip data is unaffected.
 
-Renderers and detectors are permanently offline. Local transformers and actions are offline and reproducible. Explicit host actions may open isolated, checksum/session-bound dialogs whose only IPC is the extension bridge. That bridge enforces declared HTTPS/navigation origins, checksum grants, scoped credential-header injection, and bounded output through the transform/output boundary. Capability-backed WASM transformers and `generation.text` remain unavailable until their host adapters exist.
+Renderers and detectors are permanently offline. Local transformers and actions are offline and reproducible. Explicit host actions may open isolated, checksum/session-bound dialogs whose only IPC is the extension bridge. That bridge enforces declared HTTPS/navigation origins, checksum grants, scoped credential-header injection, and bounded output through the transform/output boundary. Capability-backed WASM transformers and actions receive only invocation-scoped WIT broker imports for declared HTTPS and `generation.text` capabilities. Configured credential values are injected by the host and reflected-secret responses are rejected. JSON-schema parameter controls are host-rendered and values are validated again in Rust before guest execution.
 
 ## Search
 
@@ -122,9 +122,9 @@ Blocks sharing structural context pack toward 1,536 UTF-8 bytes. A contextual Ol
 
 ### Providers
 
-Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Ollama endpoint validation, model discovery, HTTP transport, wire types, and typed errors implement the general `TextEmbeddingProvider` boundary under `providers/ollama`. Search owns chunking, generations, jobs, indexing, and retrieval; application state owns its background worker. Device configuration stores endpoint/model/enablement, runtime diagnostics are relational, and immutable embedding spaces store only provider/model vector compatibility.
+Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Ollama endpoint validation, model discovery, bounded HTTP transport, wire types, and typed errors implement both `TextEmbeddingProvider` and `GenerationProvider` under `providers/ollama`. Search owns chunking, generations, jobs, indexing, and retrieval; application state owns its background worker. Device configuration stores generation and embedding endpoint/model/enablement separately; extensions see only provider availability and generated output, never provider configuration.
 
-Hosted providers, generation, and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data.
+Hosted providers and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data.
 
 ## Code and data ownership
 

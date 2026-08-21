@@ -45,6 +45,7 @@ pub struct ContextActionDescriptor {
     pub consent_required: bool,
     pub external_navigation_origins: Vec<String>,
     pub http_origins: Vec<String>,
+    pub providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,6 +153,7 @@ pub enum BridgeRequest {
 pub enum BridgeOutcome {
     Https(super::BrokerHttpResponse),
     OpenExternal(String),
+    GenerationText(String),
     Output {
         outputs: Vec<CapturedRepresentation>,
         disposition: ActionDisposition,
@@ -694,23 +696,36 @@ impl ExtensionService {
         repo: &HistoryRepository,
         input: &CapturedRepresentation,
     ) -> Result<Vec<crate::contributions::transformer::TransformerDescriptor>> {
-        Ok(self
+        let mut descriptors = Vec::new();
+        for item in self
             .active_contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
-            .filter(|item| item.declaration.execution == ExecutionClass::Local)
             .filter(|item| accepts(&item.declaration, input, None))
-            .map(
-                |item| crate::contributions::transformer::TransformerDescriptor {
-                    id: item.id,
-                    version: item.version,
-                    label: item.declaration.display_name,
-                    parameter_schema: item.declaration.parameter_schema,
-                    input_limit_bytes: 1024 * 1024,
-                    timeout_ms: 500,
+        {
+            let consent_required = self.consent_required(repo, &item).await?;
+            descriptors.push(crate::contributions::transformer::TransformerDescriptor {
+                id: item.id,
+                version: item.version,
+                label: item.declaration.display_name,
+                parameter_schema: item.declaration.parameter_schema,
+                input_limit_bytes: 1024 * 1024,
+                timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
+                    125_000
+                } else {
+                    500
                 },
-            )
-            .collect())
+                execution: execution_name(item.declaration.execution).into(),
+                consent_required,
+                http_origins: item
+                    .http_permissions
+                    .iter()
+                    .map(|value| value.origin.clone())
+                    .collect(),
+                providers: item.providers,
+            });
+        }
+        Ok(descriptors)
     }
 
     pub async fn renderer_descriptors(
@@ -805,6 +820,7 @@ impl ExtensionService {
                     .iter()
                     .map(|value| value.origin.clone())
                     .collect(),
+                providers: item.providers,
             });
         }
         actions.sort_by(|left, right| left.label.cmp(&right.label).then(left.id.cmp(&right.id)));
@@ -822,7 +838,7 @@ impl ExtensionService {
             .await?
             .into_iter()
             .map(|item| {
-                let available = item.declaration.execution == ExecutionClass::Local;
+                let available = true;
                 let icon_svg = self.contribution_icon(&item);
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
@@ -850,8 +866,7 @@ impl ExtensionService {
                         .collect(),
                     execution: execution_name(item.declaration.execution).into(),
                     available,
-                    unavailable_reason: (!available)
-                        .then(|| "Network capability broker is not available in this build".into()),
+                    unavailable_reason: None,
                     parameter_schema: item.declaration.parameter_schema,
                     consent_required: false,
                     external_navigation_origins: item.external_navigation_origins,
@@ -860,6 +875,7 @@ impl ExtensionService {
                         .iter()
                         .map(|value| value.origin.clone())
                         .collect(),
+                    providers: item.providers,
                 }
             })
             .collect();
@@ -892,20 +908,18 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
             .context("contextual action is not available for this representation")?;
+        super::manifest::validate_parameters(
+            &contribution.declaration.parameter_schema,
+            &parameters,
+        )?;
         if contribution.declaration.execution == ExecutionClass::CapabilityBacked
-            && !matches!(
-                contribution.declaration.handler,
-                Some(ActionHandler::Dialog)
-            )
+            || contribution.declaration.effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    ActionEffect::OpenHttpsUrl | ActionEffect::OpenDialog
+                )
+            })
         {
-            bail!("network capability broker is not available in this build");
-        }
-        if contribution.declaration.effects.iter().any(|effect| {
-            matches!(
-                effect,
-                ActionEffect::OpenHttpsUrl | ActionEffect::OpenDialog
-            )
-        }) {
             self.consume_invocation(
                 &contribution,
                 action_id,
@@ -943,7 +957,7 @@ impl ExtensionService {
                 let parameters = merge_parameters(preset, parameters)?;
                 let qualified = format!("{}/{}", contribution.package_id, transformer_id);
                 let (_, outputs) = self
-                    .transform(repo, &qualified, source.clone(), parameters)
+                    .transform(repo, &qualified, source.clone(), parameters, None)
                     .await?
                     .context("action transformer is unavailable")?;
                 ActionOutcome::Output {
@@ -954,6 +968,12 @@ impl ExtensionService {
                 }
             }
             ActionHandler::Guest => {
+                let broker =
+                    if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
+                        Some(self.runtime_broker_context(repo, &contribution).await?)
+                    } else {
+                        None
+                    };
                 let result = self
                     .runtime
                     .run_action(
@@ -965,6 +985,7 @@ impl ExtensionService {
                             payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
                         }),
                         serde_json::to_string(&parameters)?,
+                        broker,
                     )
                     .await;
                 match result {
@@ -1003,6 +1024,7 @@ impl ExtensionService {
             .context("extension action is not installed and enabled")?;
         if contribution.external_navigation_origins.is_empty()
             && contribution.http_permissions.is_empty()
+            && contribution.providers.is_empty()
         {
             bail!("extension action has no grantable external-data permission");
         }
@@ -1021,6 +1043,15 @@ impl ExtensionService {
                 .bind(&contribution.extension_id)
                 .bind(&contribution.sha256)
                 .bind(&permission.origin)
+                .bind(now_ms())
+                .execute(&mut *transaction)
+                .await?;
+        }
+        for provider in &contribution.providers {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id)
+                .bind(&contribution.sha256)
+                .bind(provider)
                 .bind(now_ms())
                 .execute(&mut *transaction)
                 .await?;
@@ -1078,6 +1109,79 @@ impl ExtensionService {
                 expires_at,
             },
         );
+        Ok(ActionInvocation { token, expires_at })
+    }
+
+    pub async fn grant_transformer_permissions(
+        &self,
+        repo: &HistoryRepository,
+        transformer_id: &str,
+    ) -> Result<()> {
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?
+            .into_iter()
+            .find(|item| item.id == transformer_id)
+            .context("extension transformer is not installed and enabled")?;
+        let mut transaction = repo.pool.begin().await?;
+        for permission in &contribution.http_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'http', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
+        for provider in &contribution.providers {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(provider).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn issue_transformer_invocation(
+        &self,
+        repo: &HistoryRepository,
+        transformer_id: &str,
+        clip_id: &str,
+        source_id: &str,
+    ) -> Result<ActionInvocation> {
+        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?
+            .into_iter()
+            .find(|item| item.id == transformer_id && accepts(&item.declaration, &source, None))
+            .context("extension transformer is not available for this representation")?;
+        if contribution.declaration.execution != ExecutionClass::CapabilityBacked {
+            bail!("local transformers do not require invocation tokens");
+        }
+        if self.consent_required(repo, &contribution).await? {
+            bail!("external data consent is required for this package release");
+        }
+        if contribution
+            .providers
+            .iter()
+            .any(|value| value == "generation.text")
+            && !crate::providers::generation::available(repo).await?
+        {
+            bail!("generation.text provider is not configured");
+        }
+        let token = uuid::Uuid::now_v7().to_string();
+        let expires_at = now_ms() + 30_000;
+        self.invocations
+            .lock()
+            .expect("extension invocation store poisoned")
+            .insert(
+                token.clone(),
+                PendingInvocation {
+                    package_sha256: contribution.sha256,
+                    action_id: transformer_id.into(),
+                    clip_id: clip_id.into(),
+                    source_id: source_id.into(),
+                    facet_id: None,
+                    expires_at,
+                },
+            );
         Ok(ActionInvocation { token, expires_at })
     }
 
@@ -1352,7 +1456,9 @@ impl ExtensionService {
                 if prompt.len() > 1024 * 1024 {
                     bail!("generation prompt exceeds 1 MiB");
                 }
-                bail!("generation.text provider is unavailable")
+                Ok(BridgeOutcome::GenerationText(
+                    crate::providers::generation::generate(repo, &prompt).await?,
+                ))
             }
             BridgeRequest::SubmitOutput {
                 mime_type,
@@ -1636,7 +1742,8 @@ impl ExtensionService {
             .effects
             .contains(&ActionEffect::OpenHttpsUrl);
         let needs_http = !contribution.http_permissions.is_empty();
-        if !needs_navigation && !needs_http {
+        let needs_provider = !contribution.providers.is_empty();
+        if !needs_navigation && !needs_http && !needs_provider {
             return Ok(false);
         }
         if needs_navigation && contribution.external_navigation_origins.is_empty() {
@@ -1660,7 +1767,63 @@ impl ExtensionService {
             || contribution
                 .http_permissions
                 .iter()
-                .any(|permission| !grants.contains(&("http".into(), permission.origin.clone()))))
+                .any(|permission| !grants.contains(&("http".into(), permission.origin.clone())))
+            || contribution
+                .providers
+                .iter()
+                .any(|provider| !grants.contains(&("provider".into(), provider.clone()))))
+    }
+
+    async fn runtime_broker_context(
+        &self,
+        repo: &HistoryRepository,
+        contribution: &ActiveContribution,
+    ) -> Result<super::runtime::RuntimeBrokerContext> {
+        if self.consent_required(repo, contribution).await? {
+            bail!("external data consent is required for this package release");
+        }
+        let mut injected_headers = std::collections::BTreeMap::new();
+        let mut protected_secrets = Vec::new();
+        for credential in &contribution.credential_permissions {
+            let value = match extension_credential_entry(&contribution.package_id, &credential.id)?
+                .get_password()
+            {
+                Ok(value) => value,
+                Err(keyring::Error::NoEntry) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if !value.is_empty() {
+                protected_secrets.push(value.as_bytes().to_vec());
+            }
+            let headers = injected_headers
+                .entry(credential.http_origin.clone())
+                .or_insert_with(std::collections::BTreeMap::new);
+            match credential.placement.as_str() {
+                "authorization_bearer" => {
+                    headers.insert("authorization".into(), format!("Bearer {value}"));
+                }
+                "header" => {
+                    headers.insert(
+                        credential
+                            .header_name
+                            .clone()
+                            .context("credential header name is missing")?,
+                        value,
+                    );
+                }
+                _ => bail!("unsupported credential injection placement"),
+            }
+        }
+        Ok(super::runtime::RuntimeBrokerContext {
+            repo: repo.clone(),
+            http_permissions: contribution.http_permissions.clone(),
+            injected_headers,
+            protected_secrets,
+            generation_allowed: contribution
+                .providers
+                .iter()
+                .any(|provider| provider == "generation.text"),
+        })
     }
 
     fn consume_invocation(
@@ -1718,19 +1881,10 @@ impl ExtensionService {
             .providers
             .iter()
             .any(|provider| provider == "generation.text")
+            && !crate::providers::generation::available(repo).await?
         {
             return Ok(ExtensionActionState::Disabled(
-                "Text generation provider is not configured in this build".into(),
-            ));
-        }
-        if contribution.declaration.execution == ExecutionClass::CapabilityBacked
-            && !matches!(
-                contribution.declaration.handler,
-                Some(ActionHandler::Dialog)
-            )
-        {
-            return Ok(ExtensionActionState::Disabled(
-                "The extension network broker is not available in this build".into(),
+                "Text generation provider is not configured".into(),
             ));
         }
         if !matches!(contribution.declaration.handler, Some(ActionHandler::Guest)) {
@@ -1909,22 +2063,38 @@ impl ExtensionService {
         transformer_id: &str,
         input: CapturedRepresentation,
         parameters: serde_json::Value,
+        invocation_scope: Option<(&str, &str, &str)>,
     ) -> Result<Option<(String, Vec<CapturedRepresentation>)>> {
         let Some(contribution) = self
             .active_contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
-            .find(|item| {
-                item.id == transformer_id
-                    && item.declaration.execution == ExecutionClass::Local
-                    && accepts(&item.declaration, &input, None)
-            })
+            .find(|item| item.id == transformer_id && accepts(&item.declaration, &input, None))
         else {
             return Ok(None);
         };
         if !parameters.is_object() {
             bail!("extension transformer parameters must be an object");
         }
+        super::manifest::validate_parameters(
+            &contribution.declaration.parameter_schema,
+            &parameters,
+        )?;
+        let broker = if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
+            let (clip_id, source_id, token) = invocation_scope
+                .context("capability-backed transformer requires an invocation token")?;
+            self.consume_invocation(
+                &contribution,
+                transformer_id,
+                clip_id,
+                source_id,
+                None,
+                token,
+            )?;
+            Some(self.runtime_broker_context(repo, &contribution).await?)
+        } else {
+            None
+        };
         let outputs = self
             .runtime
             .transform(
@@ -1932,6 +2102,7 @@ impl ExtensionService {
                 &contribution.local_id,
                 representation(input)?,
                 serde_json::to_string(&parameters)?,
+                broker,
             )
             .await;
         match outputs {

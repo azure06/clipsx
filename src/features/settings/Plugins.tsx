@@ -155,7 +155,8 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
     <div className="mt-2 space-y-2 border-t border-slate-200/70 pt-2 dark:border-white/10">
       {extension.settings.map(setting => {
         const value = settings[setting.id] ?? setting.default
-        const inputValue = typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+        const inputValue =
+          typeof value === 'string' || typeof value === 'number' ? String(value) : ''
         return (
           <label className="flex items-center justify-between gap-3 text-xs" key={setting.id}>
             <span>{setting.label}</span>

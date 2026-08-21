@@ -578,8 +578,7 @@ impl SemanticChunkStrategy for RtfStrategy {
         mime_is(input, &["text/rtf", "application/rtf"])
     }
     fn extract_blocks(&self, input: &SemanticInput) -> Result<Option<Vec<SemanticBlock>>> {
-        Ok(crate::text::rtf_visible_text(&input.text)
-            .map(|text| plain_blocks(&text, "paragraph")))
+        Ok(crate::text::rtf_visible_text(&input.text).map(|text| plain_blocks(&text, "paragraph")))
     }
 }
 

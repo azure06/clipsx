@@ -31,10 +31,7 @@ pub(crate) fn resolve_history_preview(
     extension: Option<CompactPresentation>,
 ) -> HistoryPreview {
     if let Some(extension) = extension {
-        if let Some(title) = extension
-            .title
-            .filter(|title| !title.trim().is_empty())
-        {
+        if let Some(title) = extension.title.filter(|title| !title.trim().is_empty()) {
             return HistoryPreview {
                 leading: extension.leading,
                 title,
@@ -221,7 +218,14 @@ mod tests {
     #[test]
     fn never_falls_back_to_binary_or_file_content() {
         for kind in [
-            "image", "files", "document", "office", "rich_text", "html", "text", "unsupported",
+            "image",
+            "files",
+            "document",
+            "office",
+            "rich_text",
+            "html",
+            "text",
+            "unsupported",
         ] {
             let preview = build_builtin_preview(ctx(kind));
             assert_ne!(preview.title, "Binary or file content");
@@ -313,7 +317,10 @@ mod tests {
         let mut svg = ctx("document");
         svg.leading_mime = Some("image/svg+xml");
         assert_eq!(build_builtin_preview(svg).title, "SVG image");
-        assert_eq!(build_builtin_preview(ctx("office")).title, "Office document");
+        assert_eq!(
+            build_builtin_preview(ctx("office")).title,
+            "Office document"
+        );
         let mut unsupported = ctx("unsupported");
         unsupported.leading_format_family = Some("binary");
         assert_eq!(build_builtin_preview(unsupported).title, "Binary file");
@@ -334,7 +341,10 @@ mod tests {
         };
         let preview = resolve_history_preview(ctx("text"), Some(extension));
         assert_eq!(preview.title, "Custom title");
-        assert_eq!(preview.leading, LeadingVisual::Monogram { text: "AB".into() });
+        assert_eq!(
+            preview.leading,
+            LeadingVisual::Monogram { text: "AB".into() }
+        );
     }
 
     #[test]

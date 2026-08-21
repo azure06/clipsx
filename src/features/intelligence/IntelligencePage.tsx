@@ -26,6 +26,13 @@ import { useToast } from '../../shared/contexts/ToastContext'
 type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
 type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
 type SearchSettings = { syntaxMode: 'simple' | 'advanced'; enabledSourceIds: string[] }
+type GenerationProviderStatus = {
+  enabled: boolean
+  available: boolean
+  diagnostic: string | null
+  endpoint: string | null
+  model: string | null
+}
 
 const formatBytes = (bytes: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -72,6 +79,9 @@ export const IntelligencePage = () => {
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
   const [settingsSaving, setSettingsSaving] = useState(false)
+  const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
+  const [generationModel, setGenerationModel] = useState('')
+  const [generationSaving, setGenerationSaving] = useState(false)
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
 
@@ -81,14 +91,20 @@ export const IntelligencePage = () => {
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
-      const [s, sources, settings] = await Promise.all([
+      const [s, sources, settings, generation] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<SearchSourceDescriptor[]>('list_search_sources'),
         invoke<SearchSettings>('get_search_settings'),
+        invoke<GenerationProviderStatus>('get_text_generation_status'),
       ])
       setStatus(s)
       setSearchSources(sources)
       setSearchSettings(settings)
+      if (generation) {
+        setGenerationStatus(generation)
+        if (generation.model) setGenerationModel(generation.model)
+        if (generation.endpoint && !s.endpoint) setEndpoint(generation.endpoint)
+      }
       if (s.endpoint) setEndpoint(s.endpoint)
       if (s.model) setSelectedModel(s.model)
       if (s.phase === 'ready') lastFailureToastRef.current = null
@@ -218,6 +234,34 @@ export const IntelligencePage = () => {
       toast({ title: 'Disconnect failed', description: toErrorMessage(e), type: 'error' })
     } finally {
       setDisconnecting(false)
+    }
+  }
+
+  const handleGenerationConnect = async () => {
+    if (!generationModel || !endpoint.trim()) return
+    setGenerationSaving(true)
+    try {
+      const next = await invoke<GenerationProviderStatus>('configure_text_generation_provider', {
+        endpoint,
+        model: generationModel,
+      })
+      setGenerationStatus(next)
+      toast({ title: 'Local text generation configured', type: 'success' })
+    } catch (e) {
+      toast({ title: 'Generation setup failed', description: toErrorMessage(e), type: 'error' })
+    } finally {
+      setGenerationSaving(false)
+    }
+  }
+
+  const handleGenerationDisconnect = async () => {
+    setGenerationSaving(true)
+    try {
+      await invoke('disable_text_generation_provider')
+      await loadStatus()
+      toast({ title: 'Local text generation disabled', type: 'success' })
+    } finally {
+      setGenerationSaving(false)
     }
   }
 
@@ -659,20 +703,64 @@ export const IntelligencePage = () => {
           </p>
         </div>
 
-        {/* AI Generation — coming soon */}
-        <div className="rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 opacity-60 dark:border-white/10 dark:bg-slate-100/5">
+        {/* Local text generation */}
+        <div className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
           <div className="flex items-center gap-2">
             <Wand2 className="h-4 w-4 text-pink-400" strokeWidth={1.5} />
             <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-              AI Generation
+              Local Text Generation
             </span>
-            <span className="ml-auto rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/10">
-              coming soon
+            <span
+              className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${generationStatus?.available ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
+            >
+              {generationStatus?.available ? 'available' : 'not configured'}
             </span>
           </div>
-          <p className="mt-2 text-xs text-gray-400">
-            Summarize, expand, and transform clipboard content with a local model.
+          <p className="text-xs text-gray-500">
+            Extensions can request generation through ClipsX without learning your Ollama endpoint
+            or model configuration.
           </p>
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <input
+              aria-label="Generation endpoint"
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-100/5"
+              placeholder="http://localhost:11434"
+              value={endpoint}
+              onChange={event => setEndpoint(event.target.value)}
+            />
+            <input
+              aria-label="Generation model"
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-100/5"
+              placeholder="llama3.2"
+              value={generationModel}
+              onChange={event => setGenerationModel(event.target.value)}
+            />
+            <Button
+              size="sm"
+              isLoading={generationSaving}
+              disabled={generationSaving || !endpoint.trim() || !generationModel.trim()}
+              onClick={() => void handleGenerationConnect()}
+            >
+              {generationStatus?.enabled ? 'Update' : 'Enable'}
+            </Button>
+          </div>
+          {generationStatus?.diagnostic && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {generationStatus.diagnostic}
+            </p>
+          )}
+          {generationStatus?.enabled && (
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<Unplug className="h-3.5 w-3.5" />}
+              isLoading={generationSaving}
+              disabled={generationSaving}
+              onClick={() => void handleGenerationDisconnect()}
+            >
+              Disable generation
+            </Button>
+          )}
         </div>
       </div>
     </div>

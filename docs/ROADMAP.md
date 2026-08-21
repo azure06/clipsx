@@ -5,7 +5,7 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 ## Current priorities
 
 1. Certify native clipboard and desktop behavior in installed builds.
-2. Complete parameter-driven transforms and extension contribution UX.
+2. Certify parameter-driven transforms and extension contribution UX in installed builds.
 3. Harden local search, OCR, and settings workflows.
 4. Ship only after the release matrix and signing gates are complete.
 
@@ -32,7 +32,6 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 
 ### Transform completion
 
-- Generate parameter controls, defaults, and validation from built-in and extension contribution schemas rather than always submitting an empty object.
 - Show the source representation used by each transform and complete loading, error, retry, cancellation, and expired-result states.
 - Prove preview, Copy, Paste, and Save as New Clip consume identical cached bytes and preserve provenance.
 - Complete keyboard-first discovery, accessibility coverage, and remaining CSV/code/content-specific operations that belong as contextual actions.
@@ -42,9 +41,8 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 ### Extension product completion
 
 - Add registry refresh/update and compatibility UX, plus richer package/contribution diagnostics and provenance.
-- Generate parameter controls for extension transformers and actions from declared schemas.
-- Add installed end-to-end automation for the Ask AI, Mermaid Viewer, and Text API fixtures.
-- Extend the audited dialog HTTP/credential bridge to capability-backed WASM transformers; add the host-owned `generation.text` adapter without exposing localhost or provider configuration.
+- Add installed end-to-end automation for the Ask AI, Ask Local AI, Mermaid Viewer, and Text API fixtures.
+- Cancel an in-flight capability-backed HTTPS or generation request when its action, dialog, or extension view closes, and prove cancellation leaves no reusable invocation state.
 - Keep raw filesystem, clipboard, history, database, shell, environment, credential values, provider handles, and frontend-code access unavailable to extensions. V2 packages are checksum-pinned, manually updated with permission-diff review, and may contribute only host-isolated detail/dialog UI.
 
 **Exit gate:** a user can safely install, inspect, use, diagnose, recover, update, disable, and remove a compatible package; invalid or failing packages cannot affect canonical clips.
@@ -55,7 +53,8 @@ These are not release requirements:
 
 - trusted local visual semantic search through the registered source/provider boundary;
 - hosted or OpenAI-compatible providers with explicit consent;
-- generation providers and generated artifacts;
+- additional local or hosted generation providers and generated artifacts; the
+  host-owned Ollama text-generation adapter is already delivered;
 - layout-aware OCR once artifacts expose page/layout contracts;
 - AST code chunking after language detection and supported-language policy are designed;
 - user-configurable search weights or new input kinds.

@@ -864,6 +864,7 @@ async fn create_transform_preview(
     transformer_id: String,
     source_id: String,
     parameters: serde_json::Value,
+    invocation_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<transformers::TransformPreview, String> {
     let (source, _) = state
@@ -873,7 +874,15 @@ async fn create_transform_preview(
         .map_err(|error| error.to_string())?;
     if let Some((version, outputs)) = state
         .extensions
-        .transform(&state.history, &transformer_id, source, parameters.clone())
+        .transform(
+            &state.history,
+            &transformer_id,
+            source,
+            parameters.clone(),
+            invocation_token
+                .as_deref()
+                .map(|token| (clip_id.as_str(), source_id.as_str(), token)),
+        )
         .await
         .map_err(|error| error.to_string())?
     {
@@ -1018,6 +1027,32 @@ async fn issue_extension_action_invocation(
             &source_id,
             facet_id.as_deref(),
         )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn grant_extension_transformer_permissions(
+    transformer_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .grant_transformer_permissions(&state.history, &transformer_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn issue_extension_transformer_invocation(
+    transformer_id: String,
+    clip_id: String,
+    source_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ActionInvocation, String> {
+    state
+        .extensions
+        .issue_transformer_invocation(&state.history, &transformer_id, &clip_id, &source_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1237,6 +1272,7 @@ async fn extension_bridge(
                 .map_err(|error| error.to_string())?;
             Ok(serde_json::json!({ "opened": true }))
         }
+        BridgeOutcome::GenerationText(text) => Ok(serde_json::json!({ "text": text })),
         BridgeOutcome::Output {
             outputs,
             disposition,
@@ -1968,6 +2004,30 @@ async fn get_text_embedding_status(
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn configure_text_generation_provider(
+    endpoint: String,
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<crate::providers::generation::GenerationProviderStatus, String> {
+    crate::providers::generation::configure(&state.history, endpoint, model)
+        .await
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+async fn disable_text_generation_provider(state: State<'_, AppState>) -> Result<(), String> {
+    crate::providers::generation::disable(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+async fn get_text_generation_status(
+    state: State<'_, AppState>,
+) -> Result<crate::providers::generation::GenerationProviderStatus, String> {
+    crate::providers::generation::status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
 async fn reindex_text_embeddings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -2452,6 +2512,8 @@ pub(crate) fn run() {
             run_context_action,
             grant_extension_action_permissions,
             issue_extension_action_invocation,
+            grant_extension_transformer_permissions,
+            issue_extension_transformer_invocation,
             get_extension_package_settings,
             set_extension_package_setting,
             get_extension_credential_status,
@@ -2499,6 +2561,9 @@ pub(crate) fn run() {
             configure_text_embedding_provider,
             disable_text_embedding_provider,
             get_text_embedding_status,
+            configure_text_generation_provider,
+            disable_text_generation_provider,
+            get_text_generation_status,
             retry_text_embedding_provider,
             reindex_text_embeddings,
             index_missing_text_embeddings,

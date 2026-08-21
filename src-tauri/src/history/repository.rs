@@ -305,13 +305,12 @@ impl HistoryRepository {
         let leading_format_family: Option<String> = row.get(16);
         let plain_text_fallback: Option<String> = row.get(17);
 
-        let ocr_text = if primary_presentation_kind == "image"
-            && ocr_status.as_deref() == Some("completed")
-        {
-            crate::artifacts::ocr_text(self, &id).await
-        } else {
-            None
-        };
+        let ocr_text =
+            if primary_presentation_kind == "image" && ocr_status.as_deref() == Some("completed") {
+                crate::artifacts::ocr_text(self, &id).await
+            } else {
+                None
+            };
         let (file_name, file_count) = if primary_presentation_kind == "files" {
             self.leading_file_entry(leading_representation_id.as_deref())
                 .await?
@@ -1483,10 +1482,7 @@ mod tests {
             .unwrap();
         let text_summary = repo.summary(&text_id).await.unwrap();
         assert_eq!(text_summary.history_preview.title, "hello world");
-        assert_ne!(
-            text_summary.history_preview.title,
-            "Binary or file content"
-        );
+        assert_ne!(text_summary.history_preview.title, "Binary or file content");
 
         let (image_id, _) = repo
             .capture(
@@ -1548,7 +1544,10 @@ mod tests {
             .await
             .unwrap();
         let html_summary = repo.summary(&html_id).await.unwrap();
-        assert_eq!(html_summary.history_preview.title, "real plain-text sibling");
+        assert_eq!(
+            html_summary.history_preview.title,
+            "real plain-text sibling"
+        );
     }
 
     #[tokio::test]

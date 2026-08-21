@@ -77,9 +77,10 @@ same Rust broker. HTTPS is exact-origin HTTPS only; redirects and
 private/loopback/link-local/metadata destinations are denied. Secrets remain in
 the OS credential store and may be injected only into a declared header for one
 declared HTTP origin; secret values are never returned to UI or WASM.
-`generation.text` is an abstract provider capability;
-local Ollama support will be supplied by a host-owned adapter, never direct
-localhost access from an extension.
+`generation.text` is an abstract provider capability backed initially by the
+host-owned Ollama adapter. Users configure endpoint and model in ClipsX;
+extensions receive generated text but never localhost access or provider
+configuration.
 
 The broker requires both a remembered checksum-bound grant and a short-lived
 host-issued invocation token before selected clip data can leave ClipsX.
@@ -89,11 +90,13 @@ extension child webviews receive only the session-authenticated bridge command.
 Dialog-lifetime sessions are bound to package checksum, contribution, selected
 clip/source, child label, and an unguessable token. HTTPS, external navigation,
 credential injection, nonsecret settings, and bounded output submission are
-implemented for explicit dialog actions. Output is cached through the normal
+implemented for explicit dialog actions and capability-backed WASM actions and
+transformers. Output is cached through the normal
 transform boundary before preview, copy, paste, or save-as-new-clip. The
-`generation.text` contract is declared and reports an unavailable reason until
-the host-owned generation adapter is installed. WASM HTTP/provider adapters are
-not yet exposed. See the [threat model](EXTENSION_THREAT_MODEL.md).
+`generation.text` contract reports an unavailable reason until a local provider
+is configured. Parameter schemas generate host controls for bounded primitive
+fields and are validated again before guest execution. See the
+[threat model](EXTENSION_THREAT_MODEL.md).
 
 ## Acceptance examples
 
@@ -103,6 +106,9 @@ size-limited actions, SVG icons, declared navigation, and first-use consent.
 detail/dialog UI, source fallback, and no network permission.
 `examples/extensions/text-api` demonstrates a consented custom dialog, exact
 origin/path/method HTTPS access, and copy/save output through the host bridge.
+`examples/extensions/ask-local-ai` demonstrates a capability-backed WASM action,
+host-owned Ollama generation, dynamic action state, generated parameter controls,
+and preview/copy/save output without exposing provider configuration.
 
 Versioned installable archives and checksums are published in
 [`examples/extensions/packages`](../examples/extensions/packages/README.md).

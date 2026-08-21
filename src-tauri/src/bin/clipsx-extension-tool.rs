@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use wit_component::ComponentEncoder;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const API_VERSION: &str = "2.0.0";
@@ -29,6 +30,7 @@ fn main() -> Result<()> {
 fn pack(input: &Path, output: &Path) -> Result<()> {
     let mut files = BTreeMap::new();
     collect_package_files(input, input, &mut files)?;
+    componentize_core_module(&mut files)?;
     validate_contents(&files)?;
     if output.extension().and_then(|value| value.to_str()) != Some("clipsx") {
         bail!("extension package output must use the .clipsx suffix");
@@ -46,6 +48,31 @@ fn pack(input: &Path, output: &Path) -> Result<()> {
     archive.finish()?;
     println!("packed {}", output.display());
     Ok(())
+}
+
+/// Guest crates build a core module for `wasm32-unknown-unknown`. The package
+/// tool owns the final componentization step so extension authors never need
+/// ambient WASI just to produce a Component Model artifact.
+fn componentize_core_module(files: &mut BTreeMap<String, Vec<u8>>) -> Result<()> {
+    let Some(component) = files.get("component.wasm") else {
+        return Ok(());
+    };
+    if !is_core_module(component) {
+        return Ok(());
+    }
+    let mut encoder = ComponentEncoder::default()
+        .module(component)
+        .context("component.wasm cannot be componentized; build it with wit-bindgen for wasm32-unknown-unknown")?
+        .validate(true);
+    let encoded = encoder
+        .encode()
+        .context("component.wasm componentization failed")?;
+    files.insert("component.wasm".into(), encoded);
+    Ok(())
+}
+
+fn is_core_module(bytes: &[u8]) -> bool {
+    bytes.get(0..8) == Some(b"\0asm\x01\0\0\0")
 }
 
 fn validate(path: &Path) -> Result<()> {
@@ -84,6 +111,9 @@ fn validate_contents(files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     if let Some(component) = find("component.wasm") {
         if component.len() > 8 * 1024 * 1024 || !component.starts_with(b"\0asm") {
             bail!("component.wasm is oversized or is not WebAssembly");
+        }
+        if is_core_module(component) {
+            bail!("component.wasm is a core module; package it with clipsx-extension-tool so it can be converted to a no-WASI component");
         }
     } else if manifest.contributions.iter().any(|contribution| {
         matches!(

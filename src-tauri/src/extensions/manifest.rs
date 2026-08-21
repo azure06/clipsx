@@ -332,6 +332,7 @@ impl ExtensionManifest {
             {
                 bail!("extension parameter schema must be a bounded JSON object");
             }
+            validate_parameter_schema(&contribution.parameter_schema)?;
             self.validate_contribution(contribution)?;
         }
         Ok(())
@@ -571,6 +572,137 @@ impl ExtensionManifest {
     }
 }
 
+pub fn validate_parameter_schema(schema: &Value) -> Result<()> {
+    let object = schema
+        .as_object()
+        .context("extension parameter schema must be an object")?;
+    if object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("object")
+        != "object"
+    {
+        bail!("extension parameter schema root type must be object");
+    }
+    let properties = object
+        .get("properties")
+        .map(|value| {
+            value
+                .as_object()
+                .context("parameter schema properties must be an object")
+        })
+        .transpose()?
+        .cloned()
+        .unwrap_or_default();
+    if properties.len() > 32 {
+        bail!("extension parameter schema has too many properties");
+    }
+    for (name, property) in &properties {
+        valid_id(name, "parameter")?;
+        let property = property
+            .as_object()
+            .context("parameter property schema must be an object")?;
+        let kind = property
+            .get("type")
+            .and_then(Value::as_str)
+            .context("parameter property type is required")?;
+        if !matches!(kind, "string" | "number" | "integer" | "boolean") {
+            bail!("unsupported parameter property type");
+        }
+        if property.get("enum").is_some_and(|value| {
+            value
+                .as_array()
+                .is_none_or(|values| values.is_empty() || values.len() > 64)
+        }) {
+            bail!("parameter enum must contain between 1 and 64 values");
+        }
+    }
+    if let Some(required) = object.get("required") {
+        let required = required
+            .as_array()
+            .context("parameter schema required must be an array")?;
+        if required.iter().any(|name| {
+            name.as_str()
+                .is_none_or(|name| !properties.contains_key(name))
+        }) {
+            bail!("parameter schema requires an undeclared property");
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_parameters(schema: &Value, parameters: &Value) -> Result<()> {
+    let schema = schema.as_object().context("parameter schema is invalid")?;
+    let values = parameters
+        .as_object()
+        .context("extension parameters must be an object")?;
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if schema.get("additionalProperties") == Some(&Value::Bool(false))
+        && values.keys().any(|name| !properties.contains_key(name))
+    {
+        bail!("extension parameters contain an undeclared property");
+    }
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        for name in required.iter().filter_map(Value::as_str) {
+            if !values.contains_key(name) {
+                bail!("required extension parameter is missing: {name}");
+            }
+        }
+    }
+    for (name, value) in values {
+        let Some(property) = properties.get(name).and_then(Value::as_object) else {
+            continue;
+        };
+        let valid_type = match property.get("type").and_then(Value::as_str) {
+            Some("string") => value.is_string(),
+            Some("number") => value.is_number(),
+            Some("integer") => value.as_i64().is_some() || value.as_u64().is_some(),
+            Some("boolean") => value.is_boolean(),
+            _ => false,
+        };
+        if !valid_type {
+            bail!("extension parameter has the wrong type: {name}");
+        }
+        if let Some(allowed) = property.get("enum").and_then(Value::as_array) {
+            if !allowed.contains(value) {
+                bail!("extension parameter is outside its declared enum: {name}");
+            }
+        }
+        if let Some(text) = value.as_str() {
+            let length = text.chars().count() as u64;
+            if property
+                .get("minLength")
+                .and_then(Value::as_u64)
+                .is_some_and(|min| length < min)
+                || property
+                    .get("maxLength")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|max| length > max)
+            {
+                bail!("extension parameter length is outside its declared bounds: {name}");
+            }
+        }
+        if let Some(number) = value.as_f64() {
+            if property
+                .get("minimum")
+                .and_then(Value::as_f64)
+                .is_some_and(|min| number < min)
+                || property
+                    .get("maximum")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|max| number > max)
+            {
+                bail!("extension parameter is outside its declared bounds: {name}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn valid_credential_header(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 80
@@ -808,5 +940,51 @@ mod tests {
         assert!(manifest(action.clone()).validate().is_ok());
         action.ui_surfaces.clear();
         assert!(manifest(action).validate().is_err());
+    }
+
+    #[test]
+    fn parameter_schema_and_runtime_values_use_the_same_bounded_subset() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "instruction": { "type": "string", "minLength": 1, "maxLength": 20 },
+                "count": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "output": { "type": "string", "enum": ["preview", "copy"] }
+            },
+            "required": ["instruction"],
+            "additionalProperties": false
+        });
+        assert!(validate_parameter_schema(&schema).is_ok());
+        assert!(validate_parameters(
+            &schema,
+            &serde_json::json!({"instruction":"explain", "count":3, "output":"copy"})
+        )
+        .is_ok());
+        assert!(validate_parameters(&schema, &serde_json::json!({"count": 3})).is_err());
+        assert!(validate_parameters(
+            &schema,
+            &serde_json::json!({"instruction":"explain", "count":9})
+        )
+        .is_err());
+        assert!(validate_parameters(
+            &schema,
+            &serde_json::json!({"instruction":"explain", "unknown":true})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parameter_schema_rejects_nested_or_unbounded_shapes() {
+        assert!(validate_parameter_schema(&serde_json::json!({
+            "type":"object", "properties":{"nested":{"type":"object"}}
+        }))
+        .is_err());
+        let properties = (0..33)
+            .map(|index| (format!("p{index}"), serde_json::json!({"type":"string"})))
+            .collect::<serde_json::Map<_, _>>();
+        assert!(validate_parameter_schema(&serde_json::json!({
+            "type":"object", "properties": properties
+        }))
+        .is_err());
     }
 }
