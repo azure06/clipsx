@@ -40,7 +40,12 @@ type Extension = {
   checksum: string | null
   externalNavigationOrigins: string[]
   providers: string[]
-  settings: Array<{ id: string; label: string; kind: 'boolean' | 'string' | 'number'; default: unknown }>
+  settings: Array<{
+    id: string
+    label: string
+    kind: 'boolean' | 'string' | 'number'
+    default: unknown
+  }>
 }
 type CredentialStatus = { id: string; label: string; configured: boolean }
 type RegistryPackage = {
@@ -136,7 +141,9 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
       invoke<Record<string, unknown>>('get_extension_package_settings', {
         packageId: extension.packageId,
       }),
-      invoke<CredentialStatus[]>('get_extension_credential_status', { packageId: extension.packageId }),
+      invoke<CredentialStatus[]>('get_extension_credential_status', {
+        packageId: extension.packageId,
+      }),
     ]).then(([values, status]) => {
       setSettings(values)
       setCredentials(status)
@@ -148,6 +155,7 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
     <div className="mt-2 space-y-2 border-t border-slate-200/70 pt-2 dark:border-white/10">
       {extension.settings.map(setting => {
         const value = settings[setting.id] ?? setting.default
+        const inputValue = typeof value === 'string' || typeof value === 'number' ? String(value) : ''
         return (
           <label className="flex items-center justify-between gap-3 text-xs" key={setting.id}>
             <span>{setting.label}</span>
@@ -169,9 +177,10 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
               <input
                 className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
                 type={setting.kind === 'number' ? 'number' : 'text'}
-                value={String(value ?? '')}
+                value={inputValue}
                 onChange={event => {
-                  const next = setting.kind === 'number' ? Number(event.target.value) : event.target.value
+                  const next =
+                    setting.kind === 'number' ? Number(event.target.value) : event.target.value
                   if (setting.kind === 'number' && !Number.isFinite(next)) return
                   setSettings(current => ({ ...current, [setting.id]: next }))
                   void invoke('set_extension_package_setting', {
@@ -187,14 +196,19 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
       })}
       {credentials.map(credential => (
         <label className="flex items-center justify-between gap-3 text-xs" key={credential.id}>
-          <span>{credential.label}{credential.configured ? ' (configured)' : ''}</span>
+          <span>
+            {credential.label}
+            {credential.configured ? ' (configured)' : ''}
+          </span>
           <input
             className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
             type="password"
             autoComplete="off"
             placeholder={credential.configured ? 'Replace secret' : 'Enter secret'}
             value={drafts[credential.id] ?? ''}
-            onChange={event => setDrafts(current => ({ ...current, [credential.id]: event.target.value }))}
+            onChange={event =>
+              setDrafts(current => ({ ...current, [credential.id]: event.target.value }))
+            }
             onBlur={event => {
               const value = event.target.value
               if (!value) return
@@ -203,7 +217,11 @@ const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
                 credentialId: credential.id,
                 value,
               }).then(() => {
-                setCredentials(current => current.map(item => item.id === credential.id ? { ...item, configured: true } : item))
+                setCredentials(current =>
+                  current.map(item =>
+                    item.id === credential.id ? { ...item, configured: true } : item
+                  )
+                )
                 setDrafts(current => ({ ...current, [credential.id]: '' }))
               })
             }}
