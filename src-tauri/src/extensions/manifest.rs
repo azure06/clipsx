@@ -215,6 +215,16 @@ pub struct CredentialPermission {
     pub placement: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionSetting {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    #[serde(default = "empty_object")]
+    pub default: Value,
+}
+
 fn default_version() -> String {
     "1.0.0".into()
 }
@@ -239,6 +249,8 @@ pub struct ExtensionManifest {
     pub license: String,
     #[serde(default)]
     pub permissions: ExtensionPermissions,
+    #[serde(default)]
+    pub settings: Vec<ExtensionSetting>,
     #[serde(default)]
     pub contributions: Vec<ManifestContribution>,
 }
@@ -508,6 +520,29 @@ impl ExtensionManifest {
                 bail!("credential permission is invalid");
             }
         }
+        if self.settings.len() > 32 {
+            bail!("extension settings declaration exceeds its limits");
+        }
+        let mut settings = BTreeSet::new();
+        for setting in &self.settings {
+            valid_id(&setting.id, "setting")?;
+            let valid_default = match setting.kind.as_str() {
+                "boolean" => setting.default.is_boolean(),
+                "string" => setting
+                    .default
+                    .as_str()
+                    .is_some_and(|value| value.len() <= 4096),
+                "number" => setting.default.is_number(),
+                _ => false,
+            };
+            if setting.label.trim().is_empty()
+                || setting.label.len() > 120
+                || !valid_default
+                || !settings.insert(&setting.id)
+            {
+                bail!("extension setting declaration is invalid");
+            }
+        }
         Ok(())
     }
 
@@ -578,6 +613,7 @@ mod tests {
             description: String::new(),
             license: String::new(),
             permissions: ExtensionPermissions::default(),
+            settings: vec![],
             contributions: vec![contribution],
         }
     }
@@ -674,6 +710,20 @@ mod tests {
             });
         assert!(value.validate().is_ok());
         value.permissions.external_navigation[0].origin = "http://localhost:11434".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn settings_are_typed_and_have_matching_defaults() {
+        let mut value = manifest(contribution(ContributionKind::Transformer));
+        value.settings.push(ExtensionSetting {
+            id: "tone".into(),
+            label: "Tone".into(),
+            kind: "string".into(),
+            default: Value::String("concise".into()),
+        });
+        assert!(value.validate().is_ok());
+        value.settings[0].default = Value::Bool(true);
         assert!(value.validate().is_err());
     }
 }

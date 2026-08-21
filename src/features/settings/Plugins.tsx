@@ -40,7 +40,9 @@ type Extension = {
   checksum: string | null
   externalNavigationOrigins: string[]
   providers: string[]
+  settings: Array<{ id: string; label: string; kind: 'boolean' | 'string' | 'number'; default: unknown }>
 }
+type CredentialStatus = { id: string; label: string; configured: boolean }
 type RegistryPackage = {
   packageId: string
   version: string
@@ -121,6 +123,94 @@ const CollapsibleSection = ({
       </button>
       {open && children}
     </section>
+  )
+}
+
+const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
+  const [settings, setSettings] = useState<Record<string, unknown>>({})
+  const [credentials, setCredentials] = useState<CredentialStatus[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    void Promise.all([
+      invoke<Record<string, unknown>>('get_extension_package_settings', {
+        packageId: extension.packageId,
+      }),
+      invoke<CredentialStatus[]>('get_extension_credential_status', { packageId: extension.packageId }),
+    ]).then(([values, status]) => {
+      setSettings(values)
+      setCredentials(status)
+    })
+  }, [extension.packageId])
+
+  if (extension.settings.length === 0 && credentials.length === 0) return null
+  return (
+    <div className="mt-2 space-y-2 border-t border-slate-200/70 pt-2 dark:border-white/10">
+      {extension.settings.map(setting => {
+        const value = settings[setting.id] ?? setting.default
+        return (
+          <label className="flex items-center justify-between gap-3 text-xs" key={setting.id}>
+            <span>{setting.label}</span>
+            {setting.kind === 'boolean' ? (
+              <input
+                type="checkbox"
+                checked={Boolean(value)}
+                onChange={event => {
+                  const next = event.target.checked
+                  setSettings(current => ({ ...current, [setting.id]: next }))
+                  void invoke('set_extension_package_setting', {
+                    packageId: extension.packageId,
+                    settingId: setting.id,
+                    value: next,
+                  })
+                }}
+              />
+            ) : (
+              <input
+                className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
+                type={setting.kind === 'number' ? 'number' : 'text'}
+                value={String(value ?? '')}
+                onChange={event => {
+                  const next = setting.kind === 'number' ? Number(event.target.value) : event.target.value
+                  if (setting.kind === 'number' && !Number.isFinite(next)) return
+                  setSettings(current => ({ ...current, [setting.id]: next }))
+                  void invoke('set_extension_package_setting', {
+                    packageId: extension.packageId,
+                    settingId: setting.id,
+                    value: next,
+                  })
+                }}
+              />
+            )}
+          </label>
+        )
+      })}
+      {credentials.map(credential => (
+        <label className="flex items-center justify-between gap-3 text-xs" key={credential.id}>
+          <span>{credential.label}{credential.configured ? ' (configured)' : ''}</span>
+          <input
+            className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
+            type="password"
+            autoComplete="off"
+            placeholder={credential.configured ? 'Replace secret' : 'Enter secret'}
+            value={drafts[credential.id] ?? ''}
+            onChange={event => setDrafts(current => ({ ...current, [credential.id]: event.target.value }))}
+            onBlur={event => {
+              const value = event.target.value
+              if (!value) return
+              void invoke('set_extension_credential', {
+                packageId: extension.packageId,
+                credentialId: credential.id,
+                value,
+              }).then(() => {
+                setCredentials(current => current.map(item => item.id === credential.id ? { ...item, configured: true } : item))
+                setDrafts(current => ({ ...current, [credential.id]: '' }))
+              })
+            }}
+          />
+        </label>
+      ))}
+    </div>
   )
 }
 
@@ -513,6 +603,7 @@ export const Plugins = () => {
                         {extension.unavailableContributions.join(', ')}
                       </div>
                     )}
+                    <ExtensionConfiguration extension={extension} />
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     {extension.status === 'quarantined' && (

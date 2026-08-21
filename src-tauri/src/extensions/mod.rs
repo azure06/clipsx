@@ -10,8 +10,8 @@ mod service;
 #[allow(unused_imports)]
 pub use manifest::{
     ActionDisposition, ActionEffect, ActionHandler, ActionPlacement, ContributionKind,
-    ContributionMatcher, ExecutionClass, ExtensionManifest, ManifestContribution, RenderSurface,
-    UiSurface, ViewPurpose,
+    ContributionMatcher, ExecutionClass, ExtensionManifest, ExtensionSetting, ManifestContribution,
+    RenderSurface, UiSurface, ViewPurpose,
 };
 #[allow(unused_imports)]
 pub use packages::{
@@ -24,7 +24,8 @@ pub use runtime::{
     ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
 };
 pub use service::{
-    ActionInvocation, ActionOutcome, ContextActionDescriptor, CustomViewSession, ExtensionService,
+    ActionInvocation, ActionOutcome, ContextActionDescriptor, CredentialStatus, CustomViewSession,
+    ExtensionService,
 };
 
 use serde::{Deserialize, Serialize};
@@ -57,4 +58,5 @@ pub struct ExtensionSummary {
     pub checksum: Option<String>,
     pub external_navigation_origins: Vec<String>,
     pub providers: Vec<String>,
+    pub settings: Vec<ExtensionSetting>,
 }

@@ -106,6 +106,14 @@ struct PendingCustomView {
     expires_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStatus {
+    pub id: String,
+    pub label: String,
+    pub configured: bool,
+}
+
 #[derive(Clone)]
 pub struct ExtensionService {
     store: ExtensionPackageStore,
@@ -284,6 +292,7 @@ impl ExtensionService {
                         .map(|permission| permission.origin.clone())
                         .collect(),
                     providers: package.manifest.permissions.providers,
+                    settings: package.manifest.settings,
                 })
             })
             .collect()
@@ -990,6 +999,12 @@ impl ExtensionService {
             .ui_entry
             .as_deref()
             .context("custom extension view has no entrypoint")?;
+        let settings = self
+            .package_settings(repo, &contribution.package_id)
+            .await?;
+        let credentials = self
+            .credential_status(repo, &contribution.package_id)
+            .await?;
         let token = uuid::Uuid::now_v7().to_string();
         let label = format!("extension-{}", uuid::Uuid::now_v7());
         let entry_url = format!("clipsx-extension://localhost/{token}/{entry}");
@@ -1019,6 +1034,8 @@ impl ExtensionService {
                             },
                         },
                         "facetId": facet_id,
+                        "settings": settings,
+                        "credentials": credentials,
                         "surface": match surface { UiSurface::Detail => "detail", UiSurface::Dialog => "dialog" },
                         "theme": "system",
                         "locale": "en",
@@ -1075,6 +1092,135 @@ impl ExtensionService {
             .lock()
             .expect("extension custom view store poisoned")
             .remove(token);
+    }
+
+    pub async fn package_settings(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<serde_json::Value> {
+        let (extension_id, package) = self.package_for_settings(repo, package_id).await?;
+        let rows = sqlx::query(
+            "SELECT setting_id,value_json FROM extension_package_settings WHERE extension_id=?",
+        )
+        .bind(extension_id)
+        .fetch_all(&repo.pool)
+        .await?;
+        let stored = rows
+            .into_iter()
+            .filter_map(|row| {
+                let id: String = row.get(0);
+                let value: String = row.get(1);
+                serde_json::from_str(&value).ok().map(|value| (id, value))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        Ok(serde_json::Value::Object(
+            package
+                .manifest
+                .settings
+                .into_iter()
+                .map(|setting| {
+                    let value = stored
+                        .get(&setting.id)
+                        .cloned()
+                        .filter(|value| setting_value_is_valid(&setting, value))
+                        .unwrap_or(setting.default);
+                    (setting.id, value)
+                })
+                .collect(),
+        ))
+    }
+
+    pub async fn set_package_setting(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        setting_id: &str,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        let (extension_id, package) = self.package_for_settings(repo, package_id).await?;
+        let setting = package
+            .manifest
+            .settings
+            .iter()
+            .find(|setting| setting.id == setting_id)
+            .context("extension setting is not declared")?;
+        if !setting_value_is_valid(setting, &value) {
+            bail!("extension setting value does not match its declaration");
+        }
+        sqlx::query("INSERT INTO extension_package_settings(extension_id,setting_id,value_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(extension_id,setting_id) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(extension_id).bind(setting_id).bind(serde_json::to_string(&value)?).bind(now_ms())
+            .execute(&repo.pool).await?;
+        Ok(())
+    }
+
+    pub async fn credential_status(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<Vec<CredentialStatus>> {
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
+        package
+            .manifest
+            .permissions
+            .credentials
+            .into_iter()
+            .map(|credential| {
+                let entry = extension_credential_entry(package_id, &credential.id)?;
+                let configured = matches!(entry.get_password(), Ok(value) if !value.is_empty());
+                Ok(CredentialStatus {
+                    id: credential.id,
+                    label: credential.label,
+                    configured,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn set_credential(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        credential_id: &str,
+        value: Option<&str>,
+    ) -> Result<()> {
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
+        if !package
+            .manifest
+            .permissions
+            .credentials
+            .iter()
+            .any(|credential| credential.id == credential_id)
+        {
+            bail!("extension credential is not declared");
+        }
+        let entry = extension_credential_entry(package_id, credential_id)?;
+        match value {
+            Some(value) if !value.is_empty() && value.len() <= 8192 => entry.set_password(value)?,
+            Some(_) => bail!("extension credential must be between 1 and 8192 bytes"),
+            None => match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => return Err(error.into()),
+            },
+        }
+        Ok(())
+    }
+
+    async fn package_for_settings(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<(String, super::ExtensionPackage)> {
+        let row = sqlx::query("SELECT id,relative_path FROM extension_installs WHERE package_id=?")
+            .bind(package_id)
+            .fetch_optional(&repo.pool)
+            .await?
+            .context("extension package is not installed")?;
+        Ok((
+            row.get(0),
+            self.store
+                .load(std::path::Path::new(&row.get::<String, _>(1)))?,
+        ))
     }
 
     pub async fn set_action_shortcut(
@@ -1584,6 +1730,7 @@ impl ExtensionService {
                 .map(|permission| permission.origin.clone())
                 .collect(),
             providers: package.manifest.permissions.providers,
+            settings: package.manifest.settings,
         })
     }
 
@@ -2180,6 +2327,7 @@ fn summary_from_manifest(
             .map(|permission| permission.origin.clone())
             .collect(),
         providers: manifest.permissions.providers,
+        settings: manifest.settings,
     }
 }
 fn payload_bytes(value: &CapturedRepresentation) -> usize {
@@ -2188,6 +2336,23 @@ fn payload_bytes(value: &CapturedRepresentation) -> usize {
         CapturedPayload::Binary(value) => value.len(),
         CapturedPayload::Files(value) => value.iter().map(String::len).sum(),
     }
+}
+
+fn setting_value_is_valid(setting: &super::ExtensionSetting, value: &serde_json::Value) -> bool {
+    match setting.kind.as_str() {
+        "boolean" => value.is_boolean(),
+        "string" => value.as_str().is_some_and(|value| value.len() <= 4096),
+        "number" => value.is_number(),
+        _ => false,
+    }
+}
+
+fn extension_credential_entry(package_id: &str, credential_id: &str) -> Result<keyring::Entry> {
+    keyring::Entry::new(
+        "com.infiniti.clipsx.extension",
+        &format!("{package_id}:{credential_id}"),
+    )
+    .map_err(Into::into)
 }
 
 async fn download_release(entry: &RegistryPackage) -> Result<Vec<u8>> {

@@ -1021,6 +1021,63 @@ async fn issue_extension_action_invocation(
 }
 
 #[tauri::command]
+async fn get_extension_package_settings(
+    package_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .extensions
+        .package_settings(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_package_setting(
+    package_id: String,
+    setting_id: String,
+    value: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_package_setting(&state.history, &package_id, &setting_id, value)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_extension_credential_status(
+    package_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::CredentialStatus>, String> {
+    state
+        .extensions
+        .credential_status(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_credential(
+    package_id: String,
+    credential_id: String,
+    value: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_credential(
+            &state.history,
+            &package_id,
+            &credential_id,
+            value.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn open_extension_custom_view(
     app: tauri::AppHandle,
     renderer_id: String,
@@ -2300,6 +2357,10 @@ pub(crate) fn run() {
             run_context_action,
             grant_extension_action_permissions,
             issue_extension_action_invocation,
+            get_extension_package_settings,
+            set_extension_package_setting,
+            get_extension_credential_status,
+            set_extension_credential,
             open_extension_custom_view,
             close_extension_custom_view,
             sync_extension_custom_view,
@@ -2470,7 +2531,6 @@ mod tests {
             "frontend invokes commands missing from generate_handler!: {missing:?}"
         );
     }
-
 
     #[test]
     fn extension_child_labels_are_reserved_from_application_commands() {
