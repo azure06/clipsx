@@ -199,9 +199,12 @@ pub struct ExternalNavigationPermission {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HttpPermission {
     pub origin: String,
+    pub path_patterns: Vec<String>,
     #[serde(default)]
     pub methods: Vec<String>,
+    pub max_request_bytes: u64,
     pub max_response_bytes: u64,
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -472,6 +475,19 @@ impl ExtensionManifest {
                     .any(|method| !allowed_methods.contains(&method.as_str()))
                 || permission.max_response_bytes == 0
                 || permission.max_response_bytes > MAX_HTTP_RESPONSE_BYTES
+                || permission.max_request_bytes == 0
+                || permission.max_request_bytes > 10 * 1024 * 1024
+                || !(100..=30_000).contains(&permission.timeout_ms)
+                || permission.path_patterns.is_empty()
+                || permission.path_patterns.len() > 32
+                || permission.path_patterns.iter().any(|pattern| {
+                    !pattern.starts_with('/')
+                        || pattern.contains("..")
+                        || pattern.contains('?')
+                        || pattern.contains('#')
+                        || pattern.matches('*').count() > 1
+                        || (pattern.contains('*') && !pattern.ends_with('*'))
+                })
                 || !origins.insert(permission.origin.to_ascii_lowercase())
             {
                 bail!("HTTP permissions require unique exact HTTPS origins, approved methods, and bounded responses");
@@ -606,6 +622,17 @@ mod tests {
     }
 
     #[test]
+    fn obsolete_v2_draft_is_rejected_with_migration_message() {
+        let error = ExtensionManifest::parse(
+            b"schemaVersion = 2\npackageId = \"example.old\"\nversion = \"1.0.0\"\napiVersion = \"^2.0\"\ndisplayName = \"Old\"",
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("obsolete Extension API v2 draft"));
+    }
+
+    #[test]
     fn renderer_requires_matcher_purpose_and_surface() {
         let mut value = contribution(ContributionKind::Renderer);
         value.purpose = Some(ViewPurpose::Semantic);
@@ -625,11 +652,28 @@ mod tests {
         value.contributions[0].execution = ExecutionClass::CapabilityBacked;
         value.permissions.http.push(HttpPermission {
             origin: "https://translation.googleapis.com".into(),
+            path_patterns: vec!["/language/translate/*".into()],
             methods: vec!["POST".into()],
+            max_request_bytes: 1_048_576,
             max_response_bytes: 1_048_576,
+            timeout_ms: 10_000,
         });
         assert!(value.validate().is_ok());
         value.permissions.http[0].origin = "http://localhost:8080".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn external_navigation_is_separate_and_https_only() {
+        let mut value = manifest(contribution(ContributionKind::Transformer));
+        value
+            .permissions
+            .external_navigation
+            .push(ExternalNavigationPermission {
+                origin: "https://chatgpt.com".into(),
+            });
+        assert!(value.validate().is_ok());
+        value.permissions.external_navigation[0].origin = "http://localhost:11434".into();
         assert!(value.validate().is_err());
     }
 }

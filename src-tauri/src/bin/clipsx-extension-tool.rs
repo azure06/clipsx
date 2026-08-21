@@ -13,13 +13,6 @@ const API_VERSION: &str = "2.0.0";
 #[path = "../extensions/manifest.rs"]
 mod manifest;
 
-const ALLOWED: &[&str] = &[
-    "clipsx-extension.toml",
-    "component.wasm",
-    "README.md",
-    "LICENSE",
-];
-
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.as_slice() {
@@ -35,15 +28,7 @@ fn main() -> Result<()> {
 
 fn pack(input: &Path, output: &Path) -> Result<()> {
     let mut files = BTreeMap::new();
-    for name in ALLOWED {
-        let path = input.join(name);
-        if path.exists() {
-            files.insert(
-                *name,
-                fs::read(&path).with_context(|| format!("unable to read {name}"))?,
-            );
-        }
-    }
+    collect_package_files(input, input, &mut files)?;
     validate_contents(&files)?;
     if output.extension().and_then(|value| value.to_str()) != Some("clipsx") {
         bail!("extension package output must use the .clipsx suffix");
@@ -77,7 +62,7 @@ fn validate(path: &Path) -> Result<()> {
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
         let name = entry.name().to_string();
-        if entry.is_dir() || !ALLOWED.contains(&name.as_str()) {
+        if entry.is_dir() || !allowed_path(&name) {
             bail!("extension archive contains unsupported entry {name}");
         }
         let mut bytes = Vec::new();
@@ -92,18 +77,68 @@ fn validate(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_contents<T: AsRef<str>>(files: &BTreeMap<T, Vec<u8>>) -> Result<()> {
-    let find = |name: &str| {
-        files
-            .iter()
-            .find(|(key, _)| key.as_ref() == name)
-            .map(|(_, value)| value)
-    };
+fn validate_contents(files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    let find = |name: &str| files.get(name);
     let manifest_bytes = find("clipsx-extension.toml").context("manifest is missing")?;
-    manifest::ExtensionManifest::parse(manifest_bytes)?;
-    let component = find("component.wasm").context("component.wasm is missing")?;
-    if component.len() > 8 * 1024 * 1024 || !component.starts_with(b"\0asm") {
-        bail!("component.wasm is oversized or is not WebAssembly");
+    let manifest = manifest::ExtensionManifest::parse(manifest_bytes)?;
+    if let Some(component) = find("component.wasm") {
+        if component.len() > 8 * 1024 * 1024 || !component.starts_with(b"\0asm") {
+            bail!("component.wasm is oversized or is not WebAssembly");
+        }
+    } else if manifest.contributions.iter().any(|contribution| {
+        matches!(
+            contribution.kind,
+            manifest::ContributionKind::Detector | manifest::ContributionKind::Transformer
+        ) || (matches!(contribution.kind, manifest::ContributionKind::Renderer)
+            && contribution.ui_surfaces.is_empty())
+            || matches!(contribution.handler, Some(manifest::ActionHandler::Guest))
+    }) {
+        bail!("component.wasm is required by declared guest logic");
+    }
+    for contribution in &manifest.contributions {
+        if let Some(icon) = &contribution.icon_asset {
+            find(icon).with_context(|| format!("declared icon asset {icon} is missing"))?;
+        }
+        if let Some(entry) = &contribution.ui_entry {
+            find(entry).with_context(|| format!("declared UI entry {entry} is missing"))?;
+        }
     }
     Ok(())
+}
+
+fn collect_package_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_package_files(root, &path, files)?;
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if allowed_path(&relative) {
+            files.insert(
+                relative.clone(),
+                fs::read(&path).with_context(|| format!("unable to read {relative}"))?,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn allowed_path(name: &str) -> bool {
+    matches!(
+        name,
+        "clipsx-extension.toml" | "component.wasm" | "README.md" | "LICENSE"
+    ) || (name.starts_with("icons/") && name.ends_with(".svg") && name.matches('/').count() == 1)
+        || (name.starts_with("ui/")
+            && name
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != ".."))
 }

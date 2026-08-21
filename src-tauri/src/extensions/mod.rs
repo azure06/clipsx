@@ -1,6 +1,7 @@
 //! M5 community extension packages. Packages are untrusted component-model
 //! WebAssembly and receive no ambient host capabilities.
 
+mod broker;
 mod manifest;
 mod packages;
 mod runtime;
@@ -8,8 +9,9 @@ mod service;
 
 #[allow(unused_imports)]
 pub use manifest::{
-    ActionDisposition, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
-    ExecutionClass, ExtensionManifest, ManifestContribution, RenderSurface, ViewPurpose,
+    ActionDisposition, ActionEffect, ActionHandler, ActionPlacement, ContributionKind,
+    ContributionMatcher, ExecutionClass, ExtensionManifest, ManifestContribution, RenderSurface,
+    UiSurface, ViewPurpose,
 };
 #[allow(unused_imports)]
 pub use packages::{
@@ -17,11 +19,13 @@ pub use packages::{
 };
 #[allow(unused_imports)]
 pub use runtime::{
-    ExtensionActionResult, ExtensionCompactModel, ExtensionContent, ExtensionFacet,
-    ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
+    ExtensionActionResult, ExtensionActionState, ExtensionCompactModel, ExtensionContent,
+    ExtensionFacet, ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
     ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
 };
-pub use service::{ActionOutcome, ContextActionDescriptor, ExtensionService};
+pub use service::{
+    ActionInvocation, ActionOutcome, ContextActionDescriptor, CustomViewSession, ExtensionService,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,4 +54,7 @@ pub struct ExtensionSummary {
     pub http_origins: Vec<String>,
     pub credential_labels: Vec<String>,
     pub unavailable_contributions: Vec<String>,
+    pub checksum: Option<String>,
+    pub external_navigation_origins: Vec<String>,
+    pub providers: Vec<String>,
 }

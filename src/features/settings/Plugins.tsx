@@ -37,6 +37,9 @@ type Extension = {
   httpOrigins: string[]
   credentialLabels: string[]
   unavailableContributions: string[]
+  checksum: string | null
+  externalNavigationOrigins: string[]
+  providers: string[]
 }
 type RegistryPackage = {
   packageId: string
@@ -44,6 +47,12 @@ type RegistryPackage = {
   displayName: string
   description: string
   contributions: string[]
+  apiVersion: string
+  sha256: string
+  httpOrigins: string[]
+  externalNavigationOrigins: string[]
+  credentialLabels: string[]
+  providers: string[]
 }
 type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }
 type ExtensionAction = {
@@ -72,6 +81,23 @@ const KIND_META: Record<string, { icon: React.ReactNode; color: string; descript
     color: 'text-emerald-500',
     description: 'Convert content between formats — JSON↔CSV, Base64, curl→fetch…',
   },
+}
+
+const compareSemver = (left: string, right: string) => {
+  const parse = (value: string) => {
+    const [core = '', prerelease = ''] = value.split('-', 2)
+    return { numbers: core.split('.').map(part => Number(part)), prerelease }
+  }
+  const a = parse(left)
+  const b = parse(right)
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (a.numbers[index] ?? 0) - (b.numbers[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  if (a.prerelease === b.prerelease) return 0
+  if (!a.prerelease) return 1
+  if (!b.prerelease) return -1
+  return a.prerelease.localeCompare(b.prerelease)
 }
 
 const CollapsibleSection = ({
@@ -235,11 +261,48 @@ export const Plugins = () => {
     }
   }
 
+  const installUpdate = async (installed: Extension, update: RegistryPackage) => {
+    const oldPermissions = [
+      ...installed.httpOrigins.map(value => `HTTPS ${value}`),
+      ...installed.externalNavigationOrigins.map(value => `Navigate ${value}`),
+      ...installed.credentialLabels.map(value => `Credential ${value}`),
+      ...installed.providers.map(value => `Provider ${value}`),
+    ]
+    const newPermissions = [
+      ...update.httpOrigins.map(value => `HTTPS ${value}`),
+      ...update.externalNavigationOrigins.map(value => `Navigate ${value}`),
+      ...update.credentialLabels.map(value => `Credential ${value}`),
+      ...update.providers.map(value => `Provider ${value}`),
+    ]
+    const permissionChanged =
+      JSON.stringify(oldPermissions.sort()) !== JSON.stringify(newPermissions.sort())
+    const approved = window.confirm(
+      [
+        `Update ${installed.displayName} from v${installed.version} to v${update.version}?`,
+        `Release checksum: ${update.sha256}`,
+        permissionChanged ? 'Declared permissions changed.' : 'Declared permissions are unchanged.',
+        'All remembered external-data grants will be revoked and require fresh consent.',
+      ].join('\n\n')
+    )
+    if (!approved) return
+    await extensionAction(update.packageId, 'install_registry_extension', {
+      version: update.version,
+    })
+    await load()
+  }
+
   const groups = ['Detector', 'Renderer', 'Transformer']
   const activeItems = utilities.filter(item => item.kind === activeKind)
   const availableInRegistry = registry.filter(
     item => !extensions.some(ext => ext.packageId === item.packageId)
   )
+  const registryUpdates = extensions.flatMap(installed => {
+    const update = registry
+      .filter(item => item.packageId === installed.packageId)
+      .filter(item => compareSemver(item.version, installed.version) > 0)
+      .sort((left, right) => compareSemver(right.version, left.version))[0]
+    return update ? [{ installed, update }] : []
+  })
 
   return (
     <div className="relative h-full w-full overflow-y-auto bg-transparent text-gray-900 dark:text-gray-100 custom-scrollbar animate-fade-in">
@@ -523,6 +586,35 @@ export const Plugins = () => {
                       )}
                     </>
                   )}
+                </div>
+              ))}
+            </div>
+          </CollapsibleSection>
+        )}
+
+        {registryUpdates.length > 0 && (
+          <CollapsibleSection title="Extension updates">
+            <div className="space-y-2">
+              {registryUpdates.map(({ installed, update }) => (
+                <div
+                  className="flex items-center justify-between rounded-lg border border-blue-200/70 px-3 py-2 dark:border-blue-400/20"
+                  key={`${update.packageId}-${update.version}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{installed.displayName}</div>
+                    <div className="text-[10px] text-gray-500">
+                      v{installed.version} → v{update.version} · manual update
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busyId === update.packageId}
+                    leftIcon={<Download className="h-3.5 w-3.5 text-blue-500" />}
+                    onClick={() => void installUpdate(installed, update)}
+                  >
+                    Review update
+                  </Button>
                 </div>
               ))}
             </div>

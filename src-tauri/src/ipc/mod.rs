@@ -578,6 +578,7 @@ async fn install_registry_extension(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<crate::extensions::ExtensionSummary, String> {
+    close_extension_webviews(&app);
     let installed = state
         .extensions
         .install_registry(&state.history, &package_id, &version)
@@ -598,6 +599,7 @@ async fn install_local_extension(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<crate::extensions::ExtensionSummary, String> {
+    close_extension_webviews(&app);
     let installed = state
         .extensions
         .install_local(&state.history, std::path::Path::new(&path))
@@ -643,6 +645,9 @@ async fn set_extension_enabled(
             .await
             .map_err(|error| error.to_string())?;
     }
+    if !enabled {
+        close_extension_webviews(&app);
+    }
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
 }
@@ -674,6 +679,7 @@ async fn uninstall_extension(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    close_extension_webviews(&app);
     state
         .extensions
         .uninstall(&state.history, &package_id)
@@ -681,6 +687,14 @@ async fn uninstall_extension(
         .map_err(|error| error.to_string())?;
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
+}
+
+fn close_extension_webviews(app: &tauri::AppHandle) {
+    for (label, webview) in app.webviews() {
+        if label.starts_with("extension-") {
+            let _ = webview.close();
+        }
+    }
 }
 
 #[tauri::command]
@@ -898,6 +912,7 @@ async fn run_context_action(
     facet_id: Option<String>,
     action_id: String,
     parameters: serde_json::Value,
+    invocation_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ContextActionRunResponse, String> {
     match state
@@ -909,6 +924,7 @@ async fn run_context_action(
             &source_id,
             facet_id.as_deref(),
             parameters.clone(),
+            invocation_token.as_deref(),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -946,6 +962,176 @@ async fn run_context_action(
             Ok(ContextActionRunResponse::Notification { level, message })
         }
     }
+}
+
+#[tauri::command]
+async fn grant_extension_action_permissions(
+    action_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .grant_action_permissions(&state.history, &action_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn issue_extension_action_invocation(
+    action_id: String,
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ActionInvocation, String> {
+    state
+        .extensions
+        .issue_action_invocation(
+            &state.history,
+            &action_id,
+            &clip_id,
+            &source_id,
+            facet_id.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn open_extension_custom_view(
+    app: tauri::AppHandle,
+    renderer_id: String,
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    surface: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::CustomViewSession, String> {
+    if !x.is_finite()
+        || !y.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width < 100.0
+        || height < 80.0
+        || width > 10_000.0
+        || height > 10_000.0
+    {
+        return Err("extension custom view bounds are invalid".into());
+    }
+    let surface = match surface.as_str() {
+        "detail" => crate::extensions::UiSurface::Detail,
+        "dialog" => crate::extensions::UiSurface::Dialog,
+        _ => return Err("unsupported extension custom view surface".into()),
+    };
+    let session = state
+        .extensions
+        .begin_custom_view(
+            &state.history,
+            &renderer_id,
+            &clip_id,
+            &source_id,
+            facet_id.as_deref(),
+            surface,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let url = url::Url::parse(&session.entry_url).map_err(|error| error.to_string())?;
+    let allowed_token = session.token.clone();
+    let bridge_token = session.token.clone();
+    let bridge_label = session.label.clone();
+    let bridge_app = app.clone();
+    let builder = tauri::webview::WebviewBuilder::new(
+        session.label.clone(),
+        tauri::WebviewUrl::External(url),
+    )
+    .incognito(true)
+    .devtools(cfg!(debug_assertions))
+    .on_navigation(move |url| {
+        if url.scheme() == "clipsx-extension-bridge"
+            && url.host_str() == Some(bridge_token.as_str())
+        {
+            let command = url.path().trim_start_matches('/');
+            if matches!(command, "open-dialog" | "close") {
+                let _ = bridge_app.emit(
+                    "extension-bridge-message",
+                    serde_json::json!({ "token": bridge_token, "command": command }),
+                );
+                if command == "close" {
+                    if let Some(webview) = bridge_app.get_webview(&bridge_label) {
+                        let _ = webview.close();
+                    }
+                    if let Some(state) = bridge_app.try_state::<AppState>() {
+                        state.extensions.end_custom_view(&bridge_token);
+                    }
+                }
+            }
+            return false;
+        }
+        url.scheme() == "clipsx-extension"
+            && url.host_str() == Some("localhost")
+            && url.path().starts_with(&format!("/{allowed_token}/"))
+    })
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    let parent = app
+        .get_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    parent
+        .add_child(
+            builder,
+            tauri::LogicalPosition::new(x, y),
+            tauri::LogicalSize::new(width, height),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(session)
+}
+
+#[tauri::command]
+async fn close_extension_custom_view(
+    app: tauri::AppHandle,
+    label: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !label.starts_with("extension-") {
+        return Err("invalid extension custom view label".into());
+    }
+    if let Some(webview) = app.get_webview(&label) {
+        webview.close().map_err(|error| error.to_string())?;
+    }
+    state.extensions.end_custom_view(&token);
+    Ok(())
+}
+
+#[tauri::command]
+async fn sync_extension_custom_view(
+    app: tauri::AppHandle,
+    label: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    if !label.starts_with("extension-")
+        || !x.is_finite()
+        || !y.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width < 100.0
+        || height < 80.0
+    {
+        return Err("extension custom view bounds are invalid".into());
+    }
+    let webview = app
+        .get_webview(&label)
+        .ok_or_else(|| "extension custom view is unavailable".to_string())?;
+    webview
+        .set_position(tauri::LogicalPosition::new(x, y))
+        .and_then(|_| webview.set_size(tauri::LogicalSize::new(width, height)))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1774,6 +1960,36 @@ pub(crate) fn run() {
                     .unwrap(),
             }
         })
+        .register_uri_scheme_protocol("clipsx-extension", |context, request| {
+            let path = request.uri().path().trim_start_matches('/');
+            let mut parts = path.splitn(2, '/');
+            let token = parts.next().unwrap_or_default();
+            let asset_path = parts.next().unwrap_or_default();
+            let response = context
+                .app_handle()
+                .try_state::<AppState>()
+                .and_then(|state| state.extensions.custom_view_asset(token, asset_path).ok());
+            match response {
+                Some((bytes, mime)) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "no-store")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Referrer-Policy", "no-referrer")
+                    .header(
+                        "Content-Security-Policy",
+                        "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
+                    )
+                    .body(bytes)
+                    .unwrap(),
+                None => tauri::http::Response::builder()
+                    .status(404)
+                    .header("Content-Type", "text/plain")
+                    .header("Cache-Control", "no-store")
+                    .body(b"extension asset unavailable".to_vec())
+                    .unwrap(),
+            }
+        })
         .setup(|app| {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -2045,6 +2261,11 @@ pub(crate) fn run() {
             list_context_actions,
             list_extension_actions,
             run_context_action,
+            grant_extension_action_permissions,
+            issue_extension_action_invocation,
+            open_extension_custom_view,
+            close_extension_custom_view,
+            sync_extension_custom_view,
             set_extension_action_shortcut,
             execute_clipboard_output,
             save_transform_result,

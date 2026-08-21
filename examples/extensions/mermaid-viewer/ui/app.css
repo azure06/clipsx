@@ -1,0 +1,9 @@
+:root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { display: grid; gap: 16px; padding: 16px; }
+nav { display: flex; justify-content: flex-end; gap: 8px; }
+button { border: 1px solid currentColor; border-radius: 7px; padding: 6px 10px; background: Canvas; color: CanvasText; }
+#diagram { min-height: 160px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 10px; padding: 16px; }
+.node { border: 1px solid currentColor; border-radius: 8px; padding: 8px 12px; max-width: 32rem; overflow-wrap: anywhere; }
+.arrow { opacity: .65; padding: 4px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }

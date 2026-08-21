@@ -56,6 +56,7 @@ interface types {
   variant output-content { text(string), binary(list<u8>) }
 
   enum action-disposition { preview, copy, paste, save-as-clip }
+  variant action-state { hidden, disabled(string), enabled }
   variant action-result {
     output(tuple<list<output-representation>, action-disposition>),
     open-https-url(string),
@@ -64,10 +65,11 @@ interface types {
 }
 
 world extension {
-  use types.{representation, facet, render-model, compact-model, output-representation, action-result, guest-error};
+  use types.{representation, facet, render-model, compact-model, output-representation, action-result, action-state, guest-error};
   export detect: func(contribution-id: string, input: representation) -> result<list<facet>, guest-error>;
   export render-detail: func(contribution-id: string, input: representation, facet: option<facet>) -> result<render-model, guest-error>;
   export render-compact: func(contribution-id: string, input: representation, facet: option<facet>) -> result<compact-model, guest-error>;
   export transform: func(contribution-id: string, input: representation, parameters-json: string) -> result<list<output-representation>, guest-error>;
   export run-action: func(contribution-id: string, input: representation, facet: option<facet>, parameters-json: string) -> result<action-result, guest-error>;
+  export action-state: func(contribution-id: string, input: representation, facet: option<facet>, settings-json: string) -> result<action-state, guest-error>;
 }

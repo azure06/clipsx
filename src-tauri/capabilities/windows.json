@@ -3,6 +3,6 @@
   "identifier": "windows-capability",
   "description": "Windows-only window chrome permissions",
   "platforms": ["windows"],
-  "windows": ["main"],
+  "webviews": ["main"],
   "permissions": ["decorum:allow-show-snap-overlay"]
 }

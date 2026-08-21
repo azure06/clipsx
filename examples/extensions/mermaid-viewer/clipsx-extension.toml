@@ -8,6 +8,15 @@ description = "Offline Mermaid detection with an isolated bundled detail and dia
 license = "MIT"
 
 [[contributions]]
+id = "detect-mermaid"
+kind = "detector"
+displayName = "Mermaid detector"
+emitsFacetIds = ["mermaid"]
+
+[[contributions.matchers]]
+mimeTypes = ["text/plain"]
+
+[[contributions]]
 id = "mermaid-detail"
 kind = "renderer"
 displayName = "Mermaid diagram"
@@ -18,4 +27,4 @@ uiEntry = "ui/index.html"
 uiSurfaces = ["detail", "dialog"]
 
 [[contributions.matchers]]
-mimeTypes = ["text/plain"]
+facetIds = ["example.mermaid-viewer.mermaid"]

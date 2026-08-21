@@ -228,10 +228,33 @@ export const ClipActionsToolbar = ({
             <ActionButton action={action} key={action.id} />
           </>
         ))}
+        {transformControls?.actions
+          .filter(action => action.placements.includes('preview_toolbar'))
+          .slice(0, 2)
+          .map(action => (
+            <button
+              key={action.id}
+              type="button"
+              aria-label={action.label}
+              disabled={!action.available}
+              title={action.unavailableReason ?? action.label}
+              className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+              onClick={() => void transformControls.runAction(action.id)}
+            >
+              {action.iconSvg ? (
+                <img src={action.iconSvg} alt="" className="h-4 w-4" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+            </button>
+          ))}
         {transformControls &&
-          (transformControls.items.length > 0 || transformControls.actions.length > 0) && (
-            <TransformDropdown controls={transformControls} />
-          )}
+          (transformControls.items.length > 0 ||
+            transformControls.actions.some(
+              (action, index) =>
+                action.placements.includes('action_menu') ||
+                (action.placements.includes('preview_toolbar') && index >= 2)
+            )) && <TransformDropdown controls={transformControls} />}
       </div>
     </Tooltip.Provider>
   )
@@ -294,20 +317,29 @@ const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
           </DropdownMenuItem>
         ))}
         {controls.items.length > 0 && controls.actions.length > 0 && <DropdownMenuSeparator />}
-        {controls.actions.map(action => (
-          <DropdownMenuItem
-            key={action.id}
-            disabled={!action.available}
-            title={action.unavailableReason ?? undefined}
-            className="justify-between gap-4 py-1.5"
-            onSelect={() => void controls.runAction(action.id)}
-          >
-            <span>{action.label}</span>
-            {action.shortcut && (
-              <span className="text-[10px] text-gray-400">{action.shortcut}</span>
-            )}
-          </DropdownMenuItem>
-        ))}
+        {controls.actions
+          .filter(
+            (action, index) =>
+              action.placements.includes('action_menu') ||
+              (action.placements.includes('preview_toolbar') && index >= 2)
+          )
+          .map(action => (
+            <DropdownMenuItem
+              key={action.id}
+              disabled={!action.available}
+              title={action.unavailableReason ?? undefined}
+              className="justify-between gap-4 py-1.5"
+              onSelect={() => void controls.runAction(action.id)}
+            >
+              <span className="flex items-center gap-2">
+                {action.iconSvg && <img src={action.iconSvg} alt="" className="h-4 w-4" />}
+                {action.label}
+              </span>
+              {action.shortcut && (
+                <span className="text-[10px] text-gray-400">{action.shortcut}</span>
+              )}
+            </DropdownMenuItem>
+          ))}
       </DropdownMenuContent>
     </DropdownMenu>
     <Tooltip.Portal>

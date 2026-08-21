@@ -5,7 +5,7 @@ mod bindings {
 }
 
 use bindings::clipsx::extension::types::{
-    ActionResult, CardField, CardModel, CompactModel, Content, Facet, GuestError,
+    ActionResult, ActionState, CardField, CardModel, CompactModel, Content, Facet, GuestError,
     GuestErrorCode, LeadingVisual, OutputContent, OutputRepresentation, RenderModel,
     Representation, Rgba,
 };
@@ -21,15 +21,16 @@ struct Color {
 }
 
 impl bindings::Guest for ColorTools {
-    fn detect(
-        contribution_id: String,
-        input: Representation,
-    ) -> Result<Vec<Facet>, GuestError> {
+    fn detect(contribution_id: String, input: Representation) -> Result<Vec<Facet>, GuestError> {
         if contribution_id != "detect-color" {
             return Ok(Vec::new());
         }
-        let Some(text) = text(&input) else { return Ok(Vec::new()) };
-        let Some(color) = parse_color(text.trim()) else { return Ok(Vec::new()) };
+        let Some(text) = text(&input) else {
+            return Ok(Vec::new());
+        };
+        let Some(color) = parse_color(text.trim()) else {
+            return Ok(Vec::new());
+        };
         Ok(vec![Facet {
             id: "color".into(),
             payload_json: payload(color),
@@ -50,9 +51,18 @@ impl bindings::Guest for ColorTools {
             title: hex(color),
             subtitle: Some(rgb(color)),
             fields: vec![
-                CardField { label: "HEX".into(), value: hex(color) },
-                CardField { label: "RGB".into(), value: rgb(color) },
-                CardField { label: "HSL".into(), value: hsl(color) },
+                CardField {
+                    label: "HEX".into(),
+                    value: hex(color),
+                },
+                CardField {
+                    label: "RGB".into(),
+                    value: rgb(color),
+                },
+                CardField {
+                    label: "HSL".into(),
+                    value: hsl(color),
+                },
             ],
         }))
     }
@@ -107,10 +117,22 @@ impl bindings::Guest for ColorTools {
     ) -> Result<ActionResult, GuestError> {
         Err(unsupported("Color Tools actions use transformer presets"))
     }
+
+    fn action_state(
+        _contribution_id: String,
+        _input: Representation,
+        _facet: Option<Facet>,
+        _settings_json: String,
+    ) -> Result<ActionState, GuestError> {
+        Ok(ActionState::Enabled)
+    }
 }
 
 fn text(input: &Representation) -> Option<&str> {
-    match &input.content { Content::Text(value) => Some(value), _ => None }
+    match &input.content {
+        Content::Text(value) => Some(value),
+        _ => None,
+    }
 }
 
 fn color_from_input(input: &Representation) -> Result<Color, GuestError> {
@@ -120,7 +142,9 @@ fn color_from_input(input: &Representation) -> Result<Color, GuestError> {
 }
 
 fn parse_color(value: &str) -> Option<Color> {
-    parse_hex(value).or_else(|| parse_rgb(value)).or_else(|| parse_hsl(value))
+    parse_hex(value)
+        .or_else(|| parse_rgb(value))
+        .or_else(|| parse_hsl(value))
 }
 
 fn parse_hex(value: &str) -> Option<Color> {
@@ -146,7 +170,12 @@ fn parse_rgb(value: &str) -> Option<Color> {
         .map(str::parse)
         .collect::<Result<_, _>>()
         .ok()?;
-    (values.len() == 3).then(|| Color { r: values[0], g: values[1], b: values[2], a: 255 })
+    (values.len() == 3).then(|| Color {
+        r: values[0],
+        g: values[1],
+        b: values[2],
+        a: 255,
+    })
 }
 
 fn parse_hsl(value: &str) -> Option<Color> {
@@ -155,26 +184,50 @@ fn parse_hsl(value: &str) -> Option<Color> {
         .split(|ch: char| ch == ',' || ch.is_whitespace())
         .filter(|part| !part.is_empty())
         .collect();
-    if values.len() != 3 { return None }
+    if values.len() != 3 {
+        return None;
+    }
     let h = values[0].parse::<f64>().ok()?.rem_euclid(360.0) / 360.0;
     let s = values[1].strip_suffix('%')?.parse::<f64>().ok()? / 100.0;
     let l = values[2].strip_suffix('%')?.parse::<f64>().ok()? / 100.0;
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
     let channel = |mut t: f64| {
-        if t < 0.0 { t += 1.0 }
-        if t > 1.0 { t -= 1.0 }
-        let value = if t < 1.0 / 6.0 { p + (q - p) * 6.0 * t }
-            else if t < 0.5 { q }
-            else if t < 2.0 / 3.0 { p + (q - p) * (2.0 / 3.0 - t) * 6.0 }
-            else { p };
+        if t < 0.0 {
+            t += 1.0
+        }
+        if t > 1.0 {
+            t -= 1.0
+        }
+        let value = if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        };
         (value * 255.0).round() as u8
     };
-    Some(Color { r: channel(h + 1.0 / 3.0), g: channel(h), b: channel(h - 1.0 / 3.0), a: 255 })
+    Some(Color {
+        r: channel(h + 1.0 / 3.0),
+        g: channel(h),
+        b: channel(h - 1.0 / 3.0),
+        a: 255,
+    })
 }
 
-fn hex(color: Color) -> String { format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b) }
-fn rgb(color: Color) -> String { format!("rgb({} {} {})", color.r, color.g, color.b) }
+fn hex(color: Color) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+fn rgb(color: Color) -> String {
+    format!("rgb({} {} {})", color.r, color.g, color.b)
+}
 fn hsl(color: Color) -> String {
     let r = color.r as f64 / 255.0;
     let g = color.g as f64 / 255.0;
@@ -183,18 +236,29 @@ fn hsl(color: Color) -> String {
     let min = r.min(g).min(b);
     let l = (max + min) / 2.0;
     let delta = max - min;
-    let (h, s) = if delta == 0.0 { (0.0, 0.0) } else {
+    let (h, s) = if delta == 0.0 {
+        (0.0, 0.0)
+    } else {
         let s = delta / (1.0 - (2.0 * l - 1.0).abs());
-        let h = if max == r { 60.0 * ((g - b) / delta).rem_euclid(6.0) }
-            else if max == g { 60.0 * ((b - r) / delta + 2.0) }
-            else { 60.0 * ((r - g) / delta + 4.0) };
+        let h = if max == r {
+            60.0 * ((g - b) / delta).rem_euclid(6.0)
+        } else if max == g {
+            60.0 * ((b - r) / delta + 2.0)
+        } else {
+            60.0 * ((r - g) / delta + 4.0)
+        };
         (h, s)
     };
     format!("hsl({:.0} {:.0}% {:.0}%)", h, s * 100.0, l * 100.0)
 }
 
 fn swatch(color: Color) -> LeadingVisual {
-    LeadingVisual::Swatch(Rgba { red: color.r, green: color.g, blue: color.b, alpha: color.a })
+    LeadingVisual::Swatch(Rgba {
+        red: color.r,
+        green: color.g,
+        blue: color.b,
+        alpha: color.a,
+    })
 }
 
 fn payload(color: Color) -> String {
@@ -207,12 +271,19 @@ fn payload(color: Color) -> String {
         "green": color.g,
         "blue": color.b,
         "alpha": color.a,
-    }).to_string()
+    })
+    .to_string()
 }
 
 fn invalid(message: &str) -> GuestError {
-    GuestError { code: GuestErrorCode::InvalidInput, message: message.into() }
+    GuestError {
+        code: GuestErrorCode::InvalidInput,
+        message: message.into(),
+    }
 }
 fn unsupported(message: &str) -> GuestError {
-    GuestError { code: GuestErrorCode::Unsupported, message: message.into() }
+    GuestError {
+        code: GuestErrorCode::Unsupported,
+        message: message.into(),
+    }
 }

@@ -16,7 +16,7 @@ use super::ExtensionManifest;
 const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
-const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +47,14 @@ pub struct RegistryPackage {
     pub sha256: String,
     #[serde(default)]
     pub contributions: Vec<String>,
+    #[serde(default)]
+    pub http_origins: Vec<String>,
+    #[serde(default)]
+    pub external_navigation_origins: Vec<String>,
+    #[serde(default)]
+    pub credential_labels: Vec<String>,
+    #[serde(default)]
+    pub providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +77,7 @@ impl RegistryIndex {
         let mut entries = BTreeMap::new();
         for package in &index.packages {
             ExtensionManifest::parse(format!(
-                "schemaVersion = 2\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
+                "schemaVersion = 2\ncontractRevision = 2\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
                 package.package_id, package.version, package.api_version, package.display_name
             ).as_bytes())?;
             if package.sha256.len() != 64
@@ -269,6 +277,30 @@ impl ExtensionPackageStore {
             component_path,
         })
     }
+
+    pub fn package_asset(&self, relative_path: &Path, asset_path: &str) -> Result<Vec<u8>> {
+        if relative_path.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        }) || !allowed_path(asset_path)
+            || !(asset_path.starts_with("ui/") || asset_path.starts_with("icons/"))
+        {
+            bail!("extension asset path is invalid");
+        }
+        let package_root = self.root.join(relative_path);
+        let path = package_root.join(asset_path);
+        if !package_root.starts_with(self.root.join("packages")) || !path.starts_with(&package_root)
+        {
+            bail!("extension asset escaped its package root");
+        }
+        let bytes = fs::read(path).context("extension asset is unavailable")?;
+        if bytes.len() > MAX_ASSET_BYTES {
+            bail!("extension asset exceeds its runtime limit");
+        }
+        Ok(bytes)
+    }
 }
 
 fn unpack(archive: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
@@ -340,7 +372,7 @@ fn validate_assets(contents: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     for (path, bytes) in contents {
         if (path.starts_with("icons/") || path.starts_with("ui/")) && bytes.len() > MAX_ASSET_BYTES
         {
-            bail!("extension UI asset exceeds 2 MiB");
+            bail!("extension UI asset exceeds 4 MiB");
         }
         if path.starts_with("icons/") {
             validate_svg(bytes)?;
@@ -456,5 +488,31 @@ mod tests {
             .install(&archive, InstallSource::Developer, None)
             .is_err());
         assert!(!root.path().join("packages").join("component.wasm").exists());
+    }
+
+    #[test]
+    fn rejects_active_and_external_svg_content() {
+        assert!(validate_svg(
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#
+        )
+        .is_ok());
+        for malicious in [
+            br#"<svg onload="alert(1)"></svg>"#.as_slice(),
+            br#"<svg><script>alert(1)</script></svg>"#.as_slice(),
+            br#"<svg><foreignObject><html/></foreignObject></svg>"#.as_slice(),
+            br#"<svg><use href="https://example.com/icon.svg#x"/></svg>"#.as_slice(),
+            br#"<!DOCTYPE svg><svg></svg>"#.as_slice(),
+        ] {
+            assert!(validate_svg(malicious).is_err());
+        }
+    }
+
+    #[test]
+    fn package_asset_paths_are_scoped() {
+        assert!(allowed_path("ui/assets/app.js"));
+        assert!(allowed_path("icons/action.svg"));
+        assert!(!allowed_path("ui/../component.wasm"));
+        assert!(!allowed_path("icons/nested/action.svg"));
+        assert!(!allowed_path("other/app.js"));
     }
 }

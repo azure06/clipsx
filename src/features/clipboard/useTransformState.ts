@@ -19,13 +19,19 @@ export type ContextAction = {
   packageId: string
   label: string
   icon: string | null
+  iconSvg: string | null
+  placements: Array<'preview_toolbar' | 'action_menu'>
   effects: string[]
   execution: 'local' | 'capability_backed'
   available: boolean
   unavailableReason: string | null
   parameterSchema: Record<string, unknown>
   shortcut: string | null
+  consentRequired: boolean
+  externalNavigationOrigins: string[]
 }
+
+type ActionInvocation = { token: string; expiresAt: number }
 
 type ContextActionRunResponse =
   | {
@@ -116,12 +122,34 @@ export const useTransformState = ({
       setError(null)
       setPreview(null)
       try {
+        let invocationToken: string | null = null
+        if (action.effects.includes('open_https_url')) {
+          if (action.consentRequired) {
+            const destinations = action.externalNavigationOrigins.join('\n')
+            const approved = window.confirm(
+              `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
+            )
+            if (!approved) {
+              setActiveTransformer(null)
+              return
+            }
+            await invoke('grant_extension_action_permissions', { actionId: action.id })
+          }
+          const invocation = await invoke<ActionInvocation>('issue_extension_action_invocation', {
+            actionId: action.id,
+            clipId,
+            sourceId,
+            facetId: basePresentation?.activeView.facetId ?? null,
+          })
+          invocationToken = invocation.token
+        }
         const result = await invoke<ContextActionRunResponse>('run_context_action', {
           clipId,
           sourceId,
           facetId: basePresentation?.activeView.facetId ?? null,
           actionId: action.id,
           parameters: {},
+          invocationToken,
         })
         if (result.kind === 'notification') {
           window.dispatchEvent(

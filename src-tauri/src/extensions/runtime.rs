@@ -128,6 +128,13 @@ pub enum ExtensionActionResult {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtensionActionState {
+    Hidden,
+    Disabled(String),
+    Enabled,
+}
+
 struct StoreData {
     limits: StoreLimits,
 }
@@ -326,6 +333,33 @@ impl ExtensionRuntime {
         result.map(from_wit_action_result).map_err(guest_error)
     }
 
+    pub async fn action_state(
+        &self,
+        sha256: &str,
+        contribution_id: &str,
+        input: ExtensionRepresentation,
+        facet: Option<ExtensionFacet>,
+        settings_json: String,
+    ) -> Result<ExtensionActionState> {
+        let (mut store, instance) = self
+            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100))
+            .await?;
+        let result = timeout(
+            Duration::from_millis(100),
+            instance.call_action_state(
+                &mut store,
+                contribution_id,
+                &to_wit_representation(input),
+                facet.map(to_wit_facet).as_ref(),
+                &settings_json,
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("extension action-state timed out"))?
+        .map_err(wasmtime_error)?;
+        result.map(from_wit_action_state).map_err(guest_error)
+    }
+
     async fn binding_instance(
         &self,
         sha256: &str,
@@ -513,6 +547,17 @@ fn from_wit_action_result(
         ActionResult::Notification((level, message)) => {
             ExtensionActionResult::Notification { level, message }
         }
+    }
+}
+
+fn from_wit_action_state(
+    value: bindings::clipsx::extension::types::ActionState,
+) -> ExtensionActionState {
+    use bindings::clipsx::extension::types::ActionState;
+    match value {
+        ActionState::Hidden => ExtensionActionState::Hidden,
+        ActionState::Disabled(reason) => ExtensionActionState::Disabled(reason),
+        ActionState::Enabled => ExtensionActionState::Enabled,
     }
 }
 

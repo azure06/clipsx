@@ -1,6 +1,12 @@
-use std::{fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::{redirect::Policy, Client};
 use serde::Serialize;
 use serde_json::json;
@@ -14,10 +20,10 @@ use crate::{
 
 use super::{
     ActionDisposition, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
-    ExecutionClass, ExtensionActionResult, ExtensionContent, ExtensionLeadingVisual,
-    ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation, ExtensionRuntime,
-    ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex, RegistryPackage,
-    RenderSurface, RuntimeStatus, ViewPurpose, OFFICIAL_REGISTRY_URL,
+    ExecutionClass, ExtensionActionResult, ExtensionActionState, ExtensionContent,
+    ExtensionLeadingVisual, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
+    ExtensionRuntime, ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex,
+    RegistryPackage, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose, OFFICIAL_REGISTRY_URL,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,12 +33,31 @@ pub struct ContextActionDescriptor {
     pub package_id: String,
     pub label: String,
     pub icon: Option<String>,
+    pub icon_svg: Option<String>,
+    pub placements: Vec<String>,
     pub effects: Vec<String>,
     pub execution: String,
     pub available: bool,
     pub unavailable_reason: Option<String>,
     pub parameter_schema: serde_json::Value,
     pub shortcut: Option<String>,
+    pub consent_required: bool,
+    pub external_navigation_origins: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionInvocation {
+    pub token: String,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomViewSession {
+    pub token: String,
+    pub label: String,
+    pub entry_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -59,12 +84,33 @@ pub struct ActiveContribution {
     pub id: String,
     pub version: String,
     pub declaration: ManifestContribution,
+    pub external_navigation_origins: Vec<String>,
+    pub package_relative_path: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct PendingInvocation {
+    package_sha256: String,
+    action_id: String,
+    clip_id: String,
+    source_id: String,
+    facet_id: Option<String>,
+    expires_at: i64,
+}
+
+#[derive(Debug, Clone)]
+struct PendingCustomView {
+    package_relative_path: std::path::PathBuf,
+    context_script: Vec<u8>,
+    expires_at: i64,
 }
 
 #[derive(Clone)]
 pub struct ExtensionService {
     store: ExtensionPackageStore,
     runtime: ExtensionRuntime,
+    invocations: Arc<Mutex<HashMap<String, PendingInvocation>>>,
+    custom_views: Arc<Mutex<HashMap<String, PendingCustomView>>>,
 }
 
 impl ExtensionService {
@@ -72,7 +118,20 @@ impl ExtensionService {
         Ok(Self {
             store: ExtensionPackageStore::new(roots.extensions())?,
             runtime: ExtensionRuntime::new()?,
+            invocations: Arc::new(Mutex::new(HashMap::new())),
+            custom_views: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    pub fn invalidate_runtime_sessions(&self) {
+        self.invocations
+            .lock()
+            .expect("extension invocation store poisoned")
+            .clear();
+        self.custom_views
+            .lock()
+            .expect("extension custom view store poisoned")
+            .clear();
     }
 
     pub async fn refresh_registry(&self) -> Result<RegistryIndex> {
@@ -215,6 +274,15 @@ impl ExtensionService {
                         .filter(|item| item.execution == ExecutionClass::CapabilityBacked)
                         .map(|item| item.display_name.clone())
                         .collect(),
+                    checksum: Some(package.sha256),
+                    external_navigation_origins: package
+                        .manifest
+                        .permissions
+                        .external_navigation
+                        .iter()
+                        .map(|permission| permission.origin.clone())
+                        .collect(),
+                    providers: package.manifest.permissions.providers,
                 })
             })
             .collect()
@@ -237,6 +305,11 @@ impl ExtensionService {
             bail!("extension is not installed");
         }
         if !enabled {
+            self.invalidate_runtime_sessions();
+            sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=(SELECT id FROM extension_installs WHERE package_id=?)")
+                .bind(package_id)
+                .execute(&repo.pool)
+                .await?;
             sqlx::query("DELETE FROM content_compact_presentations WHERE renderer_id LIKE ?")
                 .bind(format!("{package_id}/%"))
                 .execute(&repo.pool)
@@ -259,6 +332,7 @@ impl ExtensionService {
     }
 
     pub async fn uninstall(&self, repo: &HistoryRepository, package_id: &str) -> Result<()> {
+        self.invalidate_runtime_sessions();
         sqlx::query("DELETE FROM content_compact_presentations WHERE renderer_id LIKE ?")
             .bind(format!("{package_id}/%"))
             .execute(&repo.pool)
@@ -325,6 +399,14 @@ impl ExtensionService {
                     id: package.manifest.qualified_contribution_id(&declaration.id),
                     version: declaration.version.clone(),
                     declaration: declaration.clone(),
+                    external_navigation_origins: package
+                        .manifest
+                        .permissions
+                        .external_navigation
+                        .iter()
+                        .map(|permission| permission.origin.clone())
+                        .collect(),
+                    package_relative_path: package.relative_path.clone(),
                 });
             }
         }
@@ -585,34 +667,60 @@ impl ExtensionService {
     ) -> Result<Vec<ContextActionDescriptor>> {
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let shortcuts = self.action_shortcuts(repo).await?;
-        let mut actions: Vec<_> = self
+        let facet = self
+            .action_facet(repo, clip_id, source_id, facet_id)
+            .await?;
+        let mut actions = Vec::new();
+        for item in self
             .active_contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .filter(|item| accepts(&item.declaration, &source, facet_id))
-            .map(|item| {
-                let available = item.declaration.execution == ExecutionClass::Local;
-                ContextActionDescriptor {
-                    shortcut: shortcuts.get(&item.id).cloned(),
-                    id: item.id,
-                    package_id: item.package_id,
-                    label: item.declaration.display_name,
-                    icon: item.declaration.icon,
-                    effects: item
-                        .declaration
-                        .effects
-                        .into_iter()
-                        .map(action_effect_name)
-                        .map(str::to_string)
-                        .collect(),
-                    execution: execution_name(item.declaration.execution).into(),
-                    available,
-                    unavailable_reason: (!available)
-                        .then(|| "Network capability broker is not available in this build".into()),
-                    parameter_schema: item.declaration.parameter_schema,
-                }
-            })
-            .collect();
+        {
+            let state = self
+                .action_state(repo, &item, &source, facet.clone())
+                .await?;
+            if state == ExtensionActionState::Hidden {
+                continue;
+            }
+            let (available, unavailable_reason) = match state {
+                ExtensionActionState::Enabled => (true, None),
+                ExtensionActionState::Disabled(reason) => (false, Some(reason)),
+                ExtensionActionState::Hidden => unreachable!(),
+            };
+            let consent_required = self.consent_required(repo, &item).await?;
+            let icon_svg = self.contribution_icon(&item);
+            actions.push(ContextActionDescriptor {
+                shortcut: shortcuts.get(&item.id).cloned(),
+                id: item.id,
+                package_id: item.package_id,
+                label: item.declaration.display_name,
+                icon: item.declaration.icon,
+                icon_svg,
+                placements: item
+                    .declaration
+                    .placements
+                    .iter()
+                    .map(|placement| match placement {
+                        super::ActionPlacement::PreviewToolbar => "preview_toolbar".into(),
+                        super::ActionPlacement::ActionMenu => "action_menu".into(),
+                    })
+                    .collect(),
+                effects: item
+                    .declaration
+                    .effects
+                    .into_iter()
+                    .map(action_effect_name)
+                    .map(str::to_string)
+                    .collect(),
+                execution: execution_name(item.declaration.execution).into(),
+                available,
+                unavailable_reason,
+                parameter_schema: item.declaration.parameter_schema,
+                consent_required,
+                external_navigation_origins: item.external_navigation_origins,
+            });
+        }
         actions.sort_by(|left, right| left.label.cmp(&right.label).then(left.id.cmp(&right.id)));
         Ok(actions)
     }
@@ -628,12 +736,23 @@ impl ExtensionService {
             .into_iter()
             .map(|item| {
                 let available = item.declaration.execution == ExecutionClass::Local;
+                let icon_svg = self.contribution_icon(&item);
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
                     id: item.id,
                     package_id: item.package_id,
                     label: item.declaration.display_name,
                     icon: item.declaration.icon,
+                    icon_svg,
+                    placements: item
+                        .declaration
+                        .placements
+                        .iter()
+                        .map(|placement| match placement {
+                            super::ActionPlacement::PreviewToolbar => "preview_toolbar".into(),
+                            super::ActionPlacement::ActionMenu => "action_menu".into(),
+                        })
+                        .collect(),
                     effects: item
                         .declaration
                         .effects
@@ -646,6 +765,8 @@ impl ExtensionService {
                     unavailable_reason: (!available)
                         .then(|| "Network capability broker is not available in this build".into()),
                     parameter_schema: item.declaration.parameter_schema,
+                    consent_required: false,
+                    external_navigation_origins: item.external_navigation_origins,
                 }
             })
             .collect();
@@ -665,6 +786,7 @@ impl ExtensionService {
         source_id: &str,
         facet_id: Option<&str>,
         parameters: serde_json::Value,
+        invocation_token: Option<&str>,
     ) -> Result<ActionOutcome> {
         if !parameters.is_object() {
             bail!("extension action parameters must be an object");
@@ -679,14 +801,33 @@ impl ExtensionService {
         if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
             bail!("network capability broker is not available in this build");
         }
-        let facet = if let Some(id) = facet_id {
-            crate::contributions::facets(repo, clip_id)
-                .await?
-                .into_iter()
-                .find(|facet| facet.id == id && facet.source_representation_id == source_id)
-        } else {
-            None
-        };
+        if contribution
+            .declaration
+            .effects
+            .contains(&ActionEffect::OpenHttpsUrl)
+        {
+            self.consume_invocation(
+                &contribution,
+                action_id,
+                clip_id,
+                source_id,
+                facet_id,
+                invocation_token.context("extension action requires an invocation token")?,
+            )?;
+        }
+        let facet = self
+            .action_facet(repo, clip_id, source_id, facet_id)
+            .await?;
+        match self
+            .action_state(repo, &contribution, &source, facet.clone())
+            .await?
+        {
+            ExtensionActionState::Enabled => {}
+            ExtensionActionState::Hidden => bail!("extension action is hidden for this clip"),
+            ExtensionActionState::Disabled(reason) => {
+                bail!("extension action is disabled: {reason}")
+            }
+        }
         let outcome = match contribution
             .declaration
             .handler
@@ -737,6 +878,198 @@ impl ExtensionService {
         validate_action_outcome(&contribution, &outcome)?;
         self.success(repo, &contribution).await?;
         Ok(outcome)
+    }
+
+    pub async fn grant_action_permissions(
+        &self,
+        repo: &HistoryRepository,
+        action_id: &str,
+    ) -> Result<()> {
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Action)
+            .await?
+            .into_iter()
+            .find(|item| item.id == action_id)
+            .context("extension action is not installed and enabled")?;
+        if contribution.external_navigation_origins.is_empty() {
+            bail!("extension action has no grantable external navigation permission");
+        }
+        let mut transaction = repo.pool.begin().await?;
+        for origin in &contribution.external_navigation_origins {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'external_navigation', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id)
+                .bind(&contribution.sha256)
+                .bind(origin)
+                .bind(now_ms())
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn issue_action_invocation(
+        &self,
+        repo: &HistoryRepository,
+        action_id: &str,
+        clip_id: &str,
+        source_id: &str,
+        facet_id: Option<&str>,
+    ) -> Result<ActionInvocation> {
+        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Action)
+            .await?
+            .into_iter()
+            .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
+            .context("contextual action is not available for this representation")?;
+        if self.consent_required(repo, &contribution).await? {
+            bail!("external data consent is required for this package release");
+        }
+        let facet = self
+            .action_facet(repo, clip_id, source_id, facet_id)
+            .await?;
+        match self
+            .action_state(repo, &contribution, &source, facet)
+            .await?
+        {
+            ExtensionActionState::Enabled => {}
+            ExtensionActionState::Hidden => bail!("extension action is hidden for this clip"),
+            ExtensionActionState::Disabled(reason) => {
+                bail!("extension action is disabled: {reason}")
+            }
+        }
+        let token = uuid::Uuid::now_v7().to_string();
+        let expires_at = now_ms() + 30_000;
+        let mut invocations = self
+            .invocations
+            .lock()
+            .expect("extension invocation store poisoned");
+        invocations.retain(|_, invocation| invocation.expires_at > now_ms());
+        invocations.insert(
+            token.clone(),
+            PendingInvocation {
+                package_sha256: contribution.sha256,
+                action_id: action_id.into(),
+                clip_id: clip_id.into(),
+                source_id: source_id.into(),
+                facet_id: facet_id.map(str::to_string),
+                expires_at,
+            },
+        );
+        Ok(ActionInvocation { token, expires_at })
+    }
+
+    pub async fn begin_custom_view(
+        &self,
+        repo: &HistoryRepository,
+        renderer_id: &str,
+        clip_id: &str,
+        source_id: &str,
+        facet_id: Option<&str>,
+        surface: UiSurface,
+    ) -> Result<CustomViewSession> {
+        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Renderer)
+            .await?
+            .into_iter()
+            .find(|item| {
+                item.id == renderer_id
+                    && accepts(&item.declaration, &source, facet_id)
+                    && item.declaration.ui_surfaces.contains(&surface)
+            })
+            .context("custom extension detail view is unavailable")?;
+        let entry = contribution
+            .declaration
+            .ui_entry
+            .as_deref()
+            .context("custom extension view has no entrypoint")?;
+        let token = uuid::Uuid::now_v7().to_string();
+        let label = format!("extension-{}", uuid::Uuid::now_v7());
+        let entry_url = format!("clipsx-extension://localhost/{token}/{entry}");
+        let mut sessions = self
+            .custom_views
+            .lock()
+            .expect("extension custom view store poisoned");
+        sessions.retain(|_, session| session.expires_at > now_ms());
+        sessions.insert(
+            token.clone(),
+            PendingCustomView {
+                package_relative_path: contribution.package_relative_path,
+                context_script: (format!(
+                    "window.ClipsX=Object.freeze({{context:Object.freeze({})}});",
+                    serde_json::to_string(&json!({
+                        "representation": {
+                            "formatKey": source.format_key,
+                            "mimeType": source.canonical_mime_type,
+                            "storageKind": match &source.payload {
+                                CapturedPayload::Text(_) => "text",
+                                CapturedPayload::Binary(_) => "binary_asset",
+                                CapturedPayload::Files(_) => "file_list",
+                            },
+                            "text": match &source.payload {
+                                CapturedPayload::Text(value) => Some(value.as_str()),
+                                _ => None,
+                            },
+                        },
+                        "facetId": facet_id,
+                        "surface": match surface { UiSurface::Detail => "detail", UiSurface::Dialog => "dialog" },
+                        "theme": "system",
+                        "locale": "en",
+                    }))?
+                )
+                + &format!(
+                    "window.ClipsX.openDialog=()=>location.assign('clipsx-extension-bridge://{token}/open-dialog');window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');"
+                ))
+                .into_bytes(),
+                expires_at: now_ms() + 60 * 60 * 1000,
+            },
+        );
+        Ok(CustomViewSession {
+            token,
+            label,
+            entry_url,
+        })
+    }
+
+    pub fn custom_view_asset(&self, token: &str, path: &str) -> Result<(Vec<u8>, &'static str)> {
+        let sessions = self
+            .custom_views
+            .lock()
+            .expect("extension custom view store poisoned");
+        let session = sessions
+            .get(token)
+            .filter(|session| session.expires_at > now_ms())
+            .context("extension custom view session is invalid or expired")?;
+        if path == "__clipsx/context.js" {
+            return Ok((
+                session.context_script.clone(),
+                "text/javascript; charset=utf-8",
+            ));
+        }
+        let bytes = self
+            .store
+            .package_asset(&session.package_relative_path, path)?;
+        let mime = match path.rsplit('.').next().unwrap_or_default() {
+            "html" => "text/html; charset=utf-8",
+            "js" | "mjs" => "text/javascript; charset=utf-8",
+            "css" => "text/css; charset=utf-8",
+            "json" => "application/json",
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "woff2" => "font/woff2",
+            _ => "application/octet-stream",
+        };
+        Ok((bytes, mime))
+    }
+
+    pub fn end_custom_view(&self, token: &str) {
+        self.custom_views
+            .lock()
+            .expect("extension custom view store poisoned")
+            .remove(token);
     }
 
     pub async fn set_action_shortcut(
@@ -795,6 +1128,129 @@ impl ExtensionService {
             .collect())
     }
 
+    fn contribution_icon(&self, contribution: &ActiveContribution) -> Option<String> {
+        let path = contribution.declaration.icon_asset.as_deref()?;
+        let bytes = self
+            .store
+            .package_asset(&contribution.package_relative_path, path)
+            .ok()?;
+        Some(format!(
+            "data:image/svg+xml;base64,{}",
+            BASE64.encode(bytes)
+        ))
+    }
+
+    async fn consent_required(
+        &self,
+        repo: &HistoryRepository,
+        contribution: &ActiveContribution,
+    ) -> Result<bool> {
+        if !contribution
+            .declaration
+            .effects
+            .contains(&ActionEffect::OpenHttpsUrl)
+        {
+            return Ok(false);
+        }
+        if contribution.external_navigation_origins.is_empty() {
+            return Ok(true);
+        }
+        let granted = sqlx::query_scalar::<_, String>(
+            "SELECT permission_value FROM extension_permission_grants WHERE extension_id=? AND package_sha256=? AND permission_kind='external_navigation'",
+        )
+        .bind(&contribution.extension_id)
+        .bind(&contribution.sha256)
+        .fetch_all(&repo.pool)
+        .await?;
+        Ok(contribution
+            .external_navigation_origins
+            .iter()
+            .any(|origin| !granted.contains(origin)))
+    }
+
+    fn consume_invocation(
+        &self,
+        contribution: &ActiveContribution,
+        action_id: &str,
+        clip_id: &str,
+        source_id: &str,
+        facet_id: Option<&str>,
+        token: &str,
+    ) -> Result<()> {
+        let invocation = self
+            .invocations
+            .lock()
+            .expect("extension invocation store poisoned")
+            .remove(token)
+            .context("extension invocation token is invalid or already used")?;
+        if invocation.expires_at <= now_ms()
+            || invocation.package_sha256 != contribution.sha256
+            || invocation.action_id != action_id
+            || invocation.clip_id != clip_id
+            || invocation.source_id != source_id
+            || invocation.facet_id.as_deref() != facet_id
+        {
+            bail!("extension invocation token is expired or does not match this action scope");
+        }
+        Ok(())
+    }
+
+    async fn action_facet(
+        &self,
+        repo: &HistoryRepository,
+        clip_id: &str,
+        source_id: &str,
+        facet_id: Option<&str>,
+    ) -> Result<Option<crate::contributions::FacetDescriptor>> {
+        Ok(if let Some(id) = facet_id {
+            crate::contributions::facets(repo, clip_id)
+                .await?
+                .into_iter()
+                .find(|facet| facet.id == id && facet.source_representation_id == source_id)
+        } else {
+            None
+        })
+    }
+
+    async fn action_state(
+        &self,
+        repo: &HistoryRepository,
+        contribution: &ActiveContribution,
+        source: &CapturedRepresentation,
+        facet: Option<crate::contributions::FacetDescriptor>,
+    ) -> Result<ExtensionActionState> {
+        if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
+            return Ok(ExtensionActionState::Disabled(
+                "The extension network broker is not available in this build".into(),
+            ));
+        }
+        if !matches!(contribution.declaration.handler, Some(ActionHandler::Guest)) {
+            return Ok(ExtensionActionState::Enabled);
+        }
+        let state = self
+            .runtime
+            .action_state(
+                &contribution.sha256,
+                &contribution.local_id,
+                representation(source.clone())?,
+                facet.map(|facet| super::ExtensionFacet {
+                    id: facet.id,
+                    payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
+                }),
+                "{}".into(),
+            )
+            .await;
+        match state {
+            Ok(state) => Ok(state),
+            Err(error) => {
+                self.failure(repo, contribution, &error).await?;
+                Ok(ExtensionActionState::Disabled(
+                    "Extension action state could not be evaluated".into(),
+                ))
+            }
+        }
+    }
+
     pub async fn renderer_views(
         &self,
         repo: &HistoryRepository,
@@ -829,7 +1285,16 @@ impl ExtensionService {
                         capability_id: representation.capability_id.clone(),
                         facet_id: None,
                         is_original: false,
-                        presentation_kind: "extension".into(),
+                        presentation_kind: if renderer
+                            .declaration
+                            .ui_surfaces
+                            .contains(&UiSurface::Detail)
+                        {
+                            "extension_ui"
+                        } else {
+                            "extension"
+                        }
+                        .into(),
                         purpose: purpose_name(renderer.declaration.purpose).into(),
                         match_specificity: match_specificity(&renderer.declaration, &source, None),
                         placement: "alternate".into(),
@@ -849,7 +1314,16 @@ impl ExtensionService {
                             capability_id: representation.capability_id.clone(),
                             facet_id: Some(facet.id.clone()),
                             is_original: false,
-                            presentation_kind: "extension".into(),
+                            presentation_kind: if renderer
+                                .declaration
+                                .ui_surfaces
+                                .contains(&UiSurface::Detail)
+                            {
+                                "extension_ui"
+                            } else {
+                                "extension"
+                            }
+                            .into(),
                             purpose: purpose_name(renderer.declaration.purpose).into(),
                             match_specificity: match_specificity(
                                 &renderer.declaration,
@@ -887,6 +1361,15 @@ impl ExtensionService {
         else {
             return Ok(None);
         };
+        if contribution
+            .declaration
+            .ui_surfaces
+            .contains(&UiSurface::Detail)
+        {
+            return Ok(Some(RenderModel::Text {
+                text: String::new(),
+            }));
+        }
         let result = self
             .runtime
             .render_detail(
@@ -989,6 +1472,7 @@ impl ExtensionService {
         package: super::ExtensionPackage,
         source: InstallSource,
     ) -> Result<ExtensionSummary> {
+        self.invalidate_runtime_sessions();
         let id: Option<String> =
             sqlx::query_scalar("SELECT id FROM extension_installs WHERE package_id=?")
                 .bind(&package.manifest.package_id)
@@ -1045,6 +1529,15 @@ impl ExtensionService {
                 .filter(|item| item.execution == ExecutionClass::CapabilityBacked)
                 .map(|item| item.display_name.clone())
                 .collect(),
+            checksum: Some(package.sha256),
+            external_navigation_origins: package
+                .manifest
+                .permissions
+                .external_navigation
+                .iter()
+                .map(|permission| permission.origin.clone())
+                .collect(),
+            providers: package.manifest.permissions.providers,
         })
     }
 
@@ -1342,6 +1835,18 @@ fn validate_action_outcome(
             if parsed.scheme() != "https" || parsed.host_str().is_none() || url.len() > 2048 {
                 bail!("extension actions may open only bounded HTTPS URLs");
             }
+            let requested_origin = parsed.origin().ascii_serialization();
+            let permitted = contribution
+                .external_navigation_origins
+                .iter()
+                .any(|origin| {
+                    url::Url::parse(origin)
+                        .map(|value| value.origin().ascii_serialization() == requested_origin)
+                        .unwrap_or(false)
+                });
+            if !permitted {
+                bail!("extension action requested an undeclared external navigation origin");
+            }
             ActionEffect::OpenHttpsUrl
         }
         ActionOutcome::Notification { level, message } => {
@@ -1621,6 +2126,14 @@ fn summary_from_manifest(
             .filter(|item| item.execution == ExecutionClass::CapabilityBacked)
             .map(|item| item.display_name.clone())
             .collect(),
+        checksum: None,
+        external_navigation_origins: manifest
+            .permissions
+            .external_navigation
+            .iter()
+            .map(|permission| permission.origin.clone())
+            .collect(),
+        providers: manifest.permissions.providers,
     }
 }
 fn payload_bytes(value: &CapturedRepresentation) -> usize {
