@@ -240,29 +240,28 @@ export const ClipActionsToolbar = ({
           </>
         ))}
         {extensionToolbarActions.map(action => (
-            <button
-              key={action.id}
-              type="button"
-              aria-label={action.label}
-              disabled={!action.available}
-              title={action.unavailableReason ?? action.label}
-              className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
-              onClick={() => transformControls && void transformControls.runAction(action.id)}
-            >
-              {action.iconSvg ? (
-                <img src={action.iconSvg} alt="" className="h-4 w-4" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-            </button>
-          ))}
-        {transformControls &&
-          (transformControls.items.length > 0 || hasExtensionOverflow) && (
-            <TransformDropdown
-              controls={transformControls}
-              directActionIds={directExtensionActionIds}
-            />
-          )}
+          <button
+            key={action.id}
+            type="button"
+            aria-label={action.label}
+            disabled={!action.available}
+            title={action.unavailableReason ?? action.label}
+            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
+            onClick={() => transformControls && void transformControls.runAction(action.id)}
+          >
+            {action.iconSvg ? (
+              <img src={action.iconSvg} alt="" className="h-4 w-4" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+          </button>
+        ))}
+        {transformControls && (transformControls.items.length > 0 || hasExtensionOverflow) && (
+          <TransformDropdown
+            controls={transformControls}
+            directActionIds={directExtensionActionIds}
+          />
+        )}
       </div>
     </Tooltip.Provider>
   )
@@ -331,14 +330,14 @@ const TransformDropdown = ({
           </DropdownMenuItem>
         ))}
         {controls.items.length > 0 && controls.actions.length > 0 && <DropdownMenuSeparator />}
-          {controls.actions
-            .filter(
-              action =>
-                action.pinned ||
-                action.placements.includes('action_menu') ||
-                !directActionIds.has(action.id)
-            )
-            .map(action => (
+        {controls.actions
+          .filter(
+            action =>
+              action.pinned ||
+              action.placements.includes('action_menu') ||
+              !directActionIds.has(action.id)
+          )
+          .map(action => (
             <DropdownMenuItem
               key={action.id}
               disabled={!action.available}

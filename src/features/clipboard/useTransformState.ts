@@ -195,9 +195,7 @@ export const useTransformState = ({
 
   useEffect(() => {
     onControls?.(
-      items.length > 0 || actions.length > 0
-        ? { items, actions, run, runAction, pinAction }
-        : null
+      items.length > 0 || actions.length > 0 ? { items, actions, run, runAction, pinAction } : null
     )
   }, [actions, items, onControls, pinAction, run, runAction])
 
