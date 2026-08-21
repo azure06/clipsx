@@ -72,7 +72,7 @@ Transforms are explicit byte-producing operations. The host validates parameters
 
 ## Extensions
 
-Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract is [Extension API v2](EXTENSION_API_V2.md); V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal.
+Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract is [Extension API v2](EXTENSION_API_V2.md), with its privilege boundary defined by the [extension threat model](EXTENSION_THREAT_MODEL.md); V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal.
 
 Packages are checksum-pinned registry or Developer Mode `.clipsx` archives. Installed bytes live in app-owned storage; enablement, runtime state, contribution failure streaks, quarantine, compact caches, and app-local action shortcuts are profile data. The Plugins UI supports registry/local installation, enable/disable, uninstall, recovery, permission disclosure, and shortcuts.
 

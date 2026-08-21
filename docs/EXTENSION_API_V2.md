@@ -80,9 +80,21 @@ localhost access from an extension.
 The broker requires both a remembered checksum-bound grant and a short-lived
 host-issued invocation token before selected clip data can leave ClipsX.
 
+The current implementation exposes selected representation/facet context and
+offline detail/dialog lifecycle. External-navigation actions already use
+checksum grants and one-shot invocation tokens. The HTTPS broker policy and
+request executor are implemented and tested, but guest adapters, credential
+injection, nonsecret settings, output submission from custom UI, and
+`generation.text` remain unavailable until their end-to-end authorization tests
+land. Capability-backed contributions therefore report a disabled reason rather
+than receiving partial access. See the [threat model](EXTENSION_THREAT_MODEL.md).
+
 ## Acceptance examples
 
 `examples/extensions/ask-ai` demonstrates Unicode-safe URL encoding,
 size-limited actions, SVG icons, declared navigation, and first-use consent.
 `examples/extensions/mermaid-viewer` demonstrates offline detection, bundled
 detail/dialog UI, source fallback, and no network permission.
+
+Versioned installable archives and checksums are published in
+[`examples/extensions/packages`](../examples/extensions/packages/README.md).

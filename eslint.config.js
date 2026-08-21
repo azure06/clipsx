@@ -6,7 +6,16 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 export default tseslint.config(
   // Ignore build outputs and dependencies
   {
-    ignores: ['dist', 'dist-ssr', 'node_modules', 'src-tauri/target', 'src-tauri/gen']
+    ignores: [
+      'dist',
+      'dist-ssr',
+      'node_modules',
+      'src-tauri/target',
+      'src-tauri/gen',
+      // Extension UI is packaged guest code (including vendored framework
+      // bundles), not part of the privileged React frontend build.
+      'examples/extensions/*/ui/**',
+    ],
   },
 
   // Base configs for all files
