@@ -66,13 +66,13 @@ The host creates a `ClipViewSet` from ready representations, facets, installed e
 
 Saved renderer preference is resolved facet first, then capability, then MIME. Without a preference, image/file/document/Office content prefers faithful renderers; text-centric content prefers structured, semantic, faithful, source, then diagnostic renderers. Matcher specificity, capture priority, native ordinal, and stable renderer ID make the result deterministic. A failing extension renderer falls back to a compatible built-in view.
 
-Renderers return the bounded `RenderModel` union, which React renders directly: text, code, Markdown, HTML/rich text in a sanitized sandboxed iframe, tables, trees, key/value data, cards, images, files, documents, semantic views, and explicit errors. Extensions never provide React, HTML, CSS, scripts, or asset URLs.
+Renderers return the bounded `RenderModel` union, which React renders directly: text, code, Markdown, HTML/rich text in a sanitized sandboxed iframe, tables, trees, key/value data, cards, images, files, documents, semantic views, and explicit errors. Extension package detail/dialog UI is the exception: it runs in a dedicated child webview with package-scoped assets and no inherited main-webview capability, generic IPC, direct network, filesystem, shell, clipboard, database, popup, or download access.
 
 Transforms are explicit byte-producing operations. The host validates parameters, caches an exact short-lived result, and uses those exact result bytes for preview, Copy, Paste, and Save as New Clip. Saving creates a linked canonical clip with transform provenance; it never overwrites the source. The output boundary is the only clipboard-write owner.
 
 ## Extensions
 
-Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract is [Extension API v2](EXTENSION_API_V2.md); V1 packages are rejected.
+Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract is [Extension API v2](EXTENSION_API_V2.md); V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal.
 
 Packages are checksum-pinned registry or Developer Mode `.clipsx` archives. Installed bytes live in app-owned storage; enablement, runtime state, contribution failure streaks, quarantine, compact caches, and app-local action shortcuts are profile data. The Plugins UI supports registry/local installation, enable/disable, uninstall, recovery, permission disclosure, and shortcuts.
 

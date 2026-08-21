@@ -23,6 +23,20 @@ pub enum ContributionKind {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ActionPlacement {
+    PreviewToolbar,
+    ActionMenu,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiSurface {
+    Detail,
+    Dialog,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ViewPurpose {
     Faithful,
     Structured,
@@ -149,6 +163,15 @@ pub struct ManifestContribution {
     #[serde(default)]
     pub execution: ExecutionClass,
     pub icon: Option<String>,
+    /// A package-owned SVG under `icons/`. It is validated while the package is
+    /// installed and is always rendered as an image, never injected as markup.
+    pub icon_asset: Option<String>,
+    #[serde(default)]
+    pub placements: Vec<ActionPlacement>,
+    #[serde(default)]
+    pub ui_surfaces: Vec<UiSurface>,
+    /// A package-relative entrypoint under `ui/` for a detail/dialog webview.
+    pub ui_entry: Option<String>,
     #[serde(default)]
     pub effects: Vec<ActionEffect>,
     pub handler: Option<ActionHandler>,
@@ -160,7 +183,16 @@ pub struct ManifestContribution {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionPermissions {
     pub http: Vec<HttpPermission>,
+    pub external_navigation: Vec<ExternalNavigationPermission>,
     pub credentials: Vec<CredentialPermission>,
+    #[serde(default)]
+    pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExternalNavigationPermission {
+    pub origin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +223,9 @@ fn empty_object() -> Value {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionManifest {
     pub schema_version: u32,
+    /// The old pre-release v2 draft did not carry this field. Requiring it is
+    /// the deliberate clean break that prevents a second compatibility runtime.
+    pub contract_revision: u32,
     pub package_id: String,
     pub version: String,
     pub api_version: String,
@@ -216,6 +251,9 @@ impl ExtensionManifest {
         if value.get("schemaVersion").and_then(toml::Value::as_integer) == Some(1) {
             bail!("Extension API v1 packages are incompatible; rebuild this package for API v2");
         }
+        if value.get("contractRevision").is_none() {
+            bail!("obsolete Extension API v2 draft package; rebuild with contractRevision = 2");
+        }
         let manifest: Self = toml::from_str(source)
             .context("extension manifest is not valid Extension API v2 TOML")?;
         manifest.validate()?;
@@ -228,6 +266,9 @@ impl ExtensionManifest {
         }
         if self.schema_version != 2 {
             bail!("unsupported extension manifest schema; expected schemaVersion = 2");
+        }
+        if self.contract_revision != 2 {
+            bail!("unsupported Extension API v2 contract revision; expected contractRevision = 2");
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -304,6 +345,9 @@ impl ExtensionManifest {
                 if contribution.purpose.is_some() || !contribution.surfaces.is_empty() {
                     bail!("action contributions cannot declare renderer purpose or surfaces");
                 }
+                if contribution.placements.is_empty() {
+                    bail!("action contributions require at least one placement");
+                }
                 if let Some(ActionHandler::TransformerPreset { transformer_id, .. }) =
                     &contribution.handler
                 {
@@ -330,7 +374,22 @@ impl ExtensionManifest {
                 {
                     bail!("detector contributions must declare emitted facet IDs");
                 }
+                if !contribution.placements.is_empty()
+                    || !contribution.ui_surfaces.is_empty()
+                    || contribution.ui_entry.is_some()
+                {
+                    bail!("detector and transformer contributions cannot declare UI surfaces or action placement");
+                }
             }
+        }
+        if contribution.kind != ContributionKind::Action && !contribution.placements.is_empty() {
+            bail!("only action contributions may declare action placement");
+        }
+        if contribution.ui_surfaces.is_empty() != contribution.ui_entry.is_none() {
+            bail!("custom UI requires both uiEntry and at least one UI surface");
+        }
+        if let Some(entry) = &contribution.ui_entry {
+            valid_ui_path(entry)?;
         }
         if contribution.kind != ContributionKind::Detector
             && !contribution.emits_facet_ids.is_empty()
@@ -353,12 +412,45 @@ impl ExtensionManifest {
         if let Some(icon) = &contribution.icon {
             valid_host_icon(icon)?;
         }
+        if let Some(icon_asset) = &contribution.icon_asset {
+            if !icon_asset.starts_with("icons/") || !icon_asset.ends_with(".svg") {
+                bail!("package iconAsset must reference an SVG below icons/");
+            }
+        }
         Ok(())
     }
 
     fn validate_permissions(&self) -> Result<()> {
-        if self.permissions.http.len() > 16 || self.permissions.credentials.len() > 16 {
+        if self.permissions.http.len() > 16
+            || self.permissions.credentials.len() > 16
+            || self.permissions.external_navigation.len() > 16
+            || self.permissions.providers.len() > 8
+        {
             bail!("extension permission declaration exceeds its limits");
+        }
+        let mut navigation_origins = BTreeSet::new();
+        for permission in &self.permissions.external_navigation {
+            let parsed =
+                Url::parse(&permission.origin).context("external navigation origin is invalid")?;
+            if parsed.scheme() != "https"
+                || parsed.host_str().is_none()
+                || parsed.username() != ""
+                || parsed.password().is_some()
+                || parsed.path() != "/"
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || !navigation_origins.insert(permission.origin.to_ascii_lowercase())
+            {
+                bail!("external navigation permissions require unique exact HTTPS origins");
+            }
+        }
+        if self
+            .permissions
+            .providers
+            .iter()
+            .any(|provider| provider != "generation.text")
+        {
+            bail!("extension requests an unsupported provider capability");
         }
         let allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
         let mut origins = BTreeSet::new();
@@ -408,6 +500,19 @@ impl ExtensionManifest {
     }
 }
 
+fn valid_ui_path(value: &str) -> Result<()> {
+    if !value.starts_with("ui/")
+        || value.contains('\\')
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || value.len() > 240
+    {
+        bail!("custom UI entry must be a bounded package-relative path below ui/");
+    }
+    Ok(())
+}
+
 pub fn valid_host_icon(value: &str) -> Result<()> {
     if !matches!(
         value,
@@ -449,6 +554,7 @@ mod tests {
     fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
         ExtensionManifest {
             schema_version: 2,
+            contract_revision: 2,
             package_id: "example.colors".into(),
             version: "1.0.0".into(),
             api_version: "^2.0".into(),
@@ -479,6 +585,14 @@ mod tests {
             surfaces: vec![],
             execution: ExecutionClass::Local,
             icon: Some("palette".into()),
+            icon_asset: None,
+            placements: if kind == ContributionKind::Action {
+                vec![ActionPlacement::ActionMenu]
+            } else {
+                vec![]
+            },
+            ui_surfaces: vec![],
+            ui_entry: None,
             effects: vec![],
             handler: None,
             parameter_schema: empty_object(),

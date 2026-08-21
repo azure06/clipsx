@@ -1,0 +1,21 @@
+schemaVersion = 2
+contractRevision = 2
+packageId = "example.mermaid-viewer"
+version = "1.0.0"
+apiVersion = "^2.0"
+displayName = "Mermaid Viewer"
+description = "Offline Mermaid detection with an isolated bundled detail and dialog view."
+license = "MIT"
+
+[[contributions]]
+id = "mermaid-detail"
+kind = "renderer"
+displayName = "Mermaid diagram"
+purpose = "structured"
+surfaces = ["detail"]
+iconAsset = "icons/mermaid.svg"
+uiEntry = "ui/index.html"
+uiSurfaces = ["detail", "dialog"]
+
+[[contributions.matchers]]
+mimeTypes = ["text/plain"]

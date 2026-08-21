@@ -16,12 +16,8 @@ use super::ExtensionManifest;
 const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
-const ALLOWED_FILES: &[&str] = &[
-    "clipsx-extension.toml",
-    "component.wasm",
-    "README.md",
-    "LICENSE",
-];
+const MAX_ASSET_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PACKAGE_FILES: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,7 +31,7 @@ pub struct ExtensionPackage {
     pub manifest: ExtensionManifest,
     pub sha256: String,
     pub relative_path: PathBuf,
-    pub component_path: PathBuf,
+    pub component_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,10 +174,15 @@ impl ExtensionPackageStore {
                 bail!("extension manifest does not match the reviewed registry entry");
             }
         }
-        let component = required(&contents, "component.wasm")?;
-        if component.len() > MAX_COMPONENT_BYTES {
-            bail!("extension component exceeds 8 MiB");
+        if let Some(component) = contents.get("component.wasm") {
+            if component.len() > MAX_COMPONENT_BYTES || !component.starts_with(b"\0asm") {
+                bail!("extension package contains an invalid bounded WebAssembly component");
+            }
+        } else if manifest_requires_component(&manifest) {
+            bail!("extension package declares guest logic but does not contain component.wasm");
         }
+        validate_assets(&contents)?;
+        validate_declared_assets(&manifest, &contents)?;
 
         let relative_path = PathBuf::from("packages")
             .join(&manifest.package_id)
@@ -198,6 +199,9 @@ impl ExtensionPackageStore {
                 .join(format!("package-{}", Uuid::now_v7()));
             fs::create_dir_all(&staged)?;
             for (name, bytes) in &contents {
+                if let Some(parent) = staged.join(name).parent() {
+                    fs::create_dir_all(parent)?;
+                }
                 fs::write(staged.join(name), bytes)?;
             }
             fs::create_dir_all(
@@ -211,7 +215,9 @@ impl ExtensionPackageStore {
             manifest,
             sha256,
             relative_path: relative_path.clone(),
-            component_path: self.root.join(relative_path).join("component.wasm"),
+            component_path: contents
+                .contains_key("component.wasm")
+                .then(|| self.root.join(relative_path).join("component.wasm")),
         })
     }
 
@@ -221,10 +227,15 @@ impl ExtensionPackageStore {
         }
         let contents = unpack(archive)?;
         let manifest = ExtensionManifest::parse(required(&contents, "clipsx-extension.toml")?)?;
-        let component = required(&contents, "component.wasm")?;
-        if component.len() > MAX_COMPONENT_BYTES || !component.starts_with(b"\0asm") {
-            bail!("extension package does not contain a valid bounded WebAssembly component");
+        if let Some(component) = contents.get("component.wasm") {
+            if component.len() > MAX_COMPONENT_BYTES || !component.starts_with(b"\0asm") {
+                bail!("extension package does not contain a valid bounded WebAssembly component");
+            }
+        } else if manifest_requires_component(&manifest) {
+            bail!("extension package declares guest logic but does not contain component.wasm");
         }
+        validate_assets(&contents)?;
+        validate_declared_assets(&manifest, &contents)?;
         Ok(manifest)
     }
 
@@ -242,7 +253,10 @@ impl ExtensionPackageStore {
             bail!("extension package path escaped its root");
         }
         let manifest = ExtensionManifest::parse(&fs::read(path.join("clipsx-extension.toml"))?)?;
-        let component_path = path.join("component.wasm");
+        let component_path = path
+            .join("component.wasm")
+            .exists()
+            .then(|| path.join("component.wasm"));
         let sha256 = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -260,7 +274,7 @@ impl ExtensionPackageStore {
 fn unpack(archive: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut zip =
         ZipArchive::new(Cursor::new(archive)).context("extension archive is not a ZIP file")?;
-    if zip.is_empty() || zip.len() > ALLOWED_FILES.len() {
+    if zip.is_empty() || zip.len() > MAX_PACKAGE_FILES {
         bail!("extension archive has an invalid number of entries");
     }
     let mut total = 0usize;
@@ -268,8 +282,7 @@ fn unpack(archive: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     for index in 0..zip.len() {
         let mut file = zip.by_index(index)?;
         let name = file.name().to_owned();
-        if !ALLOWED_FILES.contains(&name.as_str())
-            || name.contains('/')
+        if !allowed_path(&name)
             || name.contains('\\')
             || name.starts_with('.')
             || file.is_dir()
@@ -294,10 +307,101 @@ fn unpack(archive: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
             bail!("extension archive contains a duplicate or truncated entry");
         }
     }
-    if !files.contains_key("clipsx-extension.toml") || !files.contains_key("component.wasm") {
-        bail!("extension archive must contain a manifest and component");
+    if !files.contains_key("clipsx-extension.toml") {
+        bail!("extension archive must contain a manifest");
     }
     Ok(files)
+}
+
+fn allowed_path(name: &str) -> bool {
+    matches!(
+        name,
+        "clipsx-extension.toml" | "component.wasm" | "README.md" | "LICENSE"
+    ) || (name.starts_with("icons/") && name.ends_with(".svg") && name.matches('/').count() == 1)
+        || (name.starts_with("ui/")
+            && name
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != ".."))
+}
+
+fn manifest_requires_component(manifest: &ExtensionManifest) -> bool {
+    manifest.contributions.iter().any(|contribution| {
+        (contribution.ui_surfaces.is_empty()
+            && matches!(contribution.kind, super::ContributionKind::Renderer))
+            || matches!(
+                contribution.kind,
+                super::ContributionKind::Detector | super::ContributionKind::Transformer
+            )
+            || matches!(contribution.handler, Some(super::ActionHandler::Guest))
+    })
+}
+
+fn validate_assets(contents: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    for (path, bytes) in contents {
+        if (path.starts_with("icons/") || path.starts_with("ui/")) && bytes.len() > MAX_ASSET_BYTES
+        {
+            bail!("extension UI asset exceeds 2 MiB");
+        }
+        if path.starts_with("icons/") {
+            validate_svg(bytes)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_declared_assets(
+    manifest: &ExtensionManifest,
+    contents: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    for contribution in &manifest.contributions {
+        if let Some(icon) = &contribution.icon_asset {
+            if !contents.contains_key(icon) {
+                bail!("extension iconAsset is not present in the package");
+            }
+        }
+        if let Some(entry) = &contribution.ui_entry {
+            if !contents.contains_key(entry) {
+                bail!("extension uiEntry is not present in the package");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Conservative allow-list validation. The host deliberately accepts a small
+/// static SVG subset and renders it only through an image boundary.
+fn validate_svg(bytes: &[u8]) -> Result<()> {
+    let source = std::str::from_utf8(bytes).context("SVG icon must be UTF-8")?;
+    if source.len() > 128 * 1024 || !source.trim_start().starts_with("<svg") {
+        bail!("SVG icon is invalid or exceeds 128 KiB");
+    }
+    let lower = source.to_ascii_lowercase();
+    let forbidden = [
+        "<!",
+        "<script",
+        "<foreignobject",
+        "<iframe",
+        "<object",
+        "<embed",
+        "<image",
+        "<use",
+        "<animate",
+        "<set",
+        "<style",
+        "url(",
+        "href=",
+        "xlink:",
+        "javascript:",
+        "data:",
+    ];
+    if forbidden.iter().any(|token| lower.contains(token))
+        || lower
+            .split_whitespace()
+            .any(|token| token.starts_with("on") && token.contains('='))
+    {
+        bail!("SVG icon contains unsupported active or external content");
+    }
+    Ok(())
 }
 
 fn required<'a>(contents: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Result<&'a [u8]> {

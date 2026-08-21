@@ -115,9 +115,11 @@ impl ExtensionService {
         let package = self
             .store
             .install(&archive, InstallSource::Registry, Some(&entry))?;
-        self.runtime
-            .validate_component(&package.sha256, &package.component_path)
-            .await?;
+        if let Some(component_path) = &package.component_path {
+            self.runtime
+                .validate_component(&package.sha256, component_path)
+                .await?;
+        }
         self.persist_install(repo, package, InstallSource::Registry)
             .await
     }
@@ -137,9 +139,11 @@ impl ExtensionService {
         let package = self
             .store
             .install(&archive, InstallSource::Developer, None)?;
-        self.runtime
-            .validate_component(&package.sha256, &package.component_path)
-            .await?;
+        if let Some(component_path) = &package.component_path {
+            self.runtime
+                .validate_component(&package.sha256, component_path)
+                .await?;
+        }
         self.persist_install(repo, package, InstallSource::Developer)
             .await
     }
@@ -296,9 +300,16 @@ impl ExtensionService {
         let mut values = Vec::new();
         for row in rows {
             let package = self.store.load(Path::new(&row.get::<String, _>(3)))?;
-            if self.runtime.component(&package.sha256).is_none() {
+            if self.runtime.component(&package.sha256).is_none() && package.component_path.is_some()
+            {
                 self.runtime
-                    .validate_component(&package.sha256, &package.component_path)
+                    .validate_component(
+                        &package.sha256,
+                        package
+                            .component_path
+                            .as_ref()
+                            .expect("checked component path"),
+                    )
                     .await?;
             }
             for declaration in
@@ -998,6 +1009,12 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
+        // A package identity is stable but its bytes are not. Never carry a
+        // data-egress approval across an update or developer replacement.
+        sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=?")
+            .bind(&id)
+            .execute(&mut *transaction)
+            .await?;
         transaction.commit().await?;
         Ok(ExtensionSummary {
             package_id: package.manifest.package_id,
@@ -1670,6 +1687,10 @@ mod tests {
             surfaces: vec![RenderSurface::Detail, RenderSurface::Compact],
             execution: ExecutionClass::Local,
             icon: Some("palette".into()),
+            icon_asset: None,
+            placements: vec![],
+            ui_surfaces: vec![],
+            ui_entry: None,
             effects: vec![],
             handler: None,
             parameter_schema: json!({}),

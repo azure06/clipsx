@@ -1,4 +1,5 @@
 schemaVersion = 2
+contractRevision = 2
 packageId = "example.color-tools"
 version = "1.0.0"
 apiVersion = "^2.0"
@@ -41,6 +42,7 @@ kind = "action"
 displayName = "Copy as HEX"
 icon = "palette"
 effects = ["copy"]
+placements = ["preview_toolbar", "action_menu"]
 handler = { kind = "transformer_preset", transformerId = "format-color", parameters = { format = "hex" }, disposition = "copy" }
 
 [[contributions.matchers]]
@@ -52,6 +54,7 @@ kind = "action"
 displayName = "Copy as RGB"
 icon = "palette"
 effects = ["copy"]
+placements = ["preview_toolbar", "action_menu"]
 handler = { kind = "transformer_preset", transformerId = "format-color", parameters = { format = "rgb" }, disposition = "copy" }
 
 [[contributions.matchers]]
@@ -63,6 +66,7 @@ kind = "action"
 displayName = "Copy as HSL"
 icon = "palette"
 effects = ["copy"]
+placements = ["preview_toolbar", "action_menu"]
 handler = { kind = "transformer_preset", transformerId = "format-color", parameters = { format = "hsl" }, disposition = "copy" }
 
 [[contributions.matchers]]

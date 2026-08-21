@@ -1,0 +1,38 @@
+schemaVersion = 2
+contractRevision = 2
+packageId = "example.ask-ai"
+version = "1.0.0"
+apiVersion = "^2.0"
+displayName = "Ask AI"
+description = "Open selected text as an encoded prompt in ChatGPT or Claude."
+license = "MIT"
+
+[[contributions]]
+id = "ask-chatgpt"
+kind = "action"
+displayName = "Ask ChatGPT"
+iconAsset = "icons/chatgpt.svg"
+placements = ["preview_toolbar", "action_menu"]
+effects = ["open_https_url"]
+handler = { kind = "guest" }
+
+[[contributions.matchers]]
+mimeTypes = ["text/plain"]
+
+[[contributions]]
+id = "ask-claude"
+kind = "action"
+displayName = "Ask Claude"
+iconAsset = "icons/claude.svg"
+placements = ["preview_toolbar", "action_menu"]
+effects = ["open_https_url"]
+handler = { kind = "guest" }
+
+[[contributions.matchers]]
+mimeTypes = ["text/plain"]
+
+[[permissions.externalNavigation]]
+origin = "https://chatgpt.com"
+
+[[permissions.externalNavigation]]
+origin = "https://claude.ai"
