@@ -12,6 +12,7 @@ export type TransformControls = {
   actions: ContextAction[]
   run: (id: string) => Promise<void>
   runAction: (id: string) => Promise<void>
+  pinAction: (id: string, pinned: boolean) => Promise<void>
 }
 
 export type ContextAction = {
@@ -27,6 +28,7 @@ export type ContextAction = {
   unavailableReason: string | null
   parameterSchema: Record<string, unknown>
   shortcut: string | null
+  pinned: boolean
   consentRequired: boolean
   externalNavigationOrigins: string[]
 }
@@ -184,9 +186,20 @@ export const useTransformState = ({
     [actions, basePresentation?.activeView.facetId, clipId, sourceId]
   )
 
+  const pinAction = useCallback(async (id: string, pinned: boolean) => {
+    await invoke('set_extension_action_pinned', { actionId: id, pinned })
+    setActions(current =>
+      current.map(action => (action.id === id ? { ...action, pinned } : action))
+    )
+  }, [])
+
   useEffect(() => {
-    onControls?.(items.length > 0 || actions.length > 0 ? { items, actions, run, runAction } : null)
-  }, [actions, items, onControls, run, runAction])
+    onControls?.(
+      items.length > 0 || actions.length > 0
+        ? { items, actions, run, runAction, pinAction }
+        : null
+    )
+  }, [actions, items, onControls, pinAction, run, runAction])
 
   useEffect(() => {
     const platform = getPlatform()

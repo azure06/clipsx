@@ -32,6 +32,29 @@ use tokio::{
     net::TcpListener,
 };
 
+fn is_extension_webview_label(label: &str) -> bool {
+    label.starts_with("extension-")
+}
+
+fn reject_extension_webview_invokes<R, F>(
+    handler: F,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
+where
+    R: tauri::Runtime,
+    F: Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+{
+    move |invoke| {
+        if is_extension_webview_label(invoke.message.webview_ref().label()) {
+            invoke
+                .resolver
+                .reject("extension webviews cannot invoke application commands");
+            true
+        } else {
+            handler(invoke)
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CoreUtility {
@@ -1075,7 +1098,8 @@ async fn open_extension_custom_view(
             && url.host_str() == Some("localhost")
             && url.path().starts_with(&format!("/{allowed_token}/"))
     })
-    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .on_download(|_, _| false);
     let parent = app
         .get_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
@@ -1131,6 +1155,19 @@ async fn sync_extension_custom_view(
     webview
         .set_position(tauri::LogicalPosition::new(x, y))
         .and_then(|_| webview.set_size(tauri::LogicalSize::new(width, height)))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_action_pinned(
+    action_id: String,
+    pinned: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_action_pinned(&state.history, &action_id, pinned)
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -2225,7 +2262,7 @@ pub(crate) fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(reject_extension_webview_invokes(tauri::generate_handler![
             show_main_window_command,
             set_tray_labels,
             get_release_info,
@@ -2266,6 +2303,7 @@ pub(crate) fn run() {
             open_extension_custom_view,
             close_extension_custom_view,
             sync_extension_custom_view,
+            set_extension_action_pinned,
             set_extension_action_shortcut,
             execute_clipboard_output,
             save_transform_result,
@@ -2309,7 +2347,7 @@ pub(crate) fn run() {
             reindex_text_embeddings,
             index_missing_text_embeddings,
             clear_text_embedding_space
-        ])
+        ]))
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -2412,7 +2450,9 @@ mod tests {
             .collect::<BTreeSet<_>>();
         let ipc_source = include_str!("mod.rs");
         let handler = ipc_source
-            .split_once(".invoke_handler(tauri::generate_handler![")
+            .split_once(
+                ".invoke_handler(reject_extension_webview_invokes(tauri::generate_handler![",
+            )
             .and_then(|(_, value)| value.split_once("])"))
             .map(|(value, _)| value)
             .expect("invoke handler block must be present");
@@ -2429,6 +2469,16 @@ mod tests {
             missing.is_empty(),
             "frontend invokes commands missing from generate_handler!: {missing:?}"
         );
+    }
+
+
+    #[test]
+    fn extension_child_labels_are_reserved_from_application_commands() {
+        assert!(is_extension_webview_label("extension-0198"));
+        assert!(!is_extension_webview_label("main"));
+        let source = include_str!("mod.rs");
+        assert!(source.contains(".on_download(|_, _| false)"));
+        assert!(source.contains("reject_extension_webview_invokes(tauri::generate_handler!["));
     }
 
     #[test]

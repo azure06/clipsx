@@ -41,6 +41,7 @@ pub struct ContextActionDescriptor {
     pub unavailable_reason: Option<String>,
     pub parameter_schema: serde_json::Value,
     pub shortcut: Option<String>,
+    pub pinned: bool,
     pub consent_required: bool,
     pub external_navigation_origins: Vec<String>,
 }
@@ -667,6 +668,7 @@ impl ExtensionService {
     ) -> Result<Vec<ContextActionDescriptor>> {
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let shortcuts = self.action_shortcuts(repo).await?;
+        let pins = self.action_pins(repo).await?;
         let facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
             .await?;
@@ -692,6 +694,7 @@ impl ExtensionService {
             let icon_svg = self.contribution_icon(&item);
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
+                pinned: pins.contains(&item.id),
                 id: item.id,
                 package_id: item.package_id,
                 label: item.declaration.display_name,
@@ -730,6 +733,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
     ) -> Result<Vec<ContextActionDescriptor>> {
         let shortcuts = self.action_shortcuts(repo).await?;
+        let pins = self.action_pins(repo).await?;
         let mut actions: Vec<_> = self
             .active_contributions(repo, ContributionKind::Action)
             .await?
@@ -739,6 +743,7 @@ impl ExtensionService {
                 let icon_svg = self.contribution_icon(&item);
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
+                    pinned: pins.contains(&item.id),
                     id: item.id,
                     package_id: item.package_id,
                     label: item.declaration.display_name,
@@ -1115,6 +1120,34 @@ impl ExtensionService {
         Ok(())
     }
 
+    pub async fn set_action_pinned(
+        &self,
+        repo: &HistoryRepository,
+        action_id: &str,
+        pinned: bool,
+    ) -> Result<()> {
+        let contribution = self
+            .active_contributions(repo, ContributionKind::Action)
+            .await?
+            .into_iter()
+            .find(|item| item.id == action_id)
+            .context("extension action is not installed and enabled")?;
+        if pinned {
+            sqlx::query("INSERT INTO extension_action_pins(extension_id,action_id,pinned_at) VALUES(?,?,?) ON CONFLICT(action_id) DO UPDATE SET extension_id=excluded.extension_id,pinned_at=excluded.pinned_at")
+                .bind(&contribution.extension_id)
+                .bind(action_id)
+                .bind(now_ms())
+                .execute(&repo.pool)
+                .await?;
+        } else {
+            sqlx::query("DELETE FROM extension_action_pins WHERE action_id=?")
+                .bind(action_id)
+                .execute(&repo.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn action_shortcuts(
         &self,
         repo: &HistoryRepository,
@@ -1126,6 +1159,19 @@ impl ExtensionService {
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
             .collect())
+    }
+
+    async fn action_pins(
+        &self,
+        repo: &HistoryRepository,
+    ) -> Result<std::collections::BTreeSet<String>> {
+        Ok(
+            sqlx::query_scalar("SELECT action_id FROM extension_action_pins")
+                .fetch_all(&repo.pool)
+                .await?
+                .into_iter()
+                .collect(),
+        )
     }
 
     fn contribution_icon(&self, contribution: &ActiveContribution) -> Option<String> {

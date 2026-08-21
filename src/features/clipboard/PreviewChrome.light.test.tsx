@@ -292,6 +292,7 @@ describe('preview chrome light theme styling', () => {
           actions: [],
           run: vi.fn(),
           runAction: vi.fn(),
+          pinAction: vi.fn(),
         }}
       />
     )
