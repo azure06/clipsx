@@ -129,10 +129,9 @@ export const useTransformState = ({
         let invocationToken: string | null = null
         if (action.effects.includes('open_https_url') || action.effects.includes('open_dialog')) {
           if (action.consentRequired) {
-            const destinations = [
-              ...action.externalNavigationOrigins,
-              ...action.httpOrigins,
-            ].join('\n')
+            const destinations = [...action.externalNavigationOrigins, ...action.httpOrigins].join(
+              '\n'
+            )
             const approved = window.confirm(
               `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
             )
