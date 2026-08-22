@@ -2,7 +2,7 @@ use super::chunking::{
     self, deduplicate_inputs, SemanticChunk, SemanticFacet, SemanticInput, PIPELINE_VERSION,
 };
 use crate::{
-    history::{new_id, now_ms, sha256, HistoryRepository},
+    history::{new_id, now_ms, sha256, ClipSummary, HistoryRepository},
     providers::{
         self,
         contracts::text_embedding::{TextEmbeddingProvider, TextEmbeddingSpace},
@@ -25,6 +25,21 @@ use std::{
 const PROVIDER_CONFIG_KEY: &str = "providers.text_embedding.active";
 const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
+const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
+  trim(COALESCE(c.note,'')) <> ''
+  OR EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id)
+  OR EXISTS(
+    SELECT 1 FROM clip_representations r
+    JOIN clip_text_values t ON t.representation_id=r.id
+    WHERE r.clip_id=c.id AND r.lifecycle_state='ready'
+  )
+  OR EXISTS(
+    SELECT 1 FROM artifact_records ar
+    JOIN artifact_text_values atv ON atv.artifact_id=ar.id
+    WHERE ar.owner_clip_id=c.id AND ar.producer_id='builtin.artifact.ocr'
+    AND ar.lifecycle_state='ready'
+  )
+)";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,9 +66,21 @@ pub struct ProviderStatus {
     pub indexed_clips: u64,
     pub pending_jobs: u64,
     pub failed_jobs: u64,
-    pub total_clips: u64,
+    pub eligible_clips: u64,
     pub endpoint: Option<String>,
     pub model: Option<String>,
+}
+
+/// A compact, read-only view of an existing failed indexing job. The clip
+/// preview is resolved from canonical history data at read time; it is not
+/// another persisted projection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedEmbeddingJob {
+    pub clip: ClipSummary,
+    pub attempt_count: u32,
+    pub last_error: Option<String>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -153,10 +180,7 @@ pub async fn disable(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
     let config = get_device_config(&repo.pool).await?;
-    let total: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM clip_items WHERE lifecycle_state='ready'")
-            .fetch_one(&repo.pool)
-            .await?;
+    let eligible = eligible_clip_count(repo).await?;
     let Some(config) = config else {
         return Ok(ProviderStatus {
             enabled: false,
@@ -167,7 +191,7 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
             indexed_clips: 0,
             pending_jobs: 0,
             failed_jobs: 0,
-            total_clips: total as u64,
+            eligible_clips: eligible as u64,
             endpoint: None,
             model: None,
         });
@@ -175,10 +199,12 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
     let active = generation_by_status(repo, "active").await?;
     let building = generation_by_status(repo, "building").await?;
     let failed_generation = generation_by_status(repo, "failed").await?;
+    // A retained failed rebuild is diagnostic history, not the live index.
+    // Prefer the active generation once no rebuild is currently running.
     let target = building
         .as_ref()
-        .or(failed_generation.as_ref())
-        .or(active.as_ref());
+        .or(active.as_ref())
+        .or(failed_generation.as_ref());
     let (indexed, pending, failed, job_diagnostic) = generation_counts(repo, target).await?;
     let diagnostic = provider_diagnostic(repo, &config.provider_id)
         .await?
@@ -201,10 +227,57 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         indexed_clips: indexed as u64,
         pending_jobs: pending as u64,
         failed_jobs: failed as u64,
-        total_clips: total as u64,
+        eligible_clips: eligible as u64,
         endpoint: Some(config.endpoint),
         model: Some(config.model),
     })
+}
+
+/// Count clips that can actually contribute a semantic input. Images without
+/// OCR, for example, are valid clipboard history but cannot yet be embedded by
+/// the text provider, so they must not make text-index coverage look incomplete.
+async fn eligible_clip_count(repo: &HistoryRepository) -> Result<i64> {
+    let sql = format!("SELECT count(*) FROM clip_items c WHERE {ELIGIBLE_CLIP_PREDICATE}");
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(&repo.pool)
+        .await?)
+}
+
+pub async fn failed_jobs(repo: &HistoryRepository, limit: u32) -> Result<Vec<FailedEmbeddingJob>> {
+    // Mirror `status`: an active generation can have an individual failed job
+    // after an index-missing run, while a rebuilding generation becomes failed
+    // only once it settles.
+    let generation = generation_by_status(repo, "building")
+        .await?
+        .or(generation_by_status(repo, "active").await?)
+        .or(generation_by_status(repo, "failed").await?);
+    let Some(generation) = generation else {
+        return Ok(Vec::new());
+    };
+    let rows = sqlx::query(
+        "SELECT clip_id,attempt_count,last_error,updated_at FROM search_index_jobs
+         WHERE generation_id=? AND status='failed' ORDER BY updated_at DESC,id LIMIT ?",
+    )
+    .bind(generation.id)
+    .bind(i64::from(limit.clamp(1, 20)))
+    .fetch_all(&repo.pool)
+    .await?;
+    let mut jobs = Vec::with_capacity(rows.len());
+    for row in rows {
+        let clip_id: String = row.get(0);
+        // A clip can disappear through normal retention while its failed job is
+        // still visible. Ignore that stale row instead of failing the whole view.
+        let Ok(clip) = repo.summary(&clip_id).await else {
+            continue;
+        };
+        jobs.push(FailedEmbeddingJob {
+            clip,
+            attempt_count: row.get::<i64, _>(1).max(0) as u32,
+            last_error: row.get(2),
+            updated_at: row.get(3),
+        });
+    }
+    Ok(jobs)
 }
 
 async fn generation_counts(
@@ -214,7 +287,7 @@ async fn generation_counts(
     let Some(generation) = generation else {
         return Ok((0, 0, 0, None));
     };
-    let indexed = job_count(repo, &generation.id, "status='completed'").await?;
+    let indexed = completed_eligible_job_count(repo, &generation.id).await?;
     let pending = job_count(repo, &generation.id, "status IN ('pending','running')").await?;
     let failed = job_count(repo, &generation.id, "status='failed'").await?;
     let diagnostic = sqlx::query_scalar(
@@ -225,6 +298,18 @@ async fn generation_counts(
     .fetch_optional(&repo.pool)
     .await?;
     Ok((indexed, pending, failed, diagnostic))
+}
+
+async fn completed_eligible_job_count(repo: &HistoryRepository, generation: &str) -> Result<i64> {
+    let sql = format!(
+        "SELECT count(*) FROM search_index_jobs j
+         JOIN clip_items c ON c.id=j.clip_id
+         WHERE j.generation_id=? AND j.status='completed' AND {ELIGIBLE_CLIP_PREDICATE}"
+    );
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(generation)
+        .fetch_one(&repo.pool)
+        .await?)
 }
 
 async fn job_count(repo: &HistoryRepository, generation: &str, predicate: &str) -> Result<i64> {
@@ -255,6 +340,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     .fetch_all(&repo.pool)
     .await?;
     let mut count = 0;
+    let mut first_error = None;
     for row in rows {
         count += 1;
         let id: String = row.get(0);
@@ -283,21 +369,32 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
                 .await?;
             }
             Err(error) => {
+                let error_message = error.to_string();
                 sqlx::query(
                     "UPDATE search_index_jobs SET
                      status=CASE WHEN attempt_count >= 3 THEN 'failed' ELSE 'pending' END,
                      last_error=?,completed_at=?,updated_at=? WHERE id=?",
                 )
-                .bind(error.to_string().chars().take(512).collect::<String>())
+                .bind(error_message.chars().take(512).collect::<String>())
                 .bind(now_ms())
                 .bind(now_ms())
                 .bind(&id)
                 .execute(&repo.pool)
                 .await?;
+                // Return one failure after this batch is persisted. The worker
+                // then validates the provider again and applies its bounded
+                // backoff, rather than consuming all three attempts in a tight
+                // loop during a temporary Ollama outage.
+                if first_error.is_none() {
+                    first_error = Some(error_message);
+                }
             }
         }
     }
     settle_generation(repo, &generation).await?;
+    if let Some(error) = first_error {
+        bail!(error);
+    }
     Ok(count)
 }
 
@@ -706,13 +803,15 @@ pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     let active = generation_by_status(repo, "active")
         .await?
         .context("no active embedding generation")?;
-    let clips: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM clip_items WHERE lifecycle_state='ready' AND NOT EXISTS(
-           SELECT 1 FROM search_chunks sc WHERE sc.clip_id=clip_items.id AND sc.generation_id=?)",
-    )
-    .bind(&active.id)
-    .fetch_all(&repo.pool)
-    .await?;
+    let sql = format!(
+        "SELECT c.id FROM clip_items c WHERE {ELIGIBLE_CLIP_PREDICATE} AND NOT EXISTS(
+           SELECT 1 FROM search_index_jobs j WHERE j.clip_id=c.id
+           AND j.generation_id=? AND j.status='completed')"
+    );
+    let clips: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(&active.id)
+        .fetch_all(&repo.pool)
+        .await?;
     for clip in clips {
         enqueue_job(repo, &active.id, &clip).await?;
     }

@@ -25,7 +25,7 @@ const readyStatus = (overrides: Partial<TextEmbeddingStatus> = {}): TextEmbeddin
   indexedClips: 5,
   pendingJobs: 0,
   failedJobs: 0,
-  totalClips: 5,
+  eligibleClips: 5,
   endpoint: 'http://localhost:11434',
   model: 'nomic-embed-text',
   ...overrides,
@@ -60,6 +60,7 @@ describe('IntelligencePage indexing actions', () => {
         return Promise.resolve(currentStatus)
       }
       if (command === 'list_search_sources') return Promise.resolve([])
+      if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
       if (command === 'get_search_settings') {
         return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
       }
@@ -76,6 +77,7 @@ describe('IntelligencePage indexing actions', () => {
       if (command === 'reindex_text_embeddings') return reindex
       if (command === 'get_text_embedding_status') return Promise.resolve(currentStatus)
       if (command === 'list_search_sources') return Promise.resolve([])
+      if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
       if (command === 'get_search_settings') {
         return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
       }
@@ -147,7 +149,7 @@ describe('IntelligencePage indexing actions', () => {
       failedJobs: 1,
     })
     render(<IntelligencePage />)
-    await screen.findByText(/provider unavailable/)
+    await screen.findByText(/Ollama was unavailable during the last attempt/)
 
     act(() => {
       for (const handler of eventHandlers.get('embedding-index-failed') ?? []) {

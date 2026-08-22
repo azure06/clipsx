@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import {
   BrainCircuit,
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -21,7 +22,11 @@ import {
   Unplug,
   Wand2,
 } from 'lucide-react'
-import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
+import type {
+  FailedTextEmbeddingJob,
+  SearchSourceDescriptor,
+  TextEmbeddingStatus,
+} from '../../shared/types/v2'
 import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
 
@@ -43,6 +48,9 @@ const formatBytes = (bytes: number): string => {
 }
 
 const explainOllamaDiagnostic = (diagnostic: string): string => {
+  if (/provider (is )?unavailable/.test(diagnostic)) {
+    return 'Ollama was unavailable during the last attempt. Your clips are safe; retry when Ollama is ready.'
+  }
   if (diagnostic === 'Ollama returned 400 Bad Request') {
     return 'Ollama rejected a previous embedding request. Retry now; if it happens again, ClipsX will show Ollama’s specific reason. It is often an outdated Ollama version, a model that cannot create embeddings, or text that exceeds the model context.'
   }
@@ -85,6 +93,8 @@ export const IntelligencePage = () => {
   const [connecting, setConnecting] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
   const [status, setStatus] = useState<TextEmbeddingStatus | null>(null)
+  const [failedJobs, setFailedJobs] = useState<FailedTextEmbeddingJob[]>([])
+  const [showAffectedClips, setShowAffectedClips] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [activeIndexAction, setActiveIndexAction] = useState<ActiveIndexAction | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
@@ -107,15 +117,17 @@ export const IntelligencePage = () => {
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
-      const [s, sources, settings, generation] = await Promise.all([
+      const [s, sources, settings, generation, jobs] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<SearchSourceDescriptor[]>('list_search_sources'),
         invoke<SearchSettings>('get_search_settings'),
         invoke<GenerationProviderStatus>('get_text_generation_status'),
+        invoke<FailedTextEmbeddingJob[]>('list_failed_text_embedding_jobs'),
       ])
       setStatus(s)
       setSearchSources(sources)
       setSearchSettings(settings)
+      setFailedJobs(Array.isArray(jobs) ? jobs : [])
       if (generation) {
         setGenerationStatus(generation)
         if (generation.model) setGenerationModel(generation.model)
@@ -356,7 +368,7 @@ export const IntelligencePage = () => {
 
   // Progress bar math
   const indexing = status?.phase === 'indexing'
-  const total = status?.totalClips ?? 0
+  const total = status?.eligibleClips ?? 0
   const progressPct = total > 0 ? Math.round((status!.indexedClips / total) * 100) : 100
 
   return (
@@ -502,8 +514,8 @@ export const IntelligencePage = () => {
                   <div className="flex items-center justify-between text-[10px] text-gray-500">
                     <span>
                       {indexing
-                        ? `Indexing… ${status.indexedClips.toLocaleString()} / ${total.toLocaleString()} clips`
-                        : `${status.indexedClips.toLocaleString()} clips indexed`}
+                        ? `Indexing… ${status.indexedClips.toLocaleString()} / ${total.toLocaleString()} eligible clips`
+                        : `${status.indexedClips.toLocaleString()} eligible clips indexed`}
                     </span>
                     <span className="tabular-nums font-medium">{progressPct}%</span>
                   </div>
@@ -524,28 +536,80 @@ export const IntelligencePage = () => {
                   )}
                 </div>
 
-                {status.diagnostic && (
-                  <div className="flex items-start justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-                    <span>
-                      <span className="font-semibold">Meaning Search needs attention. </span>
-                      {explainOllamaDiagnostic(status.diagnostic)}
-                      {status.failedJobs > 0 && (
-                        <span className="mt-1 block">
-                          {status.failedJobs.toLocaleString()} indexing job
-                          {status.failedJobs === 1 ? '' : 's'} can be retried.
-                        </span>
-                      )}
-                    </span>
-                    <button
-                      className="flex items-center gap-1 font-semibold underline disabled:opacity-50"
-                      disabled={activeIndexAction !== null}
-                      onClick={() => void handleRetry()}
-                    >
-                      {activeIndexAction?.kind === 'retry' && (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      )}
-                      Retry
-                    </button>
+                {(status.diagnostic || status.failedJobs > 0) && (
+                  <div className="rounded-xl border border-amber-300/45 bg-linear-to-r from-amber-50/90 via-amber-50/60 to-transparent p-3 text-xs text-amber-800 shadow-[0_10px_22px_-20px_rgba(146,64,14,0.65)] dark:border-amber-400/20 dark:from-amber-500/10 dark:via-amber-500/[0.055] dark:text-amber-200">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">Meaning Search needs attention</p>
+                        <p className="mt-0.5 leading-5 text-amber-700/90 dark:text-amber-200/80">
+                          {status.diagnostic
+                            ? explainOllamaDiagnostic(status.diagnostic)
+                            : `${status.failedJobs.toLocaleString()} clip${status.failedJobs === 1 ? '' : 's'} need meaning indexing.`}
+                        </p>
+                        {status.failedJobs > 0 && (
+                          <p className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-200/70">
+                            {status.failedJobs.toLocaleString()} indexing job
+                            {status.failedJobs === 1 ? '' : 's'} can be retried.
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        className="flex shrink-0 items-center gap-1 font-semibold underline decoration-amber-500/40 underline-offset-2 hover:text-amber-950 disabled:opacity-50 dark:hover:text-white"
+                        disabled={activeIndexAction !== null}
+                        onClick={() => void handleRetry()}
+                      >
+                        {activeIndexAction?.kind === 'retry' && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        Retry now
+                      </button>
+                    </div>
+                    {failedJobs.length > 0 && (
+                      <div className="mt-2.5 border-t border-amber-300/35 pt-2.5 dark:border-amber-400/15">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-950 dark:text-amber-100 dark:hover:text-white"
+                          aria-expanded={showAffectedClips}
+                          onClick={() => setShowAffectedClips(value => !value)}
+                        >
+                          {showAffectedClips ? (
+                            <ChevronDown className="h-3 w-3" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3" />
+                          )}
+                          Show affected clips ({failedJobs.length}
+                          {status.failedJobs > failedJobs.length ? '+' : ''})
+                        </button>
+                        {showAffectedClips && (
+                          <div className="mt-2 space-y-1.5">
+                            {failedJobs.map(job => (
+                              <div
+                                key={job.clip.id}
+                                className="rounded-lg border border-amber-300/30 bg-white/45 px-2.5 py-2 dark:border-amber-400/10 dark:bg-black/10"
+                              >
+                                <p className="truncate text-[11px] font-medium text-slate-800 dark:text-slate-100">
+                                  {job.clip.historyPreview.title}
+                                </p>
+                                <p className="mt-0.5 truncate text-[10px] text-slate-500 dark:text-slate-400">
+                                  {job.clip.historyPreview.subtitle ??
+                                    job.clip.sourceAppName ??
+                                    'Clipboard item'}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {status.diagnostic && (
+                      <details className="mt-2 text-[10px] text-amber-800/75 dark:text-amber-100/65">
+                        <summary className="cursor-pointer select-none hover:text-amber-950 dark:hover:text-white">
+                          Technical details
+                        </summary>
+                        <p className="mt-1 break-words font-mono leading-4">{status.diagnostic}</p>
+                      </details>
+                    )}
                   </div>
                 )}
 

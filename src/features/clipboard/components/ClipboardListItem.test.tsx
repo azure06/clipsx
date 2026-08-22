@@ -18,17 +18,18 @@ vi.mock('lucide-react', () => ({
   Command: () => <div data-testid="command-icon" />,
   CornerDownLeft: () => <div data-testid="corner-icon" />,
   ScanText: () => <div data-testid="scan-icon" />,
-  AlignLeft: () => <div data-testid="text-icon" />,
   Braces: () => <div data-testid="braces-icon" />,
   Code2: () => <div data-testid="code-icon" />,
   Database: () => <div data-testid="database-icon" />,
   File: () => <div data-testid="file-icon" />,
+  FileCode2: () => <div data-testid="html-icon" />,
   Globe: () => <div data-testid="globe-icon" />,
   KeyRound: () => <div data-testid="key-icon" />,
   Link: () => <div data-testid="link-icon" />,
   Palette: () => <div data-testid="palette-icon" />,
   Table2: () => <div data-testid="table-icon" />,
   Terminal: () => <div data-testid="terminal-icon" />,
+  Text: () => <div data-testid="text-icon" />,
 }))
 
 // Mock keyboard shortcuts
@@ -133,8 +134,8 @@ describe('ClipboardListItem', () => {
     const thumbnail = screen.getByRole('img', {
       name: /thumbnail/i,
     })
-    expect(thumbnail.className).toContain('h-7')
-    expect(thumbnail.className).toContain('w-7')
+    expect(thumbnail.className).toContain('h-[26px]')
+    expect(thumbnail.className).toContain('w-[26px]')
     expect(thumbnail.className).toContain('rounded-full')
   })
 

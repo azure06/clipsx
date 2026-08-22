@@ -27,9 +27,16 @@ export type TextEmbeddingStatus = {
   indexedClips: number
   pendingJobs: number
   failedJobs: number
-  totalClips: number
+  eligibleClips: number
   endpoint: string | null
   model: string | null
+}
+
+export type FailedTextEmbeddingJob = {
+  clip: ClipSummary
+  attemptCount: number
+  lastError: string | null
+  updatedAt: number
 }
 
 export type SearchSourceDescriptor = {

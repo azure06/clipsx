@@ -2076,6 +2076,14 @@ async fn get_text_embedding_status(
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn list_failed_text_embedding_jobs(
+    state: State<'_, AppState>,
+) -> Result<Vec<embeddings::FailedEmbeddingJob>, String> {
+    embeddings::failed_jobs(&state.history, 5)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
 async fn configure_text_generation_provider(
     endpoint: String,
     model: String,
@@ -2639,6 +2647,7 @@ pub(crate) fn run() {
             configure_text_embedding_provider,
             disable_text_embedding_provider,
             get_text_embedding_status,
+            list_failed_text_embedding_jobs,
             configure_text_generation_provider,
             disable_text_generation_provider,
             get_text_generation_status,

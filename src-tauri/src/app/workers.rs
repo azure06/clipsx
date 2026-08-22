@@ -32,7 +32,6 @@ impl SingleWorker {
                     match embeddings::validate_configured_provider(&history).await {
                         Ok(()) => {
                             validated = true;
-                            retry = 0;
                             let _ = app.emit(
                                 "search-source-status-changed",
                                 search::SEMANTIC_TEXT_SOURCE_ID,

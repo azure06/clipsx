@@ -98,7 +98,7 @@ pub(crate) fn build_builtin_preview(ctx: PreviewContext<'_>) -> HistoryPreview {
                         .and_then(|text| normalize_snippet(&text))
                 })
                 .unwrap_or_else(|| "Text".to_string());
-            let leading = facet_icon(ctx.facet_id).unwrap_or_else(|| host_icon("globe"));
+            let leading = facet_icon(ctx.facet_id).unwrap_or_else(|| host_icon("html"));
             finish(leading, title, None, badge)
         }
         "text" => {

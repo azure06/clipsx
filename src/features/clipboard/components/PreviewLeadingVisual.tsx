@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClipSummary, HistoryPreview } from '../../../shared/types/v2'
 import {
-  AlignLeft,
   Braces,
   Code2,
   Database,
   File,
+  FileCode2,
   Globe,
   Hash,
   KeyRound,
@@ -14,6 +14,7 @@ import {
   Palette,
   Table2,
   Terminal,
+  Text,
   type LucideIcon,
 } from 'lucide-react'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
@@ -31,31 +32,33 @@ const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
   palette: Palette,
   table: Table2,
   terminal: Terminal,
-  text: AlignLeft,
+  text: Text,
+  html: FileCode2,
 }
 
 // Same recipe as ContentIcon: a tinted ring + soft bg per content type, so the
 // history list reads as colorful and alive rather than one flat gray blob.
 const ICON_TINTS: Record<string, string> = {
-  braces: 'bg-emerald-500/20 text-emerald-500 ring-emerald-500/30 dark:text-emerald-400',
-  code: 'bg-green-500/20 text-green-500 ring-green-500/30 dark:text-green-400',
-  database: 'bg-indigo-500/20 text-indigo-500 ring-indigo-500/30 dark:text-indigo-400',
-  file: 'bg-slate-500/20 text-slate-500 ring-slate-500/30 dark:text-slate-400',
-  globe: 'bg-sky-500/20 text-sky-500 ring-sky-500/30 dark:text-sky-400',
-  hash: 'bg-cyan-500/20 text-cyan-500 ring-cyan-500/30 dark:text-cyan-400',
-  key: 'bg-red-500/20 text-red-500 ring-red-500/30 dark:text-red-400',
-  link: 'bg-blue-500/20 text-blue-500 ring-blue-500/30 dark:text-blue-400',
-  palette: 'bg-fuchsia-500/20 text-fuchsia-500 ring-fuchsia-500/30 dark:text-fuchsia-400',
-  table: 'bg-lime-500/20 text-lime-500 ring-lime-500/30 dark:text-lime-400',
-  terminal: 'bg-violet-500/20 text-violet-500 ring-violet-500/30 dark:text-violet-400',
-  text: 'bg-slate-500/20 text-slate-500 ring-slate-500/30 dark:text-slate-400',
+  braces: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
+  code: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
+  database: 'bg-indigo-500/15 text-indigo-600 ring-indigo-500/25 dark:text-indigo-300',
+  file: 'bg-slate-500/15 text-slate-600 ring-slate-400/25 dark:text-slate-300',
+  globe: 'bg-sky-500/15 text-sky-600 ring-sky-500/25 dark:text-sky-300',
+  hash: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
+  html: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
+  key: 'bg-rose-500/15 text-rose-600 ring-rose-500/25 dark:text-rose-300',
+  link: 'bg-sky-500/15 text-sky-600 ring-sky-500/25 dark:text-sky-300',
+  palette: 'bg-fuchsia-500/15 text-fuchsia-600 ring-fuchsia-500/25 dark:text-fuchsia-300',
+  table: 'bg-amber-500/15 text-amber-600 ring-amber-500/25 dark:text-amber-300',
+  terminal: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
+  text: 'bg-slate-500/15 text-slate-600 ring-slate-400/25 dark:text-slate-300',
 }
 
 const CIRCLE_CLASS =
   'flex items-center justify-center rounded-full ring-2 shadow-sm transition-all duration-200 hover:scale-110 hover:shadow-md'
 
 const SIZES = {
-  sm: { outer: 'h-7 w-7', icon: 'h-3.5 w-3.5' },
+  sm: { outer: 'h-[26px] w-[26px]', icon: 'h-3 w-3' },
   lg: { outer: 'h-14 w-14', icon: 'h-6 w-6' },
 } as const
 
