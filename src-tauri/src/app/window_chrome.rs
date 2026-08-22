@@ -16,15 +16,9 @@ fn traffic_light_x(index: usize) -> f64 {
     TRAFFIC_LIGHT_X + index as f64 * 20.0
 }
 
-pub(crate) fn configure(window: &WebviewWindow) -> tauri::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        use tauri_plugin_decorum::WebviewWindowExt;
-        window.create_overlay_titlebar()?;
-    }
-
+pub(crate) fn configure(_window: &WebviewWindow) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
-    configure_macos(window)?;
+    configure_macos(_window)?;
 
     Ok(())
 }

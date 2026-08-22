@@ -2757,9 +2757,13 @@ mod tests {
             .split(|value: char| !(value.is_ascii_alphanumeric() || value == '_'))
             .filter(|value| !value.is_empty())
             .collect::<BTreeSet<_>>();
+        let registered_plugin_commands = BTreeSet::from(["plugin:decorum|show_snap_overlay"]);
         let missing = invoked
             .iter()
-            .filter(|command| !registered.contains(command.as_str()))
+            .filter(|command| {
+                !registered.contains(command.as_str())
+                    && !registered_plugin_commands.contains(command.as_str())
+            })
             .cloned()
             .collect::<Vec<_>>();
         assert!(
@@ -2813,6 +2817,21 @@ mod tests {
         assert_eq!(
             window["windowEffects"]["effects"],
             serde_json::json!(["acrylic", "underWindowBackground"])
+        );
+    }
+
+    #[test]
+    fn windows_snap_layout_is_scoped_to_the_main_webview() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        assert_eq!(config["app"]["withGlobalTauri"], false);
+
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../../capabilities/windows.json")).unwrap();
+        assert_eq!(capability["webviews"], serde_json::json!(["main"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["decorum:allow-show-snap-overlay"])
         );
     }
 
