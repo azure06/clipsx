@@ -35,90 +35,27 @@ import {
   RefreshCw,
   UserRound,
   LogOut,
+  Cloud,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 import { normalizeLanguage } from '../../i18n'
+import { SettingsNavigation, type SettingsNavigationItem } from './components/SettingsNavigation'
+import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
-export type SettingsTab = 'general' | 'account' | 'clipboard' | 'storage' | 'privacy' | 'advanced'
+export type SettingsTab =
+  | 'general'
+  | 'clipboard'
+  | 'keyboard'
+  | 'storage'
+  | 'privacy'
+  | 'sync'
+  | 'account'
+  | 'advanced'
 
 type SettingsProps = {
   initialTab?: SettingsTab
 }
-
-// --- Settings-specific layout components (not shared) ---
-
-type SettingsSectionProps = {
-  readonly icon: React.ReactNode
-  readonly title: string
-  readonly description: string
-  readonly children: React.ReactNode
-}
-
-const SettingsSection = ({ icon, title, description, children }: SettingsSectionProps) => (
-  <Card
-    header={
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-linear-to-br from-blue-100/60 to-violet-100/60 dark:from-blue-900/30 dark:to-violet-900/30 text-blue-600 dark:text-violet-400">
-          {icon}
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-500">{description}</p>
-        </div>
-      </div>
-    }
-    className="shadow-sm"
-  >
-    <div className="space-y-4">{children}</div>
-  </Card>
-)
-
-type SettingRowProps = {
-  readonly label: string
-  readonly description?: string
-  readonly children: React.ReactNode
-}
-
-const SettingRow = ({ label, description, children }: SettingRowProps) => (
-  <div className="flex items-start justify-between gap-4">
-    <div className="flex-1 min-w-0">
-      <label className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</label>
-      {description && (
-        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-500">{description}</p>
-      )}
-    </div>
-    <div className="shrink-0">{children}</div>
-  </div>
-)
-
-type ButtonGroupOption = {
-  readonly value: number
-  readonly label: string
-  readonly icon?: React.ReactNode
-}
-
-type ButtonGroupProps = {
-  readonly value: number
-  readonly onChange: (value: number) => void
-  readonly options: readonly ButtonGroupOption[]
-}
-
-const ButtonGroup = ({ value, onChange, options }: ButtonGroupProps) => (
-  <div className="flex flex-wrap gap-2">
-    {options.map(option => (
-      <Button
-        key={option.value}
-        variant={value === option.value ? 'primary' : 'secondary'}
-        size="sm"
-        onClick={() => onChange(option.value)}
-        leftIcon={option.icon}
-      >
-        {option.label}
-      </Button>
-    ))}
-  </div>
-)
 
 // --- ShortcutRecorder: visual key-combination recorder widget ---
 
@@ -358,14 +295,62 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
 
   // --- Option lists ---
 
-  const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'general', label: t('settings.general'), icon: <SettingsIcon className="h-4 w-4" /> },
-    { id: 'account', label: t('settings.account'), icon: <UserRound className="h-4 w-4" /> },
-    { id: 'clipboard', label: t('settings.clipboard'), icon: <Clipboard className="h-4 w-4" /> },
-    { id: 'storage', label: t('settings.storage'), icon: <Database className="h-4 w-4" /> },
-    { id: 'privacy', label: t('settings.privacy'), icon: <Shield className="h-4 w-4" /> },
-    { id: 'advanced', label: t('settings.advanced'), icon: <Keyboard className="h-4 w-4" /> },
+  const tabs: SettingsNavigationItem<SettingsTab>[] = [
+    {
+      id: 'general',
+      label: t('settings.general'),
+      icon: <Palette className="h-4 w-4" />,
+      group: 'preferences',
+    },
+    {
+      id: 'clipboard',
+      label: t('settings.clipboard'),
+      icon: <Clipboard className="h-4 w-4" />,
+      group: 'preferences',
+    },
+    {
+      id: 'keyboard',
+      label: 'Keyboard',
+      icon: <Keyboard className="h-4 w-4" />,
+      group: 'preferences',
+    },
+    {
+      id: 'storage',
+      label: t('settings.storage'),
+      icon: <Database className="h-4 w-4" />,
+      group: 'preferences',
+    },
+    {
+      id: 'privacy',
+      label: t('settings.privacy'),
+      icon: <Shield className="h-4 w-4" />,
+      group: 'preferences',
+    },
+    { id: 'sync', label: 'Sync', icon: <Cloud className="h-4 w-4" />, group: 'system' },
+    {
+      id: 'account',
+      label: t('settings.account'),
+      icon: <UserRound className="h-4 w-4" />,
+      group: 'system',
+    },
+    {
+      id: 'advanced',
+      label: t('settings.advanced'),
+      icon: <SettingsIcon className="h-4 w-4" />,
+      group: 'system',
+    },
   ]
+
+  const tabDescriptions: Record<SettingsTab, string> = {
+    general: 'Appearance, language, and window behavior.',
+    clipboard: 'What ClipsX captures and how it returns content to other apps.',
+    keyboard: 'Global and built-in action shortcuts.',
+    storage: 'History retention and capture size limits.',
+    privacy: 'When local clipboard data is cleared.',
+    sync: 'Configuration status, devices, and conflicts.',
+    account: 'Sign in and identity for account-backed services.',
+    advanced: 'Updates, system integration, and configuration tools.',
+  }
 
   const themeOptions = [
     { value: 'auto' as Theme, label: t('settings.themeAuto') },
@@ -411,34 +396,12 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Left Sidebar Menu */}
-      <div className="w-48 shrink-0 flex flex-col border-r border-gray-200/50 dark:border-white/10 bg-slate-100/30 dark:bg-slate-900/30">
-        <div className="p-4">
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 px-2">
-            {t('settings.title')}
-          </h2>
-          <div className="space-y-1">
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-left ${
-                  activeTab === tab.id
-                    ? 'bg-blue-100/60 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
-                    : 'text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-slate-100/5 hover:text-gray-900 dark:hover:text-gray-200'
-                }`}
-              >
-                <div
-                  className={`${activeTab === tab.id ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300'}`}
-                >
-                  {tab.icon}
-                </div>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      <SettingsNavigation
+        activeTab={activeTab}
+        items={tabs}
+        onSelect={setActiveTab}
+        title={t('settings.title')}
+      />
 
       {/* Right Content Area */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -447,9 +410,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {tabs.find(t => t.id === activeTab)?.label}
             </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              {t('settings.manageTab', { tab: tabs.find(tab => tab.id === activeTab)?.label })}
-            </p>
+            <p className="mt-1 text-sm text-gray-500">{tabDescriptions[activeTab]}</p>
           </div>
           {/* GENERAL TAB */}
           {activeTab === 'general' && (
@@ -487,22 +448,6 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
               </SettingsSection>
 
               <SettingsSection
-                icon={<Keyboard className="h-4 w-4" />}
-                title={t('settings.shortcuts')}
-                description={t('settings.shortcutsDescription')}
-              >
-                <SettingRow
-                  label={t('settings.globalShortcut')}
-                  description={t('settings.globalShortcutDescription')}
-                >
-                  <ShortcutRecorder
-                    value={settings.global_shortcut}
-                    onChange={shortcut => void updateSettings({ global_shortcut: shortcut })}
-                  />
-                </SettingRow>
-              </SettingsSection>
-
-              <SettingsSection
                 icon={<SettingsIcon className="h-4 w-4" />}
                 title={t('settings.windowBehavior')}
                 description={t('settings.windowBehaviorDescription')}
@@ -528,6 +473,56 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                 </SettingRow>
               </SettingsSection>
             </>
+          )}
+
+          {activeTab === 'keyboard' && (
+            <>
+              <SettingsSection
+                icon={<Keyboard className="h-4 w-4" />}
+                title="App shortcut"
+                description="Choose the keyboard shortcut that opens ClipsX from anywhere."
+              >
+                <SettingRow
+                  label={t('settings.globalShortcut')}
+                  description={t('settings.globalShortcutDescription')}
+                >
+                  <ShortcutRecorder
+                    value={settings.global_shortcut}
+                    onChange={shortcut => void updateSettings({ global_shortcut: shortcut })}
+                  />
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection
+                icon={<Keyboard className="h-4 w-4" />}
+                title="Built-in actions"
+                description="Action-specific shortcuts will appear here as they become configurable."
+              >
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-xs leading-5 text-slate-500 dark:border-white/10 dark:bg-white/[0.02]">
+                  Navigation, copy, pin, and other built-in actions currently use their documented
+                  defaults. Extension action shortcuts live with each extension.
+                </p>
+              </SettingsSection>
+            </>
+          )}
+
+          {activeTab === 'sync' && (
+            <SettingsSection
+              icon={<Cloud className="h-4 w-4" />}
+              title="Configuration sync"
+              description="Keep preferences and extension choices consistent across your devices."
+            >
+              <div className="rounded-xl border border-dashed border-violet-300/50 bg-linear-to-br from-violet-500/[0.07] to-transparent px-4 py-4 dark:border-violet-400/20 dark:from-violet-500/[0.12]">
+                <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                  Not available yet
+                </p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  This page will show sync status, devices, conflicts, and exactly what is included.
+                  Clipboard content, local models, credentials, and extension grants will remain
+                  local.
+                </p>
+              </div>
+            </SettingsSection>
           )}
 
           {/* CLIPBOARD TAB */}
