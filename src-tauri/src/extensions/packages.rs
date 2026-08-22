@@ -391,6 +391,13 @@ fn validate_declared_assets(
                 bail!("extension iconAsset is not present in the package");
             }
         }
+        if let Some(icons) = &contribution.icon_assets {
+            for (theme, icon) in [("light", &icons.light), ("dark", &icons.dark)] {
+                if !contents.contains_key(icon) {
+                    bail!("extension iconAssets.{theme} is not present in the package");
+                }
+            }
+        }
         if let Some(entry) = &contribution.ui_entry {
             if !contents.contains_key(entry) {
                 bail!("extension uiEntry is not present in the package");
@@ -420,13 +427,13 @@ fn validate_svg(bytes: &[u8]) -> Result<()> {
         "<animate",
         "<set",
         "<style",
-        "url(",
         "href=",
         "xlink:",
         "javascript:",
         "data:",
     ];
     if forbidden.iter().any(|token| lower.contains(token))
+        || !only_local_fragment_urls(&lower)
         || lower
             .split_whitespace()
             .any(|token| token.starts_with("on") && token.contains('='))
@@ -434,6 +441,20 @@ fn validate_svg(bytes: &[u8]) -> Result<()> {
         bail!("SVG icon contains unsupported active or external content");
     }
     Ok(())
+}
+
+fn only_local_fragment_urls(source: &str) -> bool {
+    source.split("url(").skip(1).all(|tail| {
+        let Some((value, _)) = tail.split_once(')') else {
+            return false;
+        };
+        let value = value.trim();
+        value.starts_with('#')
+            && value.len() > 1
+            && value[1..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    })
 }
 
 fn required<'a>(contents: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Result<&'a [u8]> {
@@ -496,12 +517,17 @@ mod tests {
             br#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>"#
         )
         .is_ok());
+        assert!(validate_svg(
+            br#"<svg><defs><clipPath id="icon"><path d="M0 0h1v1z"/></clipPath></defs><g clip-path="url(#icon)"/></svg>"#
+        )
+        .is_ok());
         for malicious in [
             br#"<svg onload="alert(1)"></svg>"#.as_slice(),
             br#"<svg><script>alert(1)</script></svg>"#.as_slice(),
             br#"<svg><foreignObject><html/></foreignObject></svg>"#.as_slice(),
             br#"<svg><use href="https://example.com/icon.svg#x"/></svg>"#.as_slice(),
             br#"<!DOCTYPE svg><svg></svg>"#.as_slice(),
+            br#"<svg><path fill="url(https://example.com/icon.svg)"/></svg>"#.as_slice(),
         ] {
             assert!(validate_svg(malicious).is_err());
         }

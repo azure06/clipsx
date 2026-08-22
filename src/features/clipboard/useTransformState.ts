@@ -32,6 +32,8 @@ export type ContextAction = {
   label: string
   icon: string | null
   iconSvg: string | null
+  iconSvgDark: string | null
+  iconScale: number
   placements: Array<'preview_toolbar' | 'action_menu'>
   effects: string[]
   execution: 'local' | 'capability_backed'

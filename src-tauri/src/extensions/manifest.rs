@@ -168,6 +168,16 @@ pub struct ManifestContribution {
     /// A package-owned SVG under `icons/`. It is validated while the package is
     /// installed and is always rendered as an image, never injected as markup.
     pub icon_asset: Option<String>,
+    /// Theme-specific package SVGs. `light` is used on a light host surface and
+    /// `dark` is used on a dark host surface. This is necessary because package
+    /// icons are image resources and therefore cannot inherit host `currentColor`.
+    #[serde(default)]
+    pub icon_assets: Option<ThemedIconAssets>,
+    /// A bounded visual adjustment for assets that include prescribed clear
+    /// space in their viewBox. The host scales the complete image; it never
+    /// crops or rewrites the SVG.
+    #[serde(default = "default_icon_scale")]
+    pub icon_scale: f32,
     #[serde(default)]
     pub placements: Vec<ActionPlacement>,
     #[serde(default)]
@@ -179,6 +189,13 @@ pub struct ManifestContribution {
     pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThemedIconAssets {
+    pub light: String,
+    pub dark: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -232,6 +249,9 @@ pub struct ExtensionSetting {
 
 fn default_version() -> String {
     "1.0.0".into()
+}
+fn default_icon_scale() -> f32 {
+    1.0
 }
 fn empty_object() -> Value {
     Value::Object(Default::default())
@@ -440,10 +460,19 @@ impl ExtensionManifest {
         if let Some(icon) = &contribution.icon {
             valid_host_icon(icon)?;
         }
+        if contribution.icon_asset.is_some() && contribution.icon_assets.is_some() {
+            bail!("use either iconAsset or iconAssets, not both");
+        }
         if let Some(icon_asset) = &contribution.icon_asset {
-            if !icon_asset.starts_with("icons/") || !icon_asset.ends_with(".svg") {
-                bail!("package iconAsset must reference an SVG below icons/");
-            }
+            valid_icon_asset(icon_asset, "iconAsset")?;
+        }
+        if let Some(icon_assets) = &contribution.icon_assets {
+            valid_icon_asset(&icon_assets.light, "iconAssets.light")?;
+            valid_icon_asset(&icon_assets.dark, "iconAssets.dark")?;
+        }
+        if !contribution.icon_scale.is_finite() || !(0.75..=2.0).contains(&contribution.icon_scale)
+        {
+            bail!("iconScale must be between 0.75 and 2");
         }
         Ok(())
     }
@@ -570,6 +599,19 @@ impl ExtensionManifest {
     pub fn qualified_contribution_id(&self, local_id: &str) -> String {
         format!("{}/{}", self.package_id, local_id)
     }
+}
+
+fn valid_icon_asset(value: &str, label: &str) -> Result<()> {
+    if !value.starts_with("icons/")
+        || !value.ends_with(".svg")
+        || value.contains('\\')
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!("package {label} must reference an SVG directly below icons/");
+    }
+    Ok(())
 }
 
 pub fn validate_parameter_schema(schema: &Value) -> Result<()> {
@@ -802,6 +844,8 @@ mod tests {
             execution: ExecutionClass::Local,
             icon: Some("palette".into()),
             icon_asset: None,
+            icon_assets: None,
+            icon_scale: 1.0,
             placements: if kind == ContributionKind::Action {
                 vec![ActionPlacement::ActionMenu]
             } else {
@@ -844,6 +888,27 @@ mod tests {
         wildcard.surfaces = vec![RenderSurface::Detail];
         wildcard.matchers = vec![ContributionMatcher::default()];
         assert!(manifest(wildcard).validate().is_err());
+    }
+
+    #[test]
+    fn themed_icon_assets_must_be_a_complete_safe_pair() {
+        let mut value = contribution(ContributionKind::Detector);
+        value.icon = None;
+        value.icon_assets = Some(ThemedIconAssets {
+            light: "icons/example-dark.svg".into(),
+            dark: "icons/example-light.svg".into(),
+        });
+        assert!(manifest(value.clone()).validate().is_ok());
+
+        value.icon_assets.as_mut().unwrap().dark = "icons/../other.svg".into();
+        assert!(manifest(value).validate().is_err());
+    }
+
+    #[test]
+    fn icon_scale_is_bounded() {
+        let mut value = contribution(ContributionKind::Detector);
+        value.icon_scale = 2.1;
+        assert!(manifest(value).validate().is_err());
     }
 
     #[test]

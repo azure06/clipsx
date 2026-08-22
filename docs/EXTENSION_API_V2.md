@@ -22,7 +22,8 @@ displayName = "Ask AI"
 id = "ask-chatgpt"
 kind = "action"
 displayName = "Ask ChatGPT"
-iconAsset = "icons/chatgpt.svg"
+iconAssets = { light = "icons/chatgpt-dark.svg", dark = "icons/chatgpt-light.svg" }
+iconScale = 1.85
 placements = ["preview_toolbar", "action_menu"]
 effects = ["open_https_url"]
 handler = { kind = "guest" }
@@ -50,10 +51,17 @@ Matchers establish applicability. The `action-state` guest export returns
 grant, input support, and session) can only downgrade that state and are checked
 again immediately before execution.
 
-Package SVGs live below `icons/`. Installation rejects active/external SVG
+Package SVGs live below `icons/`. `iconAssets` supplies a complete light/dark
+pair, selected by the host theme; use it for marks that require contrast on
+both surfaces. The legacy single `iconAsset` remains a theme-neutral fallback.
+`iconScale` may be set between `0.75` and `2` when a supplied asset contains
+prescribed viewBox clear space; the host scales the image without cropping or
+rewriting it.
+Installation rejects active/external SVG
 content including scripts, entities, event handlers, CSS URLs, foreignObject,
-animation, embedded HTML, and references. Accepted icons are rendered as images,
-not injected into the main DOM.
+animation, embedded HTML, and external references. Static local fragment
+references such as `url(#gradient)` are allowed. Accepted icons are rendered as
+images, not injected into the main DOM.
 
 Actions may preview, copy, paste, save a new clip, open a declared URL, notify,
 or open a declared dialog. They cannot update/delete clips, inspect arbitrary

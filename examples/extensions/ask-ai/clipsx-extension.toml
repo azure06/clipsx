@@ -1,7 +1,7 @@
 schemaVersion = 2
 contractRevision = 2
 packageId = "example.ask-ai"
-version = "1.0.0"
+version = "1.0.2"
 apiVersion = "^2.0"
 displayName = "Ask AI"
 description = "Open selected text as an encoded prompt in ChatGPT or Claude."
@@ -11,7 +11,8 @@ license = "MIT"
 id = "ask-chatgpt"
 kind = "action"
 displayName = "Ask ChatGPT"
-iconAsset = "icons/chatgpt.svg"
+iconAssets = { light = "icons/chatgpt-black.svg", dark = "icons/chatgpt-white.svg" }
+iconScale = 1.85
 placements = ["preview_toolbar", "action_menu"]
 effects = ["open_https_url"]
 handler = { kind = "guest" }
@@ -23,7 +24,7 @@ mimeTypes = ["text/plain"]
 id = "ask-claude"
 kind = "action"
 displayName = "Ask Claude"
-iconAsset = "icons/claude.svg"
+iconAssets = { light = "icons/claude-rounded.svg", dark = "icons/claude-rounded.svg" }
 placements = ["preview_toolbar", "action_menu"]
 effects = ["open_https_url"]
 handler = { kind = "guest" }

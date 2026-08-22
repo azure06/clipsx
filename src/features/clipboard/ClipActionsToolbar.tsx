@@ -83,6 +83,26 @@ const editorExtension = (presentation: ClipPresentation): string | null => {
   return null
 }
 
+const ExtensionIcon = ({
+  light,
+  dark,
+  scale,
+}: {
+  light: string | null
+  dark: string | null
+  scale: number
+}) => {
+  if (!light) return <Sparkles className="h-4 w-4" />
+  const style = scale === 1 ? undefined : { transform: `scale(${scale})` }
+  if (!dark) return <img src={light} alt="" className="h-4 w-4" style={style} />
+  return (
+    <>
+      <img src={light} alt="" className="h-4 w-4 dark:hidden" style={style} />
+      <img src={dark} alt="" className="hidden h-4 w-4 dark:block" style={style} />
+    </>
+  )
+}
+
 export const ClipActionsToolbar = ({
   presentation,
   context,
@@ -249,11 +269,11 @@ export const ClipActionsToolbar = ({
             className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
             onClick={() => transformControls && void transformControls.runAction(action.id)}
           >
-            {action.iconSvg ? (
-              <img src={action.iconSvg} alt="" className="h-4 w-4" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
+            <ExtensionIcon
+              light={action.iconSvg}
+              dark={action.iconSvgDark}
+              scale={action.iconScale}
+            />
           </button>
         ))}
         {transformControls && (transformControls.items.length > 0 || hasExtensionOverflow) && (
@@ -346,7 +366,13 @@ const TransformDropdown = ({
               onSelect={() => void controls.runAction(action.id)}
             >
               <span className="flex items-center gap-2">
-                {action.iconSvg && <img src={action.iconSvg} alt="" className="h-4 w-4" />}
+                {action.iconSvg && (
+                  <ExtensionIcon
+                    light={action.iconSvg}
+                    dark={action.iconSvgDark}
+                    scale={action.iconScale}
+                  />
+                )}
                 {action.label}
               </span>
               {action.shortcut && (

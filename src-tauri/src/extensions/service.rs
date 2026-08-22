@@ -34,6 +34,8 @@ pub struct ContextActionDescriptor {
     pub label: String,
     pub icon: Option<String>,
     pub icon_svg: Option<String>,
+    pub icon_svg_dark: Option<String>,
+    pub icon_scale: f32,
     pub placements: Vec<String>,
     pub effects: Vec<String>,
     pub execution: String,
@@ -784,7 +786,7 @@ impl ExtensionService {
                 ExtensionActionState::Hidden => unreachable!(),
             };
             let consent_required = self.consent_required(repo, &item).await?;
-            let icon_svg = self.contribution_icon(&item);
+            let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
                 pinned: pins.contains(&item.id),
@@ -793,6 +795,8 @@ impl ExtensionService {
                 label: item.declaration.display_name,
                 icon: item.declaration.icon,
                 icon_svg,
+                icon_svg_dark,
+                icon_scale: item.declaration.icon_scale,
                 placements: item
                     .declaration
                     .placements
@@ -839,7 +843,7 @@ impl ExtensionService {
             .into_iter()
             .map(|item| {
                 let available = true;
-                let icon_svg = self.contribution_icon(&item);
+                let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
                     pinned: pins.contains(&item.id),
@@ -848,6 +852,8 @@ impl ExtensionService {
                     label: item.declaration.display_name,
                     icon: item.declaration.icon,
                     icon_svg,
+                    icon_svg_dark,
+                    icon_scale: item.declaration.icon_scale,
                     placements: item
                         .declaration
                         .placements
@@ -1720,16 +1726,27 @@ impl ExtensionService {
         )
     }
 
-    fn contribution_icon(&self, contribution: &ActiveContribution) -> Option<String> {
-        let path = contribution.declaration.icon_asset.as_deref()?;
-        let bytes = self
-            .store
-            .package_asset(&contribution.package_relative_path, path)
-            .ok()?;
-        Some(format!(
-            "data:image/svg+xml;base64,{}",
-            BASE64.encode(bytes)
-        ))
+    fn contribution_icons(
+        &self,
+        contribution: &ActiveContribution,
+    ) -> (Option<String>, Option<String>) {
+        let asset = |path: &str| {
+            self.store
+                .package_asset(&contribution.package_relative_path, path)
+                .ok()
+                .map(|bytes| format!("data:image/svg+xml;base64,{}", BASE64.encode(bytes)))
+        };
+        if let Some(icons) = &contribution.declaration.icon_assets {
+            return (asset(&icons.light), asset(&icons.dark));
+        }
+        (
+            contribution
+                .declaration
+                .icon_asset
+                .as_deref()
+                .and_then(asset),
+            None,
+        )
     }
 
     async fn consent_required(
@@ -2943,6 +2960,8 @@ mod tests {
             execution: ExecutionClass::Local,
             icon: Some("palette".into()),
             icon_asset: None,
+            icon_assets: None,
+            icon_scale: 1.0,
             placements: vec![],
             ui_surfaces: vec![],
             ui_entry: None,
