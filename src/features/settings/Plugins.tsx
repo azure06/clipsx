@@ -6,6 +6,7 @@ import {
   Code2,
   Download,
   Filter,
+  Info,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -15,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '../../shared/components/ui/Button'
 import { Switch } from '../../shared/components/ui/Switch'
 import { ExtensionsNavigation, type ExtensionsDestination } from './extensions/ExtensionsNavigation'
+import { ExtensionsHelpDialog } from './extensions/ExtensionsHelpDialog'
 import { PackageDetailView } from './extensions/PackageDetail'
 import type { CatalogEntry, CoreUtility, ExtensionCatalog, PackageDetail } from './extensions/types'
 
@@ -36,6 +38,7 @@ export const Plugins = () => {
   const [detail, setDetail] = useState<PackageDetail | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const load = useCallback(async () => {
     setError(null)
@@ -177,15 +180,25 @@ export const Plugins = () => {
               Install and manage isolated packages without widening ClipsX’s trust boundary.
             </p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            isLoading={busy}
-            leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
-            onClick={() => void refresh()}
-          >
-            Check for updates
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={<Info className="h-3.5 w-3.5" />}
+              onClick={() => setHelpOpen(true)}
+            >
+              How it works
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              isLoading={busy}
+              leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+              onClick={() => void refresh()}
+            >
+              Check for updates
+            </Button>
+          </div>
         </header>
         <ExtensionsNavigation
           value={destination}
@@ -195,6 +208,7 @@ export const Plugins = () => {
             setDetail(null)
           }}
         />
+        <ExtensionsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         {error && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/[.07] px-3 py-2 text-xs text-red-700 dark:text-red-300">
             {error}
