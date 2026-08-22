@@ -19,7 +19,7 @@ const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES: usize = 256;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallSource {
     Registry,
@@ -55,6 +55,46 @@ pub struct RegistryPackage {
     pub credential_labels: Vec<String>,
     #[serde(default)]
     pub providers: Vec<String>,
+    #[serde(default)]
+    pub publisher: Option<RegistryPublisher>,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub archive_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub homepage_url: Option<String>,
+    #[serde(default)]
+    pub repository_url: Option<String>,
+    #[serde(default)]
+    pub documentation_url: Option<String>,
+    #[serde(default)]
+    pub icon_assets: Option<RegistryIconAssets>,
+    #[serde(default)]
+    pub permission_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryPublisher {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryIconAssets {
+    pub light: String,
+    pub dark: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +111,7 @@ impl RegistryIndex {
         }
         let index: Self =
             serde_json::from_slice(bytes).context("registry index is not valid JSON")?;
-        if index.schema_version != 1 || index.packages.len() > 10_000 {
+        if !(1..=2).contains(&index.schema_version) || index.packages.len() > 10_000 {
             bail!("unsupported or oversized registry index");
         }
         let mut entries = BTreeMap::new();
@@ -89,6 +129,9 @@ impl RegistryIndex {
                 bail!("registry package checksum is invalid");
             }
             validate_release_url(&package.release_url)?;
+            if index.schema_version == 2 {
+                validate_marketplace_metadata(package)?;
+            }
             if entries
                 .insert((&package.package_id, &package.version), ())
                 .is_some()
@@ -124,7 +167,7 @@ impl ExtensionPackageStore {
     }
 
     pub fn cache_path(&self) -> PathBuf {
-        self.root.join("cache").join("registry-v1.json")
+        self.root.join("cache").join("registry-v2.json")
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -147,11 +190,15 @@ impl ExtensionPackageStore {
     }
 
     pub fn cached_registry(&self) -> Result<Option<RegistryIndex>> {
-        let path = self.cache_path();
-        if !path.exists() {
-            return Ok(None);
+        for path in [
+            self.cache_path(),
+            self.root.join("cache").join("registry-v1.json"),
+        ] {
+            if path.exists() {
+                return Ok(Some(RegistryIndex::parse(&fs::read(path)?)?));
+            }
         }
-        Ok(Some(RegistryIndex::parse(&fs::read(path)?)?))
+        Ok(None)
     }
 
     pub fn install(
@@ -181,6 +228,12 @@ impl ExtensionPackageStore {
             {
                 bail!("extension manifest does not match the reviewed registry entry");
             }
+            if entry.schema_requires_permission_fingerprint()
+                && entry.permission_fingerprint.as_deref()
+                    != Some(permission_fingerprint(&manifest).as_str())
+            {
+                bail!("extension permissions do not match the reviewed registry entry");
+            }
         }
         if let Some(component) = contents.get("component.wasm") {
             if component.len() > MAX_COMPONENT_BYTES || !component.starts_with(b"\0asm") {
@@ -191,6 +244,13 @@ impl ExtensionPackageStore {
         }
         validate_assets(&contents)?;
         validate_declared_assets(&manifest, &contents)?;
+        if let Some(icons) = registry_entry.and_then(|entry| entry.icon_assets.as_ref()) {
+            for asset in [&icons.light, &icons.dark] {
+                if !asset.starts_with("icons/") || !contents.contains_key(asset) {
+                    bail!("registry package icon asset is missing from the archive");
+                }
+            }
+        }
 
         let relative_path = PathBuf::from("packages")
             .join(&manifest.package_id)
@@ -481,6 +541,81 @@ pub fn validate_release_url(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
+    let publisher = package
+        .publisher
+        .as_ref()
+        .context("registry v2 package is missing publisher metadata")?;
+    if publisher.id.is_empty()
+        || publisher.id.len() > 120
+        || publisher.display_name.is_empty()
+        || publisher.display_name.len() > 160
+        || package.categories.len() > 12
+        || package.tags.len() > 24
+        || package.categories.iter().chain(&package.tags).any(|value| {
+            value.is_empty() || value.len() > 80 || value.chars().any(char::is_control)
+        })
+    {
+        bail!("registry v2 package metadata exceeds its limits");
+    }
+    for timestamp in [&package.published_at, &package.updated_at] {
+        if timestamp
+            .as_deref()
+            .is_none_or(|value| value.len() < 10 || value.len() > 40)
+        {
+            bail!("registry v2 package timestamp is invalid");
+        }
+    }
+    if package
+        .archive_size_bytes
+        .is_none_or(|size| size == 0 || size > MAX_ARCHIVE_BYTES as u64)
+        || package.license.as_deref().is_none_or(str::is_empty)
+    {
+        bail!("registry v2 package archive metadata is invalid");
+    }
+    let icons = package
+        .icon_assets
+        .as_ref()
+        .context("registry v2 package is missing icon assets")?;
+    for asset in [&icons.light, &icons.dark] {
+        if !asset.starts_with("icons/") || asset.len() > 256 || !allowed_path(asset) {
+            bail!("registry v2 package icon asset is invalid");
+        }
+    }
+    if package
+        .permission_fingerprint
+        .as_deref()
+        .is_none_or(|value| {
+            value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        bail!("registry v2 package permission fingerprint is invalid");
+    }
+    for link in [
+        &package.homepage_url,
+        &package.repository_url,
+        &package.documentation_url,
+    ] {
+        if let Some(link) = link {
+            let url = url::Url::parse(link).context("registry marketplace link is invalid")?;
+            if url.scheme() != "https" || url.host_str().is_none() || link.len() > 2048 {
+                bail!("registry marketplace link must be HTTPS");
+            }
+        }
+    }
+    Ok(())
+}
+
+impl RegistryPackage {
+    fn schema_requires_permission_fingerprint(&self) -> bool {
+        self.publisher.is_some() && self.permission_fingerprint.is_some()
+    }
+}
+
+pub fn permission_fingerprint(manifest: &ExtensionManifest) -> String {
+    hex_digest(&serde_json::to_vec(&manifest.permissions).expect("extension permissions serialize"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +628,28 @@ mod tests {
         assert!(
             validate_release_url("https://github.com/a/b/releases/download/v1/a.clipsx").is_ok()
         );
+    }
+
+    #[test]
+    fn registry_v1_remains_a_limited_cached_catalog() {
+        let index = RegistryIndex::parse(
+            br#"{"schemaVersion":1,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(index.schema_version, 1);
+        assert!(index.packages[0].publisher.is_none());
+    }
+
+    #[test]
+    fn registry_v2_requires_reviewed_marketplace_metadata() {
+        let valid = r#"{"schemaVersion":2,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":"icons/example-light.svg","dark":"icons/example-dark.svg"},"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}"#;
+        assert!(RegistryIndex::parse(valid.as_bytes()).is_ok());
+        let missing_publisher = valid.replacen(
+            "\"publisher\":{\"id\":\"clipsx\",\"displayName\":\"ClipsX\",\"verified\":true},",
+            "",
+            1,
+        );
+        assert!(RegistryIndex::parse(missing_publisher.as_bytes()).is_err());
     }
 
     #[test]

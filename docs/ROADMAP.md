@@ -5,7 +5,6 @@ This roadmap contains only unfinished work. Completed behavior belongs in [ARCHI
 ## 1. Product structure and interaction
 
 - Restructure Intelligence into Overview, Search, Models, Indexing, and OCR. Remove unrelated extension status and avoid permanent sections for unavailable future features.
-- Restructure Extensions into Installed, Discover, Built-ins, and Developer. Add package detail routes with Overview, Settings, Permissions, Actions, and Diagnostics.
 - Move app and built-in shortcuts to a Keyboard settings section. Keep package action shortcuts on that package's Actions page.
 - Replace hard-coded command handling with a command registry and complete the shortcut coverage/conflict audit documented in [PRODUCT_STRUCTURE.md](PRODUCT_STRUCTURE.md).
 - Add an accessible draggable history/preview separator, keyboard resizing, reset behavior, sensible minimum widths, and a persisted device-local ratio.
@@ -19,7 +18,7 @@ This roadmap contains only unfinished work. Completed behavior belongs in [ARCHI
 - Implement the periodic `auto_clear_minutes` worker with safe cancellation and reset semantics.
 - Resolve the conflicting representation-size defaults: 10 MiB in frontend reset defaults versus 50 MiB in the Rust capture default; document and test one product default.
 - Validate autostart, clear-on-exit, updater, account callback, provider changes, package settings, shortcuts, and restart effects.
-- Re-key retained extension preferences by stable package ID instead of an install-row ID. On uninstall, remove grants and credentials, then let the user retain or delete non-secret settings and shortcuts.
+- Finish the uninstall choice for stable package settings and shortcuts: retain or delete non-secret settings after grants and credentials are removed.
 - Add cascade/invalidation tests for delete, clear, retention, note edits, tag edits/deletion, OCR completion, extraction changes, and extension update/removal. Include managed-file retries and search/embedding refresh.
 - Add a schema ownership check so new clip-owned derived tables cannot silently omit deletion behavior.
 
@@ -43,7 +42,7 @@ This roadmap contains only unfinished work. Completed behavior belongs in [ARCHI
 - Show the source representation used by each transform and complete loading, error, retry, cancellation, and expired-result states.
 - Prove transform preview, Copy, Paste, and Save as New Clip consume identical cached bytes and preserve provenance.
 - Complete remaining CSV/code/content-specific operations that belong as contextual actions.
-- Certify registry refresh, compatibility, manual updates, package diagnostics, provenance, and recovery in installed builds.
+- Certify registry refresh, v2 metadata snapshots, manual review, safe opt-in auto-updates, permission-change fallback, package diagnostics, provenance, and recovery in installed builds.
 - Add installed end-to-end automation for Ask AI, Ask Local AI, Mermaid Viewer, and Text API fixtures.
 - Cancel in-flight HTTPS or generation requests when an action, dialog, or extension view closes; prove no reusable invocation state remains.
 

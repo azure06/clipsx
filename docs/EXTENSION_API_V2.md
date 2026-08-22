@@ -37,9 +37,14 @@ origin = "https://chatgpt.com"
 
 Installed packages are enabled, disabled, quarantined, or incompatible.
 Lifecycle never mutates canonical clips, facets, or saved output. Registry
-updates are manual and review release/checksum/permission changes. Developer
-Mode may replace a package ID for iteration. Updates, disablement, removal, and
-developer replacement revoke checksum-bound external-data grants.
+metadata is reviewed separately from package manifests and is snapshot when a
+release is installed. Updates always show release/checksum/permission changes.
+Safe automatic updates are opt-in: only enabled, ready registry packages may
+move to a newer stable compatible release with an identical complete permission
+set. Every other update remains reviewable and manual. Developer Mode may
+replace a package ID for iteration but can never auto-update. Updates,
+disablement, removal, and developer replacement revoke checksum-bound
+external-data grants.
 
 ## Contributions and actions
 

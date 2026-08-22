@@ -8,6 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::{redirect::Policy, Client};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::Row;
@@ -19,11 +20,13 @@ use crate::{
 };
 
 use super::{
-    ActionDisposition, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
-    ExecutionClass, ExtensionActionResult, ExtensionActionState, ExtensionContent,
-    ExtensionLeadingVisual, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
+    permission_fingerprint, ActionDisposition, ActionEffect, ActionHandler, ContributionKind,
+    ContributionMatcher, ExecutionClass, ExtensionActionResult, ExtensionActionState,
+    ExtensionCatalog, ExtensionCatalogEntry, ExtensionContent, ExtensionLeadingVisual,
+    ExtensionPackageDetail, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
     ExtensionRuntime, ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex,
-    RegistryPackage, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose, OFFICIAL_REGISTRY_URL,
+    RegistryPackage, RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
+    OFFICIAL_REGISTRY_URL,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -235,6 +238,254 @@ impl ExtensionService {
         }
     }
 
+    pub async fn catalog(&self, repo: &HistoryRepository) -> Result<ExtensionCatalog> {
+        let installed = self.list(repo).await?;
+        let index = self.cached_registry()?;
+        let cached = index.is_some();
+        let error = (!cached).then(|| "The registry has not been checked yet.".into());
+        let mut latest = std::collections::BTreeMap::<String, RegistryPackage>::new();
+        if let Some(index) = &index {
+            for release in &index.packages {
+                let replace = latest
+                    .get(&release.package_id)
+                    .is_none_or(|current| version_cmp(&release.version, &current.version).is_gt());
+                if replace {
+                    latest.insert(release.package_id.clone(), release.clone());
+                }
+            }
+        }
+        let mut packages = latest
+            .into_values()
+            .map(|package| {
+                let installed_release = installed
+                    .iter()
+                    .find(|item| item.package_id == package.package_id)
+                    .cloned();
+                let update = installed_release.as_ref().and_then(|item| {
+                    (version_cmp(&package.version, &item.version).is_gt()).then(|| package.clone())
+                });
+                let eligible = installed_release
+                    .as_ref()
+                    .zip(update.as_ref())
+                    .is_some_and(|(item, update)| self.safe_update_eligible(item, update));
+                ExtensionCatalogEntry {
+                    package,
+                    installed: installed_release,
+                    update,
+                    auto_update_eligible: eligible,
+                }
+            })
+            .collect::<Vec<_>>();
+        for extension in installed {
+            if !packages.iter().any(|item| {
+                item.installed
+                    .as_ref()
+                    .is_some_and(|value| value.package_id == extension.package_id)
+            }) {
+                packages.push(ExtensionCatalogEntry {
+                    package: self
+                        .snapshot_for(repo, &extension.package_id)
+                        .await?
+                        .unwrap_or_else(|| registry_from_summary(&extension)),
+                    installed: Some(extension),
+                    update: None,
+                    auto_update_eligible: false,
+                });
+            }
+        }
+        packages.sort_by(|left, right| left.package.display_name.cmp(&right.package.display_name));
+        Ok(ExtensionCatalog {
+            packages,
+            registry: RegistryStatus {
+                schema_version: index.as_ref().map(|value| value.schema_version),
+                cached,
+                last_successful_check_at: self.last_registry_check(repo).await?,
+                error,
+            },
+        })
+    }
+
+    pub async fn package_detail(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<ExtensionPackageDetail> {
+        let catalog = self.catalog(repo).await?;
+        let entry = catalog
+            .packages
+            .into_iter()
+            .find(|entry| entry.package.package_id == package_id)
+            .context("extension package was not found")?;
+        let installed = entry.installed.clone();
+        let (settings, credentials, actions, diagnostics) = if let Some(installed) = &installed {
+            let mut diagnostics = Vec::new();
+            if installed.status != RuntimeStatus::Ready {
+                diagnostics.push(format!("Runtime status: {:?}", installed.status));
+            }
+            if !installed.enabled {
+                diagnostics.push("Disabled packages do not participate at runtime.".into());
+            }
+            let actions = self
+                .action_catalog(repo)
+                .await?
+                .into_iter()
+                .filter(|action| action.package_id == installed.package_id)
+                .collect();
+            (
+                self.package_settings(repo, package_id).await?,
+                self.credential_status(repo, package_id).await?,
+                actions,
+                diagnostics,
+            )
+        } else {
+            (serde_json::json!({}), Vec::new(), Vec::new(), Vec::new())
+        };
+        Ok(ExtensionPackageDetail {
+            installed,
+            package: Some(entry.package),
+            actions,
+            settings,
+            credentials,
+            update: entry.update,
+            auto_update_mode: self.update_preference(repo, package_id).await?,
+            auto_update_eligible: entry.auto_update_eligible,
+            grants_revoked_on_update: true,
+            diagnostics,
+        })
+    }
+
+    pub async fn update_preference(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<String> {
+        Ok(
+            sqlx::query_scalar("SELECT mode FROM extension_update_preferences WHERE package_id=?")
+                .bind(package_id)
+                .fetch_optional(&repo.pool)
+                .await?
+                .unwrap_or_else(|| "inherit".into()),
+        )
+    }
+
+    pub async fn set_update_preference(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        mode: &str,
+    ) -> Result<()> {
+        if !matches!(mode, "inherit" | "enabled" | "disabled") {
+            bail!("extension update preference is invalid");
+        }
+        let source: Option<String> =
+            sqlx::query_scalar("SELECT source FROM extension_installs WHERE package_id=?")
+                .bind(package_id)
+                .fetch_optional(&repo.pool)
+                .await?;
+        if source.as_deref() == Some("developer") && mode == "enabled" {
+            bail!("Developer Mode packages cannot receive registry auto-updates");
+        }
+        sqlx::query("INSERT INTO extension_update_preferences(package_id,mode,updated_at) VALUES(?,?,?) ON CONFLICT(package_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at")
+            .bind(package_id).bind(mode).bind(now_ms()).execute(&repo.pool).await?;
+        Ok(())
+    }
+
+    pub async fn auto_update_enabled(&self, repo: &HistoryRepository) -> Result<bool> {
+        let value: Option<String> = sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key='extensions.auto_updates_enabled'")
+            .fetch_optional(&repo.pool).await?;
+        Ok(value
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or(false))
+    }
+
+    pub async fn set_auto_update_enabled(
+        &self,
+        repo: &HistoryRepository,
+        enabled: bool,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES('extensions.auto_updates_enabled',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(json!(enabled).to_string()).bind(now_ms()).execute(&repo.pool).await?;
+        Ok(())
+    }
+
+    pub async fn check_for_updates(
+        &self,
+        repo: &HistoryRepository,
+        force: bool,
+    ) -> Result<ExtensionCatalog> {
+        let due = self
+            .last_registry_check(repo)
+            .await?
+            .is_none_or(|last| now_ms() - last >= 24 * 60 * 60 * 1000);
+        if !force && !due {
+            return self.catalog(repo).await;
+        }
+        let index = self.refresh_registry().await?;
+        self.record_registry_check(repo).await?;
+        let global = self.auto_update_enabled(repo).await?;
+        for installed in self.list(repo).await? {
+            let mode = self.update_preference(repo, &installed.package_id).await?;
+            let opted_in = match mode.as_str() {
+                "enabled" => true,
+                "disabled" => false,
+                _ => global,
+            };
+            let candidate = index
+                .packages
+                .iter()
+                .filter(|entry| entry.package_id == installed.package_id)
+                .max_by(|left, right| version_cmp(&left.version, &right.version));
+            if opted_in
+                && candidate.is_some_and(|entry| self.safe_update_eligible(&installed, entry))
+            {
+                let _ = self
+                    .install_registry(repo, &installed.package_id, &candidate.unwrap().version)
+                    .await;
+            }
+        }
+        self.catalog(repo).await
+    }
+
+    async fn last_registry_check(&self, repo: &HistoryRepository) -> Result<Option<i64>> {
+        let value: Option<String> = sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key='extensions.registry_last_successful_check_at'")
+            .fetch_optional(&repo.pool).await?;
+        Ok(value.and_then(|value| serde_json::from_str(&value).ok()))
+    }
+
+    async fn record_registry_check(&self, repo: &HistoryRepository) -> Result<()> {
+        sqlx::query("INSERT INTO config_profile_values(key,value_json,updated_at) VALUES('extensions.registry_last_successful_check_at',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(json!(now_ms()).to_string()).bind(now_ms()).execute(&repo.pool).await?;
+        Ok(())
+    }
+
+    async fn snapshot_for(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<Option<RegistryPackage>> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT metadata_json FROM extension_registry_snapshots WHERE package_id=?",
+        )
+        .bind(package_id)
+        .fetch_optional(&repo.pool)
+        .await?;
+        value
+            .map(|value| {
+                serde_json::from_str(&value).context("stored registry metadata is invalid")
+            })
+            .transpose()
+    }
+
+    fn safe_update_eligible(&self, installed: &ExtensionSummary, update: &RegistryPackage) -> bool {
+        installed.source == InstallSource::Registry
+            && installed.enabled
+            && matches!(installed.status, RuntimeStatus::Ready)
+            && !update.version.contains('-')
+            && version_cmp(&update.version, &installed.version).is_gt()
+            && update.permission_fingerprint.as_deref()
+                == Some(installed.permission_fingerprint.as_str())
+    }
+
     pub async fn install_registry(
         &self,
         repo: &HistoryRepository,
@@ -255,7 +506,7 @@ impl ExtensionService {
                 .validate_component(&package.sha256, component_path)
                 .await?;
         }
-        self.persist_install(repo, package, InstallSource::Registry)
+        self.persist_install(repo, package, InstallSource::Registry, Some(&entry))
             .await
     }
 
@@ -279,7 +530,7 @@ impl ExtensionService {
                 .validate_component(&package.sha256, component_path)
                 .await?;
         }
-        self.persist_install(repo, package, InstallSource::Developer)
+        self.persist_install(repo, package, InstallSource::Developer, None)
             .await
     }
 
@@ -321,6 +572,7 @@ impl ExtensionService {
                     _ => bail!("stored extension status is invalid"),
                 };
                 let package = self.store.load(Path::new(&row.get::<String, _>(5)))?;
+                let permission_fingerprint = permission_fingerprint(&package.manifest);
                 Ok(ExtensionSummary {
                     package_id: row.get(0),
                     version: row.get(1),
@@ -360,6 +612,7 @@ impl ExtensionService {
                         .collect(),
                     providers: package.manifest.permissions.providers,
                     settings: package.manifest.settings,
+                    permission_fingerprint,
                 })
             })
             .collect()
@@ -1505,11 +1758,11 @@ impl ExtensionService {
         repo: &HistoryRepository,
         package_id: &str,
     ) -> Result<serde_json::Value> {
-        let (extension_id, package) = self.package_for_settings(repo, package_id).await?;
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
         let rows = sqlx::query(
-            "SELECT setting_id,value_json FROM extension_package_settings WHERE extension_id=?",
+            "SELECT setting_id,value_json FROM extension_package_settings_v2 WHERE package_id=?",
         )
-        .bind(extension_id)
+        .bind(package_id)
         .fetch_all(&repo.pool)
         .await?;
         let stored = rows
@@ -1544,7 +1797,7 @@ impl ExtensionService {
         setting_id: &str,
         value: serde_json::Value,
     ) -> Result<()> {
-        let (extension_id, package) = self.package_for_settings(repo, package_id).await?;
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
         let setting = package
             .manifest
             .settings
@@ -1554,8 +1807,8 @@ impl ExtensionService {
         if !setting_value_is_valid(setting, &value) {
             bail!("extension setting value does not match its declaration");
         }
-        sqlx::query("INSERT INTO extension_package_settings(extension_id,setting_id,value_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(extension_id,setting_id) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
-            .bind(extension_id).bind(setting_id).bind(serde_json::to_string(&value)?).bind(now_ms())
+        sqlx::query("INSERT INTO extension_package_settings_v2(package_id,setting_id,value_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(package_id,setting_id) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(package_id).bind(setting_id).bind(serde_json::to_string(&value)?).bind(now_ms())
             .execute(&repo.pool).await?;
         Ok(())
     }
@@ -2168,6 +2421,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
         package: super::ExtensionPackage,
         source: InstallSource,
+        registry_entry: Option<&RegistryPackage>,
     ) -> Result<ExtensionSummary> {
         self.invalidate_runtime_sessions();
         let id: Option<String> =
@@ -2196,7 +2450,17 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
+        if let Some(entry) = registry_entry {
+            sqlx::query("INSERT INTO extension_registry_snapshots(package_id,version,metadata_json,recorded_at) VALUES(?,?,?,?) ON CONFLICT(package_id) DO UPDATE SET version=excluded.version,metadata_json=excluded.metadata_json,recorded_at=excluded.recorded_at")
+                .bind(&package.manifest.package_id)
+                .bind(&entry.version)
+                .bind(serde_json::to_string(entry)?)
+                .bind(now)
+                .execute(&mut *transaction)
+                .await?;
+        }
         transaction.commit().await?;
+        let permission_fingerprint = permission_fingerprint(&package.manifest);
         Ok(ExtensionSummary {
             package_id: package.manifest.package_id,
             version: package.manifest.version,
@@ -2236,6 +2500,7 @@ impl ExtensionService {
                 .collect(),
             providers: package.manifest.permissions.providers,
             settings: package.manifest.settings,
+            permission_fingerprint,
         })
     }
 
@@ -2826,6 +3091,7 @@ fn summary_from_manifest(
     enabled: bool,
     status: RuntimeStatus,
 ) -> ExtensionSummary {
+    let permission_fingerprint = permission_fingerprint(&manifest);
     ExtensionSummary {
         package_id: manifest.package_id,
         version: manifest.version,
@@ -2861,6 +3127,43 @@ fn summary_from_manifest(
             .collect(),
         providers: manifest.permissions.providers,
         settings: manifest.settings,
+        permission_fingerprint,
+    }
+}
+
+fn version_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    match (Version::parse(left), Version::parse(right)) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        _ => left.cmp(right),
+    }
+}
+
+fn registry_from_summary(value: &ExtensionSummary) -> RegistryPackage {
+    RegistryPackage {
+        package_id: value.package_id.clone(),
+        version: value.version.clone(),
+        api_version: super::API_VERSION.into(),
+        display_name: value.display_name.clone(),
+        description: value.description.clone(),
+        release_url: String::new(),
+        sha256: value.checksum.clone().unwrap_or_default(),
+        contributions: Vec::new(),
+        http_origins: value.http_origins.clone(),
+        external_navigation_origins: value.external_navigation_origins.clone(),
+        credential_labels: value.credential_labels.clone(),
+        providers: value.providers.clone(),
+        publisher: None,
+        categories: Vec::new(),
+        tags: Vec::new(),
+        published_at: None,
+        updated_at: None,
+        archive_size_bytes: None,
+        license: None,
+        homepage_url: None,
+        repository_url: None,
+        documentation_url: None,
+        icon_assets: None,
+        permission_fingerprint: Some(value.permission_fingerprint.clone()),
     }
 }
 fn payload_bytes(value: &CapturedRepresentation) -> usize {

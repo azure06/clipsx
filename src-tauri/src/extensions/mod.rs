@@ -17,7 +17,8 @@ pub use manifest::{
 };
 #[allow(unused_imports)]
 pub use packages::{
-    ExtensionPackage, ExtensionPackageStore, InstallSource, RegistryIndex, RegistryPackage,
+    permission_fingerprint, ExtensionPackage, ExtensionPackageStore, InstallSource,
+    RegistryIconAssets, RegistryIndex, RegistryPackage, RegistryPublisher,
 };
 #[allow(unused_imports)]
 pub use runtime::{
@@ -36,7 +37,7 @@ pub const API_VERSION: &str = "2.0.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeStatus {
     Ready,
@@ -61,4 +62,45 @@ pub struct ExtensionSummary {
     pub external_navigation_origins: Vec<String>,
     pub providers: Vec<String>,
     pub settings: Vec<ExtensionSetting>,
+    pub permission_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionCatalog {
+    pub packages: Vec<ExtensionCatalogEntry>,
+    pub registry: RegistryStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionCatalogEntry {
+    pub package: RegistryPackage,
+    pub installed: Option<ExtensionSummary>,
+    pub update: Option<RegistryPackage>,
+    pub auto_update_eligible: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryStatus {
+    pub schema_version: Option<u32>,
+    pub cached: bool,
+    pub last_successful_check_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionPackageDetail {
+    pub installed: Option<ExtensionSummary>,
+    pub package: Option<RegistryPackage>,
+    pub actions: Vec<ContextActionDescriptor>,
+    pub settings: serde_json::Value,
+    pub credentials: Vec<CredentialStatus>,
+    pub update: Option<RegistryPackage>,
+    pub auto_update_mode: String,
+    pub auto_update_eligible: bool,
+    pub grants_revoked_on_update: bool,
+    pub diagnostics: Vec<String>,
 }

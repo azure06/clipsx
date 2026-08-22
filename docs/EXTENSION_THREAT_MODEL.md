@@ -41,18 +41,18 @@ invoked operation -> grant + scoped token -> host broker -> allowed destination
 
 ## Principal threats and controls
 
-| Threat | Primary controls |
-| --- | --- |
-| Malicious archive/path traversal | bounded ZIP parsing, path normalization, duplicate/size rejection, app-owned install root |
-| Active SVG/HTML payload | strict SVG rejection/canonicalization, image rendering, package protocol CSP |
-| WASM escape or denial of service | Component Model validation, empty ambient linker, memory/table/fuel/epoch/time limits, quarantine |
-| Child-view privilege escalation | unique `extension-*` labels, global Rust invoke gate, main-only capability file, no global Tauri API |
-| Network or popup bypass | `connect-src 'none'`, navigation allowlist, popup and download denial, incognito child views |
-| Token/session spoofing | random session/token values plus package/contribution/clip/source/facet binding and expiry |
-| SSRF/DNS rebinding/redirect abuse | HTTPS-only exact origin/path/method policy, resolved-address filtering/pinning, redirects disabled |
-| Secret disclosure | OS credential store, broker-only injection, response/log redaction requirement |
-| Canonical history corruption | output-only dispositions and host-owned copy/paste/save paths |
-| Malicious update retaining trust | manual update, checksum display, permission diff, grant/session invalidation |
+| Threat                            | Primary controls                                                                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Malicious archive/path traversal  | bounded ZIP parsing, path normalization, duplicate/size rejection, app-owned install root                                                                                   |
+| Active SVG/HTML payload           | strict SVG rejection/canonicalization, image rendering, package protocol CSP                                                                                                |
+| WASM escape or denial of service  | Component Model validation, empty ambient linker, memory/table/fuel/epoch/time limits, quarantine                                                                           |
+| Child-view privilege escalation   | unique `extension-*` labels, global Rust invoke gate, main-only capability file, no global Tauri API                                                                        |
+| Network or popup bypass           | `connect-src 'none'`, navigation allowlist, popup and download denial, incognito child views                                                                                |
+| Token/session spoofing            | random session/token values plus package/contribution/clip/source/facet binding and expiry                                                                                  |
+| SSRF/DNS rebinding/redirect abuse | HTTPS-only exact origin/path/method policy, resolved-address filtering/pinning, redirects disabled                                                                          |
+| Secret disclosure                 | OS credential store, broker-only injection, response/log redaction requirement                                                                                              |
+| Canonical history corruption      | output-only dispositions and host-owned copy/paste/save paths                                                                                                               |
+| Malicious update retaining trust  | opt-in safe updates only for stable, compatible, permission-identical releases; checksum verification, grant/session invalidation, and manual review for every other update |
 
 ## Residual risk and release gates
 

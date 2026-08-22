@@ -1,800 +1,536 @@
-import { useCallback, useEffect, useState } from 'react'
-import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { TextEmbeddingStatus } from '../../shared/types/v2'
+import {
+  CheckCircle2,
+  Code2,
+  Download,
+  Filter,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  Sparkles,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '../../shared/components/ui/Button'
 import { Switch } from '../../shared/components/ui/Switch'
-import { ShortcutRecorder } from './Settings'
-import {
-  ArrowRight,
-  Box,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  Database,
-  Download,
-  Eye,
-  FolderOpen,
-  Plug,
-  RefreshCw,
-  RotateCcw,
-  Scan,
-  Shuffle,
-  Trash2,
-} from 'lucide-react'
+import { ExtensionsNavigation, type ExtensionsDestination } from './extensions/ExtensionsNavigation'
+import { PackageDetailView } from './extensions/PackageDetail'
+import type { CatalogEntry, CoreUtility, ExtensionCatalog, PackageDetail } from './extensions/types'
 
-type CoreUtility = { id: string; kind: string; label: string; version: string }
-type Extension = {
-  packageId: string
-  version: string
-  enabled: boolean
-  status: 'ready' | 'quarantined' | 'incompatible'
-  displayName: string
-  description: string
-  source: 'registry' | 'developer'
-  httpOrigins: string[]
-  credentialLabels: string[]
-  unavailableContributions: string[]
-  checksum: string | null
-  externalNavigationOrigins: string[]
-  providers: string[]
-  settings: Array<{
-    id: string
-    label: string
-    kind: 'boolean' | 'string' | 'number'
-    default: unknown
-  }>
-}
-type CredentialStatus = { id: string; label: string; configured: boolean }
-type RegistryPackage = {
-  packageId: string
-  version: string
-  displayName: string
-  description: string
-  contributions: string[]
-  apiVersion: string
-  sha256: string
-  httpOrigins: string[]
-  externalNavigationOrigins: string[]
-  credentialLabels: string[]
-  providers: string[]
-}
-type RegistryIndex = { schemaVersion: number; packages: RegistryPackage[] }
-type ExtensionAction = {
-  id: string
-  packageId: string
-  label: string
-  shortcut: string | null
-  available: boolean
-  unavailableReason: string | null
-  execution: 'local' | 'capability_backed'
-}
-
-const KIND_META: Record<string, { icon: React.ReactNode; color: string; description: string }> = {
-  Detector: {
-    icon: <Scan className="h-4 w-4" />,
-    color: 'text-blue-500',
-    description: 'Analyse clipboard content and tag it — URL, email, color, secret…',
-  },
-  Renderer: {
-    icon: <Eye className="h-4 w-4" />,
-    color: 'text-violet-500',
-    description: 'Control how tagged content is displayed in the preview panel.',
-  },
-  Transformer: {
-    icon: <Shuffle className="h-4 w-4" />,
-    color: 'text-emerald-500',
-    description: 'Convert content between formats — JSON↔CSV, Base64, curl→fetch…',
-  },
-}
-
-const compareSemver = (left: string, right: string) => {
-  const parse = (value: string) => {
-    const [core = '', prerelease = ''] = value.split('-', 2)
-    return { numbers: core.split('.').map(part => Number(part)), prerelease }
-  }
-  const a = parse(left)
-  const b = parse(right)
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (a.numbers[index] ?? 0) - (b.numbers[index] ?? 0)
-    if (difference !== 0) return difference
-  }
-  if (a.prerelease === b.prerelease) return 0
-  if (!a.prerelease) return 1
-  if (!b.prerelease) return -1
-  return a.prerelease.localeCompare(b.prerelease)
-}
-
-const CollapsibleSection = ({
-  title,
-  children,
-  defaultOpen = true,
-}: {
-  title: React.ReactNode
-  children: React.ReactNode
-  defaultOpen?: boolean
-}) => {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <section>
-      <button
-        className="mb-2 flex w-full items-center gap-1.5 text-left text-[10px] font-semibold uppercase tracking-widest text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-        onClick={() => setOpen(v => !v)}
-      >
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        {title}
-      </button>
-      {open && children}
-    </section>
-  )
-}
-
-const ExtensionConfiguration = ({ extension }: { extension: Extension }) => {
-  const [settings, setSettings] = useState<Record<string, unknown>>({})
-  const [credentials, setCredentials] = useState<CredentialStatus[]>([])
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-
-  useEffect(() => {
-    void Promise.all([
-      invoke<Record<string, unknown>>('get_extension_package_settings', {
-        packageId: extension.packageId,
-      }),
-      invoke<CredentialStatus[]>('get_extension_credential_status', {
-        packageId: extension.packageId,
-      }),
-    ]).then(([values, status]) => {
-      setSettings(values)
-      setCredentials(status)
-    })
-  }, [extension.packageId])
-
-  if (extension.settings.length === 0 && credentials.length === 0) return null
-  return (
-    <div className="mt-2 space-y-2 border-t border-slate-200/70 pt-2 dark:border-white/10">
-      {extension.settings.map(setting => {
-        const value = settings[setting.id] ?? setting.default
-        const inputValue =
-          typeof value === 'string' || typeof value === 'number' ? String(value) : ''
-        return (
-          <label className="flex items-center justify-between gap-3 text-xs" key={setting.id}>
-            <span>{setting.label}</span>
-            {setting.kind === 'boolean' ? (
-              <input
-                type="checkbox"
-                checked={Boolean(value)}
-                onChange={event => {
-                  const next = event.target.checked
-                  setSettings(current => ({ ...current, [setting.id]: next }))
-                  void invoke('set_extension_package_setting', {
-                    packageId: extension.packageId,
-                    settingId: setting.id,
-                    value: next,
-                  })
-                }}
-              />
-            ) : (
-              <input
-                className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
-                type={setting.kind === 'number' ? 'number' : 'text'}
-                value={inputValue}
-                onChange={event => {
-                  const next =
-                    setting.kind === 'number' ? Number(event.target.value) : event.target.value
-                  if (setting.kind === 'number' && !Number.isFinite(next)) return
-                  setSettings(current => ({ ...current, [setting.id]: next }))
-                  void invoke('set_extension_package_setting', {
-                    packageId: extension.packageId,
-                    settingId: setting.id,
-                    value: next,
-                  })
-                }}
-              />
-            )}
-          </label>
-        )
-      })}
-      {credentials.map(credential => (
-        <label className="flex items-center justify-between gap-3 text-xs" key={credential.id}>
-          <span>
-            {credential.label}
-            {credential.configured ? ' (configured)' : ''}
-          </span>
-          <input
-            className="w-40 rounded border border-slate-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900"
-            type="password"
-            autoComplete="off"
-            placeholder={credential.configured ? 'Replace secret' : 'Enter secret'}
-            value={drafts[credential.id] ?? ''}
-            onChange={event =>
-              setDrafts(current => ({ ...current, [credential.id]: event.target.value }))
-            }
-            onBlur={event => {
-              const value = event.target.value
-              if (!value) return
-              void invoke('set_extension_credential', {
-                packageId: extension.packageId,
-                credentialId: credential.id,
-                value,
-              }).then(() => {
-                setCredentials(current =>
-                  current.map(item =>
-                    item.id === credential.id ? { ...item, configured: true } : item
-                  )
-                )
-                setDrafts(current => ({ ...current, [credential.id]: '' }))
-              })
-            }}
-          />
-        </label>
-      ))}
-    </div>
-  )
-}
+type InstalledFilter = 'all' | 'enabled' | 'disabled' | 'updates' | 'attention'
+const timeLabel = (value: number | null) =>
+  value ? new Date(value).toLocaleString() : 'Not checked yet'
 
 export const Plugins = () => {
+  const [destination, setDestination] = useState<ExtensionsDestination>('installed')
+  const [catalog, setCatalog] = useState<ExtensionCatalog | null>(null)
   const [utilities, setUtilities] = useState<CoreUtility[]>([])
-  const [extensions, setExtensions] = useState<Extension[]>([])
-  const [extensionActions, setExtensionActions] = useState<ExtensionAction[]>([])
-  const [provider, setProvider] = useState<TextEmbeddingStatus | null>(null)
-  const [registry, setRegistry] = useState<RegistryPackage[]>([])
-  const [devMode, setDevMode] = useState(false)
-  const [activeKind, setActiveKind] = useState<string>('Detector')
-  const [error, setError] = useState<string | null>(null)
+  const [developerMode, setDeveloperMode] = useState(false)
+  const [autoUpdates, setAutoUpdates] = useState(false)
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('All categories')
+  const [installedFilter, setInstalledFilter] = useState<InstalledFilter>('all')
+  const [sort, setSort] = useState<'updated' | 'name'>('updated')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<PackageDetail | null>(null)
   const [busy, setBusy] = useState(false)
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [installing, setInstalling] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    setBusy(true)
     setError(null)
     try {
-      const [core, installed, actions, status, available, isDev] = await Promise.all([
+      const [nextCatalog, core, devMode, globalAutoUpdates] = await Promise.all([
+        invoke<ExtensionCatalog>('get_extension_catalog'),
         invoke<CoreUtility[]>('list_core_utilities'),
-        invoke<Extension[]>('list_extensions'),
-        invoke<ExtensionAction[]>('list_extension_actions'),
-        invoke<TextEmbeddingStatus>('get_text_embedding_status'),
-        invoke<RegistryIndex>('get_extension_registry').catch(() => ({
-          schemaVersion: 1,
-          packages: [],
-        })),
-        invoke<boolean>('get_extension_developer_mode').catch(() => false),
+        invoke<boolean>('get_extension_developer_mode'),
+        invoke<boolean>('get_extension_auto_updates_enabled'),
       ])
+      setCatalog(nextCatalog)
       setUtilities(core)
-      setExtensions(installed)
-      setExtensionActions(actions)
-      setProvider(status)
-      setRegistry(available.packages)
-      setDevMode(isDev)
+      setDeveloperMode(devMode)
+      setAutoUpdates(globalAutoUpdates)
+    } catch (value) {
+      setError(String(value))
+    }
+  }, [])
+  const selectPackage = useCallback(async (packageId: string) => {
+    setSelectedId(packageId)
+    setDetail(null)
+    try {
+      setDetail(await invoke<PackageDetail>('get_extension_package_detail', { packageId }))
+    } catch (value) {
+      setError(String(value))
+    }
+  }, [])
+  useEffect(() => {
+    void load()
+  }, [load])
+  useEffect(() => {
+    const catalogListener = listen('extension-catalog-updated', () => void load())
+    const stateListener = listen('extension-runtime-state-updated', () => void load())
+    return () => {
+      void catalogListener.then(unlisten => unlisten())
+      void stateListener.then(unlisten => unlisten())
+    }
+  }, [load])
+  useEffect(() => {
+    void invoke('check_extension_updates', { force: false })
+      .then(load)
+      .catch(() => undefined)
+  }, [load])
+  const refresh = async () => {
+    setBusy(true)
+    try {
+      setCatalog(await invoke<ExtensionCatalog>('check_extension_updates', { force: true }))
+      await load()
     } catch (value) {
       setError(String(value))
     } finally {
       setBusy(false)
     }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  useEffect(() => {
-    const u1 = listen('extension-catalog-updated', () => void load())
-    const u2 = listen('extension-runtime-state-updated', () => void load())
-    return () => {
-      void u1.then(f => f())
-      void u2.then(f => f())
-    }
-  }, [load])
-
-  const handleDevModeToggle = async (enabled: boolean) => {
-    try {
-      await invoke('set_extension_developer_mode', { enabled })
-      setDevMode(enabled)
-    } catch (value) {
-      setError(String(value))
-    }
   }
-
-  const handleInstallLocal = async () => {
+  const categories = useMemo(
+    () => [
+      'All categories',
+      ...Array.from(
+        new Set(catalog?.packages.flatMap(item => item.package.categories) ?? [])
+      ).sort(),
+    ],
+    [catalog]
+  )
+  const visible = useMemo(
+    () =>
+      (catalog?.packages ?? [])
+        .filter(item => {
+          const haystack = [
+            item.package.displayName,
+            item.package.packageId,
+            item.package.description,
+            item.package.publisher?.displayName,
+            ...item.package.tags,
+          ]
+            .join(' ')
+            .toLowerCase()
+          return (
+            (!query.trim() || haystack.includes(query.trim().toLowerCase())) &&
+            (category === 'All categories' || item.package.categories.includes(category))
+          )
+        })
+        .sort((left, right) =>
+          sort === 'name'
+            ? left.package.displayName.localeCompare(right.package.displayName)
+            : String(right.package.updatedAt ?? '').localeCompare(
+                String(left.package.updatedAt ?? '')
+              )
+        ),
+    [catalog, category, query, sort]
+  )
+  const installed = visible
+    .filter(item => item.installed)
+    .filter(
+      item =>
+        installedFilter === 'all' ||
+        (installedFilter === 'enabled' && item.installed?.enabled) ||
+        (installedFilter === 'disabled' && !item.installed?.enabled) ||
+        (installedFilter === 'updates' && item.update) ||
+        (installedFilter === 'attention' && item.installed?.status !== 'ready')
+    )
+  const installLocal = async () => {
     const path = await open({
       title: 'Select ClipsX Extension Package',
       filters: [{ name: 'ClipsX Extension', extensions: ['clipsx'] }],
       multiple: false,
     })
     if (!path || typeof path !== 'string') return
-    setInstalling(true)
-    setError(null)
+    setBusy(true)
     try {
-      const preview = await invoke<Extension>('inspect_local_extension', { path })
-      const disclosures = [
-        `${preview.displayName} v${preview.version}`,
-        preview.httpOrigins.length > 0
-          ? `Future HTTP origins: ${preview.httpOrigins.join(', ')}`
-          : 'No network origins declared.',
-        preview.credentialLabels.length > 0
-          ? `Credential slots: ${preview.credentialLabels.join(', ')}`
-          : 'No credential slots declared.',
-        preview.unavailableContributions.length > 0
-          ? `Unavailable until the capability broker ships: ${preview.unavailableContributions.join(', ')}`
-          : '',
-        '',
-        'Install this extension?',
-      ].filter(Boolean)
-      if (!window.confirm(disclosures.join('\n'))) return
+      const preview = await invoke<{ displayName: string; version: string }>(
+        'inspect_local_extension',
+        { path }
+      )
+      if (
+        !window.confirm(
+          `Install local package ${preview.displayName} v${preview.version}?\n\nLocal packages are not reviewed by the official registry.`
+        )
+      )
+        return
       await invoke('install_local_extension', { path })
-    } catch (value) {
-      setError(String(value))
-    } finally {
-      setInstalling(false)
-    }
-  }
-
-  const setActionShortcut = async (actionId: string, accelerator: string | null) => {
-    setBusyId(actionId)
-    setError(null)
-    try {
-      await invoke('set_extension_action_shortcut', { actionId, accelerator })
       await load()
     } catch (value) {
       setError(String(value))
     } finally {
-      setBusyId(null)
+      setBusy(false)
     }
   }
-
-  const setExtension = async (extension: Extension, enabled: boolean) => {
-    setBusyId(extension.packageId)
-    try {
-      await invoke('set_extension_enabled', { packageId: extension.packageId, enabled })
-    } catch (value) {
-      setError(String(value))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  const extensionAction = async (
-    packageId: string,
-    command: string,
-    args: Record<string, unknown> = {}
-  ) => {
-    setBusyId(packageId)
-    setError(null)
-    try {
-      await invoke(command, { packageId, ...args })
-    } catch (value) {
-      setError(String(value))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
-  const installUpdate = async (installed: Extension, update: RegistryPackage) => {
-    const oldPermissions = [
-      ...installed.httpOrigins.map(value => `HTTPS ${value}`),
-      ...installed.externalNavigationOrigins.map(value => `Navigate ${value}`),
-      ...installed.credentialLabels.map(value => `Credential ${value}`),
-      ...installed.providers.map(value => `Provider ${value}`),
-    ]
-    const newPermissions = [
-      ...update.httpOrigins.map(value => `HTTPS ${value}`),
-      ...update.externalNavigationOrigins.map(value => `Navigate ${value}`),
-      ...update.credentialLabels.map(value => `Credential ${value}`),
-      ...update.providers.map(value => `Provider ${value}`),
-    ]
-    const permissionChanged =
-      JSON.stringify(oldPermissions.sort()) !== JSON.stringify(newPermissions.sort())
-    const approved = window.confirm(
-      [
-        `Update ${installed.displayName} from v${installed.version} to v${update.version}?`,
-        `Release checksum: ${update.sha256}`,
-        permissionChanged ? 'Declared permissions changed.' : 'Declared permissions are unchanged.',
-        'All remembered external-data grants will be revoked and require fresh consent.',
-      ].join('\n\n')
-    )
-    if (!approved) return
-    await extensionAction(update.packageId, 'install_registry_extension', {
-      version: update.version,
-    })
-    await load()
-  }
-
-  const groups = ['Detector', 'Renderer', 'Transformer']
-  const activeItems = utilities.filter(item => item.kind === activeKind)
-  const availableInRegistry = registry.filter(
-    item => !extensions.some(ext => ext.packageId === item.packageId)
-  )
-  const registryUpdates = extensions.flatMap(installed => {
-    const update = registry
-      .filter(item => item.packageId === installed.packageId)
-      .filter(item => compareSemver(item.version, installed.version) > 0)
-      .sort((left, right) => compareSemver(right.version, left.version))[0]
-    return update ? [{ installed, update }] : []
-  })
-
   return (
-    <div className="relative h-full w-full overflow-y-auto bg-transparent text-gray-900 dark:text-gray-100 custom-scrollbar animate-fade-in">
-      <div className="space-y-6 px-6 py-6">
-        {/* Header */}
-        <div className="flex items-start justify-between">
+    <div className="h-full overflow-y-auto bg-transparent text-slate-900 dark:text-slate-100 custom-scrollbar animate-fade-in">
+      <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-5 px-6 py-6">
+        <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-lg font-bold">Extensions</h1>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              Extend ClipsX with new detectors, renderers, and transformers.
+            <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[.16em] text-violet-600 dark:text-violet-300">
+              <Sparkles className="h-3 w-3" />
+              ClipsX package registry
+            </div>
+            <h1 className="text-xl font-semibold tracking-tight">Extensions</h1>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Install and manage isolated packages without widening ClipsX’s trust boundary.
             </p>
           </div>
           <Button
             variant="ghost"
             size="sm"
             isLoading={busy}
-            leftIcon={<RefreshCw className="h-4 w-4" />}
-            onClick={() => void load()}
+            leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+            onClick={() => void refresh()}
           >
-            Refresh
+            Check for updates
           </Button>
-        </div>
-
+        </header>
+        <ExtensionsNavigation
+          value={destination}
+          onChange={next => {
+            setDestination(next)
+            setSelectedId(null)
+            setDetail(null)
+          }}
+        />
         {error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+          <div className="rounded-xl border border-red-500/20 bg-red-500/[.07] px-3 py-2 text-xs text-red-700 dark:text-red-300">
             {error}
-          </p>
+          </div>
         )}
-
-        {/* How it works */}
-        <div className="rounded-xl border border-slate-200/60 bg-slate-50/40 px-4 py-3 dark:border-white/10 dark:bg-slate-100/5">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            How the pipeline works
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] dark:bg-slate-800">
-              clipboard
-            </span>
-            <ArrowRight className="h-3 w-3 shrink-0 text-gray-300" />
-            <span className="flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:text-blue-300">
-              <Scan className="h-3 w-3" /> Detector
-            </span>
-            <ArrowRight className="h-3 w-3 shrink-0 text-gray-300" />
-            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] dark:bg-slate-800">
-              facets
-            </span>
-            <ArrowRight className="h-3 w-3 shrink-0 text-gray-300" />
-            <span className="flex items-center gap-1 rounded-md bg-violet-500/10 px-2 py-1 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
-              <Eye className="h-3 w-3" /> Renderer
-            </span>
-            <ArrowRight className="h-3 w-3 shrink-0 text-gray-300" />
-            <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] dark:bg-slate-800">
-              preview
-            </span>
-          </div>
-          <p className="mt-2 text-[10px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            Each time you copy something,{' '}
-            <strong className="text-gray-700 dark:text-gray-300">Detectors</strong> scan it and
-            attach typed tags called <em>facets</em> (URL, email, color, secret…).{' '}
-            <strong className="text-gray-700 dark:text-gray-300">Renderers</strong> turn those
-            facets into rich previews.{' '}
-            <strong className="text-gray-700 dark:text-gray-300">Transformers</strong> let you
-            convert content on-demand — JSON↔CSV, Base64, curl→fetch, and more. Extensions can add
-            new contributions of any type.
-          </p>
-        </div>
-
-        {/* Developer mode */}
-        <section className="rounded-xl border border-slate-200/70 bg-slate-100/30 p-4 dark:border-white/10 dark:bg-white/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Code2 className="h-4 w-4 text-amber-500" />
-              <div>
-                <div className="text-sm font-semibold">Developer mode</div>
-                <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                  Install local .clipsx packages without registry verification.
-                </div>
-              </div>
-            </div>
+        {detail && selectedId ? (
+          <PackageDetailView
+            packageId={selectedId}
+            detail={detail}
+            busy={busy}
+            onClose={() => {
+              setSelectedId(null)
+              setDetail(null)
+            }}
+            onChanged={() => {
+              void load()
+              void selectPackage(selectedId)
+            }}
+          />
+        ) : (
+          <main className="min-h-0 flex-1">
+            {destination === 'installed' && (
+              <InstalledView
+                packages={installed}
+                filter={installedFilter}
+                onFilter={setInstalledFilter}
+                onSelect={id => void selectPackage(id)}
+                onDiscover={() => setDestination('discover')}
+              />
+            )}
+            {destination === 'discover' && (
+              <DiscoverView
+                packages={visible}
+                categories={categories}
+                category={category}
+                query={query}
+                sort={sort}
+                onCategory={setCategory}
+                onQuery={setQuery}
+                onSort={setSort}
+                onSelect={id => void selectPackage(id)}
+              />
+            )}
+            {destination === 'builtins' && <BuiltInsView utilities={utilities} />}
+            {destination === 'developer' && (
+              <DeveloperView
+                enabled={developerMode}
+                busy={busy}
+                onToggle={async enabled => {
+                  await invoke('set_extension_developer_mode', { enabled })
+                  setDeveloperMode(enabled)
+                }}
+                onInstall={() => void installLocal()}
+              />
+            )}
+          </main>
+        )}
+        <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200/70 pt-3 text-[10px] text-slate-500 dark:border-white/[.08]">
+          <span>
+            Registry: {catalog?.registry.cached ? 'cached catalog' : 'waiting for first check'}
+          </span>
+          <span>
+            Last successful check: {timeLabel(catalog?.registry.lastSuccessfulCheckAt ?? null)}
+          </span>
+          <label className="ml-auto flex items-center gap-2 font-medium text-slate-600 dark:text-slate-300">
+            Safe automatic updates
             <Switch
-              checked={devMode}
-              onChange={enabled => void handleDevModeToggle(enabled)}
+              checked={autoUpdates}
+              onChange={enabled => {
+                void invoke('set_extension_auto_updates_enabled', { enabled }).then(() =>
+                  setAutoUpdates(enabled)
+                )
+              }}
               size="sm"
             />
-          </div>
-          {devMode && (
-            <div className="mt-3 border-t border-slate-200/60 pt-3 dark:border-white/10">
-              <Button
-                variant="outline"
-                size="sm"
-                isLoading={installing}
-                leftIcon={<FolderOpen className="h-3.5 w-3.5" />}
-                onClick={() => void handleInstallLocal()}
-              >
-                Install local package…
-              </Button>
-            </div>
-          )}
-        </section>
-
-        {/* Core contributions — tabbed */}
-        <section>
-          <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            Core contributions
-          </div>
-          {/* Kind tabs */}
-          <div className="mb-3 flex gap-1 rounded-lg border border-slate-200/60 bg-slate-100/30 p-1 dark:border-white/10 dark:bg-white/5">
-            {groups.map(group => {
-              const meta = KIND_META[group]
-              const isActive = activeKind === group
-              return (
-                <button
-                  key={group}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    isActive
-                      ? 'bg-white shadow-sm dark:bg-slate-700'
-                      : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                  }`}
-                  onClick={() => setActiveKind(group)}
-                >
-                  <span className={isActive ? meta?.color : ''}>{meta?.icon}</span>
-                  {group}s
-                </button>
-              )
-            })}
-          </div>
-          {/* Kind description */}
-          {KIND_META[activeKind] && (
-            <p className="mb-2 text-[10px] text-gray-500 dark:text-gray-400">
-              {KIND_META[activeKind].description}
-            </p>
-          )}
-          {/* Items grid */}
-          <div className="grid gap-2 sm:grid-cols-2">
-            {activeItems.map(item => (
-              <div
-                className="flex items-center gap-3 rounded-lg border border-slate-200/70 bg-slate-100/20 px-3 py-2 dark:border-white/10 dark:bg-white/5"
-                key={item.id}
-              >
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{item.label}</div>
-                  <div className="truncate text-[10px] text-gray-500">
-                    {item.id} · v{item.version}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {activeItems.length === 0 && (
-              <p className="col-span-2 text-xs text-gray-400">No core {activeKind}s.</p>
-            )}
-          </div>
-        </section>
-
-        {/* Installed extensions */}
-        <CollapsibleSection title="Installed extensions">
-          {extensions.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-slate-200 p-4 text-xs text-gray-500 dark:border-white/10">
-              No extensions installed.{' '}
-              {devMode
-                ? 'Use "Install local package…" above to load a .clipsx package.'
-                : 'Browse the reviewed registry below, or enable Developer mode to install local packages.'}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {extensions.map(extension => (
-                <div
-                  className="flex items-center gap-3 rounded-lg border border-slate-200/70 bg-slate-100/20 px-3 py-2.5 dark:border-white/10 dark:bg-white/5"
-                  key={extension.packageId}
-                >
-                  <Plug className="h-4 w-4 shrink-0 text-violet-500" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-medium">{extension.displayName}</span>
-                      {extension.source === 'developer' && (
-                        <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                          local
-                        </span>
-                      )}
-                      {extension.status === 'quarantined' && (
-                        <span className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
-                          quarantined
-                        </span>
-                      )}
-                      {extension.status === 'incompatible' && (
-                        <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-white/10">
-                          incompatible
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-gray-500">
-                      v{extension.version}
-                      {extension.description ? ` · ${extension.description}` : ''}
-                    </div>
-                    {(extension.httpOrigins ?? []).length > 0 && (
-                      <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-                        Declares future HTTP access: {extension.httpOrigins.join(', ')}
-                      </div>
-                    )}
-                    {(extension.credentialLabels ?? []).length > 0 && (
-                      <div className="text-[10px] text-amber-600 dark:text-amber-400">
-                        Credential slots: {extension.credentialLabels.join(', ')}
-                      </div>
-                    )}
-                    {(extension.unavailableContributions ?? []).length > 0 && (
-                      <div className="text-[10px] text-gray-400">
-                        Unavailable until the capability broker ships:{' '}
-                        {extension.unavailableContributions.join(', ')}
-                      </div>
-                    )}
-                    <ExtensionConfiguration extension={extension} />
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {extension.status === 'quarantined' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busyId === extension.packageId}
-                        leftIcon={<RotateCcw className="h-3.5 w-3.5 text-amber-500" />}
-                        onClick={() =>
-                          void extensionAction(extension.packageId, 'recover_extension')
-                        }
-                      />
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={
-                        busyId === extension.packageId ||
-                        (extension.status !== 'ready' && extension.status !== 'quarantined')
-                      }
-                      onClick={() => void setExtension(extension, !extension.enabled)}
-                    >
-                      {extension.enabled ? 'Disable' : 'Enable'}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busyId === extension.packageId}
-                      leftIcon={<Trash2 className="h-3.5 w-3.5 text-red-400" />}
-                      onClick={() =>
-                        void extensionAction(extension.packageId, 'uninstall_extension')
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CollapsibleSection>
-
-        {extensionActions.length > 0 && (
-          <CollapsibleSection title="Extension action shortcuts">
-            <div className="space-y-2">
-              {extensionActions.map(action => (
-                <div
-                  key={action.id}
-                  className="flex items-center gap-3 rounded-lg border border-slate-200/70 px-3 py-2 dark:border-white/10"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{action.label}</div>
-                    <div className="truncate text-[10px] text-gray-500">
-                      {action.packageId}
-                      {action.unavailableReason ? ` · ${action.unavailableReason}` : ''}
-                    </div>
-                  </div>
-                  {action.available && (
-                    <>
-                      <ShortcutRecorder
-                        value={action.shortcut ?? ''}
-                        onChange={shortcut => void setActionShortcut(action.id, shortcut)}
-                      />
-                      {action.shortcut && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busyId === action.id}
-                          onClick={() => void setActionShortcut(action.id, null)}
-                        >
-                          Clear
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CollapsibleSection>
-        )}
-
-        {registryUpdates.length > 0 && (
-          <CollapsibleSection title="Extension updates">
-            <div className="space-y-2">
-              {registryUpdates.map(({ installed, update }) => (
-                <div
-                  className="flex items-center justify-between rounded-lg border border-blue-200/70 px-3 py-2 dark:border-blue-400/20"
-                  key={`${update.packageId}-${update.version}`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{installed.displayName}</div>
-                    <div className="text-[10px] text-gray-500">
-                      v{installed.version} → v{update.version} · manual update
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busyId === update.packageId}
-                    leftIcon={<Download className="h-3.5 w-3.5 text-blue-500" />}
-                    onClick={() => void installUpdate(installed, update)}
-                  >
-                    Review update
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CollapsibleSection>
-        )}
-
-        {/* Registry */}
-        {availableInRegistry.length > 0 && (
-          <CollapsibleSection title="Available from registry">
-            <div className="space-y-2">
-              {availableInRegistry.map(item => (
-                <div
-                  className="flex items-center justify-between rounded-lg border border-slate-200/70 px-3 py-2 dark:border-white/10"
-                  key={`${item.packageId}-${item.version}`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{item.displayName}</div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
-                      {item.contributions.map(c => (
-                        <span
-                          key={c}
-                          className="rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800"
-                        >
-                          {c}
-                        </span>
-                      ))}
-                      {item.description && <span className="truncate">{item.description}</span>}
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busyId === item.packageId}
-                    leftIcon={<Download className="h-3.5 w-3.5 text-blue-500" />}
-                    onClick={() =>
-                      void extensionAction(item.packageId, 'install_registry_extension', {
-                        version: item.version,
-                      })
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </CollapsibleSection>
-        )}
-
-        {/* Semantic search — compact status */}
-        <section className="rounded-xl border border-slate-200/70 bg-slate-100/30 p-4 dark:border-white/10 dark:bg-white/5">
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-blue-500" />
-            <h2 className="text-sm font-semibold">Semantic search</h2>
-            {provider?.enabled && (
-              <span className="ml-auto text-[10px] text-emerald-600 dark:text-emerald-400">
-                {provider.indexedClips.toLocaleString()} clips indexed
-              </span>
-            )}
-          </div>
-          <p className="mt-1.5 text-[10px] text-gray-500 dark:text-gray-400">
-            {provider?.enabled
-              ? `Ollama active · ${provider.pendingJobs} pending`
-              : 'Disabled — configure in the Intelligence page.'}
-          </p>
-        </section>
-
-        <div className="flex items-center gap-2 text-[10px] text-gray-500">
-          <Box className="h-3 w-3 shrink-0" />
-          Core contributions are built-in app code. Extensions run isolated in a WASM sandbox with
-          no filesystem or network access.
-        </div>
+          </label>
+        </footer>
       </div>
     </div>
   )
 }
+
+const InstalledView = ({
+  packages,
+  filter,
+  onFilter,
+  onSelect,
+  onDiscover,
+}: {
+  packages: CatalogEntry[]
+  filter: InstalledFilter
+  onFilter: (value: InstalledFilter) => void
+  onSelect: (value: string) => void
+  onDiscover: () => void
+}) => (
+  <section>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-sm font-semibold">Installed packages</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Identity, status, and the next action stay here. Package configuration lives in its detail
+          page.
+        </p>
+      </div>
+      <div className="flex rounded-lg border border-slate-200/70 bg-white/45 p-1 dark:border-white/10 dark:bg-slate-950/20">
+        {(['all', 'enabled', 'disabled', 'updates', 'attention'] as InstalledFilter[]).map(item => (
+          <button
+            key={item}
+            onClick={() => onFilter(item)}
+            className={`rounded-md px-2.5 py-1.5 text-[10px] font-semibold capitalize ${filter === item ? 'bg-violet-500/12 text-violet-700 dark:text-violet-300' : 'text-slate-500'}`}
+          >
+            {item === 'attention' ? 'Needs attention' : item}
+          </button>
+        ))}
+      </div>
+    </div>
+    {packages.length ? (
+      <div className="grid gap-2">
+        {packages.map(item => (
+          <PackageRow key={item.package.packageId} item={item} onSelect={onSelect} />
+        ))}
+      </div>
+    ) : (
+      <EmptyState
+        title="No packages here"
+        text="Discover reviewed packages, or install a local package from Developer Mode."
+        action="Browse Discover"
+        onAction={onDiscover}
+      />
+    )}
+  </section>
+)
+const DiscoverView = ({
+  packages,
+  categories,
+  category,
+  query,
+  sort,
+  onCategory,
+  onQuery,
+  onSort,
+  onSelect,
+}: {
+  packages: CatalogEntry[]
+  categories: string[]
+  category: string
+  query: string
+  sort: 'updated' | 'name'
+  onCategory: (value: string) => void
+  onQuery: (value: string) => void
+  onSort: (value: 'updated' | 'name') => void
+  onSelect: (value: string) => void
+}) => (
+  <section>
+    <div className="mb-4">
+      <h2 className="text-sm font-semibold">Discover</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Reviewed registry releases only. Metadata is verified by the registry, not read from package
+        archives.
+      </p>
+    </div>
+    <div className="mb-4 flex flex-wrap gap-2">
+      <label className="flex min-w-56 flex-1 items-center gap-2 rounded-xl border border-slate-200/80 bg-white/50 px-3 py-2 dark:border-white/10 dark:bg-slate-950/20">
+        <Search className="h-3.5 w-3.5 text-violet-500" />
+        <input
+          value={query}
+          onChange={event => onQuery(event.target.value)}
+          placeholder="Search name, publisher, ID, tags…"
+          className="w-full bg-transparent text-xs outline-none placeholder:text-slate-400"
+        />
+      </label>
+      <label className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white/50 px-3 py-2 text-xs dark:border-white/10 dark:bg-slate-950/20">
+        <Filter className="h-3.5 w-3.5 text-slate-400" />
+        <select
+          value={category}
+          onChange={event => onCategory(event.target.value)}
+          className="bg-transparent outline-none"
+        >
+          {categories.map(value => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+      </label>
+      <select
+        value={sort}
+        onChange={event => onSort(event.target.value as 'updated' | 'name')}
+        className="rounded-xl border border-slate-200/80 bg-white/50 px-3 py-2 text-xs outline-none dark:border-white/10 dark:bg-slate-950/20"
+      >
+        <option value="updated">Updated</option>
+        <option value="name">Name</option>
+      </select>
+    </div>
+    {packages.length ? (
+      <div className="grid gap-2">
+        {packages.map(item => (
+          <PackageRow key={item.package.packageId} item={item} onSelect={onSelect} />
+        ))}
+      </div>
+    ) : (
+      <EmptyState
+        title="Nothing matches this search"
+        text="Try a different category or remove a filter."
+      />
+    )}
+  </section>
+)
+const PackageRow = ({
+  item,
+  onSelect,
+}: {
+  item: CatalogEntry
+  onSelect: (value: string) => void
+}) => (
+  <button
+    onClick={() => onSelect(item.package.packageId)}
+    className="group flex w-full items-center gap-3 rounded-xl border border-slate-200/75 bg-white/40 px-3 py-3 text-left shadow-[0_12px_25px_-24px_rgba(30,41,59,.45)] transition-colors hover:border-violet-400/40 hover:bg-violet-500/[.035] dark:border-white/[.09] dark:bg-white/[.025] dark:hover:bg-violet-400/[.055]"
+  >
+    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 text-xs font-bold text-violet-700 dark:text-violet-200">
+      {item.package.displayName.slice(0, 1).toUpperCase()}
+    </div>
+    <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold">{item.package.displayName}</span>
+        {item.installed && (
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${item.installed.enabled ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-500'}`}
+          >
+            {item.installed.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+        )}
+        {item.update && (
+          <span className="rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700 dark:text-violet-300">
+            v{item.update.version} available
+          </span>
+        )}
+      </div>
+      <p className="mt-0.5 truncate text-xs text-slate-500">
+        {item.package.publisher?.displayName ?? 'Registry package'} ·{' '}
+        {item.package.description || item.package.packageId}
+      </p>
+    </div>
+    <span className="hidden text-[10px] text-slate-400 sm:block">
+      v{item.installed?.version ?? item.package.version}
+    </span>
+  </button>
+)
+const BuiltInsView = ({ utilities }: { utilities: CoreUtility[] }) => (
+  <section>
+    <h2 className="text-sm font-semibold">Built-ins</h2>
+    <p className="mt-1 text-xs text-slate-500">
+      These contributions ship with ClipsX. They are informational and do not have package
+      permissions.
+    </p>
+    <div className="mt-4 grid gap-2">
+      {utilities.map(item => (
+        <div
+          key={item.id}
+          className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-white/35 px-3 py-3 text-xs dark:border-white/[.08] dark:bg-white/[.025]"
+        >
+          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{item.label}</div>
+            <div className="mt-0.5 text-[10px] text-slate-500">
+              {item.kind} · {item.id}
+            </div>
+          </div>
+          <span className="text-[10px] text-slate-400">v{item.version}</span>
+        </div>
+      ))}
+    </div>
+  </section>
+)
+const DeveloperView = ({
+  enabled,
+  busy,
+  onToggle,
+  onInstall,
+}: {
+  enabled: boolean
+  busy: boolean
+  onToggle: (value: boolean) => Promise<void>
+  onInstall: () => void
+}) => (
+  <section className="max-w-2xl">
+    <h2 className="text-sm font-semibold">Developer Mode</h2>
+    <p className="mt-1 text-xs text-slate-500">
+      Use this only for local package development. Local archives do not receive marketplace
+      metadata or automatic updates.
+    </p>
+    <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/[.045] p-4">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-amber-500/10 p-2 text-amber-600">
+          <Code2 className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-semibold">Allow local packages</div>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Inspect permissions before each install. Replacement invalidates previous grants.
+          </p>
+        </div>
+        <Switch checked={enabled} onChange={value => void onToggle(value)} size="sm" />
+      </div>
+      {enabled && (
+        <div className="mt-4 border-t border-amber-500/15 pt-4">
+          <Button
+            size="sm"
+            isLoading={busy}
+            leftIcon={<Download className="h-3.5 w-3.5" />}
+            onClick={onInstall}
+          >
+            Install local .clipsx package
+          </Button>
+        </div>
+      )}
+    </div>
+  </section>
+)
+const EmptyState = ({
+  title,
+  text,
+  action,
+  onAction,
+}: {
+  title: string
+  text: string
+  action?: string
+  onAction?: () => void
+}) => (
+  <div className="rounded-2xl border border-dashed border-slate-300/80 bg-white/25 px-5 py-12 text-center dark:border-white/15 dark:bg-white/[.02]">
+    <ShieldAlert className="mx-auto h-5 w-5 text-violet-500" />
+    <h3 className="mt-3 text-sm font-semibold">{title}</h3>
+    <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-slate-500">{text}</p>
+    {action && (
+      <Button className="mt-4" size="sm" onClick={onAction}>
+        {action}
+      </Button>
+    )}
+  </div>
+)

@@ -584,6 +584,78 @@ async fn get_extension_registry(
 }
 
 #[tauri::command]
+async fn get_extension_catalog(
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionCatalog, String> {
+    state
+        .extensions
+        .catalog(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_extension_package_detail(
+    package_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionPackageDetail, String> {
+    state
+        .extensions
+        .package_detail(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn check_extension_updates(
+    force: bool,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::extensions::ExtensionCatalog, String> {
+    let catalog = state
+        .extensions
+        .check_for_updates(&state.history, force)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("extension-catalog-updated", ());
+    Ok(catalog)
+}
+
+#[tauri::command]
+async fn get_extension_auto_updates_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .extensions
+        .auto_update_enabled(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_auto_updates_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_auto_update_enabled(&state.history, enabled)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_extension_update_preference(
+    package_id: String,
+    mode: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .set_update_preference(&state.history, &package_id, &mode)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn refresh_extension_registry(
     state: State<'_, AppState>,
 ) -> Result<crate::extensions::RegistryIndex, String> {
@@ -2485,6 +2557,12 @@ pub(crate) fn run() {
             auth_storage_remove,
             list_extensions,
             get_extension_registry,
+            get_extension_catalog,
+            get_extension_package_detail,
+            check_extension_updates,
+            get_extension_auto_updates_enabled,
+            set_extension_auto_updates_enabled,
+            set_extension_update_preference,
             refresh_extension_registry,
             install_registry_extension,
             install_local_extension,
