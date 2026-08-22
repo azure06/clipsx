@@ -63,7 +63,7 @@ npm run extension:validate -- color-tools.clipsx
 npm run extension:validate -- ask-ai.clipsx
 npm run extension:validate -- ask-local-ai.clipsx
 npm run extension:validate -- mermaid-viewer.clipsx
-npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.2.clipsx
 npm run extension:validate -- examples/extensions/packages/ask-local-ai-1.0.0.clipsx
 npm run extension:validate -- examples/extensions/packages/mermaid-viewer-1.0.0.clipsx
 npm run extension:validate -- examples/extensions/packages/text-api-1.0.0.clipsx

@@ -40,7 +40,7 @@ This roadmap contains only work that remains. Completed behavior belongs in [ARC
 
 ### Extension product completion
 
-- Add registry refresh/update and compatibility UX, plus richer package/contribution diagnostics and provenance.
+- Certify registry refresh, compatibility, and manual update UX in installed builds; complete richer package/contribution diagnostics and provenance for failure and recovery.
 - Add installed end-to-end automation for the Ask AI, Ask Local AI, Mermaid Viewer, and Text API fixtures.
 - Cancel an in-flight capability-backed HTTPS or generation request when its action, dialog, or extension view closes, and prove cancellation leaves no reusable invocation state.
 - Keep raw filesystem, clipboard, history, database, shell, environment, credential values, provider handles, and frontend-code access unavailable to extensions. V2 packages are checksum-pinned, manually updated with permission-diff review, and may contribute only host-isolated detail/dialog UI.
