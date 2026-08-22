@@ -710,9 +710,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires the locally packed Ask Local AI acceptance package"]
     async fn downloadable_no_wasi_component_fits_runtime_limits() {
-        let archive =
-            include_bytes!("../../../examples/extensions/packages/ask-local-ai-1.0.0.clipsx");
+        let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/extensions/packages/ask-local-ai-1.0.0.clipsx");
+        let archive = std::fs::read(package).unwrap();
         let mut archive = ZipArchive::new(std::io::Cursor::new(archive)).unwrap();
         let mut entry = archive.by_name("component.wasm").unwrap();
         let mut bytes = Vec::new();

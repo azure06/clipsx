@@ -5,6 +5,7 @@ import {
   Copy,
   Database,
   ExternalLink,
+  Ellipsis,
   Mail,
   Phone,
   Pin,
@@ -30,7 +31,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../../shared/components/ui'
 
@@ -238,11 +238,11 @@ export const ClipActionsToolbar = ({
     .sort((left, right) => Number(right.pinned) - Number(left.pinned))
     .slice(0, 2)
   const directExtensionActionIds = new Set(extensionToolbarActions.map(action => action.id))
-  const hasExtensionOverflow = (transformControls?.actions ?? []).some(
+  const extensionMenuActions = (transformControls?.actions ?? []).filter(
     action =>
       action.pinned ||
       action.placements.includes('action_menu') ||
-      !directExtensionActionIds.has(action.id)
+      (action.placements.includes('preview_toolbar') && !directExtensionActionIds.has(action.id))
   )
 
   return (
@@ -276,11 +276,11 @@ export const ClipActionsToolbar = ({
             />
           </button>
         ))}
-        {transformControls && (transformControls.items.length > 0 || hasExtensionOverflow) && (
-          <TransformDropdown
-            controls={transformControls}
-            directActionIds={directExtensionActionIds}
-          />
+        {transformControls && transformControls.items.length > 0 && (
+          <TransformDropdown controls={transformControls} />
+        )}
+        {transformControls && extensionMenuActions.length > 0 && (
+          <ActionsDropdown controls={transformControls} actions={extensionMenuActions} />
         )}
       </div>
     </Tooltip.Provider>
@@ -320,13 +320,7 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
   )
 }
 
-const TransformDropdown = ({
-  controls,
-  directActionIds,
-}: {
-  controls: TransformControls
-  directActionIds: Set<string>
-}) => (
+const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
   <Tooltip.Root>
     <DropdownMenu>
       <Tooltip.Trigger asChild>
@@ -349,32 +343,65 @@ const TransformDropdown = ({
             {item.label}
           </DropdownMenuItem>
         ))}
-        {controls.items.length > 0 && controls.actions.length > 0 && <DropdownMenuSeparator />}
-        {controls.actions
-          .filter(
-            action =>
-              action.pinned ||
-              action.placements.includes('action_menu') ||
-              !directActionIds.has(action.id)
-          )
-          .map(action => (
-            <DropdownMenuItem
-              key={action.id}
-              disabled={!action.available}
-              title={action.unavailableReason ?? undefined}
-              className="justify-between gap-4 py-1.5"
-              onSelect={() => void controls.runAction(action.id)}
-            >
-              <span className="flex items-center gap-2">
-                {action.iconSvg && (
-                  <ExtensionIcon
-                    light={action.iconSvg}
-                    dark={action.iconSvgDark}
-                    scale={action.iconScale}
-                  />
-                )}
-                {action.label}
-              </span>
+      </DropdownMenuContent>
+    </DropdownMenu>
+    <Tooltip.Portal>
+      <Tooltip.Content
+        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+        sideOffset={5}
+      >
+        Transform
+        <span className="ml-1.5 font-mono text-gray-400">
+          {formatShortcut(transformShortcut, platform)}
+        </span>
+        <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
+      </Tooltip.Content>
+    </Tooltip.Portal>
+  </Tooltip.Root>
+)
+
+const ActionsDropdown = ({
+  controls,
+  actions,
+}: {
+  controls: TransformControls
+  actions: TransformControls['actions']
+}) => (
+  <Tooltip.Root>
+    <DropdownMenu>
+      <Tooltip.Trigger asChild>
+        <DropdownMenuTrigger asChild>
+          <button
+            aria-label="Actions"
+            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
+          >
+            <Ellipsis className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+      </Tooltip.Trigger>
+      <DropdownMenuContent className="min-w-48 p-1" align="end">
+        {actions.map(action => (
+          <DropdownMenuItem
+            key={action.id}
+            aria-label={
+              action.unavailableReason
+                ? `${action.label}: ${action.unavailableReason}`
+                : action.label
+            }
+            disabled={!action.available}
+            title={action.unavailableReason ?? undefined}
+            className="justify-between gap-4 py-1.5"
+            onSelect={() => void controls.runAction(action.id)}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ExtensionIcon
+                light={action.iconSvg}
+                dark={action.iconSvgDark}
+                scale={action.iconScale}
+              />
+              <span className="truncate">{action.label}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
               {action.shortcut && (
                 <span className="text-[10px] text-gray-400">{action.shortcut}</span>
               )}
@@ -392,8 +419,9 @@ const TransformDropdown = ({
               >
                 <Pin className={`h-3.5 w-3.5 ${action.pinned ? 'fill-current' : ''}`} />
               </button>
-            </DropdownMenuItem>
-          ))}
+            </span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
     <Tooltip.Portal>
@@ -401,10 +429,7 @@ const TransformDropdown = ({
         className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
         sideOffset={5}
       >
-        Transform
-        <span className="ml-1.5 font-mono text-gray-400">
-          {formatShortcut(transformShortcut, platform)}
-        </span>
+        Actions
         <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
       </Tooltip.Content>
     </Tooltip.Portal>

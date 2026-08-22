@@ -595,12 +595,13 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
         &package.homepage_url,
         &package.repository_url,
         &package.documentation_url,
-    ] {
-        if let Some(link) = link {
-            let url = url::Url::parse(link).context("registry marketplace link is invalid")?;
-            if url.scheme() != "https" || url.host_str().is_none() || link.len() > 2048 {
-                bail!("registry marketplace link must be HTTPS");
-            }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let url = url::Url::parse(link).context("registry marketplace link is invalid")?;
+        if url.scheme() != "https" || url.host_str().is_none() || link.len() > 2048 {
+            bail!("registry marketplace link must be HTTPS");
         }
     }
     Ok(())

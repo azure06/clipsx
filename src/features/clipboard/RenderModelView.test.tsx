@@ -43,6 +43,9 @@ const presentation = (
     purpose: 'faithful',
     matchSpecificity: 0,
     placement: 'primary',
+    iconSvg: null,
+    iconSvgDark: null,
+    iconScale: 1,
   },
   model,
 })

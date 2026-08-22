@@ -1,7 +1,7 @@
 schemaVersion = 2
 contractRevision = 2
 packageId = "example.ask-ai"
-version = "1.0.2"
+version = "1.0.3"
 apiVersion = "^2.0"
 displayName = "Ask AI"
 description = "Open selected text as an encoded prompt in ChatGPT or Claude."

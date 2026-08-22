@@ -492,13 +492,13 @@ const DeveloperView = ({
   onToggle: (value: boolean) => Promise<void>
   onInstall: () => void
 }) => (
-  <section className="max-w-2xl">
+  <section className="w-full">
     <h2 className="text-sm font-semibold">Developer Mode</h2>
     <p className="mt-1 text-xs text-slate-500">
       Use this only for local package development. Local archives do not receive marketplace
       metadata or automatic updates.
     </p>
-    <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/[.045] p-4">
+    <div className="mt-4 w-full rounded-2xl border border-amber-500/20 bg-amber-500/[.045] p-4">
       <div className="flex items-center gap-3">
         <div className="rounded-lg bg-amber-500/10 p-2 text-amber-600">
           <Code2 className="h-4 w-4" />

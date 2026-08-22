@@ -14,6 +14,7 @@ const {
   togglePinMock,
   loadMoreClipsMock,
   performCopyMock,
+  listenMock,
 } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   toastMock: vi.fn(),
@@ -22,11 +23,13 @@ const {
   togglePinMock: vi.fn(),
   loadMoreClipsMock: vi.fn(),
   performCopyMock: vi.fn(),
+  listenMock: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 
 vi.mock('../../shared/contexts/ToastContext', () => ({
   useToast: () => ({
@@ -75,6 +78,7 @@ const setNavigatorPlatform = (platform: string) => {
 describe('ClipboardHistory keyboard shortcuts', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    listenMock.mockResolvedValue(vi.fn())
     loadMoreClipsMock.mockResolvedValue(undefined)
     deleteClipMock.mockResolvedValue(undefined)
     toggleFavoriteMock.mockResolvedValue(undefined)
@@ -301,6 +305,26 @@ describe('ClipboardHistory keyboard shortcuts', () => {
 
     await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('newest'))
     input.remove()
+  })
+
+  it('routes navigation keys forwarded by an extension child view', async () => {
+    const onPreviewItem = vi.fn()
+    let hostKeyListener: ((event: { payload: { key: string } }) => void) | undefined
+    listenMock.mockImplementation((event: string, listener: typeof hostKeyListener) => {
+      if (event === 'extension-custom-view-host-key') hostKeyListener = listener
+      return Promise.resolve(vi.fn())
+    })
+    useClipboardStore.setState({
+      clips: [makeClip('newest'), makeClip('older')],
+      hasMore: false,
+      currentOffset: 2,
+    })
+    render(<ClipboardHistory onPreviewItem={onPreviewItem} />)
+    await waitFor(() => expect(hostKeyListener).toBeDefined())
+
+    act(() => hostKeyListener?.({ payload: { key: 'ArrowDown' } }))
+
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('older'))
   })
 
   it('loads remaining history and selects the oldest clip with End', async () => {

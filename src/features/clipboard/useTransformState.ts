@@ -1,10 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { executeClipboardOutput } from '../../shared/clipboardOutput'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { getPlatform, matchShortcut, parseAccelerator } from '../../shared/keyboard/shortcuts'
 import type { ParameterRequest } from './ContributionParametersDialog'
 import { schemaHasParameters } from './contributionParameters'
+import { useTheme } from '../../shared/hooks/useTheme'
 
 export type Transformer = {
   id: string
@@ -29,6 +31,8 @@ export type TransformControls = {
 export type ContextAction = {
   id: string
   packageId: string
+  sourceId?: string | null
+  facetId?: string | null
   label: string
   icon: string | null
   iconSvg: string | null
@@ -71,6 +75,9 @@ export const useTransformState = ({
   basePresentation: ClipPresentation | null
   onControls?: (controls: TransformControls | null) => void
 }) => {
+  const { appliedTheme } = useTheme()
+  const { i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en'
   const [items, setItems] = useState<Transformer[]>([])
   const [actions, setActions] = useState<ContextAction[]>([])
   const [busy, setBusy] = useState<string | null>(null)
@@ -174,10 +181,13 @@ export const useTransformState = ({
         })
         return
       }
+      const actionSourceId = action.sourceId ?? sourceId
+      const actionFacetId =
+        action.sourceId === undefined
+          ? (basePresentation?.activeView.facetId ?? null)
+          : (action.facetId ?? null)
       setBusy(action.id)
-      setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
       setError(null)
-      setPreview(null)
       try {
         let invocationToken: string | null = null
         if (
@@ -195,7 +205,6 @@ export const useTransformState = ({
               `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
             )
             if (!approved) {
-              setActiveTransformer(null)
               return
             }
             await invoke('grant_extension_action_permissions', { actionId: action.id })
@@ -203,15 +212,15 @@ export const useTransformState = ({
           const invocation = await invoke<ActionInvocation>('issue_extension_action_invocation', {
             actionId: action.id,
             clipId,
-            sourceId,
-            facetId: basePresentation?.activeView.facetId ?? null,
+            sourceId: actionSourceId,
+            facetId: actionFacetId,
           })
           invocationToken = invocation.token
         }
         const result = await invoke<ContextActionRunResponse>('run_context_action', {
           clipId,
-          sourceId,
-          facetId: basePresentation?.activeView.facetId ?? null,
+          sourceId: actionSourceId,
+          facetId: actionFacetId,
           actionId: action.id,
           parameters: parameters ?? {},
           invocationToken,
@@ -220,7 +229,6 @@ export const useTransformState = ({
           window.dispatchEvent(
             new CustomEvent('clipsx-extension-action-notification', { detail: result })
           )
-          setActiveTransformer(null)
           return
         }
         if (result.kind === 'open_dialog') {
@@ -229,41 +237,45 @@ export const useTransformState = ({
           await invoke('open_extension_custom_view', {
             rendererId: action.id,
             clipId,
-            sourceId,
-            facetId: basePresentation?.activeView.facetId ?? null,
+            sourceId: actionSourceId,
+            facetId: actionFacetId,
+            theme: appliedTheme,
+            locale,
             surface: 'dialog',
             x: Math.max(24, (window.innerWidth - width) / 2),
             y: Math.max(48, (window.innerHeight - height) / 2),
             width,
             height,
           })
-          setActiveTransformer(null)
           return
         }
         if (result.kind !== 'output') {
-          setActiveTransformer(null)
           return
         }
-        setPreview(result.preview)
-        if (result.disposition !== 'preview') {
-          if (result.disposition === 'save_as_clip') {
-            await invoke('save_transform_result', { resultId: result.preview.resultId })
-          } else {
-            await executeClipboardOutput(result.disposition, {
-              kind: 'transformed',
-              resultId: result.preview.resultId,
-            })
-          }
-          setPreview(null)
-          setActiveTransformer(null)
+        if (result.disposition === 'preview') {
+          setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
+          setPreview(result.preview)
+          return
+        }
+        if (result.disposition === 'save_as_clip') {
+          await invoke('save_transform_result', { resultId: result.preview.resultId })
+        } else {
+          await executeClipboardOutput(result.disposition, {
+            kind: 'transformed',
+            resultId: result.preview.resultId,
+          })
         }
       } catch (value) {
-        setError(String(value))
+        window.dispatchEvent(
+          new CustomEvent('clipsx-extension-action-notification', {
+            detail: { level: 'error', message: String(value) },
+          })
+        )
       } finally {
         setBusy(null)
       }
     },
-    [actions, basePresentation?.activeView.facetId, clipId, sourceId]
+    [actions, appliedTheme, basePresentation?.activeView.facetId, clipId, locale, sourceId]
   )
 
   const pinAction = useCallback(async (id: string, pinned: boolean) => {

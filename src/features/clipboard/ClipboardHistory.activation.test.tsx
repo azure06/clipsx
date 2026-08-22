@@ -5,14 +5,16 @@ import { useClipboardStore, useSettingsStore } from '../../stores'
 import type { ClipSummary } from '../../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
 
-const { toastMock, performPrimaryActionMock, performCopyMock, loadMoreClipsMock } = vi.hoisted(
-  () => ({
+const { toastMock, performPrimaryActionMock, performCopyMock, loadMoreClipsMock, listenMock } =
+  vi.hoisted(() => ({
     toastMock: vi.fn(),
     performPrimaryActionMock: vi.fn(),
     performCopyMock: vi.fn(),
     loadMoreClipsMock: vi.fn(),
-  })
-)
+    listenMock: vi.fn(() => Promise.resolve(vi.fn())),
+  }))
+
+vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 
 vi.mock('../../shared/contexts/ToastContext', () => ({
   useToast: () => ({

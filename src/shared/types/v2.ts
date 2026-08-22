@@ -122,6 +122,9 @@ export type ClipViewDescriptor = {
   mimeType: string | null
   capabilityId: string
   facetId: string | null
+  iconSvg: string | null
+  iconSvgDark: string | null
+  iconScale: number
   isOriginal: boolean
   presentationKind: string
   purpose: 'faithful' | 'structured' | 'semantic' | 'source' | 'diagnostic'

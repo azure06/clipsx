@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Copy, Database, FolderInput, RotateCw, ScanText, Sparkles, X } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type {
   ClipDetail,
   ClipPresentation,
@@ -14,55 +15,139 @@ import type {
 import { RenderModelView } from './RenderModelView'
 import { useTransformState, type TransformControls } from './useTransformState'
 import { ContributionParametersDialog } from './ContributionParametersDialog'
+import { useTheme } from '../../shared/hooks/useTheme'
 
 const OCR_TAB_ID = '__ocr__'
 const TRANSFORM_TAB_ID = '__transform__'
 
 type ExtensionCustomViewSession = { token: string; label: string; entryUrl: string }
+type ExtensionCustomViewState = {
+  token: string
+  label: string
+  state: 'ready' | 'failed'
+  message: string | null
+}
 
-const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewDescriptor }) => {
+export const ExtensionCustomView = ({
+  clipId,
+  view,
+}: {
+  clipId: string
+  view: ClipViewDescriptor
+}) => {
   const container = React.useRef<HTMLDivElement>(null)
+  const { appliedTheme } = useTheme()
+  const { i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en'
+  const [revision, setRevision] = useState(0)
+  const scope = `${clipId}:${view.rendererId}:${view.sourceId}:${view.facetId ?? ''}:${appliedTheme}:${locale}:${revision}`
+  const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null)
+  const error = failure?.scope === scope ? failure.message : null
 
   useEffect(() => {
     let disposed = false
     let session: ExtensionCustomViewSession | null = null
     let observer: ResizeObserver | null = null
+    let unlistenState: (() => void) | null = null
+    let pendingState: ExtensionCustomViewState | null = null
+    let frame = 0
+    let timeout = 0
+    let ready = false
+
+    const applyState = (state: ExtensionCustomViewState) => {
+      if (!session) {
+        pendingState = state
+        return
+      }
+      if (state.token !== session.token || state.label !== session.label) return
+      window.clearTimeout(timeout)
+      if (state.state === 'failed') {
+        observer?.disconnect()
+        session = null
+        setFailure({
+          scope,
+          message: state.message ?? 'The extension view failed to load.',
+        })
+      } else {
+        ready = true
+      }
+    }
     const bounds = () => {
       const rect = container.current?.getBoundingClientRect()
       if (!rect || rect.width < 100 || rect.height < 80) return null
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     }
-    const frame = window.requestAnimationFrame(() => {
-      const initial = bounds()
-      if (!initial) return
-      void invoke<ExtensionCustomViewSession>('open_extension_custom_view', {
-        rendererId: view.rendererId,
-        clipId,
-        sourceId: view.sourceId,
-        facetId: view.facetId,
-        surface: 'detail',
-        ...initial,
-      }).then(opened => {
-        if (disposed) {
-          void invoke('close_extension_custom_view', {
-            label: opened.label,
-            token: opened.token,
-          })
-          return
-        }
-        session = opened
-        observer = new ResizeObserver(() => {
-          const next = bounds()
-          if (!next || !session) return
-          void invoke('sync_extension_custom_view', { label: session.label, ...next })
+    void listen<ExtensionCustomViewState>('extension-custom-view-state', event => {
+      applyState(event.payload)
+    }).then(unlisten => {
+      if (disposed) {
+        unlisten()
+        return
+      }
+      unlistenState = unlisten
+      frame = window.requestAnimationFrame(() => {
+        const initial = bounds()
+        if (!initial) return
+        void invoke<ExtensionCustomViewSession>('open_extension_custom_view', {
+          rendererId: view.rendererId,
+          clipId,
+          sourceId: view.sourceId,
+          facetId: view.facetId,
+          theme: appliedTheme,
+          locale,
+          surface: 'detail',
+          ...initial,
         })
-        if (container.current) observer.observe(container.current)
+          .then(opened => {
+            if (disposed) {
+              void invoke('close_extension_custom_view', {
+                label: opened.label,
+                token: opened.token,
+              })
+              return
+            }
+            session = opened
+            if (pendingState) {
+              applyState(pendingState)
+              pendingState = null
+            }
+            if (!session) return
+            observer = new ResizeObserver(() => {
+              const next = bounds()
+              if (!next || !session) return
+              void invoke('sync_extension_custom_view', { label: session.label, ...next })
+            })
+            if (container.current) observer.observe(container.current)
+            if (!ready) {
+              timeout = window.setTimeout(() => {
+                if (!session) return
+                const expired = session
+                session = null
+                void invoke('close_extension_custom_view', {
+                  label: expired.label,
+                  token: expired.token,
+                })
+                setFailure({ scope, message: 'The extension view did not finish loading.' })
+              }, 10_000)
+            }
+          })
+          .catch(reason => {
+            if (!disposed) {
+              setFailure({
+                scope,
+                message:
+                  reason instanceof Error ? reason.message : 'The extension view could not open.',
+              })
+            }
+          })
       })
     })
     return () => {
       disposed = true
       window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
       observer?.disconnect()
+      unlistenState?.()
       if (session) {
         void invoke('close_extension_custom_view', {
           label: session.label,
@@ -70,11 +155,35 @@ const ExtensionCustomView = ({ clipId, view }: { clipId: string; view: ClipViewD
         })
       }
     }
-  }, [clipId, view.facetId, view.rendererId, view.sourceId])
+  }, [appliedTheme, clipId, locale, revision, scope, view.facetId, view.rendererId, view.sourceId])
 
   return (
-    <div ref={container} className="relative h-full w-full bg-white dark:bg-slate-950">
+    <div
+      ref={container}
+      className="relative flex h-full w-full items-center justify-center bg-white dark:bg-slate-950"
+    >
       <span className="sr-only">Custom extension view: {view.label}</span>
+      {error ? (
+        <div className="mx-auto max-w-sm px-6 text-center">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+            This extension view could not be displayed.
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{error}</p>
+          <button
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-violet-500/20 bg-violet-500/8 px-3 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-500/12 dark:text-violet-300"
+            onClick={() => setRevision(value => value + 1)}
+            type="button"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-violet-500 dark:border-slate-700 dark:border-t-violet-400" />
+          Loading {view.label}…
+        </div>
+      )}
     </div>
   )
 }
@@ -534,6 +643,9 @@ export const V2ViewPanel = ({
             mimeType: null,
             capabilityId: 'builtin.ocr',
             facetId: null,
+            iconSvg: null,
+            iconSvgDark: null,
+            iconScale: 1,
             isOriginal: false,
             presentationKind: 'text',
             purpose: 'semantic',
@@ -550,6 +662,9 @@ export const V2ViewPanel = ({
           mimeType: null,
           capabilityId: 'builtin.transform',
           facetId: null,
+          iconSvg: null,
+          iconSvgDark: null,
+          iconScale: 1,
           isOriginal: false,
           presentationKind: 'text',
           purpose: 'structured',

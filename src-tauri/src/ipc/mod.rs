@@ -36,6 +36,25 @@ fn is_extension_webview_label(label: &str) -> bool {
     label.starts_with("extension-")
 }
 
+fn is_extension_asset_navigation(url: &url::Url, token: &str) -> bool {
+    let path_prefix = format!("/{token}/");
+    (url.scheme() == "clipsx-extension"
+        && url.host_str() == Some("localhost")
+        && url.path().starts_with(&path_prefix))
+        || (matches!(url.scheme(), "http" | "https")
+            && url.host_str() == Some("clipsx-extension.localhost")
+            && url.path().starts_with(&path_prefix))
+}
+
+fn is_extension_bridge_close_navigation(url: &url::Url, token: &str) -> bool {
+    (url.scheme() == "clipsx-extension-bridge"
+        && url.host_str() == Some(token)
+        && url.path() == "/close")
+        || (matches!(url.scheme(), "http" | "https")
+            && url.host_str() == Some("clipsx-extension-bridge.localhost")
+            && url.path() == format!("/{token}/close"))
+}
+
 fn route_webview_invokes<R, F, G>(
     application_handler: F,
     extension_handler: G,
@@ -89,6 +108,20 @@ enum ContextActionRunResponse {
 struct ArtifactUpdate {
     clip_id: String,
     source_id: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionViewState {
+    token: String,
+    label: String,
+    state: &'static str,
+    message: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct ExtensionViewHostKey {
+    key: String,
 }
 
 async fn emit_clip_artifact_updates(
@@ -1199,6 +1232,8 @@ async fn open_extension_custom_view(
     width: f64,
     height: f64,
     surface: String,
+    theme: String,
+    locale: String,
     state: State<'_, AppState>,
 ) -> Result<crate::extensions::CustomViewSession, String> {
     if !x.is_finite()
@@ -1226,6 +1261,8 @@ async fn open_extension_custom_view(
             &source_id,
             facet_id.as_deref(),
             surface,
+            &theme,
+            &locale,
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -1234,43 +1271,42 @@ async fn open_extension_custom_view(
     let bridge_token = session.token.clone();
     let bridge_label = session.label.clone();
     let bridge_app = app.clone();
+    let initialization_script = state
+        .extensions
+        .custom_view_initialization_script(&session.token)
+        .map_err(|error| error.to_string())?;
     let builder = tauri::webview::WebviewBuilder::new(
         session.label.clone(),
         tauri::WebviewUrl::External(url),
     )
+    .initialization_script(initialization_script)
     .incognito(true)
     .devtools(cfg!(debug_assertions))
     .on_navigation(move |url| {
-        if url.scheme() == "clipsx-extension-bridge"
-            && url.host_str() == Some(bridge_token.as_str())
-        {
-            let command = url.path().trim_start_matches('/');
-            if command == "close" {
-                if let Some(webview) = bridge_app.get_webview(&bridge_label) {
-                    let _ = webview.close();
-                }
-                if let Some(state) = bridge_app.try_state::<AppState>() {
-                    state.extensions.end_custom_view(&bridge_token);
-                }
+        if is_extension_bridge_close_navigation(url, &bridge_token) {
+            if let Some(webview) = bridge_app.get_webview(&bridge_label) {
+                let _ = webview.close();
+            }
+            if let Some(state) = bridge_app.try_state::<AppState>() {
+                state.extensions.end_custom_view(&bridge_token);
             }
             return false;
         }
-        url.scheme() == "clipsx-extension"
-            && url.host_str() == Some("localhost")
-            && url.path().starts_with(&format!("/{allowed_token}/"))
+        is_extension_asset_navigation(url, &allowed_token)
     })
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
     .on_download(|_, _| false);
     let parent = app
         .get_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
-    parent
+    let child = parent
         .add_child(
             builder,
             tauri::LogicalPosition::new(x, y),
             tauri::LogicalSize::new(width, height),
         )
         .map_err(|error| error.to_string())?;
+    child.hide().map_err(|error| error.to_string())?;
     Ok(session)
 }
 
@@ -1335,6 +1371,47 @@ async fn extension_bridge(
         .await
         .map_err(|error| error.to_string())?;
     match outcome {
+        BridgeOutcome::ViewReady => {
+            webview.show().map_err(|error| error.to_string())?;
+            app.emit_to(
+                "main",
+                "extension-custom-view-state",
+                ExtensionViewState {
+                    token,
+                    label: webview.label().to_string(),
+                    state: "ready",
+                    message: None,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({ "ready": true }))
+        }
+        BridgeOutcome::ViewFailed(message) => {
+            let label = webview.label().to_string();
+            webview.close().map_err(|error| error.to_string())?;
+            state.extensions.end_custom_view(&token);
+            app.emit_to(
+                "main",
+                "extension-custom-view-state",
+                ExtensionViewState {
+                    token,
+                    label,
+                    state: "failed",
+                    message: Some(message),
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({ "closed": true }))
+        }
+        BridgeOutcome::HostKey(key) => {
+            app.emit_to(
+                "main",
+                "extension-custom-view-host-key",
+                ExtensionViewHostKey { key },
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({ "forwarded": true }))
+        }
         BridgeOutcome::Https(response) => {
             serde_json::to_value(response).map_err(|error| error.to_string())
         }
@@ -2787,7 +2864,54 @@ mod tests {
         assert!(!is_extension_webview_label("main"));
         let source = include_str!("mod.rs");
         assert!(source.contains(".on_download(|_, _| false)"));
+        assert!(source.contains("child.hide()"));
+        assert!(source.contains(".initialization_script(initialization_script)"));
+        assert!(source.contains("BridgeOutcome::ViewReady"));
         assert!(source.contains("], tauri::generate_handler![extension_bridge]))"));
+
+        let capability: serde_json::Value = serde_json::from_str(include_str!(
+            "../../capabilities/extension-custom-views.json"
+        ))
+        .unwrap();
+        assert_eq!(capability["webviews"], serde_json::json!(["extension-*"]));
+        assert_eq!(capability["local"], serde_json::json!(true));
+        assert!(capability.get("remote").is_none());
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["allow-extension-bridge"])
+        );
+
+        let token = "session-token";
+        assert!(is_extension_asset_navigation(
+            &url::Url::parse("clipsx-extension://localhost/session-token/ui/index.html").unwrap(),
+            token
+        ));
+        assert!(is_extension_asset_navigation(
+            &url::Url::parse("http://clipsx-extension.localhost/session-token/ui/index.html")
+                .unwrap(),
+            token
+        ));
+        assert!(is_extension_bridge_close_navigation(
+            &url::Url::parse("clipsx-extension-bridge://session-token/close").unwrap(),
+            token
+        ));
+        assert!(is_extension_bridge_close_navigation(
+            &url::Url::parse("http://clipsx-extension-bridge.localhost/session-token/close")
+                .unwrap(),
+            token
+        ));
+        assert!(!is_extension_asset_navigation(
+            &url::Url::parse("http://clipsx-extension.localhost/other-token/ui/index.html")
+                .unwrap(),
+            token
+        ));
+
+        let main_capability: serde_json::Value =
+            serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
+        assert!(main_capability["permissions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("main-app-commands")));
     }
 
     #[test]

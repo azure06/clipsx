@@ -6,6 +6,7 @@
     "main"
   ],
   "permissions": [
+    "main-app-commands",
     "core:default",
     "core:event:allow-listen",
     "core:event:allow-emit",

@@ -15,3 +15,6 @@ an accessible source fallback.
 
 The package tool converts the core module to a no-WASI Component Model artifact.
 Do not build this example with `wasm32-wasip2`.
+
+The contribution icon is the Mermaid mark published at
+<https://static.mermaidchart.dev/assets/mermaid-icon.svg>.

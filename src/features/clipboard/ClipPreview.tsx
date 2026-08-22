@@ -40,6 +40,26 @@ const KIND_COLOR: Record<string, string> = {
   text: 'bg-gray-400',
 }
 
+export const ViewTabIcon = ({
+  light,
+  dark,
+  scale,
+}: {
+  light: string | null
+  dark: string | null
+  scale: number
+}) => {
+  if (!light) return null
+  const style = scale === 1 ? undefined : { transform: `scale(${scale})` }
+  if (!dark) return <img alt="" className="h-3 w-3 shrink-0" src={light} style={style} />
+  return (
+    <>
+      <img alt="" className="h-3 w-3 shrink-0 dark:hidden" src={light} style={style} />
+      <img alt="" className="hidden h-3 w-3 shrink-0 dark:block" src={dark} style={style} />
+    </>
+  )
+}
+
 export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const { t, i18n } = useTranslation()
   const [presentation, setPresentation] = useState<ClipPresentation | null>(null)
@@ -136,6 +156,11 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
                   }`}
                 >
                   {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
+                  <ViewTabIcon
+                    light={item.iconSvg}
+                    dark={item.iconSvgDark}
+                    scale={item.iconScale}
+                  />
                   {item.label}
                 </button>
               )

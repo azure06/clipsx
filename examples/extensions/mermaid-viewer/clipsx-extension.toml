@@ -1,7 +1,7 @@
 schemaVersion = 2
 contractRevision = 2
 packageId = "example.mermaid-viewer"
-version = "1.0.0"
+version = "1.0.1"
 apiVersion = "^2.0"
 displayName = "Mermaid Viewer"
 description = "Offline Mermaid detection with an isolated bundled detail and dialog view."
@@ -19,7 +19,7 @@ mimeTypes = ["text/plain"]
 [[contributions]]
 id = "mermaid-detail"
 kind = "renderer"
-displayName = "Mermaid diagram"
+displayName = "Mermaid"
 purpose = "structured"
 surfaces = ["detail"]
 iconAsset = "icons/mermaid.svg"
@@ -32,7 +32,7 @@ facetIds = ["example.mermaid-viewer.mermaid"]
 [[contributions]]
 id = "open-mermaid-dialog"
 kind = "action"
-displayName = "Open Mermaid diagram"
+displayName = "Open Mermaid"
 iconAsset = "icons/mermaid.svg"
 placements = ["action_menu"]
 effects = ["open_dialog"]

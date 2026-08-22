@@ -9,7 +9,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::{collections::BTreeMap, sync::LazyLock, time::Duration};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::LazyLock,
+    time::Duration,
+};
 use tokio::sync::Semaphore;
 
 const MAX_INPUT_BYTES: usize = 1_048_576;
@@ -53,6 +57,9 @@ pub struct ClipViewDescriptor {
     pub mime_type: Option<String>,
     pub capability_id: String,
     pub facet_id: Option<String>,
+    pub icon_svg: Option<String>,
+    pub icon_svg_dark: Option<String>,
+    pub icon_scale: f32,
     pub is_original: bool,
     pub presentation_kind: String,
     pub purpose: String,
@@ -1116,6 +1123,9 @@ pub async fn views(
                 mime_type: rep.canonical_mime_type.clone(),
                 capability_id: rep.capability_id.clone(),
                 facet_id,
+                icon_svg: None,
+                icon_svg_dark: None,
+                icon_scale: 1.0,
                 is_original,
                 presentation_kind: kind.into(),
                 purpose: purpose.into(),
@@ -1181,6 +1191,17 @@ pub async fn views(
             );
         }
     }
+    let extension_views = extensions
+        .renderer_views(repo, clip_id, &detail, &facets)
+        .await?;
+    let claimed_extension_facets: HashSet<_> = extension_views
+        .iter()
+        .filter_map(|view| {
+            view.facet_id
+                .as_ref()
+                .map(|facet_id| (view.source_id.clone(), facet_id.clone()))
+        })
+        .collect();
     for facet in &facets {
         let Some(rep) = detail
             .representations
@@ -1215,6 +1236,14 @@ pub async fn views(
             "core.text.markdown" => ("builtin.markdown", "markdown", 80),
             "core.text.code" => ("builtin.key_value", "code", 70),
             "core.value.number" => ("builtin.number", "number", 60),
+            _ if extension_claims_facet(
+                &claimed_extension_facets,
+                &facet.source_representation_id,
+                &facet.id,
+            ) =>
+            {
+                continue
+            }
             _ => ("builtin.key_value", "details", 40),
         };
         add_view(
@@ -1227,10 +1256,7 @@ pub async fn views(
             false,
         );
     }
-    for view in extensions
-        .renderer_views(repo, clip_id, &detail, &facets)
-        .await?
-    {
+    for view in extension_views {
         let rep = detail
             .representations
             .iter()
@@ -1295,6 +1321,14 @@ pub async fn views(
         facets,
         views,
     })
+}
+
+fn extension_claims_facet(
+    claims: &HashSet<(String, String)>,
+    source_id: &str,
+    facet_id: &str,
+) -> bool {
+    claims.contains(&(source_id.to_owned(), facet_id.to_owned()))
 }
 pub async fn render(
     repo: &HistoryRepository,
@@ -1529,6 +1563,14 @@ mod tests {
         assert_eq!(image_view_label("image/png"), "PNG");
         assert_eq!(image_view_label("image/svg+xml"), "SVG");
         assert_eq!(image_view_label("image/unknown"), "Image");
+    }
+
+    #[test]
+    fn generic_facet_fallback_is_suppressed_only_for_an_exact_renderer_claim() {
+        let claims = HashSet::from([("rep-1".to_owned(), "example.mermaid".to_owned())]);
+        assert!(extension_claims_facet(&claims, "rep-1", "example.mermaid"));
+        assert!(!extension_claims_facet(&claims, "rep-2", "example.mermaid"));
+        assert!(!extension_claims_facet(&claims, "rep-1", "other.facet"));
     }
     use crate::history::{
         CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot,

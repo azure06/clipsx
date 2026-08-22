@@ -35,4 +35,5 @@
   copy.addEventListener('click', () => window.ClipsX.submitText('application/json', result, 'copy'))
   save.addEventListener('click', () => window.ClipsX.submitText('application/json', result, 'save_as_clip'))
   document.querySelector('#close').addEventListener('click', () => window.ClipsX.close())
+  window.ClipsX.ready()
 })()

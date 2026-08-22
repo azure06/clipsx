@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { V2ViewPanel } from './V2ViewPanel'
+import { ExtensionCustomView, V2ViewPanel } from './V2ViewPanel'
 
 const { invokeMock, listenMock, unlistenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -10,6 +10,9 @@ const { invokeMock, listenMock, unlistenMock } = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
+vi.mock('../../shared/hooks/useTheme', () => ({
+  useTheme: () => ({ appliedTheme: 'light' }),
+}))
 
 const summary = {
   id: 'clip-1',
@@ -217,5 +220,95 @@ describe('V2ViewPanel resolver boundary', () => {
     const callsBeforeUnmount = unlistenMock.mock.calls.length
     unmount()
     expect(unlistenMock.mock.calls.length).toBeGreaterThan(callsBeforeUnmount)
+  })
+
+  it('shows a recoverable host error when a custom child view fails to start', async () => {
+    let stateListener:
+      | ((event: {
+          payload: {
+            token: string
+            label: string
+            state: 'ready' | 'failed'
+            message: string | null
+          }
+        }) => void)
+      | null = null
+    listenMock.mockImplementation((event: string, callback: typeof stateListener) => {
+      if (event === 'extension-custom-view-state') stateListener = callback
+      return Promise.resolve(unlistenMock)
+    })
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'open_extension_custom_view') {
+        return Promise.resolve({ token: 'token-1', label: 'extension-1', entryUrl: 'extension:' })
+      }
+      if (command === 'close_extension_custom_view') return Promise.resolve()
+      return Promise.reject(new Error(`unexpected command: ${command}`))
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const boundsMock = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 10,
+      y: 20,
+      width: 640,
+      height: 360,
+      top: 20,
+      right: 650,
+      bottom: 380,
+      left: 10,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <ExtensionCustomView
+        clipId="clip-1"
+        view={{
+          id: 'extension-view',
+          rendererId: 'sample.renderer',
+          label: 'Sample viewer',
+          sourceId: 'rep-1',
+          mimeType: 'text/plain',
+          capabilityId: 'text.plain',
+          facetId: 'sample.facet',
+          iconSvg: null,
+          iconSvgDark: null,
+          iconScale: 1,
+          isOriginal: false,
+          presentationKind: 'extension_ui',
+          purpose: 'structured',
+          matchSpecificity: 500,
+          placement: 'primary',
+        }}
+      />
+    )
+    expect(screen.getByText('Loading Sample viewer…')).toBeInTheDocument()
+    await waitFor(() => expect(stateListener).not.toBeNull())
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith(
+        'open_extension_custom_view',
+        expect.objectContaining({ rendererId: 'sample.renderer' })
+      )
+    )
+
+    act(() => {
+      stateListener?.({
+        payload: {
+          token: 'token-1',
+          label: 'extension-1',
+          state: 'failed',
+          message: 'The bundled script could not load.',
+        },
+      })
+    })
+
+    expect(
+      await screen.findByText('This extension view could not be displayed.')
+    ).toBeInTheDocument()
+    expect(screen.getByText('The bundled script could not load.')).toBeInTheDocument()
+    boundsMock.mockRestore()
   })
 })

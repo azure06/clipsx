@@ -55,17 +55,16 @@ cp examples/extensions/color-tools/target/wasm32-unknown-unknown/release/clipsx_
 cp examples/extensions/ask-ai/target/wasm32-unknown-unknown/release/clipsx_ask_ai.wasm examples/extensions/ask-ai/component.wasm
 cp examples/extensions/ask-local-ai/target/wasm32-unknown-unknown/release/clipsx_ask_local_ai.wasm examples/extensions/ask-local-ai/component.wasm
 cp examples/extensions/mermaid-viewer/target/wasm32-unknown-unknown/release/clipsx_mermaid_viewer.wasm examples/extensions/mermaid-viewer/component.wasm
-npm run extension:pack -- examples/extensions/color-tools color-tools.clipsx
-npm run extension:pack -- examples/extensions/ask-ai ask-ai.clipsx
-npm run extension:pack -- examples/extensions/ask-local-ai ask-local-ai.clipsx
-npm run extension:pack -- examples/extensions/mermaid-viewer mermaid-viewer.clipsx
-npm run extension:validate -- color-tools.clipsx
-npm run extension:validate -- ask-ai.clipsx
-npm run extension:validate -- ask-local-ai.clipsx
-npm run extension:validate -- mermaid-viewer.clipsx
-npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.2.clipsx
+npm run extension:pack -- examples/extensions/color-tools examples/extensions/packages/color-tools-1.0.0.clipsx
+npm run extension:pack -- examples/extensions/ask-ai examples/extensions/packages/ask-ai-1.0.3.clipsx
+npm run extension:pack -- examples/extensions/ask-local-ai examples/extensions/packages/ask-local-ai-1.0.0.clipsx
+npm run extension:pack -- examples/extensions/mermaid-viewer examples/extensions/packages/mermaid-viewer-1.0.1.clipsx
+npm run extension:pack -- examples/extensions/text-api examples/extensions/packages/text-api-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/color-tools-1.0.0.clipsx
+npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.3.clipsx
 npm run extension:validate -- examples/extensions/packages/ask-local-ai-1.0.0.clipsx
-npm run extension:validate -- examples/extensions/packages/mermaid-viewer-1.0.0.clipsx
+cargo test --manifest-path src-tauri/Cargo.toml downloadable_no_wasi_component_fits_runtime_limits -- --ignored
+npm run extension:validate -- examples/extensions/packages/mermaid-viewer-1.0.1.clipsx
 npm run extension:validate -- examples/extensions/packages/text-api-1.0.0.clipsx
 ```
 
@@ -213,8 +212,11 @@ Wayland is not covered by this matrix.
   provider reason while local contributions continue to work. After configuring
   Ollama, consent once, run preview/copy/save, then update/disable the package
   and verify the checksum-bound grant is revoked.
-- Ask AI enforces Unicode-safe URL limits; Mermaid Viewer renders hostile input
-  offline in isolated detail/dialog views; Text API cannot directly network,
+- Ask AI enforces Unicode-safe URL limits; Mermaid Viewer 1.0.1 detects supported
+  declarations (including `pie` and declarations after comments, init directives,
+  or front matter), produces one **Mermaid** tab with its package icon, and renders
+  hostile input offline in themed isolated detail/dialog views with source fallback;
+  disabling its renderer restores the generic facet-details tab. Text API cannot directly network,
   redirect, reach private addresses, reflect credentials, open popups/downloads,
   or retain a child view after deselection/close.
 - On Windows, macOS, and Linux/X11, verify extension child-view bounds, focus,

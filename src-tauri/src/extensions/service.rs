@@ -34,6 +34,8 @@ use super::{
 pub struct ContextActionDescriptor {
     pub id: String,
     pub package_id: String,
+    pub source_id: Option<String>,
+    pub facet_id: Option<String>,
     pub label: String,
     pub icon: Option<String>,
     pub icon_svg: Option<String>,
@@ -127,7 +129,7 @@ struct PendingCustomView {
     credential_permissions: Vec<super::manifest::CredentialPermission>,
     external_navigation_origins: Vec<String>,
     providers: Vec<String>,
-    context_script: Vec<u8>,
+    context_script: String,
     expires_at: i64,
 }
 
@@ -138,6 +140,13 @@ struct PendingCustomView {
     rename_all_fields = "camelCase"
 )]
 pub enum BridgeRequest {
+    ViewReady,
+    ViewFailed {
+        message: String,
+    },
+    HostKey {
+        key: String,
+    },
     Https {
         request: super::BrokerHttpRequest,
     },
@@ -156,6 +165,9 @@ pub enum BridgeRequest {
 
 #[derive(Debug, Clone)]
 pub enum BridgeOutcome {
+    ViewReady,
+    ViewFailed(String),
+    HostKey(String),
     Https(super::BrokerHttpResponse),
     OpenExternal(String),
     GenerationText(String),
@@ -1014,19 +1026,35 @@ impl ExtensionService {
         source_id: &str,
         facet_id: Option<&str>,
     ) -> Result<Vec<ContextActionDescriptor>> {
-        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let detail = repo.detail(clip_id).await?;
+        let mut sources = Vec::with_capacity(detail.representations.len());
+        for representation_detail in &detail.representations {
+            let (source, _) = repo
+                .source_representation(clip_id, &representation_detail.id)
+                .await?;
+            sources.push((
+                representation_detail.id.clone(),
+                representation_detail.capture_priority,
+                representation_detail.ordinal,
+                source,
+            ));
+        }
         let shortcuts = self.action_shortcuts(repo).await?;
         let pins = self.action_pins(repo).await?;
-        let facet = self
+        let active_facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
             .await?;
         let mut actions = Vec::new();
         for item in self
             .active_contributions(repo, ContributionKind::Action)
             .await?
-            .into_iter()
-            .filter(|item| accepts(&item.declaration, &source, facet_id))
         {
+            let Some((selected_source_id, source, selected_facet_id)) =
+                select_action_source(&item.declaration, source_id, facet_id, &sources)
+            else {
+                continue;
+            };
+            let facet = selected_facet_id.as_deref().and(active_facet.clone());
             let state = self
                 .action_state(repo, &item, &source, facet.clone())
                 .await?;
@@ -1045,6 +1073,8 @@ impl ExtensionService {
                 pinned: pins.contains(&item.id),
                 id: item.id,
                 package_id: item.package_id,
+                source_id: Some(selected_source_id),
+                facet_id: selected_facet_id,
                 label: item.declaration.display_name,
                 icon: item.declaration.icon,
                 icon_svg,
@@ -1102,6 +1132,8 @@ impl ExtensionService {
                     pinned: pins.contains(&item.id),
                     id: item.id,
                     package_id: item.package_id,
+                    source_id: None,
+                    facet_id: None,
                     label: item.declaration.display_name,
                     icon: item.declaration.icon,
                     icon_svg,
@@ -1444,6 +1476,7 @@ impl ExtensionService {
         Ok(ActionInvocation { token, expires_at })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn begin_custom_view(
         &self,
         repo: &HistoryRepository,
@@ -1452,7 +1485,20 @@ impl ExtensionService {
         source_id: &str,
         facet_id: Option<&str>,
         surface: UiSurface,
+        theme: &str,
+        locale: &str,
     ) -> Result<CustomViewSession> {
+        if !matches!(theme, "light" | "dark") {
+            bail!("custom extension view theme is invalid");
+        }
+        if locale.is_empty()
+            || locale.len() > 35
+            || !locale
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
+        {
+            bail!("custom extension view locale is invalid");
+        }
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let contribution = self
             .active_contributions(repo, ContributionKind::Renderer)
@@ -1522,7 +1568,7 @@ impl ExtensionService {
                 credential_permissions: contribution.credential_permissions,
                 external_navigation_origins: contribution.external_navigation_origins,
                 providers: contribution.providers,
-                context_script: (format!(
+                context_script: format!(
                     "window.ClipsX={{context:Object.freeze({})}};",
                     serde_json::to_string(&json!({
                         "representation": {
@@ -1542,12 +1588,11 @@ impl ExtensionService {
                         "settings": settings,
                         "credentials": credentials,
                         "surface": match surface { UiSurface::Detail => "detail", UiSurface::Dialog => "dialog" },
-                        "theme": "system",
-                        "locale": "en",
+                        "theme": theme,
+                        "locale": locale,
                     }))?
                 )
-                + &format!("const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;window.ClipsX.https=(request)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'https',request}}}});window.ClipsX.openExternal=(url)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'open_external',url}}}});window.ClipsX.generateText=(prompt)=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'generation_text',prompt}}}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxInvoke('extension_bridge',{{token:'{token}',request:{{kind:'submit_output',mimeType,text,disposition}}}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');window.ClipsX=Object.freeze(window.ClipsX);"))
-                .into_bytes(),
+                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.addEventListener('keydown',(event)=>{{const target=event.target;const editable=target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target?.isContentEditable;if(!editable&&!event.defaultPrevented&&['ArrowUp','ArrowDown','Home','End'].includes(event.key)){{event.preventDefault();__clipsxSend({{kind:'host_key',key:event.key}}).catch(()=>{{}});}}}});window.ClipsX=Object.freeze(window.ClipsX);"#),
                 expires_at: now_ms() + 60 * 60 * 1000,
             },
         );
@@ -1567,9 +1612,14 @@ impl ExtensionService {
             .get(token)
             .filter(|session| session.expires_at > now_ms())
             .context("extension custom view session is invalid or expired")?;
+        // Pre-document-start injection is authoritative. Keep this route so
+        // already-installed pre-release packages that imported the old SDK
+        // resource continue to load while their exact package bytes remain pinned.
+        // It must be a no-op: serving the bootstrap here as well would redeclare
+        // its top-level bindings after the host has already injected it.
         if path == "__clipsx/context.js" {
             return Ok((
-                session.context_script.clone(),
+                b"/* ClipsX bridge is injected by the host at document start. */".to_vec(),
                 "text/javascript; charset=utf-8",
             ));
         }
@@ -1588,6 +1638,16 @@ impl ExtensionService {
             _ => "application/octet-stream",
         };
         Ok((bytes, mime))
+    }
+
+    pub fn custom_view_initialization_script(&self, token: &str) -> Result<String> {
+        self.custom_views
+            .lock()
+            .expect("extension custom view store poisoned")
+            .get(token)
+            .filter(|session| session.expires_at > now_ms())
+            .map(|session| session.context_script.clone())
+            .context("extension custom view session is invalid or expired")
     }
 
     pub fn end_custom_view(&self, token: &str) {
@@ -1612,6 +1672,23 @@ impl ExtensionService {
             .filter(|session| session.expires_at > now_ms() && session.label == webview_label)
             .cloned()
             .context("extension bridge session is invalid, expired, or spoofed")?;
+        let request = match request {
+            BridgeRequest::ViewReady => return Ok(BridgeOutcome::ViewReady),
+            BridgeRequest::ViewFailed { message } => {
+                let message = message.trim();
+                if message.is_empty() || message.len() > 500 {
+                    bail!("extension view failure message is invalid");
+                }
+                return Ok(BridgeOutcome::ViewFailed(message.into()));
+            }
+            BridgeRequest::HostKey { key } => {
+                if !valid_host_key(&key) {
+                    bail!("extension view requested an unsupported host key");
+                }
+                return Ok(BridgeOutcome::HostKey(key));
+            }
+            request => request,
+        };
         let action_id = session
             .action_id
             .clone()
@@ -1749,6 +1826,11 @@ impl ExtensionService {
                     source_id: session.source_id,
                     facet_id: session.facet_id,
                 })
+            }
+            BridgeRequest::ViewReady
+            | BridgeRequest::ViewFailed { .. }
+            | BridgeRequest::HostKey { .. } => {
+                unreachable!("view events return before capability handling")
             }
         }
     }
@@ -2209,6 +2291,7 @@ impl ExtensionService {
                     continue;
                 }
                 if accepts(&renderer.declaration, &source, None) {
+                    let (icon_svg, icon_svg_dark) = self.contribution_icons(renderer);
                     views.push(crate::contributions::ClipViewDescriptor {
                         id: format!("{}:{}", renderer.id, representation.id),
                         renderer_id: renderer.id.clone(),
@@ -2217,6 +2300,9 @@ impl ExtensionService {
                         mime_type: representation.canonical_mime_type.clone(),
                         capability_id: representation.capability_id.clone(),
                         facet_id: None,
+                        icon_svg,
+                        icon_svg_dark,
+                        icon_scale: renderer.declaration.icon_scale,
                         is_original: false,
                         presentation_kind: if renderer
                             .declaration
@@ -2238,6 +2324,7 @@ impl ExtensionService {
                     .filter(|facet| facet.source_representation_id == representation.id)
                 {
                     if accepts(&renderer.declaration, &source, Some(&facet.id)) {
+                        let (icon_svg, icon_svg_dark) = self.contribution_icons(renderer);
                         views.push(crate::contributions::ClipViewDescriptor {
                             id: format!("{}:{}:{}", renderer.id, representation.id, facet.id),
                             renderer_id: renderer.id.clone(),
@@ -2246,6 +2333,9 @@ impl ExtensionService {
                             mime_type: representation.canonical_mime_type.clone(),
                             capability_id: representation.capability_id.clone(),
                             facet_id: Some(facet.id.clone()),
+                            icon_svg,
+                            icon_svg_dark,
+                            icon_scale: renderer.declaration.icon_scale,
                             is_original: false,
                             presentation_kind: if renderer
                                 .declaration
@@ -2622,6 +2712,29 @@ impl ExtensionService {
     }
 }
 
+fn select_action_source(
+    declaration: &ManifestContribution,
+    active_source_id: &str,
+    active_facet_id: Option<&str>,
+    sources: &[(String, i64, i64, CapturedRepresentation)],
+) -> Option<(String, CapturedRepresentation, Option<String>)> {
+    if let Some((id, _, _, source)) = sources.iter().find(|(id, _, _, source)| {
+        id == active_source_id && accepts(declaration, source, active_facet_id)
+    }) {
+        return Some((
+            id.clone(),
+            source.clone(),
+            active_facet_id.map(str::to_string),
+        ));
+    }
+
+    sources
+        .iter()
+        .filter(|(_, _, _, source)| accepts(declaration, source, None))
+        .min_by_key(|(_, capture_priority, ordinal, _)| (*capture_priority, *ordinal))
+        .map(|(id, _, _, source)| (id.clone(), source.clone(), None))
+}
+
 fn accepts(
     declaration: &ManifestContribution,
     input: &CapturedRepresentation,
@@ -2766,6 +2879,10 @@ fn valid_output_mime_type(value: &str) -> bool {
                     b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-' | b'/'
                 )
         })
+}
+
+fn valid_host_key(value: &str) -> bool {
+    matches!(value, "ArrowUp" | "ArrowDown" | "Home" | "End")
 }
 
 fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
@@ -3292,6 +3409,35 @@ mod tests {
     }
 
     #[test]
+    fn actions_fall_back_to_the_best_matching_clip_representation() {
+        let declaration = renderer(vec![ContributionMatcher {
+            mime_types: vec!["text/plain".into()],
+            ..Default::default()
+        }]);
+        let plain_text = CapturedRepresentation {
+            format_key: "mime:text/plain".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: Some("Text".into()),
+            platform: "windows".into(),
+            capture_priority: 10,
+            payload: CapturedPayload::Text("Visible text".into()),
+        };
+        let sources = vec![
+            ("html".into(), 0, 0, input()),
+            ("plain".into(), 10, 1, plain_text),
+        ];
+
+        let selected = select_action_source(&declaration, "html", None, &sources).unwrap();
+
+        assert_eq!(selected.0, "plain");
+        assert_eq!(
+            selected.1.canonical_mime_type.as_deref(),
+            Some("text/plain")
+        );
+        assert_eq!(selected.2, None);
+    }
+
+    #[test]
     fn compact_models_are_bounded_and_thumbnail_is_host_owned() {
         let valid = validate_compact(
             super::super::ExtensionCompactModel {
@@ -3337,5 +3483,15 @@ mod tests {
             b"ordinary response",
             &[b"secret-token".to_vec()]
         ));
+    }
+
+    #[test]
+    fn custom_views_forward_only_host_owned_history_navigation_keys() {
+        for key in ["ArrowUp", "ArrowDown", "Home", "End"] {
+            assert!(valid_host_key(key));
+        }
+        for key in ["Enter", "Escape", "Delete", "c", ""] {
+            assert!(!valid_host_key(key));
+        }
     }
 }
