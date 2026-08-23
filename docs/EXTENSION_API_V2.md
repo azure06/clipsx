@@ -104,10 +104,11 @@ run; packages do not load or bundle privileged SDK code. It exposes selected rep
 settings, `ready`, `https`, `openExternal`, `generateText`, `submitText`, and
 `close`. A child view remains hidden behind host-rendered loading UI until it
 calls `ready`; bootstrap/resource failures and loading timeouts produce a
-recoverable host error instead of an empty native surface. The host-injected
-bridge forwards unclaimed Arrow Up/Down and Home/End keys when focus is outside
-an editable control, preserving history navigation without package-specific
-keyboard code.
+recoverable host error instead of an empty native surface. Detail views do not
+take focus merely by loading. When users intentionally focus a child view, its
+unmodified keyboard input—including Arrow Up/Down and Home/End—belongs to that
+view. Explicit dialogs receive focus after `ready` and return focus to the main
+webview when closed.
 `theme` is the currently applied `light` or `dark` theme (never an unresolved
 `system` value), and `locale` is the active host locale. An open detail session
 is recreated when either context value changes.

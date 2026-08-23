@@ -129,6 +129,7 @@ struct PendingCustomView {
     credential_permissions: Vec<super::manifest::CredentialPermission>,
     external_navigation_origins: Vec<String>,
     providers: Vec<String>,
+    focus_on_ready: bool,
     context_script: String,
     expires_at: i64,
 }
@@ -143,9 +144,6 @@ pub enum BridgeRequest {
     ViewReady,
     ViewFailed {
         message: String,
-    },
-    HostKey {
-        key: String,
     },
     Https {
         request: super::BrokerHttpRequest,
@@ -165,9 +163,10 @@ pub enum BridgeRequest {
 
 #[derive(Debug, Clone)]
 pub enum BridgeOutcome {
-    ViewReady,
+    ViewReady {
+        focus: bool,
+    },
     ViewFailed(String),
-    HostKey(String),
     Https(super::BrokerHttpResponse),
     OpenExternal(String),
     GenerationText(String),
@@ -1568,6 +1567,9 @@ impl ExtensionService {
                 credential_permissions: contribution.credential_permissions,
                 external_navigation_origins: contribution.external_navigation_origins,
                 providers: contribution.providers,
+                // Preview detail views must not take focus merely by loading.
+                // Explicit dialogs receive focus after their UI reports ready.
+                focus_on_ready: surface == UiSurface::Dialog,
                 context_script: format!(
                     "window.ClipsX={{context:Object.freeze({})}};",
                     serde_json::to_string(&json!({
@@ -1592,7 +1594,7 @@ impl ExtensionService {
                         "locale": locale,
                     }))?
                 )
-                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.addEventListener('keydown',(event)=>{{const target=event.target;const editable=target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target?.isContentEditable;if(!editable&&!event.defaultPrevented&&['ArrowUp','ArrowDown','Home','End'].includes(event.key)){{event.preventDefault();__clipsxSend({{kind:'host_key',key:event.key}}).catch(()=>{{}});}}}});window.ClipsX=Object.freeze(window.ClipsX);"#),
+                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.ClipsX=Object.freeze(window.ClipsX);"#),
                 expires_at: now_ms() + 60 * 60 * 1000,
             },
         );
@@ -1673,19 +1675,17 @@ impl ExtensionService {
             .cloned()
             .context("extension bridge session is invalid, expired, or spoofed")?;
         let request = match request {
-            BridgeRequest::ViewReady => return Ok(BridgeOutcome::ViewReady),
+            BridgeRequest::ViewReady => {
+                return Ok(BridgeOutcome::ViewReady {
+                    focus: session.focus_on_ready,
+                });
+            }
             BridgeRequest::ViewFailed { message } => {
                 let message = message.trim();
                 if message.is_empty() || message.len() > 500 {
                     bail!("extension view failure message is invalid");
                 }
                 return Ok(BridgeOutcome::ViewFailed(message.into()));
-            }
-            BridgeRequest::HostKey { key } => {
-                if !valid_host_key(&key) {
-                    bail!("extension view requested an unsupported host key");
-                }
-                return Ok(BridgeOutcome::HostKey(key));
             }
             request => request,
         };
@@ -1827,9 +1827,7 @@ impl ExtensionService {
                     facet_id: session.facet_id,
                 })
             }
-            BridgeRequest::ViewReady
-            | BridgeRequest::ViewFailed { .. }
-            | BridgeRequest::HostKey { .. } => {
+            BridgeRequest::ViewReady | BridgeRequest::ViewFailed { .. } => {
                 unreachable!("view events return before capability handling")
             }
         }
@@ -2881,10 +2879,6 @@ fn valid_output_mime_type(value: &str) -> bool {
         })
 }
 
-fn valid_host_key(value: &str) -> bool {
-    matches!(value, "ArrowUp" | "ArrowDown" | "Home" | "End")
-}
-
 fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
     secrets.iter().any(|secret| {
         !secret.is_empty()
@@ -3483,15 +3477,5 @@ mod tests {
             b"ordinary response",
             &[b"secret-token".to_vec()]
         ));
-    }
-
-    #[test]
-    fn custom_views_forward_only_host_owned_history_navigation_keys() {
-        for key in ["ArrowUp", "ArrowDown", "Home", "End"] {
-            assert!(valid_host_key(key));
-        }
-        for key in ["Enter", "Escape", "Delete", "c", ""] {
-            assert!(!valid_host_key(key));
-        }
     }
 }

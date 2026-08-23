@@ -6,7 +6,6 @@ import { useToast } from '../../shared/contexts/ToastContext'
 import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -428,12 +427,8 @@ export const ClipboardHistory = ({
     }
 
     window.addEventListener('keydown', handleKeyDown)
-    const unlistenHostKeys = listen<{ key: string }>('extension-custom-view-host-key', event => {
-      handleKeyDown(new KeyboardEvent('keydown', { key: event.payload.key }))
-    })
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
-      void unlistenHostKeys.then(unlisten => unlisten())
     }
   }, [
     clips,

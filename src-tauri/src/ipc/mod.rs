@@ -119,11 +119,6 @@ struct ExtensionViewState {
     message: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-struct ExtensionViewHostKey {
-    key: String,
-}
-
 async fn emit_clip_artifact_updates(
     app: &tauri::AppHandle,
     repo: &HistoryRepository,
@@ -1279,6 +1274,9 @@ async fn open_extension_custom_view(
         session.label.clone(),
         tauri::WebviewUrl::External(url),
     )
+    // Wry focuses child WebViews by default on Windows. A preview detail view
+    // must not take history focus merely by loading; dialogs focus after ready.
+    .focused(false)
     .initialization_script(initialization_script)
     .incognito(true)
     .devtools(cfg!(debug_assertions))
@@ -1289,6 +1287,9 @@ async fn open_extension_custom_view(
             }
             if let Some(state) = bridge_app.try_state::<AppState>() {
                 state.extensions.end_custom_view(&bridge_token);
+            }
+            if let Some(main) = bridge_app.get_webview("main") {
+                let _ = main.set_focus();
             }
             return false;
         }
@@ -1324,6 +1325,9 @@ async fn close_extension_custom_view(
         webview.close().map_err(|error| error.to_string())?;
     }
     state.extensions.end_custom_view(&token);
+    if let Some(main) = app.get_webview("main") {
+        let _ = main.set_focus();
+    }
     Ok(())
 }
 
@@ -1371,8 +1375,11 @@ async fn extension_bridge(
         .await
         .map_err(|error| error.to_string())?;
     match outcome {
-        BridgeOutcome::ViewReady => {
+        BridgeOutcome::ViewReady { focus } => {
             webview.show().map_err(|error| error.to_string())?;
+            if focus {
+                webview.set_focus().map_err(|error| error.to_string())?;
+            }
             app.emit_to(
                 "main",
                 "extension-custom-view-state",
@@ -1390,6 +1397,9 @@ async fn extension_bridge(
             let label = webview.label().to_string();
             webview.close().map_err(|error| error.to_string())?;
             state.extensions.end_custom_view(&token);
+            if let Some(main) = app.get_webview("main") {
+                let _ = main.set_focus();
+            }
             app.emit_to(
                 "main",
                 "extension-custom-view-state",
@@ -1402,15 +1412,6 @@ async fn extension_bridge(
             )
             .map_err(|error| error.to_string())?;
             Ok(serde_json::json!({ "closed": true }))
-        }
-        BridgeOutcome::HostKey(key) => {
-            app.emit_to(
-                "main",
-                "extension-custom-view-host-key",
-                ExtensionViewHostKey { key },
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(serde_json::json!({ "forwarded": true }))
         }
         BridgeOutcome::Https(response) => {
             serde_json::to_value(response).map_err(|error| error.to_string())
@@ -2865,6 +2866,7 @@ mod tests {
         let source = include_str!("mod.rs");
         assert!(source.contains(".on_download(|_, _| false)"));
         assert!(source.contains("child.hide()"));
+        assert!(source.contains(".focused(false)"));
         assert!(source.contains(".initialization_script(initialization_script)"));
         assert!(source.contains("BridgeOutcome::ViewReady"));
         assert!(source.contains("], tauri::generate_handler![extension_bridge]))"));
