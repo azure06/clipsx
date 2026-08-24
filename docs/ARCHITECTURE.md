@@ -98,7 +98,9 @@ flowchart LR
     Page --> Result[Hydrate results]
 ```
 
-`builtin.search.fts` is always enabled. It builds one derived FTS projection from notes, tags, ready textual representations, and completed OCR/extractions. Simple syntax turns whitespace tokens into prefix terms with implicit AND, so `doc` matches `document`; advanced mode passes FTS5 syntax through and reports typed query errors.
+`builtin.search.fts` is always enabled. It builds one derived FTS projection per clip from notes, tags, ready textual representations, and completed OCR. HTML and RTF contribute only safely extracted visible text; raw markup/control streams never enter FTS. Equivalent normalized visible text from sibling representations or OCR contributes once, while genuinely distinct text remains searchable. Simple syntax turns whitespace tokens into prefix terms with implicit AND, so `doc` matches `document`; advanced mode passes FTS5 syntax through and reports typed query errors.
+
+Keyword and filter-only search apply eligibility predicates inside SQLite; the normal FTS path does not first materialize every eligible clip ID in application memory. Semantic search currently still resolves that set because its exact-vector implementation requires it; approximate nearest-neighbor indexing is a separate future scale decision.
 
 Optional sources run independently over the same eligible set. The current optional source, `builtin.search.semantic_text`, can contribute semantic-only clips. Source failures retain FTS results with diagnostics. Candidate lists are bounded at 5,000 entries per source; results record source ranks, use equal-weight reciprocal-rank fusion, sort deterministically, then paginate. FTS and semantic source participation are persisted separately, so disabling Meaning Search never stops indexing.
 

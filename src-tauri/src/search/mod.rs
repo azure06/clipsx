@@ -9,11 +9,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
 
-const PROJECTION_VERSION: i64 = 2;
+const PROJECTION_VERSION: i64 = 3;
 pub const FTS_SOURCE_ID: &str = "builtin.search.fts";
 pub const SEMANTIC_TEXT_SOURCE_ID: &str = "builtin.search.semantic_text";
 const RRF_K: f64 = 60.0;
 const SOURCE_CANDIDATE_LIMIT: usize = 5_000;
+const PROJECTION_REBUILD_BATCH_SIZE: i64 = 100;
 
 // ─── Domain ───────────────────────────────────────────────────────────────────
 
@@ -124,24 +125,45 @@ fn default_enabled_sources() -> Vec<String> {
 /// Build or refresh `search_documents` for every ready clip that is missing or
 /// stale (wrong `projection_version`).
 pub async fn rebuild_stale_projections(repo: &HistoryRepository) -> Result<u64> {
-    let stale_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT c.id FROM clip_items c \
-         WHERE c.lifecycle_state = 'ready' \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM search_documents sd \
-               WHERE sd.clip_id = c.id \
-                 AND sd.projection_version = ? \
-           )",
-    )
-    .bind(PROJECTION_VERSION)
-    .fetch_all(&repo.pool)
-    .await?;
-
-    let count = stale_ids.len() as u64;
-    for id in stale_ids {
-        let _ = upsert_projection(repo, &id).await;
+    let mut rebuilt = 0;
+    let mut after_id: Option<String> = None;
+    loop {
+        let mut sql = String::from(
+            "SELECT c.id FROM clip_items c \
+             WHERE c.lifecycle_state = 'ready' \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM search_documents sd \
+                   WHERE sd.clip_id = c.id \
+                     AND sd.projection_version = ? \
+               )",
+        );
+        if after_id.is_some() {
+            sql.push_str(" AND c.id > ?");
+        }
+        sql.push_str(" ORDER BY c.id LIMIT ?");
+        let mut query = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(PROJECTION_VERSION);
+        if let Some(id) = &after_id {
+            query = query.bind(id);
+        }
+        let stale_ids: Vec<String> = query
+            .bind(PROJECTION_REBUILD_BATCH_SIZE)
+            .fetch_all(&repo.pool)
+            .await?;
+        let Some(last_id) = stale_ids.last().cloned() else {
+            break;
+        };
+        for id in stale_ids {
+            match upsert_projection(repo, &id).await {
+                Ok(()) => rebuilt += 1,
+                Err(error) => {
+                    eprintln!("[SEARCH] Failed to rebuild FTS projection for {id}: {error}")
+                }
+            }
+        }
+        after_id = Some(last_id);
+        tokio::task::yield_now().await;
     }
-    Ok(count)
+    Ok(rebuilt)
 }
 
 /// Rebuild the search document for a single clip.
@@ -193,25 +215,61 @@ async fn build_search_text(repo: &HistoryRepository, clip_id: &str) -> Result<St
     .await?;
     parts.extend(tags);
 
-    // 3. Text representations (ordered by capture_priority, ordinal)
-    let texts: Vec<String> = sqlx::query_scalar(
-        "SELECT t.text_value FROM clip_representations r \
+    // 3. Every ready text representation contributes only safe visible text.
+    // Equivalent normalized text is indexed once per clip, even when a native
+    // clipboard offered plain text, HTML, and RTF siblings for the same content.
+    let texts = sqlx::query(
+        "SELECT r.canonical_mime_type,t.text_value FROM clip_representations r \
          JOIN clip_text_values t ON t.representation_id = r.id \
-         WHERE r.clip_id = ? AND r.lifecycle_state = 'ready' \
-           AND r.canonical_mime_type IN ('text/plain','text/html','text/rtf','application/rtf') \
+         WHERE r.clip_id = ? AND r.lifecycle_state = 'ready' AND r.storage_kind = 'text' \
          ORDER BY r.capture_priority, r.ordinal",
     )
     .bind(clip_id)
     .fetch_all(&repo.pool)
     .await?;
-    parts.extend(texts);
+    let mut seen_visible_text = HashSet::new();
+    for row in texts {
+        let mime_type: Option<String> = row.get(0);
+        let value: String = row.get(1);
+        if let Some(visible) = fts_visible_text(mime_type.as_deref(), &value) {
+            if seen_visible_text.insert(visible.clone()) {
+                parts.push(visible);
+            }
+        }
+    }
 
-    // 4. OCR text from artifact (if any)
-    if let Some(ocr) = crate::artifacts::ocr_text(repo, clip_id).await {
-        parts.push(ocr);
+    // 4. Every completed OCR artifact, unless it duplicates captured visible text.
+    let ocr_texts: Vec<String> = sqlx::query_scalar(
+        "SELECT atv.text_value FROM artifact_records ar \
+         JOIN artifact_text_values atv ON atv.artifact_id=ar.id \
+         WHERE ar.owner_clip_id=? AND ar.producer_id='builtin.artifact.ocr' \
+           AND ar.lifecycle_state='ready' ORDER BY ar.created_at,ar.id",
+    )
+    .bind(clip_id)
+    .fetch_all(&repo.pool)
+    .await?;
+    for ocr in ocr_texts {
+        let visible = crate::text::collapse_whitespace(&ocr);
+        if !visible.is_empty() && seen_visible_text.insert(visible.clone()) {
+            parts.push(visible);
+        }
     }
 
     Ok(parts.join("\n"))
+}
+
+/// Text safe to expose to keyword search. Raw HTML and RTF remain canonical
+/// representations for reconstruction, but never become searchable source text.
+/// Other captured text formats are already textual payloads and are normalized
+/// conservatively without trying to interpret arbitrary native formats.
+fn fts_visible_text(mime_type: Option<&str>, value: &str) -> Option<String> {
+    let visible = match mime_type {
+        Some("text/html") => crate::text::html_visible_text(value),
+        Some("text/rtf" | "application/rtf") => crate::text::rtf_visible_text(value)?,
+        _ => value.to_string(),
+    };
+    let normalized = crate::text::collapse_whitespace(&visible);
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 async fn build_manifest(repo: &HistoryRepository, clip_id: &str) -> Result<String> {
@@ -249,6 +307,7 @@ struct RankedCandidate {
     clip_id: String,
     snippet: Option<String>,
     source_score: Option<f64>,
+    updated_at: i64,
 }
 
 struct SourceCandidates {
@@ -258,10 +317,10 @@ struct SourceCandidates {
 
 struct SourceContext<'a> {
     repo: &'a HistoryRepository,
+    request: &'a SearchRequest,
     query: &'a str,
     fts_query: Option<&'a str>,
-    eligible_ids: &'a HashSet<String>,
-    updated_at: &'a HashMap<String, i64>,
+    semantic_eligible: Option<&'a HashMap<String, i64>>,
 }
 
 #[async_trait]
@@ -299,30 +358,52 @@ impl SearchSource for FtsSearchSource {
         }
     }
     async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let (filters, bindings) = eligibility_filter(context.request)?;
         let Some(query) = context.fts_query else {
-            let mut ids: Vec<_> = context.eligible_ids.iter().cloned().collect();
-            ids.sort_by(|a, b| {
-                context.updated_at[b]
-                    .cmp(&context.updated_at[a])
-                    .then_with(|| a.cmp(b))
-            });
-            let truncated = ids.len() > SOURCE_CANDIDATE_LIMIT;
-            ids.truncate(SOURCE_CANDIDATE_LIMIT);
+            let sql = format!(
+                "SELECT c.id,c.updated_at FROM clip_items c {filters} \
+                 ORDER BY c.updated_at DESC,c.id LIMIT ?"
+            );
+            let mut db_query = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for binding in bindings {
+                db_query = db_query.bind(binding);
+            }
+            let rows = db_query
+                .bind((SOURCE_CANDIDATE_LIMIT + 1) as i64)
+                .fetch_all(&context.repo.pool)
+                .await?;
+            let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
             return Ok(SourceCandidates {
-                items: ids
+                items: rows
                     .into_iter()
-                    .map(|clip_id| RankedCandidate {
-                        clip_id,
+                    .take(SOURCE_CANDIDATE_LIMIT)
+                    .map(|row| RankedCandidate {
+                        clip_id: row.get(0),
                         snippet: None,
                         source_score: None,
+                        updated_at: row.get(1),
                     })
                     .collect(),
                 truncated,
             });
         };
-        let rows = sqlx::query("SELECT fts.clip_id,sd.search_text FROM search_documents_fts fts JOIN search_documents sd ON sd.clip_id=fts.clip_id JOIN json_each(?) eligible ON eligible.value=fts.clip_id WHERE search_documents_fts MATCH ? ORDER BY fts.rank,fts.clip_id LIMIT ?")
-            .bind(serde_json::to_string(context.eligible_ids)?).bind(query)
-            .bind((SOURCE_CANDIDATE_LIMIT + 1) as i64).fetch_all(&context.repo.pool).await
+        let sql = format!(
+            "SELECT fts.clip_id,sd.search_text,c.updated_at \
+             FROM search_documents_fts fts \
+             JOIN search_documents sd ON sd.clip_id=fts.clip_id \
+             JOIN clip_items c ON c.id=fts.clip_id \
+             {filters} AND search_documents_fts MATCH ? \
+             ORDER BY fts.rank,fts.clip_id LIMIT ?"
+        );
+        let mut db_query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for binding in bindings {
+            db_query = db_query.bind(binding);
+        }
+        let rows = db_query
+            .bind(query)
+            .bind((SOURCE_CANDIDATE_LIMIT + 1) as i64)
+            .fetch_all(&context.repo.pool)
+            .await
             .context("invalid advanced FTS5 query")?;
         let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
         Ok(SourceCandidates {
@@ -335,6 +416,7 @@ impl SearchSource for FtsSearchSource {
                         clip_id: row.get(0),
                         snippet: build_snippet(query, Some(&text)),
                         source_score: None,
+                        updated_at: row.get(2),
                     }
                 })
                 .collect(),
@@ -357,10 +439,14 @@ impl SearchSource for SemanticTextSearchSource {
         }
     }
     async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let eligible = context
+            .semantic_eligible
+            .context("semantic eligibility was not resolved")?;
+        let eligible_ids: HashSet<_> = eligible.keys().cloned().collect();
         let rows = semantic::semantic_matches(
             context.repo,
             context.query,
-            context.eligible_ids,
+            &eligible_ids,
             SOURCE_CANDIDATE_LIMIT + 1,
         )
         .await?;
@@ -369,10 +455,14 @@ impl SearchSource for SemanticTextSearchSource {
             items: rows
                 .into_iter()
                 .take(SOURCE_CANDIDATE_LIMIT)
-                .map(|(clip_id, score, text)| RankedCandidate {
-                    clip_id,
-                    snippet: Some(text.chars().take(160).collect()),
-                    source_score: Some(score),
+                .map(|(clip_id, score, text)| {
+                    let updated_at = eligible[&clip_id];
+                    RankedCandidate {
+                        clip_id,
+                        snippet: Some(text.chars().take(160).collect()),
+                        source_score: Some(score),
+                        updated_at,
+                    }
                 })
                 .collect(),
             truncated,
@@ -408,14 +498,13 @@ fn fuse_source(
     fused: &mut HashMap<String, FusedCandidate>,
     source_id: &str,
     candidates: Vec<RankedCandidate>,
-    eligible: &HashMap<String, i64>,
 ) {
     for (index, candidate) in candidates.into_iter().enumerate() {
         let rank = (index + 1) as u32;
         let entry = fused
             .entry(candidate.clip_id.clone())
             .or_insert_with(|| FusedCandidate {
-                updated_at: eligible[&candidate.clip_id],
+                updated_at: candidate.updated_at,
                 clip_id: candidate.clip_id.clone(),
                 score: 0.0,
                 matches: Vec::new(),
@@ -457,19 +546,10 @@ pub async fn search(
             is_exhaustive: true,
         });
     }
-    let eligible = eligible_clips(repo, request).await?;
-    let eligible_ids: HashSet<_> = eligible.keys().cloned().collect();
     let fts_query = (!raw.is_empty()).then(|| match settings.syntax_mode {
         SyntaxMode::Simple => to_simple_query(raw),
         SyntaxMode::Advanced => raw.to_string(),
     });
-    let context = SourceContext {
-        repo,
-        query: raw,
-        fts_query: fts_query.as_deref(),
-        eligible_ids: &eligible_ids,
-        updated_at: &eligible,
-    };
     let mut selected: HashSet<String> = if request.enabled_source_ids.is_empty() {
         settings.enabled_source_ids.iter().cloned().collect()
     } else {
@@ -480,6 +560,21 @@ pub async fn search(
         .into_iter()
         .filter(|source| source.mandatory() || (!raw.is_empty() && selected.contains(source.id())))
         .collect();
+    let semantic_eligible = if sources
+        .iter()
+        .any(|source| source.id() == SEMANTIC_TEXT_SOURCE_ID)
+    {
+        Some(eligible_clips(repo, request).await?)
+    } else {
+        None
+    };
+    let context = SourceContext {
+        repo,
+        request,
+        query: raw,
+        fts_query: fts_query.as_deref(),
+        semantic_eligible: semantic_eligible.as_ref(),
+    };
     let results = join_all(sources.iter().map(|source| source.candidates(&context))).await;
     let mut outcomes = Vec::new();
     let mut fused: HashMap<String, FusedCandidate> = HashMap::new();
@@ -493,7 +588,7 @@ pub async fn search(
                     status: SearchSourceOutcomeStatus::Used,
                     diagnostic: None,
                 });
-                fuse_source(&mut fused, source.id(), candidates.items, &eligible);
+                fuse_source(&mut fused, source.id(), candidates.items);
             }
             Err(error) if source.mandatory() => return Err(error),
             Err(error) => outcomes.push(SearchSourceOutcome {
@@ -577,34 +672,11 @@ async fn eligible_clips(
     repo: &HistoryRepository,
     request: &SearchRequest,
 ) -> Result<HashMap<String, i64>> {
-    let scope = request.scope.as_deref().unwrap_or("all");
-    let mut sql =
-        String::from("SELECT c.id,c.updated_at FROM clip_items c WHERE c.lifecycle_state='ready'");
-    if scope == "favorites" {
-        sql.push_str(" AND c.is_favorite=1");
-    } else if scope == "pinned" {
-        sql.push_str(" AND c.is_pinned=1");
-    }
-    if request.tag_id.is_some() {
-        sql.push_str(
-            " AND EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id AND ct.tag_id=?)",
-        );
-    }
-    if !request.representation_families.is_empty() {
-        sql.push_str(" AND EXISTS(SELECT 1 FROM clip_representations sr JOIN json_each(?) families ON ((families.value='text' AND sr.storage_kind='text') OR (families.value='image' AND sr.canonical_mime_type LIKE 'image/%') OR (families.value='files' AND sr.storage_kind='file_list') OR (families.value='html' AND sr.canonical_mime_type='text/html') OR (families.value='rtf' AND sr.canonical_mime_type IN ('text/rtf','application/rtf')) OR (families.value='office' AND sr.format_family='office') OR (families.value='document' AND sr.canonical_mime_type IN ('application/pdf','image/svg+xml'))) WHERE sr.clip_id=c.id AND sr.lifecycle_state='ready')");
-    }
-    if !request.facet_ids.is_empty() {
-        sql.push_str(" AND EXISTS(SELECT 1 FROM content_clip_facets sf JOIN json_each(?) facets ON sf.facet_id=facets.value WHERE sf.clip_id=c.id)");
-    }
+    let (filters, bindings) = eligibility_filter(request)?;
+    let sql = format!("SELECT c.id,c.updated_at FROM clip_items c {filters}");
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    if let Some(tag_id) = &request.tag_id {
-        query = query.bind(tag_id);
-    }
-    if !request.representation_families.is_empty() {
-        query = query.bind(serde_json::to_string(&request.representation_families)?);
-    }
-    if !request.facet_ids.is_empty() {
-        query = query.bind(serde_json::to_string(&request.facet_ids)?);
+    for binding in bindings {
+        query = query.bind(binding);
     }
     Ok(query
         .fetch_all(&repo.pool)
@@ -612,6 +684,33 @@ async fn eligible_clips(
         .into_iter()
         .map(|row| (row.get(0), row.get(1)))
         .collect())
+}
+
+/// SQL predicate shared by FTS and semantic eligibility. The caller chooses the
+/// select/order clause, so FTS never needs an in-memory list of every matching clip.
+fn eligibility_filter(request: &SearchRequest) -> Result<(String, Vec<String>)> {
+    let mut sql = String::from("WHERE c.lifecycle_state='ready'");
+    let mut bindings = Vec::new();
+    match request.scope.as_deref().unwrap_or("all") {
+        "favorites" => sql.push_str(" AND c.is_favorite=1"),
+        "pinned" => sql.push_str(" AND c.is_pinned=1"),
+        _ => {}
+    }
+    if let Some(tag_id) = &request.tag_id {
+        sql.push_str(
+            " AND EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id AND ct.tag_id=?)",
+        );
+        bindings.push(tag_id.clone());
+    }
+    if !request.representation_families.is_empty() {
+        sql.push_str(" AND EXISTS(SELECT 1 FROM clip_representations sr JOIN json_each(?) families ON ((families.value='text' AND sr.storage_kind='text') OR (families.value='image' AND sr.canonical_mime_type LIKE 'image/%') OR (families.value='files' AND sr.storage_kind='file_list') OR (families.value='html' AND sr.canonical_mime_type='text/html') OR (families.value='rtf' AND sr.canonical_mime_type IN ('text/rtf','application/rtf')) OR (families.value='office' AND sr.format_family='office') OR (families.value='document' AND sr.canonical_mime_type IN ('application/pdf','image/svg+xml'))) WHERE sr.clip_id=c.id AND sr.lifecycle_state='ready')");
+        bindings.push(serde_json::to_string(&request.representation_families)?);
+    }
+    if !request.facet_ids.is_empty() {
+        sql.push_str(" AND EXISTS(SELECT 1 FROM content_clip_facets sf JOIN json_each(?) facets ON sf.facet_id=facets.value WHERE sf.clip_id=c.id)");
+        bindings.push(serde_json::to_string(&request.facet_ids)?);
+    }
+    Ok((sql, bindings))
 }
 
 pub async fn get_settings(pool: &SqlitePool) -> Result<SearchSettings> {
@@ -770,19 +869,165 @@ mod tests {
         token: u64,
         representation: CapturedRepresentation,
     ) -> String {
+        capture_many(repo, token, vec![representation]).await
+    }
+
+    async fn capture_many(
+        repo: &HistoryRepository,
+        token: u64,
+        representations: Vec<CapturedRepresentation>,
+    ) -> String {
         repo.capture(
             CapturedSnapshot {
                 token,
                 source_app_name: None,
                 source_app_id: None,
                 format_observations: Vec::new(),
-                representations: vec![representation],
+                representations,
             },
             &CaptureSettings::default(),
         )
         .await
         .unwrap()
         .0
+    }
+
+    #[tokio::test]
+    async fn fts_projection_uses_distinct_visible_text_not_rich_text_source() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let clip_id = capture_many(
+            &repo,
+            1,
+            vec![
+                CapturedRepresentation {
+                    format_key: "text:plain".into(),
+                    canonical_mime_type: Some("text/plain".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 1,
+                    payload: CapturedPayload::Text("Hello world".into()),
+                },
+                CapturedRepresentation {
+                    format_key: "text:html".into(),
+                    canonical_mime_type: Some("text/html".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 2,
+                    payload: CapturedPayload::Text("<p>Hello <b>world</b></p>".into()),
+                },
+                CapturedRepresentation {
+                    format_key: "text:rtf".into(),
+                    canonical_mime_type: Some("text/rtf".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 3,
+                    payload: CapturedPayload::Text(r#"{\rtf1\ansi Hello \b world}"#.into()),
+                },
+                CapturedRepresentation {
+                    format_key: "text:unsafe-rtf".into(),
+                    canonical_mime_type: Some("application/rtf".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 4,
+                    payload: CapturedPayload::Text(r#"{\rtf1\object\objdata secret}"#.into()),
+                },
+                CapturedRepresentation {
+                    format_key: "text:json".into(),
+                    canonical_mime_type: Some("application/json".into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 5,
+                    payload: CapturedPayload::Text(r#"{"status":"ready"}"#.into()),
+                },
+            ],
+        )
+        .await;
+        upsert_projection(&repo, &clip_id).await.unwrap();
+
+        let text: String =
+            sqlx::query_scalar("SELECT search_text FROM search_documents WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(text, "Hello world\n{\"status\":\"ready\"}");
+        assert!(!text.contains("<p>"));
+        assert!(!text.contains("\\rtf"));
+        assert!(!text.contains("secret"));
+
+        let settings = SearchSettings {
+            syntax_mode: SyntaxMode::Simple,
+            enabled_source_ids: vec![FTS_SOURCE_ID.into()],
+        };
+        assert_eq!(
+            search(&repo, &request("world"), &settings)
+                .await
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(
+            search(&repo, &request("objdata"), &settings)
+                .await
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            search(&repo, &request("status"), &settings)
+                .await
+                .unwrap()
+                .total,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_projection_rebuilds_in_bounded_batches() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+
+        for token in 0..(PROJECTION_REBUILD_BATCH_SIZE as u64 + 1) {
+            capture(
+                &repo,
+                token,
+                CapturedRepresentation {
+                    format_key: "windows:CF_UNICODETEXT".into(),
+                    canonical_mime_type: Some("text/plain".into()),
+                    native_type: Some("CF_UNICODETEXT".into()),
+                    platform: "windows".into(),
+                    capture_priority: 1,
+                    payload: CapturedPayload::Text(format!("batch document {token}")),
+                },
+            )
+            .await;
+        }
+
+        assert_eq!(
+            rebuild_stale_projections(&repo).await.unwrap(),
+            PROJECTION_REBUILD_BATCH_SIZE as u64 + 1
+        );
+        let projections: i64 = sqlx::query_scalar("SELECT count(*) FROM search_documents")
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(projections, PROJECTION_REBUILD_BATCH_SIZE + 1);
+        assert_eq!(rebuild_stale_projections(&repo).await.unwrap(), 0);
     }
 
     #[test]
@@ -794,11 +1039,6 @@ mod tests {
 
     #[test]
     fn balanced_rrf_unions_any_number_of_sources_and_rewards_consensus() {
-        let eligible = HashMap::from([
-            ("keyword".into(), 3),
-            ("meaning".into(), 2),
-            ("visual".into(), 1),
-        ]);
         let mut fused = HashMap::new();
         fuse_source(
             &mut fused,
@@ -808,14 +1048,15 @@ mod tests {
                     clip_id: "keyword".into(),
                     snippet: None,
                     source_score: None,
+                    updated_at: 3,
                 },
                 RankedCandidate {
                     clip_id: "meaning".into(),
                     snippet: None,
                     source_score: None,
+                    updated_at: 2,
                 },
             ],
-            &eligible,
         );
         fuse_source(
             &mut fused,
@@ -825,14 +1066,15 @@ mod tests {
                     clip_id: "meaning".into(),
                     snippet: None,
                     source_score: Some(0.82),
+                    updated_at: 2,
                 },
                 RankedCandidate {
                     clip_id: "visual".into(),
                     snippet: None,
                     source_score: Some(0.74),
+                    updated_at: 1,
                 },
             ],
-            &eligible,
         );
         fuse_source(
             &mut fused,
@@ -841,8 +1083,8 @@ mod tests {
                 clip_id: "visual".into(),
                 snippet: None,
                 source_score: None,
+                updated_at: 1,
             }],
-            &eligible,
         );
         assert_eq!(fused.len(), 3);
         assert_eq!(fused["meaning"].matches.len(), 2);

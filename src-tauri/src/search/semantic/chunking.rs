@@ -56,6 +56,11 @@ pub trait SemanticChunkStrategy: Sync {
     }
     fn accepts(&self, input: &SemanticInput) -> bool;
     fn extract_blocks(&self, input: &SemanticInput) -> Result<Option<Vec<SemanticBlock>>>;
+    /// A recognised rich-text source that fails safe extraction must not be
+    /// reinterpreted as generic plain text and sent to the embedding provider.
+    fn permits_plain_fallback(&self) -> bool {
+        true
+    }
 }
 
 struct JsonStrategy;
@@ -96,6 +101,7 @@ pub fn chunk_input(input: &SemanticInput) -> Result<Vec<SemanticChunk>> {
                     fallback_reason,
                 ));
             }
+            _ if !strategy.permits_plain_fallback() => return Ok(Vec::new()),
             _ => declined.push(format!("{} declined", strategy.id())),
         }
     }
@@ -116,13 +122,26 @@ pub fn strategy_quality(input: &SemanticInput) -> u8 {
 }
 
 pub fn visible_fingerprint_text(input: &SemanticInput) -> String {
-    let blocks = registered_strategies()
-        .iter()
-        .filter(|strategy| strategy.accepts(input))
-        .find_map(|strategy| strategy.extract_blocks(input).ok().flatten())
-        .unwrap_or_else(|| plain_blocks(&input.text, "text"));
+    for strategy in registered_strategies() {
+        if !strategy.accepts(input) {
+            continue;
+        }
+        match strategy.extract_blocks(input).ok().flatten() {
+            Some(blocks) if !blocks.is_empty() => {
+                return collapse_whitespace(
+                    &blocks
+                        .into_iter()
+                        .map(|block| block.content)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+            }
+            _ if !strategy.permits_plain_fallback() => return String::new(),
+            _ => {}
+        }
+    }
     collapse_whitespace(
-        &blocks
+        &plain_blocks(&input.text, "text")
             .into_iter()
             .map(|block| block.content)
             .collect::<Vec<_>>()
@@ -579,6 +598,9 @@ impl SemanticChunkStrategy for RtfStrategy {
     }
     fn extract_blocks(&self, input: &SemanticInput) -> Result<Option<Vec<SemanticBlock>>> {
         Ok(crate::text::rtf_visible_text(&input.text).map(|text| plain_blocks(&text, "paragraph")))
+    }
+    fn permits_plain_fallback(&self) -> bool {
+        false
     }
 }
 
@@ -1059,12 +1081,15 @@ mod tests {
             .iter()
             .all(|chunk| chunk.strategy_id == "builtin.chunker.rtf-blocks"));
 
-        let fallback =
+        let unsafe_rtf =
             chunk_input(&input("text/rtf", r#"{\rtf1\object\objdata unsafe}"#, &[])).unwrap();
-        assert!(fallback
-            .iter()
-            .all(|chunk| chunk.strategy_id == "builtin.chunker.plain-text"));
-        assert!(fallback.iter().all(|chunk| chunk.fallback_reason.is_some()));
+        assert!(unsafe_rtf.is_empty());
+        assert!(visible_fingerprint_text(&input(
+            "text/rtf",
+            r#"{\rtf1\object\objdata unsafe}"#,
+            &[],
+        ))
+        .is_empty());
     }
 
     #[test]

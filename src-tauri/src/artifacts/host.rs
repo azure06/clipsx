@@ -28,7 +28,7 @@ pub struct ArtifactProducerDescriptor {
 /// The registry is deliberately explicit: artifact scheduling depends on this
 /// list rather than a single hard-coded "do everything" implementation.
 pub fn registered_producers() -> &'static [ArtifactProducerDescriptor] {
-    static PRODUCERS: [ArtifactProducerDescriptor; 4] = [
+    static PRODUCERS: [ArtifactProducerDescriptor; 2] = [
         ArtifactProducerDescriptor {
             id: THUMBNAIL_PRODUCER_ID,
             version: THUMBNAIL_PRODUCER_VERSION,
@@ -38,16 +38,6 @@ pub fn registered_producers() -> &'static [ArtifactProducerDescriptor] {
             id: OCR_PRODUCER_ID,
             version: OCR_PRODUCER_VERSION,
             artifact_kind: "ocr",
-        },
-        ArtifactProducerDescriptor {
-            id: "builtin.artifact.html-text",
-            version: "1",
-            artifact_kind: "text_extraction",
-        },
-        ArtifactProducerDescriptor {
-            id: "builtin.artifact.rtf-text",
-            version: "1",
-            artifact_kind: "text_extraction",
         },
     ];
     &PRODUCERS
