@@ -4,16 +4,61 @@ use crate::{
     foundation::ManagedFileStore,
     history::repository::safe_relative,
     history::{new_id, now_ms, sha256, HistoryRepository},
+    providers::{
+        contracts::{
+            ocr::{OcrProvider, OcrProviderDiagnostics},
+            visual_embedding::VisualInput,
+        },
+        native_ocr::{resolve_language, NativeOcrProvider, NATIVE_OCR_PROVIDER_ID},
+    },
 };
 use anyhow::{bail, Context, Result};
+use image::GenericImageView;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 const THUMBNAIL_MAX_EDGE: u32 = 512;
 const THUMBNAIL_PRODUCER_ID: &str = "builtin.artifact.thumbnail";
 const THUMBNAIL_PRODUCER_VERSION: &str = "1";
 const OCR_PRODUCER_ID: &str = "builtin.artifact.ocr";
-const OCR_PRODUCER_VERSION: &str = "2";
+const OCR_PRODUCER_VERSION: &str = "3";
+const OCR_MAX_INPUT_BYTES: usize = 20 * 1024 * 1024;
+const OCR_MAX_DIMENSION: u32 = 10_000;
+const OCR_MAX_PIXELS: u64 = 40_000_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrSettings {
+    pub enabled: bool,
+    pub language: String,
+}
+
+impl Default for OcrSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            language: "auto".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrRuntimeStatus {
+    pub settings: OcrSettings,
+    pub provider: OcrProviderDiagnostics,
+    pub selected_language: Option<String>,
+    pub pending_jobs: u32,
+    pub running_jobs: u32,
+    pub failed_jobs: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedOcrWork {
+    pub clip_id: String,
+    pub representation_id: String,
+}
 
 /// Stable descriptor for a host-owned derived-data producer. Future extension
 /// packages use the same descriptor, but never receive direct database access.
@@ -43,57 +88,240 @@ pub fn registered_producers() -> &'static [ArtifactProducerDescriptor] {
     &PRODUCERS
 }
 
-pub fn ocr_runtime_available() -> bool {
-    platform_ocr_available()
-}
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-/// Produce thumbnail and OCR artifacts for all raster representations in a clip.
+/// Produce thumbnails and persist OCR work for all raster representations in a clip.
 pub async fn produce_for_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()> {
-    if !ocr_enabled(repo).await? {
-        // Thumbnails are still useful and entirely local; only OCR is optional.
-        for (rep_id, binary_id) in raster_representations(repo, clip_id).await? {
-            let _ = produce_thumbnail(repo, clip_id, &rep_id, &binary_id).await;
-        }
-        return Ok(());
-    }
     let reps = raster_representations(repo, clip_id).await?;
     for (rep_id, binary_id) in reps {
         let _ = produce_thumbnail(repo, clip_id, &rep_id, &binary_id).await;
-        let _ = produce_ocr(repo, clip_id, &rep_id, &binary_id).await;
+        if ocr_settings(repo).await?.enabled {
+            enqueue_ocr(repo, &rep_id).await?;
+        }
     }
     Ok(())
 }
 
-async fn ocr_enabled(repo: &HistoryRepository) -> Result<bool> {
-    let raw: Option<String> = sqlx::query_scalar(
-        "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.enabled'",
+pub async fn ocr_settings(repo: &HistoryRepository) -> Result<OcrSettings> {
+    let rows = sqlx::query("SELECT key,value_json FROM config_profile_values WHERE key IN ('artifacts.ocr.enabled','artifacts.ocr.language')")
+        .fetch_all(&repo.pool)
+        .await?;
+    let mut settings = OcrSettings::default();
+    for row in rows {
+        let key: String = row.get(0);
+        let value: String = row.get(1);
+        match key.as_str() {
+            "artifacts.ocr.enabled" => settings.enabled = serde_json::from_str(&value)?,
+            "artifacts.ocr.language" => settings.language = serde_json::from_str(&value)?,
+            _ => {}
+        }
+    }
+    validate_language_preference(&settings.language)?;
+    Ok(settings)
+}
+
+pub async fn ocr_runtime_status(repo: &HistoryRepository) -> Result<OcrRuntimeStatus> {
+    let settings = ocr_settings(repo).await?;
+    let mut provider = NativeOcrProvider::new()
+        .diagnostics()
+        .await
+        .unwrap_or_else(|error| OcrProviderDiagnostics {
+            provider_id: NATIVE_OCR_PROVIDER_ID.into(),
+            provider_version: "unavailable".into(),
+            available: false,
+            languages: Vec::new(),
+            recovery_code: Some(error.code().into()),
+            recovery_message: Some(error.to_string()),
+        });
+    let selected_language = resolve_language(
+        &settings.language,
+        &app_language(repo).await?,
+        &provider.languages,
+    );
+    if settings.language != "auto" && selected_language.is_none() {
+        provider.recovery_code = Some("ocr_language_missing".into());
+        provider.recovery_message = Some(format!(
+            "The synchronized OCR language {} is not installed on this device. Install it or choose Automatic.",
+            settings.language
+        ));
+    }
+    let rows = sqlx::query("SELECT status,count(*) FROM artifact_jobs WHERE artifact_kind='ocr' AND producer_id=? AND producer_version=? GROUP BY status")
+        .bind(OCR_PRODUCER_ID)
+        .bind(OCR_PRODUCER_VERSION)
+        .fetch_all(&repo.pool)
+        .await?;
+    let (mut pending_jobs, mut running_jobs, mut failed_jobs) = (0, 0, 0);
+    for row in rows {
+        let count = row.get::<i64, _>(1).clamp(0, i64::from(u32::MAX)) as u32;
+        match row.get::<String, _>(0).as_str() {
+            "pending" => pending_jobs = count,
+            "running" => running_jobs = count,
+            "failed" => failed_jobs = count,
+            _ => {}
+        }
+    }
+    Ok(OcrRuntimeStatus {
+        settings,
+        provider,
+        selected_language,
+        pending_jobs,
+        running_jobs,
+        failed_jobs,
+    })
+}
+
+pub async fn update_ocr_settings(repo: &HistoryRepository, settings: &OcrSettings) -> Result<()> {
+    validate_language_preference(&settings.language)?;
+    if settings.language != "auto" {
+        let diagnostics = NativeOcrProvider::new().diagnostics().await?;
+        if diagnostics.available
+            && !diagnostics
+                .languages
+                .iter()
+                .any(|language| language.id.eq_ignore_ascii_case(&settings.language))
+        {
+            bail!("selected OCR language is not installed");
+        }
+    }
+    let previous = ocr_settings(repo).await?;
+    let now = now_ms();
+    let mut transaction = repo.pool.begin().await?;
+    for (key, value) in [
+        (
+            "artifacts.ocr.enabled",
+            serde_json::to_string(&settings.enabled)?,
+        ),
+        (
+            "artifacts.ocr.language",
+            serde_json::to_string(&settings.language)?,
+        ),
+    ] {
+        let prior: Option<String> =
+            sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key=?")
+                .bind(key)
+                .fetch_optional(&mut *transaction)
+                .await?;
+        sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(key)
+            .bind(&value)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *transaction)
+            .await?;
+        if prior.as_deref() != Some(value.as_str()) {
+            HistoryRepository::enqueue_profile_sync(&mut transaction, key, &value, now).await?;
+        }
+    }
+    if previous != *settings {
+        sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
+            .bind(now)
+            .bind(now)
+            .bind(OCR_PRODUCER_ID)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
+            .bind(now)
+            .bind(OCR_PRODUCER_ID)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
+    if settings.enabled && previous != *settings {
+        enqueue_all_ocr(repo).await?;
+    }
+    Ok(())
+}
+
+pub async fn recover_ocr_queue(repo: &HistoryRepository) -> Result<()> {
+    sqlx::query("UPDATE artifact_jobs SET status='pending',started_at=NULL,updated_at=?,last_error='Recovered after ClipsX restarted' WHERE artifact_kind='ocr' AND producer_id=? AND status='running'")
+        .bind(now_ms())
+        .bind(OCR_PRODUCER_ID)
+        .execute(&repo.pool)
+        .await?;
+    if ocr_settings(repo).await?.enabled {
+        enqueue_all_ocr(repo).await?;
+    }
+    Ok(())
+}
+
+pub async fn reconcile_ocr_settings(
+    repo: &HistoryRepository,
+    previous: &OcrSettings,
+) -> Result<()> {
+    let current = ocr_settings(repo).await?;
+    if current == *previous {
+        return Ok(());
+    }
+    let now = now_ms();
+    let mut transaction = repo.pool.begin().await?;
+    sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
+        .bind(now)
+        .bind(now)
+        .bind(OCR_PRODUCER_ID)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
+        .bind(now)
+        .bind(OCR_PRODUCER_ID)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    if current.enabled {
+        enqueue_all_ocr(repo).await?;
+    }
+    Ok(())
+}
+
+pub async fn ocr_clip_ids(repo: &HistoryRepository) -> Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT clip_id FROM clip_representations WHERE lifecycle_state='ready' \
+         AND storage_kind='binary_asset' AND canonical_mime_type LIKE 'image/%'",
     )
-    .fetch_optional(&repo.pool)
-    .await?;
-    Ok(raw
+    .fetch_all(&repo.pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn app_language(repo: &HistoryRepository) -> Result<String> {
+    let value: Option<String> =
+        sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key='ui.language'")
+            .fetch_optional(&repo.pool)
+            .await?;
+    Ok(value
         .as_deref()
-        .and_then(|v| serde_json::from_str(v).ok())
-        .unwrap_or(true))
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(|| "en".into()))
+}
+
+fn validate_language_preference(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 35
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        bail!("OCR language preference is invalid");
+    }
+    Ok(())
 }
 
 pub async fn ocr_presentation(
     repo: &HistoryRepository,
     representation_id: &str,
 ) -> Result<OcrPresentation> {
-    if !ocr_enabled(repo).await? {
+    if !ocr_settings(repo).await?.enabled {
         return Ok(OcrPresentation::Disabled);
     }
     let ready: Option<String> = sqlx::query_scalar(
         "SELECT atv.text_value FROM artifact_records ar \
          JOIN artifact_inputs ai ON ai.artifact_id=ar.id \
          JOIN artifact_text_values atv ON atv.artifact_id=ar.id \
-         WHERE ai.representation_id=? AND ar.producer_id=? \
+         WHERE ai.representation_id=? AND ar.producer_id=? AND ar.producer_version=? \
          AND ar.lifecycle_state='ready' ORDER BY ar.updated_at DESC LIMIT 1",
     )
     .bind(representation_id)
     .bind(OCR_PRODUCER_ID)
+    .bind(OCR_PRODUCER_VERSION)
     .fetch_optional(&repo.pool)
     .await?;
     if let Some(text) = ready {
@@ -101,10 +329,11 @@ pub async fn ocr_presentation(
     }
     let status: Option<String> = sqlx::query_scalar(
         "SELECT status FROM artifact_jobs WHERE target_representation_id=? \
-         AND producer_id=? ORDER BY requested_at DESC LIMIT 1",
+         AND producer_id=? AND producer_version=? ORDER BY requested_at DESC,id DESC LIMIT 1",
     )
     .bind(representation_id)
     .bind(OCR_PRODUCER_ID)
+    .bind(OCR_PRODUCER_VERSION)
     .fetch_optional(&repo.pool)
     .await?;
     Ok(match status.as_deref() {
@@ -125,17 +354,27 @@ pub async fn retry_ocr(
     clip_id: &str,
     representation_id: &str,
 ) -> Result<()> {
-    let binary_id: String = sqlx::query_scalar(
-        "SELECT binary_file_id FROM clip_representations WHERE id=? AND clip_id=? \
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM clip_representations WHERE id=? AND clip_id=? \
          AND lifecycle_state='ready' AND canonical_mime_type LIKE 'image/%' \
-         AND storage_kind='binary_asset'",
+         AND storage_kind='binary_asset')",
     )
     .bind(representation_id)
     .bind(clip_id)
-    .fetch_optional(&repo.pool)
-    .await?
-    .context("ready image representation not found")?;
-    produce_ocr(repo, clip_id, representation_id, &binary_id).await
+    .fetch_one(&repo.pool)
+    .await?;
+    if !exists {
+        bail!("ready image representation not found");
+    }
+    let now = now_ms();
+    sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND target_representation_id=? AND producer_id=? AND status IN ('pending','running')")
+        .bind(now)
+        .bind(now)
+        .bind(representation_id)
+        .bind(OCR_PRODUCER_ID)
+        .execute(&repo.pool)
+        .await?;
+    enqueue_ocr(repo, representation_id).await
 }
 
 /// First ready thumbnail artifact-binary-file id for a clip.
@@ -147,11 +386,12 @@ pub async fn thumbnail_artifact_id(repo: &HistoryRepository, clip_id: &str) -> O
          JOIN artifact_inputs ai ON ai.artifact_id = ar.id \
          JOIN artifact_binary_files ab ON ab.artifact_id = ar.id AND ab.lifecycle_state = 'ready' \
          JOIN clip_representations cr ON cr.id = ai.representation_id \
-         WHERE cr.clip_id = ? AND ar.producer_id = ? AND ar.lifecycle_state = 'ready' \
+         WHERE cr.clip_id = ? AND ar.producer_id = ? AND ar.producer_version = ? AND ar.lifecycle_state = 'ready' \
          LIMIT 1",
     )
     .bind(clip_id)
     .bind(THUMBNAIL_PRODUCER_ID)
+    .bind(THUMBNAIL_PRODUCER_VERSION)
     .fetch_optional(&repo.pool)
     .await
     .ok()
@@ -166,11 +406,12 @@ pub async fn ocr_text(repo: &HistoryRepository, clip_id: &str) -> Option<String>
          JOIN artifact_inputs ai ON ai.artifact_id = ar.id \
          JOIN artifact_text_values atv ON atv.artifact_id = ar.id \
          JOIN clip_representations cr ON cr.id = ai.representation_id \
-         WHERE cr.clip_id = ? AND ar.producer_id = ? AND ar.lifecycle_state = 'ready' \
+         WHERE cr.clip_id = ? AND ar.producer_id = ? AND ar.producer_version = ? AND ar.lifecycle_state = 'ready' \
          LIMIT 1",
     )
     .bind(clip_id)
     .bind(OCR_PRODUCER_ID)
+    .bind(OCR_PRODUCER_VERSION)
     .fetch_optional(&repo.pool)
     .await
     .ok()
@@ -326,317 +567,266 @@ fn make_thumbnail(bytes: &[u8]) -> Result<Vec<u8>> {
 
 // ─── OCR ─────────────────────────────────────────────────────────────────────
 
-async fn produce_ocr(
-    repo: &HistoryRepository,
-    clip_id: &str,
-    rep_id: &str,
-    binary_id: &str,
-) -> Result<()> {
-    let param_sha = sha256(format!("{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}").as_bytes());
-    let input_sha = binary_sha256_for(repo, binary_id).await?;
-    let input_manifest = sha256(format!("{rep_id}:{input_sha}").as_bytes());
+async fn enqueue_ocr(repo: &HistoryRepository, representation_id: &str) -> Result<()> {
+    let parameter_sha =
+        sha256(format!("{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}:pending").as_bytes());
+    let now = now_ms();
+    sqlx::query("INSERT OR IGNORE INTO artifact_jobs(id,artifact_kind,target_representation_id,producer_id,producer_version,parameter_sha256,status,requested_at,created_at,updated_at) VALUES(?,'ocr',?,?,?,?,'pending',?,?,?)")
+        .bind(new_id())
+        .bind(representation_id)
+        .bind(OCR_PRODUCER_ID)
+        .bind(OCR_PRODUCER_VERSION)
+        .bind(parameter_sha)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .execute(&repo.pool)
+        .await?;
+    Ok(())
+}
 
-    if artifact_exists(repo, OCR_PRODUCER_ID, rep_id, &param_sha).await? {
-        return Ok(());
-    }
-    let job_id = claim_job(
-        repo,
-        "ocr",
-        rep_id,
-        OCR_PRODUCER_ID,
-        OCR_PRODUCER_VERSION,
-        &param_sha,
-    )
-    .await?;
-
-    let (bytes, _) = repo.asset(binary_id).await?;
-    if !platform_ocr_available() {
-        set_job_state(repo, &job_id, "unsupported", None).await?;
-        return Ok(());
-    }
-    match platform_ocr(&bytes).await {
-        Ok(text) => {
-            let art_id = new_id();
-            let art_sha = sha256(text.as_bytes());
-            let now = now_ms();
-            let mut tx = repo.pool.begin().await?;
-            sqlx::query(
-                "INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,\
-                 parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) \
-                 VALUES(?,?,?,?,?,?,?,'pending',?,?)",
-            )
-            .bind(&art_id)
-            .bind(clip_id)
-            .bind("ocr")
-            .bind(OCR_PRODUCER_ID)
-            .bind(OCR_PRODUCER_VERSION)
-            .bind(&param_sha)
-            .bind(&input_manifest)
-            .bind(now)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "INSERT INTO artifact_inputs(artifact_id,ordinal,representation_id,input_sha256) \
-                 VALUES(?,0,?,?)",
-            )
-            .bind(&art_id)
-            .bind(rep_id)
-            .bind(&input_sha)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "INSERT INTO artifact_text_values(artifact_id,text_value,utf8_byte_length,sha256) \
-                 VALUES(?,?,?,?)",
-            )
-            .bind(&art_id)
-            .bind(&text)
-            .bind(text.len() as i64)
-            .bind(&art_sha)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE artifact_records SET lifecycle_state='ready',updated_at=? WHERE id=?",
-            )
-            .bind(now)
-            .bind(&art_id)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE artifact_jobs SET status='completed',produced_artifact_id=?,completed_at=? \
-                 WHERE id=?",
-            )
-            .bind(&art_id)
-            .bind(now)
-            .bind(&job_id)
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
-        }
-        Err(error) => {
-            set_job_state(repo, &job_id, "failed", Some(&error.to_string())).await?;
-        }
+async fn enqueue_all_ocr(repo: &HistoryRepository) -> Result<()> {
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM clip_representations WHERE lifecycle_state='ready' AND storage_kind='binary_asset' AND canonical_mime_type LIKE 'image/%'")
+        .fetch_all(&repo.pool)
+        .await?;
+    for id in ids {
+        enqueue_ocr(repo, &id).await?;
     }
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-async fn platform_ocr(bytes: &[u8]) -> Result<String> {
-    use cocoa::base::{id, nil};
-    use objc::{class, msg_send, sel, sel_impl};
-    use std::ffi::CStr;
-
-    let bytes_owned = bytes.to_vec();
-    tokio::task::spawn_blocking(move || -> Result<String> {
-        unsafe {
-            let ns_data: id = msg_send![class!(NSData),
-                dataWithBytes: bytes_owned.as_ptr()
-                length: bytes_owned.len()];
-            let ci_image: id = msg_send![class!(CIImage), imageWithData: ns_data];
-            if ci_image == nil {
-                bail!("could not create CIImage");
-            }
-            let handler: id = msg_send![class!(VNImageRequestHandler), alloc];
-            let handler: id = msg_send![handler, initWithCIImage: ci_image options: nil];
-            let request: id = msg_send![class!(VNRecognizeTextRequest), alloc];
-            let request: id = msg_send![request, init];
-            let _: () = msg_send![request, setRecognitionLevel: 1i64];
-            let requests: id = msg_send![class!(NSArray), arrayWithObject: request];
-            let ok: bool = msg_send![handler, performRequests: requests
-                                       error: std::ptr::null_mut::<id>()];
-            if !ok {
-                bail!("VNImageRequestHandler failed");
-            }
-            let results: id = msg_send![request, results];
-            if results == nil {
-                return Ok(String::new());
-            }
-            let count: usize = msg_send![results, count];
-            let mut parts = Vec::with_capacity(count);
-            for i in 0..count {
-                let obs: id = msg_send![results, objectAtIndex: i];
-                let cands: id = msg_send![obs, topCandidates: 1usize];
-                let first: id = msg_send![cands, objectAtIndex: 0usize];
-                let ns: id = msg_send![first, string];
-                let c: *const std::os::raw::c_char = msg_send![ns, UTF8String];
-                if !c.is_null() {
-                    parts.push(CStr::from_ptr(c).to_string_lossy().into_owned());
-                }
-            }
-            Ok(parts.join("\n"))
-        }
-    })
-    .await
-    .context("OCR task panicked")?
+pub async fn run_next_ocr(repo: &HistoryRepository) -> Result<Option<CompletedOcrWork>> {
+    run_next_ocr_with_provider(repo, &NativeOcrProvider::new()).await
 }
 
-#[cfg(target_os = "windows")]
-async fn platform_ocr(bytes: &[u8]) -> Result<String> {
-    use tokio::sync::oneshot;
-
-    const MAX_OCR_INPUT_BYTES: usize = 20 * 1024 * 1024;
-    if bytes.is_empty() || bytes.len() > MAX_OCR_INPUT_BYTES {
-        bail!("Windows OCR input must contain between 1 byte and 20 MiB");
-    }
-    let sender = windows_ocr_sender()?;
-    let (result_sender, result_receiver) = oneshot::channel();
-    let request = WindowsOcrRequest::Recognize(bytes.to_vec(), result_sender);
-    tokio::task::spawn_blocking(move || sender.send(request))
-        .await
-        .context("Windows OCR queue task panicked")?
-        .map_err(|_| anyhow::anyhow!("Windows OCR executor stopped"))?;
-    result_receiver
-        .await
-        .context("Windows OCR executor dropped its response")?
-        .map_err(anyhow::Error::msg)
-}
-
-#[cfg(target_os = "macos")]
-fn platform_ocr_available() -> bool {
-    true
-}
-
-#[cfg(target_os = "windows")]
-fn platform_ocr_available() -> bool {
-    use std::sync::mpsc;
-
-    let Ok(sender) = windows_ocr_sender() else {
-        return false;
+async fn run_next_ocr_with_provider(
+    repo: &HistoryRepository,
+    provider: &dyn OcrProvider,
+) -> Result<Option<CompletedOcrWork>> {
+    let mut transaction = repo.pool.begin().await?;
+    let row = sqlx::query("SELECT j.id,r.clip_id,r.id,r.binary_file_id,r.canonical_mime_type FROM artifact_jobs j JOIN clip_representations r ON r.id=j.target_representation_id WHERE j.artifact_kind='ocr' AND j.producer_id=? AND j.status='pending' ORDER BY j.requested_at,j.id LIMIT 1")
+        .bind(OCR_PRODUCER_ID)
+        .fetch_optional(&mut *transaction)
+        .await?;
+    let Some(row) = row else {
+        transaction.commit().await?;
+        return Ok(None);
     };
-    let (response_sender, response_receiver) = mpsc::sync_channel(1);
-    sender
-        .send(WindowsOcrRequest::Available(response_sender))
-        .is_ok()
-        && response_receiver.recv().unwrap_or(false)
-}
-
-#[cfg(target_os = "windows")]
-enum WindowsOcrRequest {
-    Recognize(
-        Vec<u8>,
-        tokio::sync::oneshot::Sender<std::result::Result<String, String>>,
-    ),
-    Available(std::sync::mpsc::SyncSender<bool>),
-}
-
-#[cfg(target_os = "windows")]
-fn windows_ocr_sender() -> Result<std::sync::mpsc::SyncSender<WindowsOcrRequest>> {
-    use std::sync::{mpsc, OnceLock};
-
-    static SENDER: OnceLock<mpsc::SyncSender<WindowsOcrRequest>> = OnceLock::new();
-    if let Some(sender) = SENDER.get() {
-        return Ok(sender.clone());
+    let job_id: String = row.get(0);
+    let clip_id: String = row.get(1);
+    let representation_id: String = row.get(2);
+    let binary_id: String = row.get(3);
+    let mime_type: String = row.get(4);
+    let now = now_ms();
+    let updated = sqlx::query("UPDATE artifact_jobs SET status='running',attempt_count=attempt_count+1,started_at=?,updated_at=?,last_error=NULL WHERE id=? AND status='pending'")
+        .bind(now).bind(now).bind(&job_id).execute(&mut *transaction).await?.rows_affected();
+    transaction.commit().await?;
+    if updated == 0 {
+        return Ok(None);
     }
-    let (sender, receiver) = mpsc::sync_channel(2);
-    std::thread::Builder::new()
-        .name("clipsx-winrt-ocr".into())
-        .spawn(move || windows_ocr_worker(receiver))
-        .context("unable to start the Windows OCR executor")?;
-    let _ = SENDER.set(sender.clone());
-    Ok(SENDER.get().cloned().unwrap_or(sender))
-}
-
-#[cfg(target_os = "windows")]
-fn windows_ocr_worker(receiver: std::sync::mpsc::Receiver<WindowsOcrRequest>) {
-    use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
-
-    let initialized = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
-    for request in receiver {
-        match request {
-            WindowsOcrRequest::Available(response) => {
-                let available = initialized.is_ok() && windows_ocr_engine_available();
-                let _ = response.send(available);
-            }
-            WindowsOcrRequest::Recognize(bytes, response) => {
-                let result = if initialized.is_err() {
-                    Err("unable to initialize the WinRT MTA apartment".into())
-                } else {
-                    windows_recognize(&bytes).map_err(|error| error.to_string())
-                };
-                let _ = response.send(result);
-            }
-        }
-    }
-    if initialized.is_ok() {
-        unsafe { RoUninitialize() };
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn windows_ocr_engine_available() -> bool {
-    use windows::Media::Ocr::OcrEngine;
-
-    OcrEngine::TryCreateFromUserProfileLanguages().is_ok()
-}
-
-#[cfg(target_os = "windows")]
-fn windows_recognize(bytes: &[u8]) -> Result<String> {
-    use windows::{
-        Graphics::Imaging::BitmapDecoder,
-        Media::Ocr::OcrEngine,
-        Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
+    let completed = CompletedOcrWork {
+        clip_id: clip_id.clone(),
+        representation_id: representation_id.clone(),
     };
 
-    let stream = InMemoryRandomAccessStream::new()?;
-    let writer = DataWriter::CreateDataWriter(&stream)?;
-    writer.WriteBytes(bytes)?;
-    writer.StoreAsync()?.join()?;
-    writer.DetachStream()?;
-    stream.Seek(0)?;
-
-    let decoder = BitmapDecoder::CreateAsync(&stream)?.join()?;
-    let bitmap = decoder.GetSoftwareBitmapAsync()?.join()?;
-    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-        .context("Windows has no OCR language compatible with the user profile")?;
-    let result = engine.RecognizeAsync(&bitmap)?.join()?;
-    Ok(result.Text()?.to_string())
-}
-
-#[cfg(target_os = "linux")]
-fn platform_ocr_available() -> bool {
-    std::process::Command::new("tesseract")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-fn platform_ocr_available() -> bool {
-    false
-}
-
-#[cfg(target_os = "linux")]
-async fn platform_ocr(bytes: &[u8]) -> Result<String> {
-    if std::process::Command::new("tesseract")
-        .arg("--version")
-        .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(true)
+    let settings = ocr_settings(repo).await?;
+    if !settings.enabled {
+        set_job_state(repo, &job_id, "cancelled", None).await?;
+        return Ok(Some(completed));
+    }
+    let diagnostics = match provider.diagnostics().await {
+        Ok(value) if value.available => value,
+        Ok(value) => {
+            set_job_state(
+                repo,
+                &job_id,
+                "unsupported",
+                value.recovery_message.as_deref(),
+            )
+            .await?;
+            return Ok(Some(completed));
+        }
+        Err(error) => {
+            set_job_state(repo, &job_id, "unsupported", Some(&error.to_string())).await?;
+            return Ok(Some(completed));
+        }
+    };
+    let Some(language) = resolve_language(
+        &settings.language,
+        &app_language(repo).await?,
+        &diagnostics.languages,
+    ) else {
+        set_job_state(
+            repo,
+            &job_id,
+            "unsupported",
+            Some("No compatible OCR language is installed"),
+        )
+        .await?;
+        return Ok(Some(completed));
+    };
+    let parameter_sha = sha256(
+        format!(
+            "{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}:{}:{}",
+            diagnostics.provider_version, language
+        )
+        .as_bytes(),
+    );
+    sqlx::query("UPDATE artifact_jobs SET parameter_sha256=?,updated_at=? WHERE id=?")
+        .bind(&parameter_sha)
+        .bind(now_ms())
+        .bind(&job_id)
+        .execute(&repo.pool)
+        .await?;
+    if let Some(artifact_id) =
+        existing_artifact_id(repo, OCR_PRODUCER_ID, &representation_id, &parameter_sha).await?
     {
-        bail!("tesseract not installed");
-    }
-    let bytes_owned = bytes.to_vec();
-    tokio::task::spawn_blocking(move || -> Result<String> {
-        let dir = tempfile::TempDir::new()?;
-        let input = dir.path().join("input.png");
-        std::fs::write(&input, &bytes_owned)?;
-        let output = std::process::Command::new("tesseract")
-            .arg(&input)
-            .arg("stdout")
-            .output()?;
-        if !output.status.success() {
-            let diagnostic = String::from_utf8_lossy(&output.stderr);
-            bail!("tesseract failed: {}", diagnostic.trim());
+        if !complete_job(repo, &job_id, &artifact_id).await? {
+            set_job_state(repo, &job_id, "cancelled", None).await?;
         }
-        String::from_utf8(output.stdout).context("tesseract returned non-UTF-8 text")
-    })
-    .await
-    .context("OCR task panicked")?
+        return Ok(Some(completed));
+    }
+    let (bytes, _) = repo.asset(&binary_id).await?;
+    let input_sha = binary_sha256_for(repo, &binary_id).await?;
+    let input = match bounded_visual_input(bytes, mime_type, input_sha.clone()) {
+        Ok(value) => value,
+        Err(error) => {
+            set_job_state(repo, &job_id, "failed", Some(&error.to_string())).await?;
+            return Ok(Some(completed));
+        }
+    };
+    let text = match provider.recognize(&input, &language).await {
+        Ok(value) => value,
+        Err(error) => {
+            set_job_state(repo, &job_id, "failed", Some(&error.to_string())).await?;
+            return Ok(Some(completed));
+        }
+    };
+    if !persist_ocr_result(
+        repo,
+        OcrPersistence {
+            job_id: &job_id,
+            clip_id: &clip_id,
+            representation_id: &representation_id,
+            input_sha: &input_sha,
+            parameter_sha: &parameter_sha,
+            expected_settings: &settings,
+            text: &text,
+        },
+    )
+    .await?
+    {
+        set_job_state(repo, &job_id, "cancelled", None).await?;
+    }
+    Ok(Some(completed))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-async fn platform_ocr(_bytes: &[u8]) -> Result<String> {
-    bail!("OCR not supported on this platform")
+fn bounded_visual_input(
+    bytes: Vec<u8>,
+    mime_type: String,
+    input_sha: String,
+) -> Result<VisualInput> {
+    if bytes.is_empty() || bytes.len() > OCR_MAX_INPUT_BYTES {
+        bail!("OCR input must contain between 1 byte and 20 MiB");
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes));
+    reader.set_format(image::guess_format(&bytes).context("unsupported OCR image format")?);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(OCR_MAX_DIMENSION);
+    limits.max_image_height = Some(OCR_MAX_DIMENSION);
+    limits.max_alloc = Some(OCR_MAX_PIXELS * 4);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .context("unable to decode bounded OCR image")?;
+    let (width, height) = image.dimensions();
+    if u64::from(width) * u64::from(height) > OCR_MAX_PIXELS {
+        bail!("OCR image exceeds the 40 megapixel limit");
+    }
+    Ok(VisualInput {
+        bytes: Arc::from(bytes),
+        mime_type,
+        sha256: input_sha,
+        width,
+        height,
+    })
+}
+
+struct OcrPersistence<'a> {
+    job_id: &'a str,
+    clip_id: &'a str,
+    representation_id: &'a str,
+    input_sha: &'a str,
+    parameter_sha: &'a str,
+    expected_settings: &'a OcrSettings,
+    text: &'a str,
+}
+
+async fn persist_ocr_result(repo: &HistoryRepository, result: OcrPersistence<'_>) -> Result<bool> {
+    let OcrPersistence {
+        job_id,
+        clip_id,
+        representation_id,
+        input_sha,
+        parameter_sha,
+        expected_settings,
+        text,
+    } = result;
+    let artifact_id = new_id();
+    let now = now_ms();
+    let input_manifest = sha256(format!("{representation_id}:{input_sha}").as_bytes());
+    let mut transaction = repo.pool.begin().await?;
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM artifact_jobs WHERE id=?")
+        .bind(job_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+    let enabled: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.enabled'",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let language: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.language'",
+    )
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let current_settings = OcrSettings {
+        enabled: enabled
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or(true),
+        language: language
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_else(|| "auto".into()),
+    };
+    if status.as_deref() != Some("running") || current_settings != *expected_settings {
+        transaction.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query("INSERT INTO artifact_records(id,owner_clip_id,artifact_kind,producer_id,producer_version,parameter_sha256,input_manifest_sha256,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)")
+        .bind(&artifact_id).bind(clip_id).bind("ocr").bind(OCR_PRODUCER_ID).bind(OCR_PRODUCER_VERSION)
+        .bind(parameter_sha).bind(input_manifest).bind(now).bind(now).execute(&mut *transaction).await?;
+    sqlx::query("INSERT INTO artifact_inputs(artifact_id,ordinal,representation_id,input_sha256) VALUES(?,0,?,?)")
+        .bind(&artifact_id).bind(representation_id).bind(input_sha).execute(&mut *transaction).await?;
+    sqlx::query("INSERT INTO artifact_text_values(artifact_id,text_value,utf8_byte_length,sha256) VALUES(?,?,?,?)")
+        .bind(&artifact_id).bind(text).bind(text.len() as i64).bind(sha256(text.as_bytes())).execute(&mut *transaction).await?;
+    sqlx::query("UPDATE artifact_records SET lifecycle_state='ready',updated_at=? WHERE id=?")
+        .bind(now)
+        .bind(&artifact_id)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("UPDATE artifact_jobs SET status='completed',produced_artifact_id=?,updated_at=?,completed_at=? WHERE id=? AND status='running'")
+        .bind(&artifact_id).bind(now).bind(now).bind(job_id).execute(&mut *transaction).await?;
+    transaction.commit().await?;
+    Ok(true)
+}
+
+async fn complete_job(repo: &HistoryRepository, job_id: &str, artifact_id: &str) -> Result<bool> {
+    let now = now_ms();
+    let changed = sqlx::query("UPDATE artifact_jobs SET status='completed',produced_artifact_id=?,updated_at=?,completed_at=? WHERE id=? AND status='running' AND EXISTS(SELECT 1 FROM artifact_records WHERE id=? AND lifecycle_state='ready')")
+        .bind(artifact_id).bind(now).bind(now).bind(job_id).bind(artifact_id).execute(&repo.pool).await?.rows_affected();
+    Ok(changed == 1)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -705,6 +895,25 @@ async fn artifact_exists(
     Ok(exists)
 }
 
+async fn existing_artifact_id(
+    repo: &HistoryRepository,
+    producer_id: &str,
+    rep_id: &str,
+    parameter_sha256: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT ar.id FROM artifact_records ar JOIN artifact_inputs ai ON ai.artifact_id=ar.id \
+         WHERE ar.producer_id=? AND ai.representation_id=? AND ar.parameter_sha256=? \
+         AND ar.lifecycle_state='ready' ORDER BY ar.updated_at DESC LIMIT 1",
+    )
+    .bind(producer_id)
+    .bind(rep_id)
+    .bind(parameter_sha256)
+    .fetch_optional(&repo.pool)
+    .await
+    .map_err(Into::into)
+}
+
 async fn claim_job(
     repo: &HistoryRepository,
     kind: &str,
@@ -739,13 +948,17 @@ async fn set_job_state(
     status: &str,
     error: Option<&str>,
 ) -> Result<()> {
-    sqlx::query("UPDATE artifact_jobs SET status=?,last_error=?,completed_at=? WHERE id=?")
-        .bind(status)
-        .bind(error.map(|value| value.chars().take(512).collect::<String>()))
-        .bind(now_ms())
-        .bind(job_id)
-        .execute(&repo.pool)
-        .await?;
+    let now = now_ms();
+    sqlx::query(
+        "UPDATE artifact_jobs SET status=?,last_error=?,updated_at=?,completed_at=? WHERE id=?",
+    )
+    .bind(status)
+    .bind(error.map(|value| value.chars().take(512).collect::<String>()))
+    .bind(now)
+    .bind(now)
+    .bind(job_id)
+    .execute(&repo.pool)
+    .await?;
     Ok(())
 }
 
@@ -766,6 +979,14 @@ mod tests {
         let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
             .await
             .unwrap();
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            32,
+            32,
+            image::Rgba([255, 255, 255, 255]),
+        ))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
         let (clip_id, _) = repo
             .capture(
                 CapturedSnapshot {
@@ -779,7 +1000,7 @@ mod tests {
                         native_type: Some("PNG".into()),
                         platform: "windows".into(),
                         capture_priority: 1,
-                        payload: CapturedPayload::Binary(vec![1, 2, 3]),
+                        payload: CapturedPayload::Binary(png),
                     }],
                 },
                 &CaptureSettings::default(),
@@ -876,19 +1097,316 @@ mod tests {
             }
         );
     }
+
+    #[derive(Clone)]
+    struct FakeOcrProvider {
+        diagnostics: OcrProviderDiagnostics,
+        result: crate::providers::error::ProviderResult<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrProvider for FakeOcrProvider {
+        fn descriptor(&self) -> crate::providers::contracts::ProviderDescriptor {
+            crate::providers::contracts::ProviderDescriptor {
+                provider_id: NATIVE_OCR_PROVIDER_ID.into(),
+                provider_version: "test".into(),
+                model_id: "test".into(),
+                model_revision: "test".into(),
+            }
+        }
+
+        async fn diagnostics(
+            &self,
+        ) -> crate::providers::error::ProviderResult<OcrProviderDiagnostics> {
+            Ok(self.diagnostics.clone())
+        }
+
+        async fn recognize(
+            &self,
+            _input: &VisualInput,
+            _language: &str,
+        ) -> crate::providers::error::ProviderResult<String> {
+            self.result.clone()
+        }
+    }
+
+    fn fake_provider(result: crate::providers::error::ProviderResult<String>) -> FakeOcrProvider {
+        FakeOcrProvider {
+            diagnostics: OcrProviderDiagnostics {
+                provider_id: NATIVE_OCR_PROVIDER_ID.into(),
+                provider_version: "test-engine-1".into(),
+                available: true,
+                languages: vec![crate::providers::contracts::ocr::OcrLanguage {
+                    id: "en-US".into(),
+                    label: "English".into(),
+                }],
+                recovery_code: None,
+                recovery_message: None,
+            },
+            result,
+        }
+    }
+
+    #[tokio::test]
+    async fn persistent_queue_preserves_canonical_image_and_indexes_empty_or_ready_output() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let clip_id: String =
+            sqlx::query_scalar("SELECT clip_id FROM clip_representations WHERE id=?")
+                .bind(&representation_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let canonical_sha: String = sqlx::query_scalar("SELECT b.sha256 FROM clip_representations r JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.id=?")
+            .bind(&representation_id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+
+        produce_for_clip(&repo, &clip_id).await.unwrap();
+        assert_eq!(ocr_runtime_status(&repo).await.unwrap().pending_jobs, 1);
+        let provider = fake_provider(Ok("hello from image".into()));
+        assert!(run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Ready {
+                text: "hello from image".into()
+            }
+        );
+        crate::search::upsert_projection(&repo, &clip_id)
+            .await
+            .unwrap();
+        let projected: String =
+            sqlx::query_scalar("SELECT search_text FROM search_documents WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert!(projected.contains("hello from image"));
+        let after_sha: String = sqlx::query_scalar("SELECT b.sha256 FROM clip_representations r JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.id=?")
+            .bind(&representation_id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(canonical_sha, after_sha);
+
+        retry_ocr(&repo, &clip_id, &representation_id)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider).await.unwrap();
+        let artifact_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM artifact_records WHERE owner_clip_id=? AND producer_id=?",
+        )
+        .bind(&clip_id)
+        .bind(OCR_PRODUCER_ID)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(artifact_count, 1);
+
+        repo.delete(&clip_id).await.unwrap();
+        let remaining_jobs: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM artifact_jobs WHERE target_representation_id=?",
+        )
+        .bind(&representation_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining_jobs, 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_and_unavailable_ocr_end_in_explicit_terminal_states() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let clip_id: String =
+            sqlx::query_scalar("SELECT clip_id FROM clip_representations WHERE id=?")
+                .bind(&representation_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        produce_for_clip(&repo, &clip_id).await.unwrap();
+        sqlx::query(
+            "UPDATE config_profile_values SET value_json='false' WHERE key='artifacts.ocr.enabled'",
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        run_next_ocr_with_provider(&repo, &fake_provider(Ok(String::new())))
+            .await
+            .unwrap();
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM artifact_jobs ORDER BY requested_at DESC LIMIT 1",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "cancelled");
+
+        sqlx::query(
+            "UPDATE config_profile_values SET value_json='true' WHERE key='artifacts.ocr.enabled'",
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        enqueue_ocr(&repo, &representation_id).await.unwrap();
+        let mut unavailable = fake_provider(Ok(String::new()));
+        unavailable.diagnostics.available = false;
+        unavailable.diagnostics.languages.clear();
+        unavailable.diagnostics.recovery_message = Some("Install language data".into());
+        run_next_ocr_with_provider(&repo, &unavailable)
+            .await
+            .unwrap();
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Unsupported
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_success_and_failed_retry_have_stable_presentations() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let clip_id: String =
+            sqlx::query_scalar("SELECT clip_id FROM clip_representations WHERE id=?")
+                .bind(&representation_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        produce_for_clip(&repo, &clip_id).await.unwrap();
+        run_next_ocr_with_provider(&repo, &fake_provider(Ok(String::new())))
+            .await
+            .unwrap();
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Ready {
+                text: String::new()
+            }
+        );
+
+        sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated' WHERE owner_clip_id=? AND producer_id=?")
+            .bind(&clip_id)
+            .bind(OCR_PRODUCER_ID)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        retry_ocr(&repo, &clip_id, &representation_id)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(
+            &repo,
+            &fake_provider(Err(crate::providers::error::ProviderError::InvalidOutput(
+                "fixture failure".into(),
+            ))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Failed {
+                message: "Text recognition failed".into()
+            }
+        );
+        retry_ocr(&repo, &clip_id, &representation_id)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &fake_provider(Ok("recovered".into())))
+            .await
+            .unwrap();
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Ready {
+                text: "recovered".into()
+            }
+        );
+    }
+
+    #[derive(Clone)]
+    struct BlockingOcrProvider {
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl OcrProvider for BlockingOcrProvider {
+        fn descriptor(&self) -> crate::providers::contracts::ProviderDescriptor {
+            fake_provider(Ok(String::new())).descriptor()
+        }
+
+        async fn diagnostics(
+            &self,
+        ) -> crate::providers::error::ProviderResult<OcrProviderDiagnostics> {
+            fake_provider(Ok(String::new())).diagnostics().await
+        }
+
+        async fn recognize(
+            &self,
+            _input: &VisualInput,
+            _language: &str,
+        ) -> crate::providers::error::ProviderResult<String> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok("must be discarded".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn disabling_ocr_discards_an_in_flight_native_result() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let clip_id: String =
+            sqlx::query_scalar("SELECT clip_id FROM clip_representations WHERE id=?")
+                .bind(&representation_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        produce_for_clip(&repo, &clip_id).await.unwrap();
+        let provider = BlockingOcrProvider {
+            started: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(tokio::sync::Notify::new()),
+        };
+        let worker_repo = repo.clone();
+        let worker_provider = provider.clone();
+        let worker = tokio::spawn(async move {
+            run_next_ocr_with_provider(&worker_repo, &worker_provider).await
+        });
+        provider.started.notified().await;
+        update_ocr_settings(
+            &repo,
+            &OcrSettings {
+                enabled: false,
+                language: "auto".into(),
+            },
+        )
+        .await
+        .unwrap();
+        provider.release.notify_one();
+        worker.await.unwrap().unwrap();
+        let artifacts: i64 = sqlx::query_scalar("SELECT count(*) FROM artifact_records WHERE owner_clip_id=? AND producer_id=? AND lifecycle_state='ready'")
+            .bind(&clip_id)
+            .bind(OCR_PRODUCER_ID)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(artifacts, 0);
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Disabled
+        );
+    }
 }
-#[cfg(target_os = "windows")]
-#[test]
-fn windows_ocr_runtime_has_a_profile_language() {
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn native_ocr_runtime_has_an_installed_language() {
+    let diagnostics = NativeOcrProvider::new().diagnostics().await.unwrap();
     assert!(
-        platform_ocr_available(),
-        "Windows.Media.Ocr must have at least one installed user-profile language"
+        diagnostics.available,
+        "native OCR must have at least one installed language"
     );
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 #[tokio::test]
-async fn windows_ocr_recognizes_a_bounded_bitmap_off_ui_thread() {
+async fn native_ocr_recognizes_a_bounded_bitmap_off_ui_thread() {
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
 
@@ -930,7 +1448,11 @@ async fn windows_ocr_recognizes_a_bounded_bitmap_off_ui_thread() {
     DynamicImage::ImageRgba8(image)
         .write_to(&mut png, ImageFormat::Png)
         .unwrap();
-    let text = platform_ocr(png.get_ref()).await.unwrap();
+    let provider = NativeOcrProvider::new();
+    let diagnostics = provider.diagnostics().await.unwrap();
+    let language = resolve_language("auto", "en", &diagnostics.languages).unwrap();
+    let input = bounded_visual_input(png.into_inner(), "image/png".into(), "0".repeat(64)).unwrap();
+    let text = provider.recognize(&input, &language).await.unwrap();
     assert!(
         text.to_ascii_uppercase().contains("TEST"),
         "expected TEST, got {text:?}"

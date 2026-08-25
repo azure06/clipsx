@@ -10,6 +10,7 @@ import {
   Circle,
   Database,
   LayoutDashboard,
+  Languages,
   Loader2,
   Plus,
   PlugZap,
@@ -39,6 +40,22 @@ type GenerationProviderStatus = {
   diagnostic: string | null
   endpoint: string | null
   model: string | null
+}
+type OcrLanguage = { id: string; label: string }
+type OcrRuntimeStatus = {
+  settings: { enabled: boolean; language: string }
+  provider: {
+    providerId: string
+    providerVersion: string
+    available: boolean
+    languages: OcrLanguage[]
+    recoveryCode: string | null
+    recoveryMessage: string | null
+  }
+  selectedLanguage: string | null
+  pendingJobs: number
+  runningJobs: number
+  failedJobs: number
 }
 
 const formatBytes = (bytes: number): string => {
@@ -106,6 +123,8 @@ export const IntelligencePage = () => {
   const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
   const [generationModel, setGenerationModel] = useState('')
   const [generationSaving, setGenerationSaving] = useState(false)
+  const [ocrStatus, setOcrStatus] = useState<OcrRuntimeStatus | null>(null)
+  const [ocrSaving, setOcrSaving] = useState(false)
   const [activeSection, setActiveSection] =
     useState<(typeof intelligenceSections)[number]['id']>('models')
   const { toast } = useToast()
@@ -117,17 +136,19 @@ export const IntelligencePage = () => {
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
-      const [s, sources, settings, generation, jobs] = await Promise.all([
+      const [s, sources, settings, generation, jobs, ocr] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<SearchSourceDescriptor[]>('list_search_sources'),
         invoke<SearchSettings>('get_search_settings'),
         invoke<GenerationProviderStatus>('get_text_generation_status'),
         invoke<FailedTextEmbeddingJob[]>('list_failed_text_embedding_jobs'),
+        invoke<OcrRuntimeStatus>('get_ocr_runtime_status'),
       ])
       setStatus(s)
       setSearchSources(sources)
       setSearchSettings(settings)
       setFailedJobs(Array.isArray(jobs) ? jobs : [])
+      if (ocr) setOcrStatus(ocr)
       if (generation) {
         setGenerationStatus(generation)
         if (generation.model) setGenerationModel(generation.model)
@@ -172,12 +193,23 @@ export const IntelligencePage = () => {
         })
       }
     })
+    const u6 = listen('ocr-status-changed', () => void loadStatus())
+    const u7 = listen<string>('ocr-worker-failed', event => {
+      void loadStatus()
+      toast({
+        title: 'Text recognition needs attention',
+        description: event.payload,
+        type: 'error',
+      })
+    })
     return () => {
       void u1.then(f => f())
       void u2.then(f => f())
       void u3.then(f => f())
       void u4.then(f => f())
       void u5.then(f => f())
+      void u6.then(f => f())
+      void u7.then(f => f())
     }
   }, [loadStatus, toast])
 
@@ -293,6 +325,36 @@ export const IntelligencePage = () => {
     }
   }
 
+  const saveOcrSettings = async (enabled: boolean, language: string) => {
+    if (!ocrStatus || ocrSaving) return
+    const previous = ocrStatus
+    setOcrSaving(true)
+    setOcrStatus({ ...ocrStatus, settings: { enabled, language } })
+    try {
+      const next = await invoke<OcrRuntimeStatus>('update_ocr_settings', {
+        settings: { enabled, language },
+      })
+      setOcrStatus(next)
+      toast({
+        title: enabled ? 'Text recognition updated' : 'Text recognition disabled',
+        description:
+          enabled && language !== previous.settings.language
+            ? 'Existing images are queued for recognition with the new language.'
+            : undefined,
+        type: 'success',
+      })
+    } catch (error) {
+      setOcrStatus(previous)
+      toast({
+        title: 'Could not update text recognition',
+        description: toErrorMessage(error),
+        type: 'error',
+      })
+    } finally {
+      setOcrSaving(false)
+    }
+  }
+
   const startIndexAction = async (action: IndexAction, command: string) => {
     if (activeIndexAction) return
     setActiveIndexAction({ kind: action, stage: 'submitting' })
@@ -370,6 +432,23 @@ export const IntelligencePage = () => {
   const indexing = status?.phase === 'indexing'
   const total = status?.eligibleClips ?? 0
   const progressPct = total > 0 ? Math.round((status!.indexedClips / total) * 100) : 100
+  const ocrLanguageOptions = [
+    { value: 'auto', label: 'Automatic' },
+    ...(ocrStatus?.provider.languages ?? []).map(language => ({
+      value: language.id,
+      label: language.label,
+    })),
+  ]
+  if (
+    ocrStatus &&
+    ocrStatus.settings.language !== 'auto' &&
+    !ocrLanguageOptions.some(option => option.value === ocrStatus.settings.language)
+  ) {
+    ocrLanguageOptions.push({
+      value: ocrStatus.settings.language,
+      label: `${ocrStatus.settings.language} (not installed)`,
+    })
+  }
 
   return (
     <div className="relative flex h-full flex-col overflow-auto p-8">
@@ -862,24 +941,124 @@ export const IntelligencePage = () => {
         )}
 
         {activeSection === 'vision' && (
-          <div
-            role="tabpanel"
-            id="intelligence-vision"
-            className="scroll-mt-16 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 opacity-60 dark:border-white/10 dark:bg-slate-100/5"
-          >
-            <div className="flex items-center gap-2">
-              <ScanSearch className="h-4 w-4 text-sky-400" strokeWidth={1.5} />
-              <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                Visual Image Search
-              </span>
-              <span className="ml-auto rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/10">
-                coming soon
-              </span>
-            </div>
-            <p className="mt-2 text-xs text-gray-400">
-              Semantic search over screenshots and images — find a beach photo by searching "ocean
-              sunset".
-            </p>
+          <div role="tabpanel" id="intelligence-vision" className="scroll-mt-16 space-y-4">
+            <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/30 dark:border-white/10 dark:bg-slate-100/5">
+              <div className="flex items-start justify-between gap-5 p-5">
+                <div className="flex min-w-0 gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/40 bg-sky-500/10 dark:border-sky-400/20">
+                    <ScanSearch className="h-4 w-4 text-sky-500" strokeWidth={1.6} />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      Text recognition
+                    </h2>
+                    <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Read text from copied images locally. Recognition is derived data—your
+                      original image stays unchanged when the engine is unavailable or fails.
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  size="sm"
+                  checked={ocrStatus?.settings.enabled ?? false}
+                  disabled={!ocrStatus || ocrSaving}
+                  onChange={enabled =>
+                    ocrStatus && void saveOcrSettings(enabled, ocrStatus.settings.language)
+                  }
+                />
+              </div>
+
+              <div className="border-y border-slate-200/60 bg-white/35 px-5 py-3 dark:border-white/8 dark:bg-black/10">
+                <div
+                  className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2"
+                  aria-label="Text recognition path"
+                >
+                  {[
+                    { label: 'Engine', value: ocrStatus?.provider.providerVersion ?? 'Checking…' },
+                    { label: 'Language', value: ocrStatus?.selectedLanguage ?? 'Unavailable' },
+                    {
+                      label: 'Queue',
+                      value: ocrStatus
+                        ? `${ocrStatus.pendingJobs + ocrStatus.runningJobs} waiting`
+                        : 'Checking…',
+                    },
+                  ].map((item, index) => (
+                    <div key={item.label} className="contents">
+                      {index > 0 && (
+                        <ChevronRight className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                          {item.label}
+                        </p>
+                        <p className="mt-0.5 truncate text-[11px] font-medium text-slate-700 dark:text-slate-200">
+                          {item.value}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4 p-5">
+                <div className="flex items-center justify-between gap-5">
+                  <div className="flex min-w-0 items-start gap-2.5">
+                    <Languages
+                      className="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
+                      strokeWidth={1.6}
+                    />
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        Recognition language
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                        Automatic follows your ClipsX language, then falls back to English.
+                      </p>
+                    </div>
+                  </div>
+                  <Select
+                    className="w-44 shrink-0 text-xs"
+                    value={ocrStatus?.settings.language ?? 'auto'}
+                    disabled={!ocrStatus?.settings.enabled || ocrSaving}
+                    onChange={language =>
+                      ocrStatus && void saveOcrSettings(ocrStatus.settings.enabled, language)
+                    }
+                    options={ocrLanguageOptions}
+                  />
+                </div>
+
+                {ocrStatus?.provider.recoveryMessage && (
+                  <div className="flex gap-2.5 rounded-xl border border-amber-300/45 bg-amber-50/65 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-400/15 dark:bg-amber-400/8 dark:text-amber-200">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <p className="leading-5">{ocrStatus.provider.recoveryMessage}</p>
+                  </div>
+                )}
+
+                {ocrStatus && ocrStatus.failedJobs > 0 && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                    {ocrStatus.failedJobs.toLocaleString()} image
+                    {ocrStatus.failedJobs === 1 ? '' : 's'} could not be recognized. Retry from the
+                    image’s OCR view.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200/60 bg-slate-100/20 p-5 opacity-60 dark:border-white/10 dark:bg-slate-100/4">
+              <div className="flex items-center gap-2">
+                <ScanSearch className="h-4 w-4 text-sky-400" strokeWidth={1.5} />
+                <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  Visual Image Search
+                </span>
+                <span className="ml-auto rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/10">
+                  coming soon
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-gray-400">
+                Semantic search over screenshots and images — find a beach photo by searching "ocean
+                sunset".
+              </p>
+            </section>
           </div>
         )}
 

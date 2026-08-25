@@ -36,4 +36,5 @@ INSERT INTO config_profile_values (key, value_json, created_at, updated_at) VALU
     ('renderer.preferences', '{}', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('search.syntax_mode', '"simple"', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('search.enabled_sources', '["builtin.search.fts"]', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
-    ('artifacts.ocr.enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ('artifacts.ocr.enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    ('artifacts.ocr.language', '"auto"', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);

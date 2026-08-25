@@ -30,7 +30,7 @@ jobs:
       - name: Install system and audit dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn
           cargo install cargo-audit --locked
           cargo install cargo-cyclonedx --locked
       - name: Verify application
@@ -111,7 +111,7 @@ jobs:
         if: startsWith(matrix.settings.os, 'ubuntu-')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}

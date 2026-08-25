@@ -18,14 +18,20 @@ Every item starts unchecked. Mark an item `[x]` only after its acceptance criter
 ## 2. Cross-platform OCR
 
 - [ ] Refactor OCR behind the existing provider contract with runtime availability, version, language, and recovery diagnostics.
-- [x] Implement Windows OCR on a dedicated WinRT MTA executor using `Windows.Media.Ocr`; decode bounded image bytes, select installed user languages, and keep all work off the UI thread. Evidence: [platform implementation and generated-bitmap lifecycle test](../src-tauri/src/artifacts/host.rs); both Windows runtime/language and real recognition tests pass.
+- [x] Implement Windows OCR on a dedicated WinRT MTA executor using `Windows.Media.Ocr`; decode bounded image bytes, select installed user languages, and keep all work off the UI thread. Evidence: [native provider](../src-tauri/src/providers/native_ocr.rs), [bounded artifact input and generated-bitmap recognition test](../src-tauri/src/artifacts/host.rs); local Windows runtime/language and real recognition tests pass.
 - [ ] Preserve macOS Vision OCR while adding explicit language selection, bounded execution, and real installed-build tests.
 - [ ] Harden Linux Tesseract discovery using direct process invocation, expose detected version/languages, document `.deb` dependencies, and provide actionable AppImage recovery instructions.
 - [ ] Move OCR execution to a bounded background queue with cancellation, retry, enable/disable, and reprocessing when provider/language configuration changes.
-- [x] Correct the provider registry so Windows/Linux availability reflects runtime truth rather than always reporting native OCR as available. Evidence: [dynamic provider registry](../src-tauri/src/providers/registry.rs) backed by platform runtime probes.
-- [x] Bump OCR producer provenance so stale derived artifacts rebuild without touching canonical images. Evidence: OCR producer version 2 in [artifact host](../src-tauri/src/artifacts/host.rs); artifact provenance and canonical/derived ownership are covered by existing artifact tests.
+- [x] Correct the provider registry so Windows/Linux availability reflects runtime truth rather than always reporting native OCR as available. Evidence: [async dynamic provider registry](../src-tauri/src/providers/registry.rs) backed by the native provider's real engine/language diagnostics.
+- [x] Bump OCR producer provenance so stale derived artifacts rebuild without touching canonical images. Evidence: OCR producer version 3 includes engine version and selected language in [artifact host](../src-tauri/src/artifacts/host.rs); queue lifecycle tests verify canonical image checksums remain unchanged.
 - [ ] Verify empty success, failure, unsupported, retry, deletion, indexing, FTS, semantic search, English, and Japanese flows on all advertised platforms.
 - [ ] **Exit gate:** Windows, macOS, and Linux/X11 pass the installed OCR lifecycle; Linux clearly recovers when Tesseract or language data is absent.
+
+Implementation candidate: the provider contract, persistent single-flight queue,
+configuration sync, Intelligence controls, native language diagnostics, bounded
+inputs, cancellation/stale-result rejection, FTS refresh, and CI language-package
+setup are implemented. Their boxes remain unchecked until the three-platform CI
+run and installed-candidate evidence required above are recorded.
 
 ## 3. Lean core and first-party extensions
 

@@ -210,6 +210,20 @@ async fn refresh_search_for_clip(
     Ok(())
 }
 
+fn refresh_ocr_dependents(app: tauri::AppHandle, history: HistoryRepository) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(clip_ids) = artifacts::ocr_clip_ids(&history).await else {
+            return;
+        };
+        for clip_id in clip_ids {
+            emit_clip_artifact_updates(&app, &history, &clip_id).await;
+            let _ = search::upsert_projection(&history, &clip_id).await;
+            let _ = embeddings::enqueue_clip(&history, &clip_id).await;
+        }
+        wake_embedding_worker(app, history);
+    });
+}
+
 fn source_is_excluded(snapshot: &history::CapturedSnapshot, excluded_apps: &[String]) -> bool {
     let candidates = [
         snapshot.source_app_id.as_deref(),
@@ -948,6 +962,7 @@ async fn capture_clipboard(
                     .await;
                 let _ = search::upsert_projection(&history_for_artifacts, &artifact_id).await;
                 let _ = embeddings::enqueue_clip(&history_for_artifacts, &artifact_id).await;
+                crate::app::workers::wake_ocr(&artifact_app, history_for_artifacts.clone());
                 wake_embedding_worker(artifact_app, history_for_artifacts);
             });
             let _ = app.emit(
@@ -1940,12 +1955,23 @@ async fn prepare_sync_batch(state: State<'_, AppState>) -> Result<crate::sync::S
 
 #[tauri::command]
 async fn apply_sync_response(
+    app: tauri::AppHandle,
     response: crate::sync::SyncServerResponse,
     state: State<'_, AppState>,
 ) -> Result<crate::sync::SyncStatus, String> {
-    crate::sync::apply(&state.history, response)
+    let previous_ocr = artifacts::ocr_settings(&state.history)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let status = crate::sync::apply(&state.history, response)
+        .await
+        .map_err(|error| error.to_string())?;
+    artifacts::reconcile_ocr_settings(&state.history, &previous_ocr)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::app::workers::wake_ocr(&app, state.history.clone());
+    refresh_ocr_dependents(app.clone(), state.history.clone());
+    let _ = app.emit("ocr-status-changed", ());
+    Ok(status)
 }
 
 #[tauri::command]
@@ -2046,11 +2072,38 @@ async fn retry_clip_ocr(
     artifacts::retry_ocr(&state.history, &clip_id, &source_id)
         .await
         .map_err(|error| error.to_string())?;
+    crate::app::workers::wake_ocr(&app, state.history.clone());
     let _ = app.emit(
         "clip-artifacts-updated",
         ArtifactUpdate { clip_id, source_id },
     );
     Ok(())
+}
+
+#[tauri::command]
+async fn get_ocr_runtime_status(
+    state: State<'_, AppState>,
+) -> Result<artifacts::OcrRuntimeStatus, String> {
+    artifacts::ocr_runtime_status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn update_ocr_settings(
+    settings: artifacts::OcrSettings,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<artifacts::OcrRuntimeStatus, String> {
+    artifacts::update_ocr_settings(&state.history, &settings)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::app::workers::wake_ocr(&app, state.history.clone());
+    refresh_ocr_dependents(app.clone(), state.history.clone());
+    let _ = app.emit("ocr-status-changed", ());
+    artifacts::ocr_runtime_status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 async fn list_renderer_contributions(
@@ -2595,7 +2648,7 @@ pub(crate) fn run() {
                 });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
-                let _ = crate::providers::provider_capabilities();
+                let _ = tauri::async_runtime::block_on(crate::providers::provider_capabilities());
                 // Rebuild any stale FTS projections from previous sessions.
                 let fts_history = history.clone();
                 let fts_app = app.handle().clone();
@@ -2603,6 +2656,8 @@ pub(crate) fn run() {
                     let _ = search::rebuild_stale_projections(&fts_history).await;
                     let _ = embeddings::recover_interrupted(&fts_history).await;
                     let _ = embeddings::ensure_current_chunker(&fts_history).await;
+                    let _ = artifacts::recover_ocr_queue(&fts_history).await;
+                    crate::app::workers::wake_ocr(&fts_app, fts_history.clone());
                     wake_embedding_worker(fts_app.clone(), fts_history.clone());
                     crate::app::workers::wake_managed_files(&fts_app, fts_history);
                 });
@@ -2744,6 +2799,10 @@ pub(crate) fn run() {
                                     let _ =
                                         search::upsert_projection(&detection_history, &id).await;
                                     let _ = embeddings::enqueue_clip(&detection_history, &id).await;
+                                    crate::app::workers::wake_ocr(
+                                        &detection_app,
+                                        detection_history.clone(),
+                                    );
                                     wake_embedding_worker(detection_app, detection_history);
                                 });
                             }
@@ -2842,6 +2901,8 @@ pub(crate) fn run() {
             get_clip_views,
             render_clip_view,
             retry_clip_ocr,
+            get_ocr_runtime_status,
+            update_ocr_settings,
             list_renderer_contributions,
             list_core_utilities,
             get_renderer_preferences,

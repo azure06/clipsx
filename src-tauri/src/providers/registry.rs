@@ -14,7 +14,12 @@ pub struct ProviderRegistration {
     pub available: bool,
 }
 
-pub fn provider_capabilities() -> Vec<ProviderRegistration> {
+pub async fn provider_capabilities() -> Vec<ProviderRegistration> {
+    use crate::providers::contracts::ocr::OcrProvider;
+    let ocr_available = crate::providers::native_ocr::NativeOcrProvider::new()
+        .diagnostics()
+        .await
+        .is_ok_and(|diagnostics| diagnostics.available);
     vec![
         ProviderRegistration {
             id: OLLAMA_TEXT_EMBEDDING_ID,
@@ -39,7 +44,7 @@ pub fn provider_capabilities() -> Vec<ProviderRegistration> {
         ProviderRegistration {
             id: "builtin.ocr.native",
             capability: ProviderCapability::Ocr,
-            available: crate::artifacts::ocr_runtime_available(),
+            available: ocr_available,
         },
     ]
 }

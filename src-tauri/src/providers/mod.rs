@@ -5,6 +5,7 @@ pub mod contracts;
 pub mod disabled;
 pub mod error;
 pub mod generation;
+pub mod native_ocr;
 pub mod ollama;
 pub mod registry;
 

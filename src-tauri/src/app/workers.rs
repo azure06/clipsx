@@ -1,4 +1,5 @@
-use crate::{history::HistoryRepository, search, search::semantic as embeddings};
+use crate::{artifacts, history::HistoryRepository, search, search::semantic as embeddings};
+use serde::Serialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -10,6 +11,14 @@ use tauri::{Emitter, Manager};
 pub struct BackgroundWorkers {
     pub text_index: SingleWorker,
     pub managed_files: SingleWorker,
+    pub ocr: SingleWorker,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactUpdate {
+    clip_id: String,
+    source_id: String,
 }
 
 #[derive(Clone, Default)]
@@ -121,6 +130,47 @@ impl SingleWorker {
             }
         });
     }
+
+    pub fn wake_ocr(&self, app: tauri::AppHandle, history: HistoryRepository) {
+        if self.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let guard = self.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match artifacts::run_next_ocr(&history).await {
+                    Ok(Some(work)) => {
+                        let _ = app.emit(
+                            "clip-artifacts-updated",
+                            ArtifactUpdate {
+                                clip_id: work.clip_id.clone(),
+                                source_id: work.representation_id,
+                            },
+                        );
+                        let _ = search::upsert_projection(&history, &work.clip_id).await;
+                        let _ = embeddings::enqueue_clip(&history, &work.clip_id).await;
+                        wake_text_index(&app, history.clone());
+                        let _ = app.emit("ocr-status-changed", ());
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = app.emit("ocr-worker-failed", error.to_string());
+                        break;
+                    }
+                }
+            }
+            guard.running.store(false, Ordering::SeqCst);
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM artifact_jobs WHERE artifact_kind='ocr' AND status='pending'",
+            )
+            .fetch_one(&history.pool)
+            .await
+            .unwrap_or(0);
+            if pending > 0 {
+                guard.wake_ocr(app, history);
+            }
+        });
+    }
 }
 
 pub fn wake_text_index(app: &tauri::AppHandle, history: HistoryRepository) {
@@ -135,5 +185,11 @@ pub fn wake_text_index(app: &tauri::AppHandle, history: HistoryRepository) {
 pub fn wake_managed_files(app: &tauri::AppHandle, history: HistoryRepository) {
     if let Some(state) = app.try_state::<crate::app::state::AppState>() {
         state.workers.managed_files.wake_managed_files(history);
+    }
+}
+
+pub fn wake_ocr(app: &tauri::AppHandle, history: HistoryRepository) {
+    if let Some(state) = app.try_state::<crate::app::state::AppState>() {
+        state.workers.ocr.wake_ocr(app.clone(), history);
     }
 }

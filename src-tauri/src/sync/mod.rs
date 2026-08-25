@@ -194,10 +194,28 @@ pub async fn apply(repo: &HistoryRepository, response: SyncServerResponse) -> Re
                             .bytes()
                             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
                 }),
+            "artifacts.ocr.enabled" => record
+                .payload
+                .as_ref()
+                .is_some_and(serde_json::Value::is_boolean),
+            "artifacts.ocr.language" => record
+                .payload
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| {
+                    !value.is_empty()
+                        && value.len() <= 35
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                }),
             _ => false,
         };
         let valid_profile = record.kind == "profile_setting"
-            && matches!(record.key.as_str(), "ui.theme" | "ui.language")
+            && matches!(
+                record.key.as_str(),
+                "ui.theme" | "ui.language" | "artifacts.ocr.enabled" | "artifacts.ocr.language"
+            )
             && ((record.tombstone && record.payload.is_none())
                 || (!record.tombstone && valid_value));
         if !valid_profile {
@@ -288,16 +306,21 @@ mod tests {
         let status = apply(
             &repo,
             SyncServerResponse {
-                cursor: 2,
+                cursor: 3,
                 records: vec![
                     record("ui.theme", Some(serde_json::json!("dark")), 1),
                     record("capture.max_age_days", Some(serde_json::json!(0)), 2),
+                    record(
+                        "artifacts.ocr.language",
+                        Some(serde_json::json!("ja-JP")),
+                        3,
+                    ),
                 ],
             },
         )
         .await
         .unwrap();
-        assert_eq!(status.server_cursor, 2);
+        assert_eq!(status.server_cursor, 3);
         assert_eq!(status.quarantined_records, 1);
         let value: String =
             sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key='ui.theme'")
@@ -305,6 +328,13 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(value, "\"dark\"");
+        let ocr_language: String = sqlx::query_scalar(
+            "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.language'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(ocr_language, "\"ja-JP\"");
     }
 
     #[tokio::test]

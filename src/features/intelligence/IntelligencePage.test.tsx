@@ -37,11 +37,44 @@ const toastTitles = (): string[] =>
 describe('IntelligencePage indexing actions', () => {
   let currentStatus: TextEmbeddingStatus
   let failNextStatusRefresh: boolean
+  let currentOcrStatus: {
+    settings: { enabled: boolean; language: string }
+    provider: {
+      providerId: string
+      providerVersion: string
+      available: boolean
+      languages: Array<{ id: string; label: string }>
+      recoveryCode: string | null
+      recoveryMessage: string | null
+    }
+    selectedLanguage: string | null
+    pendingJobs: number
+    runningJobs: number
+    failedJobs: number
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
     eventHandlers.clear()
     currentStatus = readyStatus()
+    currentOcrStatus = {
+      settings: { enabled: true, language: 'auto' },
+      provider: {
+        providerId: 'builtin.ocr.native',
+        providerVersion: 'Windows.Media.Ocr',
+        available: true,
+        languages: [
+          { id: 'en-US', label: 'English (United States)' },
+          { id: 'ja-JP', label: 'Japanese' },
+        ],
+        recoveryCode: null,
+        recoveryMessage: null,
+      },
+      selectedLanguage: 'en-US',
+      pendingJobs: 2,
+      runningJobs: 1,
+      failedJobs: 0,
+    }
     failNextStatusRefresh = false
     listenMock.mockImplementation(
       (eventName: string, handler: (event: { payload: unknown }) => void) => {
@@ -61,11 +94,46 @@ describe('IntelligencePage indexing actions', () => {
       }
       if (command === 'list_search_sources') return Promise.resolve([])
       if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
+      if (command === 'get_ocr_runtime_status') return Promise.resolve(currentOcrStatus)
+      if (command === 'update_ocr_settings') return Promise.resolve(currentOcrStatus)
       if (command === 'get_search_settings') {
         return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
       }
       return Promise.resolve(null)
     })
+  })
+
+  it('shows native OCR diagnostics and persists enablement from the vision page', async () => {
+    invokeMock.mockImplementation((command: string, payload?: unknown) => {
+      if (command === 'get_text_embedding_status') return Promise.resolve(currentStatus)
+      if (command === 'list_search_sources') return Promise.resolve([])
+      if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
+      if (command === 'get_search_settings') {
+        return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
+      }
+      if (command === 'get_ocr_runtime_status') return Promise.resolve(currentOcrStatus)
+      if (command === 'update_ocr_settings') {
+        const settings = (payload as { settings: { enabled: boolean; language: string } }).settings
+        currentOcrStatus = { ...currentOcrStatus, settings }
+        return Promise.resolve(currentOcrStatus)
+      }
+      return Promise.resolve(null)
+    })
+
+    render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'OCR & vision' }))
+
+    expect(await screen.findByText('Windows.Media.Ocr')).toBeInTheDocument()
+    expect(screen.getByText('en-US')).toBeInTheDocument()
+    expect(screen.getByText('3 waiting')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('switch'))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('update_ocr_settings', {
+        settings: { enabled: false, language: 'auto' },
+      })
+    )
+    expect(toastTitles()).toContain('Text recognition disabled')
   })
 
   it('does not settle against stale status before the command succeeds', async () => {

@@ -169,6 +169,14 @@ Installed-build checks:
 - reconstructed X11 selection ownership for the consumer read window;
 - XTest quick paste and focus restoration on supported desktop environments;
 - OCR runtime detection and recovery when Tesseract is absent;
+- the `.deb` recommends `tesseract-ocr`, `tesseract-ocr-eng`, and
+  `tesseract-ocr-jpn`; verify those recommendations are present in package
+  metadata and that English/Japanese appear in Intelligence after installation;
+- AppImage intentionally uses the host runtime. When Tesseract is absent,
+  Intelligence must keep ClipsX usable and show the recovery command
+  `sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn` on
+  Debian/Ubuntu (or the equivalent packages for the distribution); after
+  installation, refresh/restart and retry without reinstalling ClipsX;
 - tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
   updater, deep links, and file dialogs in published `.deb` and AppImage builds.
 
@@ -188,6 +196,11 @@ Wayland is not covered by this matrix.
 - Search configuration and degraded-state recovery.
 - OCR disabled, queued, running, empty-success, success, unsupported, failure,
   and retry states.
+- OCR Automatic selection, an explicit English selection, an explicit Japanese
+  selection, language-change reprocessing, cancellation while recognition is
+  running, and restart recovery. Confirm OCR text reaches keyword and enabled
+  semantic search exactly once while canonical image bytes/checksum remain
+  unchanged.
 - Settings restart behavior, import/export, autostart, periodic auto-clear, and
   explicit-quit clear-on-exit.
 - Extension API v1 rejection; v2 manifest/matcher/purpose/surface/action/permission validation.

@@ -116,7 +116,10 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libxdo-dev
+            libxdo-dev \
+            tesseract-ocr \
+            tesseract-ocr-eng \
+            tesseract-ocr-jpn
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -172,7 +175,10 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libxdo-dev
+            libxdo-dev \
+            tesseract-ocr \
+            tesseract-ocr-eng \
+            tesseract-ocr-jpn
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

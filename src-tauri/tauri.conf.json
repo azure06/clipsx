@@ -23,6 +23,11 @@
       "signingIdentity": "-",
       "hardenedRuntime": false
     },
+    "linux": {
+      "deb": {
+        "recommends": ["tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-jpn"]
+      }
+    },
     "windows": {
       "nsis": {
         "displayLanguageSelector": true,
