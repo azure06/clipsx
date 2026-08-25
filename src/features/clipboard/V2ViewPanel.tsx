@@ -91,10 +91,10 @@ export const ExtensionCustomView = ({
           const next = bounds()
           if (next)
             void invoke('sync_extension_custom_view', {
-            label: session.label,
-            ...next,
-            visible: false,
-          })
+              label: session.label,
+              ...next,
+              visible: false,
+            })
         }
       }
     }

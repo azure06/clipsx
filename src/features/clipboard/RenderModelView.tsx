@@ -418,7 +418,15 @@ const FilesView = ({
   </ul>
 )
 
-const LocalFilePreview = ({ clipId, path, name }: { clipId: string; path: string; name: string }) => {
+const LocalFilePreview = ({
+  clipId,
+  path,
+  name,
+}: {
+  clipId: string
+  path: string
+  name: string
+}) => {
   const [source, setSource] = useState<string | null>(null)
   useEffect(() => {
     let active = true

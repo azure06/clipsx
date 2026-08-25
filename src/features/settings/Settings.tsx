@@ -196,7 +196,9 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
 
   useEffect(() => {
     if (activeTab === 'sync') {
-      void getSyncStatus().then(setSyncStatus).catch(() => setSyncStatus(null))
+      void getSyncStatus()
+        .then(setSyncStatus)
+        .catch(() => setSyncStatus(null))
     }
   }, [activeTab])
 
@@ -584,12 +586,34 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   </p>
                 )}
                 <dl className="grid gap-2 text-xs sm:grid-cols-2">
-                  <div><dt className="text-slate-500">Device</dt><dd>{syncStatus?.deviceName ?? 'Loading…'}</dd></div>
-                  <div><dt className="text-slate-500">Last success</dt><dd>{syncStatus?.lastSuccessAt ? new Date(syncStatus.lastSuccessAt).toLocaleString() : 'Never'}</dd></div>
+                  <div>
+                    <dt className="text-slate-500">Device</dt>
+                    <dd>{syncStatus?.deviceName ?? 'Loading…'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500">Last success</dt>
+                    <dd>
+                      {syncStatus?.lastSuccessAt
+                        ? new Date(syncStatus.lastSuccessAt).toLocaleString()
+                        : 'Never'}
+                    </dd>
+                  </div>
                 </dl>
                 <div className="grid gap-3 text-xs leading-5 md:grid-cols-2">
-                  <div><p className="font-semibold">Included</p><p className="text-slate-500">Theme and language now; renderer preferences, OCR preferences, signed extension intent/settings, and shortcuts join this same typed record boundary.</p></div>
-                  <div><p className="font-semibold">Always local</p><p className="text-slate-500">Clips, notes, tags, files, credentials, provider endpoints/models, grants, device capture/window settings, jobs, diagnostics, and derived data.</p></div>
+                  <div>
+                    <p className="font-semibold">Included</p>
+                    <p className="text-slate-500">
+                      Theme and language now; renderer preferences, OCR preferences, signed
+                      extension intent/settings, and shortcuts join this same typed record boundary.
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Always local</p>
+                    <p className="text-slate-500">
+                      Clips, notes, tags, files, credentials, provider endpoints/models, grants,
+                      device capture/window settings, jobs, diagnostics, and derived data.
+                    </p>
+                  </div>
                 </div>
               </div>
             </SettingsSection>

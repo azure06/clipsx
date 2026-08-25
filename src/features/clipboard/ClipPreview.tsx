@@ -168,9 +168,7 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
             {visibleTabs.preferenceScopes.length > 0 && !visibleTabs.activeId.startsWith('__') && (
               <DropdownMenu
                 onOpenChange={open =>
-                  window.dispatchEvent(
-                    new CustomEvent('clipsx-host-overlay', { detail: { open } })
-                  )
+                  window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
                 }
               >
                 <DropdownMenuTrigger asChild>

@@ -18,10 +18,7 @@ import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '.
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
-import {
-  PROFILE_MUTATED_EVENT,
-  synchronizeIfEnabled,
-} from '../../shared/sync/configSync'
+import { PROFILE_MUTATED_EVENT, synchronizeIfEnabled } from '../../shared/sync/configSync'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
