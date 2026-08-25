@@ -80,8 +80,29 @@ export const PackageDetailView = ({
   return (
     <section className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-200/80 bg-white/45 p-5 shadow-[0_18px_42px_-34px_rgba(30,41,59,.42)] dark:border-white/10 dark:bg-slate-950/20">
       <div className="mb-5 flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/22 to-fuchsia-500/14 text-sm font-bold text-violet-700 ring-1 ring-violet-500/15 dark:text-violet-200">
-          {registryPackage.displayName.slice(0, 1).toUpperCase()}
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-violet-500/22 to-fuchsia-500/14 text-sm font-bold text-violet-700 ring-1 ring-violet-500/15 dark:text-violet-200">
+          {installed?.iconSvg || registryPackage.iconAssets?.light.dataUrl ? (
+            <>
+              <img
+                className="h-8 w-8 object-contain dark:hidden"
+                src={installed?.iconSvg ?? registryPackage.iconAssets?.light.dataUrl ?? undefined}
+                alt=""
+              />
+              <img
+                className="hidden h-8 w-8 object-contain dark:block"
+                src={
+                  installed?.iconSvgDark ??
+                  installed?.iconSvg ??
+                  registryPackage.iconAssets?.dark.dataUrl ??
+                  registryPackage.iconAssets?.light.dataUrl ??
+                  undefined
+                }
+                alt=""
+              />
+            </>
+          ) : (
+            registryPackage.displayName.slice(0, 1).toUpperCase()
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -98,6 +119,11 @@ export const PackageDetailView = ({
             {detail.update && (
               <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
                 Update available
+              </span>
+            )}
+            {detail.revoked && (
+              <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-300">
+                Revoked
               </span>
             )}
           </div>
@@ -139,7 +165,12 @@ export const PackageDetailView = ({
             Review update
           </Button>
         ) : !installed ? (
-          <Button size="sm" isLoading={busy} onClick={() => void install(registryPackage.version)}>
+          <Button
+            size="sm"
+            isLoading={busy}
+            disabled={detail.revoked}
+            onClick={() => void install(registryPackage.version)}
+          >
             Install
           </Button>
         ) : null}

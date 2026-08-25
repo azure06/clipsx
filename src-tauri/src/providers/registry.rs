@@ -14,8 +14,8 @@ pub struct ProviderRegistration {
     pub available: bool,
 }
 
-pub fn provider_capabilities() -> &'static [ProviderRegistration] {
-    const REGISTRY: &[ProviderRegistration] = &[
+pub fn provider_capabilities() -> Vec<ProviderRegistration> {
+    vec![
         ProviderRegistration {
             id: OLLAMA_TEXT_EMBEDDING_ID,
             capability: ProviderCapability::TextEmbedding,
@@ -39,10 +39,9 @@ pub fn provider_capabilities() -> &'static [ProviderRegistration] {
         ProviderRegistration {
             id: "builtin.ocr.native",
             capability: ProviderCapability::Ocr,
-            available: true,
+            available: crate::artifacts::ocr_runtime_available(),
         },
-    ];
-    REGISTRY
+    ]
 }
 
 pub fn text_embedding_provider(

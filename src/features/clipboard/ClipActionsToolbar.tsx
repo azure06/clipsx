@@ -322,7 +322,11 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
 
 const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
   <Tooltip.Root>
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={open =>
+        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
+      }
+    >
       <Tooltip.Trigger asChild>
         <DropdownMenuTrigger asChild>
           <button
@@ -368,7 +372,11 @@ const ActionsDropdown = ({
   actions: TransformControls['actions']
 }) => (
   <Tooltip.Root>
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={open =>
+        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
+      }
+    >
       <Tooltip.Trigger asChild>
         <DropdownMenuTrigger asChild>
           <button

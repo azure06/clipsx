@@ -70,6 +70,8 @@ pub enum ActionEffect {
     OpenHttpsUrl,
     Notification,
     OpenDialog,
+    ComposeEmail,
+    DialPhone,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +92,12 @@ pub enum ActionDisposition {
 pub enum ActionHandler {
     Guest,
     Dialog,
+    ComposeEmail {
+        facet_value_pointer: String,
+    },
+    DialPhone {
+        facet_value_pointer: String,
+    },
     TransformerPreset {
         transformer_id: String,
         #[serde(default = "empty_object")]
@@ -272,6 +280,10 @@ pub struct ExtensionManifest {
     pub description: String,
     #[serde(default)]
     pub license: String,
+    /// Theme-specific package identity icons used after installation. Catalog
+    /// icons are separate, registry-owned, checksum-pinned raster assets.
+    #[serde(default)]
+    pub icon_assets: Option<ThemedIconAssets>,
     #[serde(default)]
     pub permissions: ExtensionPermissions,
     #[serde(default)]
@@ -324,6 +336,10 @@ impl ExtensionManifest {
         if self.description.len() > 2_000 || self.license.len() > 200 {
             bail!("extension metadata exceeds its size limit");
         }
+        if let Some(icons) = &self.icon_assets {
+            valid_icon_asset(&icons.light, "iconAssets.light")?;
+            valid_icon_asset(&icons.dark, "iconAssets.dark")?;
+        }
         if self.contributions.is_empty() || self.contributions.len() > 32 {
             bail!("extension must declare between one and 32 contributions");
         }
@@ -375,8 +391,18 @@ impl ExtensionManifest {
                 if contribution.purpose.is_none() || contribution.surfaces.is_empty() {
                     bail!("renderer contributions require purpose and at least one surface");
                 }
-                if contribution.handler.is_some() || !contribution.effects.is_empty() {
-                    bail!("renderer contributions cannot declare action handlers or effects");
+                if contribution.handler.is_some() {
+                    bail!("renderer contributions cannot declare action handlers");
+                }
+                if contribution
+                    .effects
+                    .iter()
+                    .any(|effect| *effect != ActionEffect::Copy)
+                    || (!contribution.effects.is_empty()
+                        && (!contribution.ui_surfaces.contains(&UiSurface::Detail)
+                            || contribution.ui_entry.is_none()))
+                {
+                    bail!("custom detail renderers may declare only the copy effect");
                 }
             }
             ContributionKind::Action => {
@@ -406,6 +432,29 @@ impl ExtensionManifest {
                         || !contribution.ui_surfaces.contains(&UiSurface::Dialog))
                 {
                     bail!("dialog actions require open_dialog and a dialog UI surface");
+                }
+                match &contribution.handler {
+                    Some(ActionHandler::ComposeEmail {
+                        facet_value_pointer,
+                    }) => {
+                        validate_typed_host_handler(
+                            contribution,
+                            facet_value_pointer,
+                            ActionEffect::ComposeEmail,
+                            "compose_email",
+                        )?;
+                    }
+                    Some(ActionHandler::DialPhone {
+                        facet_value_pointer,
+                    }) => {
+                        validate_typed_host_handler(
+                            contribution,
+                            facet_value_pointer,
+                            ActionEffect::DialPhone,
+                            "dial_phone",
+                        )?;
+                    }
+                    _ => {}
                 }
             }
             ContributionKind::Detector | ContributionKind::Transformer => {
@@ -599,6 +648,37 @@ impl ExtensionManifest {
     pub fn qualified_contribution_id(&self, local_id: &str) -> String {
         format!("{}/{}", self.package_id, local_id)
     }
+}
+
+fn validate_typed_host_handler(
+    contribution: &ManifestContribution,
+    pointer: &str,
+    required_effect: ActionEffect,
+    name: &str,
+) -> Result<()> {
+    if contribution.effects != [required_effect]
+        || contribution.execution != ExecutionClass::Local
+        || pointer.is_empty()
+        || pointer.len() > 256
+        || !pointer.starts_with('/')
+        || pointer
+            .split('/')
+            .skip(1)
+            .any(|segment| segment.is_empty() || invalid_json_pointer_escape(segment))
+    {
+        bail!("{name} requires one matching effect, local execution, and a bounded facet JSON pointer");
+    }
+    Ok(())
+}
+
+fn invalid_json_pointer_escape(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    while let Some(character) = chars.next() {
+        if character == '~' && !matches!(chars.next(), Some('0' | '1')) {
+            return true;
+        }
+    }
+    false
 }
 
 fn valid_icon_asset(value: &str, label: &str) -> Result<()> {
@@ -818,6 +898,7 @@ mod tests {
             display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
+            icon_assets: None,
             permissions: ExtensionPermissions::default(),
             settings: vec![],
             contributions: vec![contribution],
@@ -1004,6 +1085,24 @@ mod tests {
         action.ui_entry = Some("ui/index.html".into());
         assert!(manifest(action.clone()).validate().is_ok());
         action.ui_surfaces.clear();
+        assert!(manifest(action).validate().is_err());
+    }
+
+    #[test]
+    fn typed_native_handlers_are_local_exact_and_pointer_bound() {
+        let mut action = contribution(ContributionKind::Action);
+        action.handler = Some(ActionHandler::ComposeEmail {
+            facet_value_pointer: "/address".into(),
+        });
+        action.effects = vec![ActionEffect::ComposeEmail];
+        assert!(manifest(action.clone()).validate().is_ok());
+
+        action.effects = vec![ActionEffect::OpenHttpsUrl];
+        assert!(manifest(action.clone()).validate().is_err());
+        action.effects = vec![ActionEffect::ComposeEmail];
+        action.handler = Some(ActionHandler::DialPhone {
+            facet_value_pointer: "number".into(),
+        });
         assert!(manifest(action).validate().is_err());
     }
 

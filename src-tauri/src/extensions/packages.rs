@@ -6,6 +6,8 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -18,6 +20,9 @@ const MAX_UNPACKED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES: usize = 256;
+const MAX_REGISTRY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_REGISTRY_SIGNATURE_BYTES: usize = 64 * 1024;
+const MAX_CATALOG_ICON_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,8 +98,17 @@ pub struct RegistryPublisher {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistryIconAssets {
-    pub light: String,
-    pub dark: String,
+    pub light: RegistryIconAsset,
+    pub dark: RegistryIconAsset,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistryIconAsset {
+    pub url: String,
+    pub sha256: String,
+    #[serde(default, skip_deserializing)]
+    pub data_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,16 +116,46 @@ pub struct RegistryIconAssets {
 pub struct RegistryIndex {
     pub schema_version: u32,
     pub packages: Vec<RegistryPackage>,
+    #[serde(default)]
+    pub revocations: Vec<RegistryRevocation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistryRevocation {
+    pub package_id: String,
+    pub version: String,
+    pub sha256: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrySignatures {
+    schema_version: u32,
+    signatures: Vec<RegistrySignature>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RegistrySignature {
+    key_id: String,
+    algorithm: String,
+    signature: String,
 }
 
 impl RegistryIndex {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > 2 * 1024 * 1024 {
+        if bytes.len() > MAX_REGISTRY_BYTES {
             bail!("registry index exceeds 2 MiB");
         }
         let index: Self =
             serde_json::from_slice(bytes).context("registry index is not valid JSON")?;
-        if !(1..=2).contains(&index.schema_version) || index.packages.len() > 10_000 {
+        if !(1..=3).contains(&index.schema_version)
+            || index.packages.len() > 10_000
+            || index.revocations.len() > 10_000
+        {
             bail!("unsupported or oversized registry index");
         }
         let mut entries = BTreeMap::new();
@@ -129,7 +173,7 @@ impl RegistryIndex {
                 bail!("registry package checksum is invalid");
             }
             validate_release_url(&package.release_url)?;
-            if index.schema_version == 2 {
+            if index.schema_version >= 2 {
                 validate_marketplace_metadata(package)?;
             }
             if entries
@@ -137,6 +181,35 @@ impl RegistryIndex {
                 .is_some()
             {
                 bail!("registry contains duplicate package versions");
+            }
+        }
+        let mut revocations = BTreeMap::new();
+        for revocation in &index.revocations {
+            if revocation.package_id.is_empty()
+                || revocation.package_id.len() > 120
+                || revocation.version.is_empty()
+                || revocation.version.len() > 64
+                || revocation.sha256.len() != 64
+                || !revocation
+                    .sha256
+                    .bytes()
+                    .all(|value| value.is_ascii_hexdigit())
+                || revocation.reason.len() > 500
+            {
+                bail!("registry revocation is invalid");
+            }
+            if revocations
+                .insert(
+                    (
+                        &revocation.package_id,
+                        &revocation.version,
+                        &revocation.sha256,
+                    ),
+                    (),
+                )
+                .is_some()
+            {
+                bail!("registry contains a duplicate revocation");
             }
         }
         Ok(index)
@@ -147,6 +220,72 @@ impl RegistryIndex {
             .iter()
             .find(|entry| entry.package_id == package_id && entry.version == version)
     }
+
+    pub fn revocation(
+        &self,
+        package_id: &str,
+        version: &str,
+        sha256: &str,
+    ) -> Option<&RegistryRevocation> {
+        self.revocations.iter().find(|entry| {
+            entry.package_id == package_id
+                && entry.version == version
+                && entry.sha256.eq_ignore_ascii_case(sha256)
+        })
+    }
+}
+
+pub fn verify_registry_signatures(index: &[u8], signatures: &[u8]) -> Result<()> {
+    let key_id = option_env!("CLIPSX_REGISTRY_KEY_ID")
+        .context("this build does not embed a trusted extension-registry key ID")?;
+    let encoded_key = option_env!("CLIPSX_REGISTRY_PUBLIC_KEY_BASE64")
+        .context("this build does not embed a trusted extension-registry public key")?;
+    let key = BASE64
+        .decode(encoded_key)
+        .context("embedded extension-registry public key is invalid base64")?;
+    let key: [u8; 32] = key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("embedded extension-registry public key must be 32 bytes"))?;
+    verify_registry_signatures_with_keys(index, signatures, &[(key_id, key)])
+}
+
+fn verify_registry_signatures_with_keys(
+    index: &[u8],
+    signatures: &[u8],
+    trusted_keys: &[(&str, [u8; 32])],
+) -> Result<()> {
+    if index.len() > MAX_REGISTRY_BYTES || signatures.len() > MAX_REGISTRY_SIGNATURE_BYTES {
+        bail!("extension registry or signature document exceeds its limit");
+    }
+    let document: RegistrySignatures = serde_json::from_slice(signatures)
+        .context("registry signature document is not valid JSON")?;
+    if document.schema_version != 1
+        || document.signatures.is_empty()
+        || document.signatures.len() > 8
+    {
+        bail!("registry signature document has an unsupported shape");
+    }
+    for entry in document.signatures {
+        if entry.algorithm != "ed25519" || entry.key_id.is_empty() || entry.key_id.len() > 120 {
+            continue;
+        }
+        let Some((_, key_bytes)) = trusted_keys.iter().find(|(id, _)| *id == entry.key_id) else {
+            continue;
+        };
+        let Ok(signature_bytes) = BASE64.decode(entry.signature) else {
+            continue;
+        };
+        let Ok(signature) = Signature::from_slice(&signature_bytes) else {
+            continue;
+        };
+        let Ok(key) = VerifyingKey::from_bytes(key_bytes) else {
+            continue;
+        };
+        if key.verify_strict(index, &signature).is_ok() {
+            return Ok(());
+        }
+    }
+    bail!("extension registry is not signed by a trusted key")
 }
 
 #[derive(Clone)]
@@ -167,7 +306,11 @@ impl ExtensionPackageStore {
     }
 
     pub fn cache_path(&self) -> PathBuf {
-        self.root.join("cache").join("registry-v2.json")
+        self.root.join("cache").join("registry-v3.json")
+    }
+
+    fn signature_cache_path(&self) -> PathBuf {
+        self.root.join("cache").join("registry-v3.signatures.json")
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -178,27 +321,93 @@ impl ExtensionPackageStore {
         self.root.join("packages")
     }
 
-    pub fn cache_registry(&self, bytes: &[u8]) -> Result<RegistryIndex> {
-        let index = RegistryIndex::parse(bytes)?;
-        let staged = self
+    pub fn cache_registry(&self, bytes: &[u8], signatures: &[u8]) -> Result<RegistryIndex> {
+        verify_registry_signatures(bytes, signatures)?;
+        let mut index = RegistryIndex::parse(bytes)?;
+        let staged_index = self
             .root
             .join("staging")
             .join(format!("registry-{}.pending", Uuid::now_v7()));
-        fs::write(&staged, bytes)?;
-        fs::rename(staged, self.cache_path())?;
+        let staged_signatures = self
+            .root
+            .join("staging")
+            .join(format!("registry-signatures-{}.pending", Uuid::now_v7()));
+        fs::write(&staged_index, bytes)?;
+        fs::write(&staged_signatures, signatures)?;
+        fs::rename(staged_signatures, self.signature_cache_path())?;
+        fs::rename(staged_index, self.cache_path())?;
+        self.attach_cached_icons(&mut index)?;
         Ok(index)
     }
 
     pub fn cached_registry(&self) -> Result<Option<RegistryIndex>> {
-        for path in [
-            self.cache_path(),
-            self.root.join("cache").join("registry-v1.json"),
-        ] {
-            if path.exists() {
-                return Ok(Some(RegistryIndex::parse(&fs::read(path)?)?));
-            }
+        let index_path = self.cache_path();
+        let signature_path = self.signature_cache_path();
+        if index_path.exists() && signature_path.exists() {
+            let bytes = fs::read(index_path)?;
+            let signatures = fs::read(signature_path)?;
+            verify_registry_signatures(&bytes, &signatures)?;
+            let mut index = RegistryIndex::parse(&bytes)?;
+            self.attach_cached_icons(&mut index)?;
+            return Ok(Some(index));
         }
         Ok(None)
+    }
+
+    pub fn cache_catalog_icon(&self, descriptor: &RegistryIconAsset, bytes: &[u8]) -> Result<()> {
+        validate_catalog_icon_descriptor(descriptor)?;
+        if bytes.is_empty() || bytes.len() > MAX_CATALOG_ICON_BYTES {
+            bail!("catalog icon exceeds its size limit");
+        }
+        catalog_icon_media_type(bytes).context("catalog icon must be PNG or WebP")?;
+        if hex_digest(bytes) != descriptor.sha256.to_ascii_lowercase() {
+            bail!("catalog icon checksum does not match the signed registry");
+        }
+        let path = self.catalog_icon_path(&descriptor.sha256);
+        if path.exists() {
+            let cached = fs::read(&path)?;
+            if cached.len() <= MAX_CATALOG_ICON_BYTES
+                && catalog_icon_media_type(&cached).is_some()
+                && hex_digest(&cached) == descriptor.sha256.to_ascii_lowercase()
+            {
+                return Ok(());
+            }
+            bail!("existing catalog icon cache entry failed integrity verification");
+        }
+        let staged = self
+            .root
+            .join("staging")
+            .join(format!("catalog-icon-{}.pending", Uuid::now_v7()));
+        fs::write(&staged, bytes)?;
+        fs::rename(staged, path)?;
+        Ok(())
+    }
+
+    fn attach_cached_icons(&self, index: &mut RegistryIndex) -> Result<()> {
+        for package in &mut index.packages {
+            let Some(icons) = &mut package.icon_assets else {
+                continue;
+            };
+            for descriptor in [&mut icons.light, &mut icons.dark] {
+                let bytes = fs::read(self.catalog_icon_path(&descriptor.sha256))
+                    .context("verified catalog icon is missing from the local cache")?;
+                let media = catalog_icon_media_type(&bytes)
+                    .context("cached catalog icon has an invalid raster format")?;
+                if bytes.len() > MAX_CATALOG_ICON_BYTES
+                    || hex_digest(&bytes) != descriptor.sha256.to_ascii_lowercase()
+                {
+                    bail!("cached catalog icon failed integrity verification");
+                }
+                descriptor.data_url = Some(format!("data:{media};base64,{}", BASE64.encode(bytes)));
+            }
+        }
+        Ok(())
+    }
+
+    fn catalog_icon_path(&self, sha256: &str) -> PathBuf {
+        self.root
+            .join("cache")
+            .join(format!("catalog-icon-{}.bin", sha256.to_ascii_lowercase()))
     }
 
     pub fn install(
@@ -244,14 +453,6 @@ impl ExtensionPackageStore {
         }
         validate_assets(&contents)?;
         validate_declared_assets(&manifest, &contents)?;
-        if let Some(icons) = registry_entry.and_then(|entry| entry.icon_assets.as_ref()) {
-            for asset in [&icons.light, &icons.dark] {
-                if !asset.starts_with("icons/") || !contents.contains_key(asset) {
-                    bail!("registry package icon asset is missing from the archive");
-                }
-            }
-        }
-
         let relative_path = PathBuf::from("packages")
             .join(&manifest.package_id)
             .join(&manifest.version)
@@ -445,6 +646,13 @@ fn validate_declared_assets(
     manifest: &ExtensionManifest,
     contents: &BTreeMap<String, Vec<u8>>,
 ) -> Result<()> {
+    if let Some(icons) = &manifest.icon_assets {
+        for (theme, icon) in [("light", &icons.light), ("dark", &icons.dark)] {
+            if !contents.contains_key(icon) {
+                bail!("extension package iconAssets.{theme} is not present in the package");
+            }
+        }
+    }
     for contribution in &manifest.contributions {
         if let Some(icon) = &contribution.icon_asset {
             if !contents.contains_key(icon) {
@@ -530,6 +738,32 @@ fn hex_digest(bytes: &[u8]) -> String {
     format!("{:x}", hash.finalize())
 }
 
+fn catalog_icon_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+fn validate_catalog_icon_descriptor(asset: &RegistryIconAsset) -> Result<()> {
+    let url = url::Url::parse(&asset.url).context("catalog icon URL is invalid")?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("raw.githubusercontent.com")
+        || !url.path().starts_with("/azure06/clipsx-registry/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("catalog icons must use the official registry raw-content origin");
+    }
+    if asset.sha256.len() != 64 || !asset.sha256.bytes().all(|value| value.is_ascii_hexdigit()) {
+        bail!("catalog icon checksum is invalid");
+    }
+    Ok(())
+}
+
 pub fn validate_release_url(value: &str) -> Result<()> {
     let url = url::Url::parse(value).context("registry release URL is invalid")?;
     if url.scheme() != "https"
@@ -578,9 +812,7 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
         .as_ref()
         .context("registry v2 package is missing icon assets")?;
     for asset in [&icons.light, &icons.dark] {
-        if !asset.starts_with("icons/") || asset.len() > 256 || !allowed_path(asset) {
-            bail!("registry v2 package icon asset is invalid");
-        }
+        validate_catalog_icon_descriptor(asset)?;
     }
     if package
         .permission_fingerprint
@@ -620,6 +852,7 @@ pub fn permission_fingerprint(manifest: &ExtensionManifest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     use std::io::Write;
     use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -629,6 +862,32 @@ mod tests {
         assert!(
             validate_release_url("https://github.com/a/b/releases/download/v1/a.clipsx").is_ok()
         );
+    }
+
+    #[test]
+    fn registry_verification_binds_exact_bytes_and_accepts_key_overlap() {
+        let index = br#"{"schemaVersion":2,"packages":[]}"#;
+        let old_key = SigningKey::from_bytes(&[7; 32]);
+        let next_key = SigningKey::from_bytes(&[9; 32]);
+        let signatures = serde_json::json!({
+            "schemaVersion": 1,
+            "signatures": [
+                {
+                    "keyId": "old",
+                    "algorithm": "ed25519",
+                    "signature": BASE64.encode(old_key.sign(index).to_bytes()),
+                },
+                {
+                    "keyId": "next",
+                    "algorithm": "ed25519",
+                    "signature": BASE64.encode(next_key.sign(index).to_bytes()),
+                }
+            ]
+        });
+        let signatures = serde_json::to_vec(&signatures).unwrap();
+        let trusted = [("next", next_key.verifying_key().to_bytes())];
+        assert!(verify_registry_signatures_with_keys(index, &signatures, &trusted).is_ok());
+        assert!(verify_registry_signatures_with_keys(b"tampered", &signatures, &trusted).is_err());
     }
 
     #[test]
@@ -642,8 +901,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_v2_requires_reviewed_marketplace_metadata() {
-        let valid = r#"{"schemaVersion":2,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":"icons/example-light.svg","dark":"icons/example-dark.svg"},"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}"#;
+    fn registry_v3_requires_reviewed_marketplace_metadata_and_hashed_icons() {
+        let valid = r#"{"schemaVersion":3,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-light.png","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"dark":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-dark.png","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"revocations":[]}"#;
         assert!(RegistryIndex::parse(valid.as_bytes()).is_ok());
         let missing_publisher = valid.replacen(
             "\"publisher\":{\"id\":\"clipsx\",\"displayName\":\"ClipsX\",\"verified\":true},",
@@ -651,6 +910,49 @@ mod tests {
             1,
         );
         assert!(RegistryIndex::parse(missing_publisher.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn registry_revocations_bind_package_version_and_checksum() {
+        let index = RegistryIndex::parse(
+            br#"{"schemaVersion":3,"packages":[],"revocations":[{"packageId":"firstparty.tools","version":"1.2.3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"compromised release"}]}"#,
+        )
+        .unwrap();
+        assert!(index
+            .revocation(
+                "firstparty.tools",
+                "1.2.3",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+            .is_some());
+        assert!(index
+            .revocation(
+                "firstparty.tools",
+                "1.2.4",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn catalog_icons_are_raster_bounded_and_hash_pinned() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ExtensionPackageStore::new(root.path().into()).unwrap();
+        let bytes = b"\x89PNG\r\n\x1a\nfixture";
+        let descriptor = RegistryIconAsset {
+            url: "https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/test.png"
+                .into(),
+            sha256: hex_digest(bytes),
+            data_url: None,
+        };
+        store.cache_catalog_icon(&descriptor, bytes).unwrap();
+
+        let mut corrupt = descriptor.clone();
+        corrupt.sha256 = "a".repeat(64);
+        assert!(store.cache_catalog_icon(&corrupt, bytes).is_err());
+        assert!(store
+            .cache_catalog_icon(&descriptor, b"<svg></svg>")
+            .is_err());
     }
 
     #[test]
@@ -667,6 +969,57 @@ mod tests {
             .install(&archive, InstallSource::Developer, None)
             .is_err());
         assert!(!root.path().join("packages").join("component.wasm").exists());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE to point to a packed .clipsx archive"]
+    async fn packed_extension_completes_host_store_install_and_load() {
+        let archive_path = std::env::var("CLIPSX_TEST_EXTENSION_ARCHIVE")
+            .expect("CLIPSX_TEST_EXTENSION_ARCHIVE must name the package under test");
+        let archive = fs::read(archive_path).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let store = ExtensionPackageStore::new(root.path().into()).unwrap();
+
+        let installed = store
+            .install(&archive, InstallSource::Developer, None)
+            .unwrap();
+        let loaded = store.load(&installed.relative_path).unwrap();
+
+        assert_eq!(loaded.manifest.package_id, installed.manifest.package_id);
+        assert_eq!(loaded.manifest.version, installed.manifest.version);
+        assert_eq!(loaded.sha256, installed.sha256);
+        assert!(loaded
+            .component_path
+            .as_ref()
+            .is_some_and(|path| path.exists()));
+        let runtime = crate::extensions::runtime::ExtensionRuntime::new().unwrap();
+        runtime
+            .validate_component(
+                &loaded.sha256,
+                loaded
+                    .component_path
+                    .as_deref()
+                    .expect("package must contain its declared component"),
+            )
+            .await
+            .unwrap();
+        let declared_asset = installed
+            .manifest
+            .contributions
+            .iter()
+            .find_map(|contribution| contribution.ui_entry.as_deref())
+            .or_else(|| {
+                installed
+                    .manifest
+                    .icon_assets
+                    .as_ref()
+                    .map(|icons| icons.light.as_str())
+            })
+            .expect("package must declare a UI entry or identity icon");
+        assert!(!store
+            .package_asset(&installed.relative_path, declared_asset)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

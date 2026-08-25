@@ -18,6 +18,10 @@ import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '.
 import { useTheme } from '../../shared/hooks/useTheme'
 import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
+import {
+  PROFILE_MUTATED_EVENT,
+  synchronizeIfEnabled,
+} from '../../shared/sync/configSync'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
@@ -41,6 +45,8 @@ export const AppLayout = () => {
   const { setThemeMode } = useTheme()
   const initializeAuth = useAuthStore(state => state.initialize)
   const completeAuthCallback = useAuthStore(state => state.completeCallback)
+  const authStatus = useAuthStore(state => state.status)
+  const authUserId = useAuthStore(state => state.userId)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
@@ -146,6 +152,30 @@ export const AppLayout = () => {
       unlistenLocalAuthCallback?.()
     }
   }, [completeAuthCallback, initializeAuth])
+
+  useEffect(() => {
+    if (authStatus !== 'signed_in' || !authUserId) return
+    let cancelled = false
+    const synchronize = () => {
+      void synchronizeIfEnabled(authUserId)
+        .then(status => {
+          if (!cancelled && status) return useSettingsStore.getState().loadSettings()
+        })
+        .catch(() => undefined)
+    }
+    const onOnline = () => synchronize()
+    const onProfileMutation = () => synchronize()
+    synchronize()
+    window.addEventListener('online', onOnline)
+    window.addEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
+    const timer = window.setInterval(synchronize, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
+    }
+  }, [authStatus, authUserId])
 
   // Apply theme as soon as settings load
   useEffect(() => {

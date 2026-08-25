@@ -17,8 +17,9 @@ pub use manifest::{
 };
 #[allow(unused_imports)]
 pub use packages::{
-    permission_fingerprint, ExtensionPackage, ExtensionPackageStore, InstallSource,
-    RegistryIconAssets, RegistryIndex, RegistryPackage, RegistryPublisher,
+    permission_fingerprint, verify_registry_signatures, ExtensionPackage, ExtensionPackageStore,
+    InstallSource, RegistryIconAsset, RegistryIconAssets, RegistryIndex, RegistryPackage,
+    RegistryPublisher, RegistryRevocation,
 };
 #[allow(unused_imports)]
 pub use runtime::{
@@ -36,6 +37,8 @@ use serde::{Deserialize, Serialize};
 pub const API_VERSION: &str = "2.0.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
+pub const OFFICIAL_REGISTRY_SIGNATURES_URL: &str =
+    "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.signatures.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +55,8 @@ pub struct ExtensionSummary {
     pub version: String,
     pub display_name: String,
     pub description: String,
+    pub icon_svg: Option<String>,
+    pub icon_svg_dark: Option<String>,
     pub source: InstallSource,
     pub enabled: bool,
     pub status: RuntimeStatus,
@@ -79,6 +84,7 @@ pub struct ExtensionCatalogEntry {
     pub installed: Option<ExtensionSummary>,
     pub update: Option<RegistryPackage>,
     pub auto_update_eligible: bool,
+    pub revoked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,4 +109,5 @@ pub struct ExtensionPackageDetail {
     pub auto_update_eligible: bool,
     pub grants_revoked_on_update: bool,
     pub diagnostics: Vec<String>,
+    pub revoked: bool,
 }

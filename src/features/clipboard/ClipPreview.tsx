@@ -166,7 +166,13 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
               )
             })}
             {visibleTabs.preferenceScopes.length > 0 && !visibleTabs.activeId.startsWith('__') && (
-              <DropdownMenu>
+              <DropdownMenu
+                onOpenChange={open =>
+                  window.dispatchEvent(
+                    new CustomEvent('clipsx-host-overlay', { detail: { open } })
+                  )
+                }
+              >
                 <DropdownMenuTrigger asChild>
                   <button className="ml-auto shrink-0 rounded-md px-2 py-1 text-[10px] text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10">
                     Use by default…

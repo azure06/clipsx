@@ -2,10 +2,10 @@ const BASE_CONNECT_SOURCES = ["'self'", 'http://localhost:5173', 'ipc://localhos
 
 const BASE_CSP = [
   "default-src 'self' http://localhost:5173",
-  "script-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost clipsx-asset: http://clipsx-asset.localhost",
-  "media-src 'self' data: blob: https://tauri.localhost asset: http://asset.localhost clipsx-asset: http://clipsx-asset.localhost",
+  "img-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost",
+  "media-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost",
   "font-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",

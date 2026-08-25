@@ -6,6 +6,8 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use wit_component::ComponentEncoder;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -18,13 +20,48 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.as_slice() {
         [_, command, input] if command == "validate" => validate(Path::new(input)),
+        [_, command, input] if command == "inspect" => inspect(Path::new(input)),
+        [_, command, input] if command == "test" => test_package(Path::new(input)),
         [_, command, input, output] if command == "pack" => {
             pack(Path::new(input), Path::new(output))
         }
+        [_, command, output, package_id] if command == "scaffold" => {
+            scaffold(Path::new(output), package_id)
+        }
+        [_, command, input, release_url] if command == "registry-entry" => {
+            registry_entry(Path::new(input), release_url)
+        }
         _ => bail!(
-            "usage: clipsx-extension-tool validate <package.clipsx> | pack <directory> <package.clipsx>"
+            "usage: clipsx-extension-tool scaffold <directory> <package-id> | pack <directory> <package.clipsx> | validate|inspect|test <package.clipsx> | registry-entry <package.clipsx> <github-release-url>"
         ),
     }
+}
+
+fn scaffold(output: &Path, package_id: &str) -> Result<()> {
+    if output.exists() || package_id.is_empty() || package_id.len() > 120 {
+        bail!("scaffold destination must be new and package ID must be bounded");
+    }
+    let display_name = package_id
+        .split(['.', '-'])
+        .next_back()
+        .unwrap_or(package_id)
+        .replace('_', " ");
+    fs::create_dir_all(output.join("icons"))?;
+    fs::create_dir_all(output.join("ui"))?;
+    fs::write(
+        output.join("clipsx-extension.toml"),
+        format!(
+            "schemaVersion = 2\ncontractRevision = 2\npackageId = \"{package_id}\"\nversion = \"0.1.0\"\napiVersion = \"^2.0\"\ndisplayName = \"{display_name}\"\ndescription = \"A ClipsX Extension API v2 package.\"\nlicense = \"MIT\"\niconAssets = {{ light = \"icons/package.svg\", dark = \"icons/package.svg\" }}\n\n[[contributions]]\nid = \"text-view\"\nkind = \"renderer\"\ndisplayName = \"Text view\"\npurpose = \"source\"\nsurfaces = [\"detail\"]\nuiEntry = \"ui/index.html\"\nuiSurfaces = [\"detail\"]\n\n[[contributions.matchers]]\nmimeTypes = [\"text/plain\"]\n"
+        ),
+    )?;
+    fs::write(output.join("README.md"), format!("# {display_name}\n"))?;
+    fs::write(
+        output.join("icons/package.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5" fill="#7c3aed"/></svg>"##,
+    )?;
+    fs::write(output.join("ui/index.html"), "<!doctype html><meta charset=\"utf-8\"><title>ClipsX extension</title><main id=\"app\">Extension view</main>")?;
+    println!("scaffolded {}", output.display());
+    Ok(())
 }
 
 fn pack(input: &Path, output: &Path) -> Result<()> {
@@ -76,6 +113,13 @@ fn is_core_module(bytes: &[u8]) -> bool {
 }
 
 fn validate(path: &Path) -> Result<()> {
+    let files = archive_files(path)?;
+    validate_contents(&files)?;
+    println!("valid Extension API v2 package: {}", path.display());
+    Ok(())
+}
+
+fn archive_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     if path.extension().and_then(|value| value.to_str()) != Some("clipsx") {
         bail!("extension package must use the .clipsx suffix");
     }
@@ -99,15 +143,87 @@ fn validate(path: &Path) -> Result<()> {
             bail!("extension archive is oversized or contains duplicate entries");
         }
     }
+    Ok(files)
+}
+
+fn inspect(path: &Path) -> Result<()> {
+    let files = archive_files(path)?;
     validate_contents(&files)?;
-    println!("valid Extension API v2 package: {}", path.display());
+    let manifest = manifest::ExtensionManifest::parse(&files["clipsx-extension.toml"])?;
+    let archive = fs::read(path)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "packageId": manifest.package_id,
+            "version": manifest.version,
+            "apiVersion": manifest.api_version,
+            "compatible": manifest.api_version == API_VERSION || manifest.api_version == "^2.0",
+            "archiveSizeBytes": archive.len(),
+            "sha256": hex_digest(&archive),
+            "contributions": manifest.contributions.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+            "permissions": manifest.permissions,
+        }))?
+    );
     Ok(())
+}
+
+fn test_package(path: &Path) -> Result<()> {
+    let files = archive_files(path)?;
+    validate_contents(&files)?;
+    if let Some(component) = files.get("component.wasm") {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        let engine = wasmtime::Engine::new(&config)
+            .map_err(|error| anyhow::anyhow!("Wasmtime engine setup failed: {error}"))?;
+        wasmtime::component::Component::new(&engine, component)
+            .map_err(|error| anyhow::anyhow!("component failed Wasmtime validation: {error}"))?;
+    }
+    println!("package tests passed: compatibility, manifest, assets, limits, and component");
+    Ok(())
+}
+
+fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
+    if !release_url.starts_with("https://github.com/")
+        || !release_url.contains("/releases/download/")
+    {
+        bail!("registry entry requires an HTTPS GitHub release URL");
+    }
+    let files = archive_files(path)?;
+    validate_contents(&files)?;
+    let manifest = manifest::ExtensionManifest::parse(&files["clipsx-extension.toml"])?;
+    let archive = fs::read(path)?;
+    let permissions = serde_json::to_vec(&manifest.permissions)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "packageId": manifest.package_id,
+            "version": manifest.version,
+            "apiVersion": manifest.api_version,
+            "displayName": manifest.display_name,
+            "description": manifest.description,
+            "releaseUrl": release_url,
+            "sha256": hex_digest(&archive),
+            "archiveSizeBytes": archive.len(),
+            "permissionFingerprint": hex_digest(&permissions),
+            "permissionReport": manifest.permissions,
+        }))?
+    );
+    Ok(())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn validate_contents(files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
     let find = |name: &str| files.get(name);
     let manifest_bytes = find("clipsx-extension.toml").context("manifest is missing")?;
     let manifest = manifest::ExtensionManifest::parse(manifest_bytes)?;
+    if let Some(icons) = &manifest.icon_assets {
+        for icon in [&icons.light, &icons.dark] {
+            find(icon).with_context(|| format!("declared package icon {icon} is missing"))?;
+        }
+    }
     if let Some(component) = find("component.wasm") {
         if component.len() > 8 * 1024 * 1024 || !component.starts_with(b"\0asm") {
             bail!("component.wasm is oversized or is not WebAssembly");

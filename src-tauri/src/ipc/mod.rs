@@ -21,6 +21,7 @@ use crate::{
     search,
 };
 use anyhow::Context;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
@@ -101,6 +102,7 @@ enum ContextActionRunResponse {
         message: String,
     },
     OpenDialog,
+    NativeAction,
 }
 
 #[derive(Clone, Serialize)]
@@ -513,6 +515,45 @@ async fn open_clip_file(
     app.shell()
         .open(path, None)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_clip_file_preview(
+    clip_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let detail = state
+        .history
+        .detail(&clip_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let allowed = detail.representations.iter().any(|representation| {
+        representation
+            .file_references
+            .iter()
+            .any(|reference| reference == &path)
+    });
+    if !allowed {
+        return Err("file is not part of this clip".into());
+    }
+    let metadata = std::fs::metadata(&path).map_err(|_| "preview file is unavailable")?;
+    if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+        return Err("preview file exceeds its 4 MiB limit".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|_| "preview file is unavailable")?;
+    let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        return Err("file is not a supported raster preview".into());
+    };
+    Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }
 
 #[tauri::command]
@@ -1095,6 +1136,14 @@ async fn run_context_action(
             Ok(ContextActionRunResponse::Notification { level, message })
         }
         crate::extensions::ActionOutcome::OpenDialog => Ok(ContextActionRunResponse::OpenDialog),
+        crate::extensions::ActionOutcome::ComposeEmail(address) => {
+            compose_email(address, app)?;
+            Ok(ContextActionRunResponse::NativeAction)
+        }
+        crate::extensions::ActionOutcome::DialPhone(number) => {
+            start_phone_action(number, false, app)?;
+            Ok(ContextActionRunResponse::NativeAction)
+        }
     }
 }
 
@@ -1279,6 +1328,7 @@ async fn open_extension_custom_view(
     .focused(false)
     .initialization_script(initialization_script)
     .incognito(true)
+    .background_color(tauri::webview::Color(0, 0, 0, 0))
     .devtools(cfg!(debug_assertions))
     .on_navigation(move |url| {
         if is_extension_bridge_close_navigation(url, &bridge_token) {
@@ -1339,6 +1389,7 @@ async fn sync_extension_custom_view(
     y: f64,
     width: f64,
     height: f64,
+    visible: Option<bool>,
 ) -> Result<(), String> {
     if !label.starts_with("extension-")
         || !x.is_finite()
@@ -1356,6 +1407,11 @@ async fn sync_extension_custom_view(
     webview
         .set_position(tauri::LogicalPosition::new(x, y))
         .and_then(|_| webview.set_size(tauri::LogicalSize::new(width, height)))
+        .and_then(|_| match visible {
+            Some(true) => webview.show(),
+            Some(false) => webview.hide(),
+            None => Ok(()),
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -1852,6 +1908,51 @@ async fn get_app_settings(state: State<'_, AppState>) -> Result<history::AppSett
         .app_settings()
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_sync_status(state: State<'_, AppState>) -> Result<crate::sync::SyncStatus, String> {
+    crate::sync::status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_sync_enabled(
+    user_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<crate::sync::SyncStatus, String> {
+    crate::sync::set_enabled(&state.history, &user_id, enabled)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::sync::status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn prepare_sync_batch(state: State<'_, AppState>) -> Result<crate::sync::SyncBatch, String> {
+    crate::sync::batch(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn apply_sync_response(
+    response: crate::sync::SyncServerResponse,
+    state: State<'_, AppState>,
+) -> Result<crate::sync::SyncStatus, String> {
+    crate::sync::apply(&state.history, response)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn record_sync_error(message: String, state: State<'_, AppState>) -> Result<(), String> {
+    crate::sync::record_error(&state.history, &message)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2525,6 +2626,32 @@ pub(crate) fn run() {
                         .redetect_history(&extension_history)
                         .await;
                 });
+                let auto_clear_history = history.clone();
+                let auto_clear_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                    loop {
+                        interval.tick().await;
+                        let Ok(settings) = auto_clear_history.app_settings().await else {
+                            continue;
+                        };
+                        let Some(minutes) = settings.auto_clear_minutes.filter(|value| *value > 0)
+                        else {
+                            continue;
+                        };
+                        let cutoff = history::now_ms()
+                            .saturating_sub(i64::from(minutes).saturating_mul(60_000));
+                        if let Ok(ids) = auto_clear_history.auto_clear_sensitive(cutoff).await {
+                            for id in ids {
+                                let _ = auto_clear_app.emit("clip-deleted", id);
+                            }
+                            crate::app::workers::wake_managed_files(
+                                &auto_clear_app,
+                                auto_clear_history.clone(),
+                            );
+                        }
+                    }
+                });
                 let monitor_history = history.clone();
                 let monitor_extensions = extensions.clone();
                 let monitor_app = app.handle().clone();
@@ -2664,6 +2791,7 @@ pub(crate) fn run() {
             compose_email,
             start_phone_action,
             open_clip_file,
+            get_clip_file_preview,
             open_detected_path,
             open_clip_text_in_editor,
             list_clips,
@@ -2704,6 +2832,11 @@ pub(crate) fn run() {
             get_capture_settings,
             get_app_settings,
             update_app_settings,
+            get_sync_status,
+            set_sync_enabled,
+            prepare_sync_batch,
+            apply_sync_response,
+            record_sync_error,
             register_global_shortcut,
             update_capture_settings,
             get_clip_views,

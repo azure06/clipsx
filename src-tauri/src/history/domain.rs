@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::contracts::HistoryPreview;
@@ -98,6 +99,59 @@ impl Default for AppSettings {
             capture_filters: CaptureFilters::default(),
             capture: CaptureSettings::default(),
         }
+    }
+}
+impl AppSettings {
+    pub fn validate(&self) -> Result<()> {
+        if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
+            bail!("theme is invalid");
+        }
+        if self.language.is_empty()
+            || self.language.len() > 35
+            || !self
+                .language
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            bail!("language is invalid");
+        }
+        if self.global_shortcut.is_empty() || self.global_shortcut.len() > 128 {
+            bail!("global shortcut is invalid");
+        }
+        if self.excluded_apps.len() > 256
+            || self.excluded_apps.iter().any(|value| {
+                value.is_empty() || value.len() > 512 || value.chars().any(char::is_control)
+            })
+        {
+            bail!("excluded application list is invalid");
+        }
+        if self
+            .auto_clear_minutes
+            .is_some_and(|value| !matches!(value, 5 | 15 | 30 | 60))
+        {
+            bail!("auto-clear interval is invalid");
+        }
+        if self
+            .capture
+            .max_ordinary_clips
+            .is_some_and(|value| value > 100_000)
+            || self.capture.max_age_days.is_some_and(|value| value > 3_650)
+            || self
+                .capture
+                .max_representation_bytes
+                .is_some_and(|value| value > 52_428_800)
+            || self
+                .capture
+                .max_snapshot_bytes
+                .is_some_and(|value| value > 104_857_600)
+            || self
+                .capture
+                .max_managed_bytes
+                .is_some_and(|value| value > 1_099_511_627_776)
+        {
+            bail!("capture limit is outside the supported range");
+        }
+        Ok(())
     }
 }
 impl Default for CaptureSettings {

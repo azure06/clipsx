@@ -426,8 +426,29 @@ const PackageRow = ({
     onClick={() => onSelect(item.package.packageId)}
     className="group flex w-full items-center gap-3 rounded-xl border border-slate-200/75 bg-white/40 px-3 py-3 text-left shadow-[0_12px_25px_-24px_rgba(30,41,59,.45)] transition-colors hover:border-violet-400/40 hover:bg-violet-500/[.035] dark:border-white/[.09] dark:bg-white/[.025] dark:hover:bg-violet-400/[.055]"
   >
-    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 text-xs font-bold text-violet-700 dark:text-violet-200">
-      {item.package.displayName.slice(0, 1).toUpperCase()}
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/10 text-xs font-bold text-violet-700 dark:text-violet-200">
+      {item.installed?.iconSvg || item.package.iconAssets?.light.dataUrl ? (
+        <>
+          <img
+            className="h-7 w-7 object-contain dark:hidden"
+            src={item.installed?.iconSvg ?? item.package.iconAssets?.light.dataUrl ?? undefined}
+            alt=""
+          />
+          <img
+            className="hidden h-7 w-7 object-contain dark:block"
+            src={
+              item.installed?.iconSvgDark ??
+              item.installed?.iconSvg ??
+              item.package.iconAssets?.dark.dataUrl ??
+              item.package.iconAssets?.light.dataUrl ??
+              undefined
+            }
+            alt=""
+          />
+        </>
+      ) : (
+        item.package.displayName.slice(0, 1).toUpperCase()
+      )}
     </div>
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -442,6 +463,11 @@ const PackageRow = ({
         {item.update && (
           <span className="rounded-full bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700 dark:text-violet-300">
             v{item.update.version} available
+          </span>
+        )}
+        {item.revoked && (
+          <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-red-700 dark:text-red-300">
+            Revoked
           </span>
         )}
       </div>

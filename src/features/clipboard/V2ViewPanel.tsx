@@ -42,7 +42,9 @@ export const ExtensionCustomView = ({
   const [revision, setRevision] = useState(0)
   const scope = `${clipId}:${view.rendererId}:${view.sourceId}:${view.facetId ?? ''}:${appliedTheme}:${locale}:${revision}`
   const [failure, setFailure] = useState<{ scope: string; message: string } | null>(null)
+  const [readyScope, setReadyScope] = useState<string | null>(null)
   const error = failure?.scope === scope ? failure.message : null
+  const isReady = readyScope === scope
 
   useEffect(() => {
     let disposed = false
@@ -53,6 +55,20 @@ export const ExtensionCustomView = ({
     let frame = 0
     let timeout = 0
     let ready = false
+    let overlayOpen = false
+    const handleOverlayVisibility = (event: Event) => {
+      const open = (event as CustomEvent<{ open: boolean }>).detail?.open ?? false
+      overlayOpen = open
+      if (!session) return
+      const next = bounds()
+      if (next)
+        void invoke('sync_extension_custom_view', {
+          label: session.label,
+          ...next,
+          visible: !open && ready,
+        })
+    }
+    window.addEventListener('clipsx-host-overlay', handleOverlayVisibility)
 
     const applyState = (state: ExtensionCustomViewState) => {
       if (!session) {
@@ -70,6 +86,16 @@ export const ExtensionCustomView = ({
         })
       } else {
         ready = true
+        setReadyScope(scope)
+        if (overlayOpen && session) {
+          const next = bounds()
+          if (next)
+            void invoke('sync_extension_custom_view', {
+            label: session.label,
+            ...next,
+            visible: false,
+          })
+        }
       }
     }
     const bounds = () => {
@@ -148,6 +174,7 @@ export const ExtensionCustomView = ({
       window.clearTimeout(timeout)
       observer?.disconnect()
       unlistenState?.()
+      window.removeEventListener('clipsx-host-overlay', handleOverlayVisibility)
       if (session) {
         void invoke('close_extension_custom_view', {
           label: session.label,
@@ -160,7 +187,7 @@ export const ExtensionCustomView = ({
   return (
     <div
       ref={container}
-      className="relative flex h-full w-full items-center justify-center bg-white dark:bg-slate-950"
+      className="relative flex h-full w-full items-center justify-center bg-transparent"
     >
       <span className="sr-only">Custom extension view: {view.label}</span>
       {error ? (
@@ -178,12 +205,12 @@ export const ExtensionCustomView = ({
             Retry
           </button>
         </div>
-      ) : (
+      ) : !isReady ? (
         <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
           <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-violet-500 dark:border-slate-700 dark:border-t-violet-400" />
           Loading {view.label}…
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

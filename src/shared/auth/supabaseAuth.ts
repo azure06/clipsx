@@ -218,3 +218,34 @@ export const signOutSupabase = async () => {
     credentialVaultStorage.removeItem(`${AUTH_STORAGE_KEY}-code-verifier`),
   ])
 }
+
+export const applySupabaseSyncBatch = async (batch: {
+  deviceId: string
+  deviceName: string
+  afterCursor: number
+  records: unknown[]
+}) => {
+  // The project schema is deployed independently from the desktop bundle, so the
+  // generated Supabase type does not include this RPC until registry promotion.
+  // Keep the temporary boundary narrow and remove it when generated types land.
+  const syncClient = getClient() as unknown as {
+    rpc: (
+      name: 'sync_apply_batch',
+      args: {
+        p_device_id: string
+        p_device_name: string
+        p_after_cursor: number
+        p_records: unknown[]
+      }
+    ) => Promise<{ data: unknown; error: { message?: string } | null }>
+  }
+  const { data, error } = await syncClient.rpc('sync_apply_batch', {
+    p_device_id: batch.deviceId,
+    p_device_name: batch.deviceName,
+    p_after_cursor: batch.afterCursor,
+    p_records: batch.records,
+  })
+  if (error) throw new Error(error.message || 'Configuration sync failed.')
+  if (!data || typeof data !== 'object') throw new Error('Configuration sync returned no data.')
+  return data
+}

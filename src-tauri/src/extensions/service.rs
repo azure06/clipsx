@@ -26,7 +26,7 @@ use super::{
     ExtensionPackageDetail, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
     ExtensionRuntime, ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex,
     RegistryPackage, RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
-    OFFICIAL_REGISTRY_URL,
+    OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +84,8 @@ pub enum ActionOutcome {
         message: String,
     },
     OpenDialog,
+    ComposeEmail(String),
+    DialPhone(String),
 }
 
 #[derive(Debug, Clone)]
@@ -225,15 +227,39 @@ impl ExtensionService {
     }
 
     pub async fn refresh_registry(&self) -> Result<RegistryIndex> {
-        let response = Client::builder()
-            .redirect(Policy::none())
-            .build()?
+        let client = Client::builder().redirect(Policy::none()).build()?;
+        let index = client
             .get(OFFICIAL_REGISTRY_URL)
             .send()
             .await?
-            .error_for_status()?;
-        let bytes = response.bytes().await?;
-        self.store.cache_registry(&bytes)
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let signatures = client
+            .get(OFFICIAL_REGISTRY_SIGNATURES_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        super::verify_registry_signatures(&index, &signatures)?;
+        let parsed = RegistryIndex::parse(&index)?;
+        for package in &parsed.packages {
+            let Some(icons) = &package.icon_assets else {
+                continue;
+            };
+            for descriptor in [&icons.light, &icons.dark] {
+                let bytes = client
+                    .get(&descriptor.url)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .bytes()
+                    .await?;
+                self.store.cache_catalog_icon(descriptor, &bytes)?;
+            }
+        }
+        self.store.cache_registry(&index, &signatures)
     }
 
     pub fn cached_registry(&self) -> Result<Option<RegistryIndex>> {
@@ -250,8 +276,12 @@ impl ExtensionService {
     }
 
     pub async fn catalog(&self, repo: &HistoryRepository) -> Result<ExtensionCatalog> {
-        let installed = self.list(repo).await?;
+        let mut installed = self.list(repo).await?;
         let index = self.cached_registry()?;
+        if let Some(index) = &index {
+            self.enforce_revocations(repo, index, &installed).await?;
+            installed = self.list(repo).await?;
+        }
         let cached = index.is_some();
         let error = (!cached).then(|| "The registry has not been checked yet.".into());
         let mut latest = std::collections::BTreeMap::<String, RegistryPackage>::new();
@@ -279,11 +309,21 @@ impl ExtensionService {
                     .as_ref()
                     .zip(update.as_ref())
                     .is_some_and(|(item, update)| self.safe_update_eligible(item, update));
+                let revoked = installed_release.as_ref().is_some_and(|item| {
+                    item.checksum.as_deref().is_some_and(|checksum| {
+                        index.as_ref().is_some_and(|registry| {
+                            registry
+                                .revocation(&item.package_id, &item.version, checksum)
+                                .is_some()
+                        })
+                    })
+                });
                 ExtensionCatalogEntry {
                     package,
                     installed: installed_release,
                     update,
                     auto_update_eligible: eligible,
+                    revoked,
                 }
             })
             .collect::<Vec<_>>();
@@ -301,6 +341,7 @@ impl ExtensionService {
                     installed: Some(extension),
                     update: None,
                     auto_update_eligible: false,
+                    revoked: false,
                 });
             }
         }
@@ -362,6 +403,7 @@ impl ExtensionService {
             auto_update_eligible: entry.auto_update_eligible,
             grants_revoked_on_update: true,
             diagnostics,
+            revoked: entry.revoked,
         })
     }
 
@@ -508,6 +550,12 @@ impl ExtensionService {
             .find(package_id, version)
             .context("reviewed extension package was not found")?
             .clone();
+        if index
+            .revocation(&entry.package_id, &entry.version, &entry.sha256)
+            .is_some()
+        {
+            bail!("this reviewed extension release has been revoked");
+        }
         let archive = download_release(&entry).await?;
         let package = self
             .store
@@ -519,6 +567,31 @@ impl ExtensionService {
         }
         self.persist_install(repo, package, InstallSource::Registry, Some(&entry))
             .await
+    }
+
+    async fn enforce_revocations(
+        &self,
+        repo: &HistoryRepository,
+        index: &RegistryIndex,
+        installed: &[ExtensionSummary],
+    ) -> Result<()> {
+        for package in installed {
+            let Some(checksum) = package.checksum.as_deref() else {
+                continue;
+            };
+            if matches!(package.source, InstallSource::Registry)
+                && index
+                    .revocation(&package.package_id, &package.version, checksum)
+                    .is_some()
+            {
+                sqlx::query("UPDATE extension_runtime_state SET status='quarantined',last_error='The signed registry revoked this release.',updated_at=? WHERE extension_id=(SELECT id FROM extension_installs WHERE package_id=?)")
+                    .bind(now_ms())
+                    .bind(&package.package_id)
+                    .execute(&repo.pool)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn install_local(
@@ -583,12 +656,18 @@ impl ExtensionService {
                     _ => bail!("stored extension status is invalid"),
                 };
                 let package = self.store.load(Path::new(&row.get::<String, _>(5)))?;
+                let (icon_svg, icon_svg_dark) = self.package_identity_icons(
+                    &package.relative_path,
+                    package.manifest.icon_assets.as_ref(),
+                );
                 let permission_fingerprint = permission_fingerprint(&package.manifest);
                 Ok(ExtensionSummary {
                     package_id: row.get(0),
                     version: row.get(1),
                     display_name: package.manifest.display_name,
                     description: package.manifest.description,
+                    icon_svg,
+                    icon_svg_dark,
                     source,
                     enabled: row.get::<i64, _>(3) != 0,
                     status,
@@ -660,6 +739,21 @@ impl ExtensionService {
     }
 
     pub async fn recover(&self, repo: &HistoryRepository, package_id: &str) -> Result<()> {
+        let installed: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT version,sha256,source FROM extension_installs WHERE package_id=?",
+        )
+        .bind(package_id)
+        .fetch_optional(&repo.pool)
+        .await?;
+        if let Some((version, checksum, source)) = installed {
+            if source == "registry"
+                && self.cached_registry()?.is_some_and(|index| {
+                    index.revocation(package_id, &version, &checksum).is_some()
+                })
+            {
+                bail!("a release revoked by the signed registry cannot be recovered");
+            }
+        }
         let mut transaction = repo.pool.begin().await?;
         let result = sqlx::query("UPDATE extension_runtime_state SET status='ready',updated_at=? WHERE extension_id=(SELECT id FROM extension_installs WHERE package_id=?) AND status='quarantined'")
             .bind(now_ms()).bind(package_id).execute(&mut *transaction).await?;
@@ -1206,7 +1300,10 @@ impl ExtensionService {
             || contribution.declaration.effects.iter().any(|effect| {
                 matches!(
                     effect,
-                    ActionEffect::OpenHttpsUrl | ActionEffect::OpenDialog
+                    ActionEffect::OpenHttpsUrl
+                        | ActionEffect::OpenDialog
+                        | ActionEffect::ComposeEmail
+                        | ActionEffect::DialPhone
                 )
             })
         {
@@ -1239,6 +1336,17 @@ impl ExtensionService {
             .context("action handler is missing")?
         {
             ActionHandler::Dialog => ActionOutcome::OpenDialog,
+            ActionHandler::ComposeEmail {
+                facet_value_pointer,
+            } => ActionOutcome::ComposeEmail(facet_string_value(
+                facet.as_ref(),
+                &facet_value_pointer,
+            )?),
+            ActionHandler::DialPhone {
+                facet_value_pointer,
+            } => {
+                ActionOutcome::DialPhone(facet_string_value(facet.as_ref(), &facet_value_pointer)?)
+            }
             ActionHandler::TransformerPreset {
                 transformer_id,
                 parameters: preset,
@@ -1555,10 +1663,8 @@ impl ExtensionService {
                 extension_id: contribution.extension_id,
                 package_id: contribution.package_id,
                 package_sha256: contribution.sha256,
-                action_id: (contribution.declaration.kind == ContributionKind::Action)
-                    .then_some(contribution.id),
-                action_version: (contribution.declaration.kind == ContributionKind::Action)
-                    .then_some(contribution.version),
+                action_id: Some(contribution.id),
+                action_version: Some(contribution.version),
                 clip_id: clip_id.into(),
                 source_id: source_id.into(),
                 facet_id: facet_id.map(str::to_string),
@@ -1692,7 +1798,7 @@ impl ExtensionService {
         let action_id = session
             .action_id
             .clone()
-            .context("detail views cannot invoke extension capabilities")?;
+            .context("extension contribution identity is missing")?;
         match request {
             BridgeRequest::Https { request } => {
                 let url =
@@ -1821,7 +1927,7 @@ impl ExtensionService {
                     action_id,
                     version: session
                         .action_version
-                        .context("dialog action version is missing")?,
+                        .context("extension contribution version is missing")?,
                     clip_id: session.clip_id,
                     source_id: session.source_id,
                     facet_id: session.facet_id,
@@ -2080,6 +2186,22 @@ impl ExtensionService {
                 .and_then(asset),
             None,
         )
+    }
+
+    fn package_identity_icons(
+        &self,
+        package_relative_path: &Path,
+        icons: Option<&super::manifest::ThemedIconAssets>,
+    ) -> (Option<String>, Option<String>) {
+        let asset = |path: &str| {
+            self.store
+                .package_asset(package_relative_path, path)
+                .ok()
+                .map(|bytes| format!("data:image/svg+xml;base64,{}", BASE64.encode(bytes)))
+        };
+        icons
+            .map(|icons| (asset(&icons.light), asset(&icons.dark)))
+            .unwrap_or_default()
     }
 
     async fn consent_required(
@@ -2549,11 +2671,17 @@ impl ExtensionService {
         }
         transaction.commit().await?;
         let permission_fingerprint = permission_fingerprint(&package.manifest);
+        let (icon_svg, icon_svg_dark) = self.package_identity_icons(
+            &package.relative_path,
+            package.manifest.icon_assets.as_ref(),
+        );
         Ok(ExtensionSummary {
             package_id: package.manifest.package_id,
             version: package.manifest.version,
             display_name: package.manifest.display_name,
             description: package.manifest.description,
+            icon_svg,
+            icon_svg_dark,
             source,
             enabled: true,
             status: RuntimeStatus::Ready,
@@ -2850,6 +2978,8 @@ fn action_effect_name(value: ActionEffect) -> &'static str {
         ActionEffect::OpenHttpsUrl => "open_https_url",
         ActionEffect::Notification => "notification",
         ActionEffect::OpenDialog => "open_dialog",
+        ActionEffect::ComposeEmail => "compose_email",
+        ActionEffect::DialPhone => "dial_phone",
     }
 }
 
@@ -2960,9 +3090,64 @@ fn validate_action_outcome(
             ActionEffect::Notification
         }
         ActionOutcome::OpenDialog => ActionEffect::OpenDialog,
+        ActionOutcome::ComposeEmail(address) => {
+            validate_email_address(address)?;
+            ActionEffect::ComposeEmail
+        }
+        ActionOutcome::DialPhone(number) => {
+            validate_phone_number(number)?;
+            ActionEffect::DialPhone
+        }
     };
     if !contribution.declaration.effects.contains(&effect) {
         bail!("extension action requested an undeclared effect");
+    }
+    Ok(())
+}
+
+fn facet_string_value(
+    facet: Option<&crate::contributions::FacetDescriptor>,
+    pointer: &str,
+) -> Result<String> {
+    let value = facet
+        .context("typed host action requires its bound facet")?
+        .payload
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_str)
+        .context("typed host action facet value is missing or is not a string")?;
+    if value.is_empty() || value.len() > 2_048 {
+        bail!("typed host action facet value exceeds its limits");
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_email_address(value: &str) -> Result<()> {
+    let value = value.trim();
+    let Some((local, domain)) = value.split_once('@') else {
+        bail!("compose_email facet value is not a valid email address");
+    };
+    if value.len() > 320
+        || local.is_empty()
+        || domain.is_empty()
+        || domain.contains('@')
+        || value.contains(['\r', '\n', ' ', '\t'])
+    {
+        bail!("compose_email facet value is not a valid email address");
+    }
+    Ok(())
+}
+
+fn validate_phone_number(value: &str) -> Result<()> {
+    let value = value.trim();
+    let digit_count = value.chars().filter(char::is_ascii_digit).count();
+    if value.is_empty()
+        || value.len() > 64
+        || !(3..=15).contains(&digit_count)
+        || !value.chars().all(|character| {
+            character.is_ascii_digit() || matches!(character, '+' | '-' | '(' | ')' | ' ' | '.')
+        })
+    {
+        bail!("dial_phone facet value is not a valid phone number");
     }
     Ok(())
 }
@@ -3208,6 +3393,8 @@ fn summary_from_manifest(
         version: manifest.version,
         display_name: manifest.display_name,
         description: manifest.description,
+        icon_svg: None,
+        icon_svg_dark: None,
         source,
         enabled,
         status,

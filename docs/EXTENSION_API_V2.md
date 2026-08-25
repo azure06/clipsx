@@ -17,6 +17,7 @@ packageId = "example.ask-ai"
 version = "1.0.0"
 apiVersion = "^2.0"
 displayName = "Ask AI"
+iconAssets = { light = "icons/package-light.svg", dark = "icons/package-dark.svg" }
 
 [[contributions]]
 id = "ask-chatgpt"
@@ -67,9 +68,24 @@ matches; otherwise it binds the action to the highest-priority ready
 representation accepted by its matcher. That bound representation is used
 consistently for state evaluation, consent, invocation scope, and execution.
 
-Package SVGs live below `icons/`. `iconAssets` supplies a complete light/dark
-pair, selected by the host theme; use it for marks that require contrast on
-both surfaces. The legacy single `iconAsset` remains a theme-neutral fallback.
+Package SVGs live below `icons/`. A top-level `iconAssets` pair identifies the
+installed package. A contribution-level `iconAssets` pair identifies one view
+or action and is selected by the host theme; use it for marks that require
+contrast on both surfaces. The contribution-level single `iconAsset` remains a
+theme-neutral fallback. Catalog icons are separate registry-owned, hashed,
+bounded PNG/WebP assets because they must be verified and displayed before
+download. Registry schema v3 declares each theme as `{ url, sha256 }`; the
+client accepts only the official registry raw-content origin, verifies the
+signed descriptor and downloaded bytes, and caches the raster by hash. Package
+SVGs are never used as pre-install catalog content.
+
+The exact registry `index.json` bytes are accompanied by a detached signature
+document containing Ed25519 signatures and key IDs. Clients verify a signature
+from an embedded trusted key before parsing or caching the index. Multiple
+signatures support key overlap. A signed `revocations` entry contains
+`packageId`, `version`, and archive `sha256`; matching registry releases are
+blocked and existing installations are quarantined. Developer Mode archives
+are explicitly unsigned and never receive registry updates.
 `iconScale` may be set between `0.75` and `2` when a supplied asset contains
 prescribed viewBox clear space; the host scales the image without cropping or
 rewriting it.
@@ -82,7 +98,13 @@ references such as `url(#gradient)` are allowed. Accepted icons are rendered as
 images, not injected into the main DOM.
 
 Actions may preview, copy, paste, save a new clip, open a declared URL, notify,
-or open a declared dialog. They cannot update/delete clips, inspect arbitrary
+open a declared dialog, or use the typed `compose_email` and `dial_phone` host
+handlers. A typed native handler declares exactly one matching effect and a
+bounded `facetValuePointer`; the host extracts that string from the action's
+bound facet and validates it before constructing the OS request. It never
+accepts an extension-provided URI. Typed native actions use local execution and
+a short-lived invocation token but require no data-egress permission. They
+cannot update/delete clips, inspect arbitrary
 history, or access filesystem, shell, database, or host clipboard APIs.
 Only an action output with the `preview` disposition opens a temporary result
 tab. Copy, paste, save, navigation, notification, and dialog effects keep the
@@ -112,6 +134,28 @@ webview when closed.
 `theme` is the currently applied `light` or `dark` theme (never an unresolved
 `system` value), and `locale` is the active host locale. An open detail session
 is recreated when either context value changes.
+
+Custom detail renderers may declare `effects = ["copy"]`. Their UI can then
+call `submitText("text/plain", value, "copy")`; ClipsX validates the declared
+effect and performs the clipboard write through the host output boundary.
+Renderers cannot request paste, save, navigation, provider, or other effects.
+Without the declaration, output submission is rejected.
+
+Settings are manifest-declared bounded `boolean`, `string`, or `number` values.
+The host validates overrides, persists them in SQLite by stable package and
+setting ID, and supplies the resolved object as `ClipsX.context.settings`.
+Custom UI must not create a second source of truth in `localStorage`, IndexedDB,
+or package files. Settings survive uninstall so a later reinstall restores
+preferences; secrets instead use declared credential permissions and the OS
+credential store.
+
+Custom views must be fully offline, use the injected theme and locale, support
+keyboard focus and reduced motion, and avoid shipping a framework where host
+render models or small DOM code are sufficient. They call `ready` after the
+first useful frame or an actionable error, not merely after HTML bootstrap.
+Expensive parsing and rendering run in the isolated child view or WASM runtime,
+away from the main ClipsX UI thread.
+
 Only a host-rendered action can create a privileged dialog session; detail views
 cannot invoke capabilities or mint dialog authorization. Navigation, HTTPS,
 credentials, provider generation, settings, and outputs all pass through the
@@ -144,24 +188,38 @@ is configured. Parameter schemas generate host controls for bounded primitive
 fields and are validated again before guest execution. See the
 [threat model](EXTENSION_THREAT_MODEL.md).
 
-## Acceptance examples
+## First-party packages and acceptance examples
 
-`examples/extensions/ask-ai` demonstrates clip-wide plain-text matching,
+First-party package sources live in
+[`azure06/clipsx-extensions`](https://github.com/azure06/clipsx-extensions).
+The host repository owns the API, runtime, package tooling, and conformance
+tests; it does not vendor extension source or generated package archives.
+
+`extensions/ask-ai` demonstrates clip-wide plain-text matching,
 Unicode-safe URL encoding, size-limited actions, SVG icons, declared navigation,
 and first-use consent.
-`examples/extensions/mermaid-viewer` demonstrates offline detection, bundled
-detail/dialog UI, source fallback, and no network permission.
+`extensions/mermaid-viewer` is the first-party Mermaid package. It
+demonstrates offline standalone Mermaid and Mermaid-in-Markdown detection, a
+theme-native React/GFM detail and dialog UI, per-diagram navigation, accessible
+source fallback, host-owned settings, and no network permission.
+`extensions/color-tools` demonstrates a custom detail view, host-native compact
+model, transformer, and preset-action models.
+`extensions/math` demonstrates conservative WASM detection plus a
+permission-free isolated view with bundled KaTeX/fonts, host-owned settings,
+immediate readiness, and accessible source recovery.
+`extensions/communication-actions` demonstrates typed Compose and Dial
+handlers without guest URI, network, shell, or filesystem access.
 An enabled compatible renderer that claims an otherwise unknown facet on an
 exact source representation suppresses the host's generic key/value details
 tab. That generic tab returns automatically when the renderer is unavailable;
 known built-in semantic renderers remain additive.
-`examples/extensions/text-api` demonstrates a consented custom dialog, exact
+`extensions/text-api` demonstrates a consented custom dialog, exact
 origin/path/method HTTPS access, and copy/save output through the host bridge.
-`examples/extensions/ask-local-ai` demonstrates a capability-backed WASM action,
+`extensions/ask-local-ai` demonstrates a capability-backed WASM action,
 host-owned Ollama generation, dynamic action state, generated parameter controls,
 and preview/copy/save output without exposing provider configuration.
 
-The repository keeps package source and validation tooling only. Versioned
-installable archives and checksums are published as registry or release assets;
-[`examples/extensions/packages`](../examples/extensions/packages/README.md) is
-an ignored local output directory for Developer Mode builds.
+The extension repository keeps package source and a pinned copy of the WIT
+contract. Generated `component.wasm`, `.clipsx`, `target/`, and `dist/` outputs
+are ignored. Versioned archives are immutable GitHub Release assets; the
+separate registry contains their signed metadata and checksums.

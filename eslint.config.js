@@ -14,7 +14,6 @@ export default tseslint.config(
       'src-tauri/gen',
       // Extension UI is packaged guest code (including vendored framework
       // bundles), not part of the privileged React frontend build.
-      'examples/extensions/*/ui/**',
     ],
   },
 

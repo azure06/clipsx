@@ -16,7 +16,7 @@ adapter's supported-format contract changes.
 - Preserve the fresh V2 schema and explicit reset flow; do not add V1 migrations
   or compatibility reads for release convenience.
 - Advertise only capabilities demonstrated in installed builds.
-- Treat Windows OCR as unsupported until it is implemented and validated.
+- Treat Windows OCR as release-blocking until its real installed lifecycle is validated; the WinRT provider implementation and generated-image recognition test are automated prerequisites, not substitutes for installed evidence.
 - Do not imply Wayland, hosted providers, visual search, additional generation
   providers, Vault, or remote sync support unless a later roadmap milestone
   explicitly delivers it. Local Ollama text generation is implemented, but may
@@ -47,25 +47,14 @@ cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
 cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
-cargo build --manifest-path examples/extensions/color-tools/Cargo.toml --target wasm32-unknown-unknown --release
-cargo build --manifest-path examples/extensions/ask-ai/Cargo.toml --target wasm32-unknown-unknown --release
-cargo build --manifest-path examples/extensions/ask-local-ai/Cargo.toml --target wasm32-unknown-unknown --release
-cargo build --manifest-path examples/extensions/mermaid-viewer/Cargo.toml --target wasm32-unknown-unknown --release
-cp examples/extensions/color-tools/target/wasm32-unknown-unknown/release/clipsx_color_tools.wasm examples/extensions/color-tools/component.wasm
-cp examples/extensions/ask-ai/target/wasm32-unknown-unknown/release/clipsx_ask_ai.wasm examples/extensions/ask-ai/component.wasm
-cp examples/extensions/ask-local-ai/target/wasm32-unknown-unknown/release/clipsx_ask_local_ai.wasm examples/extensions/ask-local-ai/component.wasm
-cp examples/extensions/mermaid-viewer/target/wasm32-unknown-unknown/release/clipsx_mermaid_viewer.wasm examples/extensions/mermaid-viewer/component.wasm
-npm run extension:pack -- examples/extensions/color-tools examples/extensions/packages/color-tools-1.0.0.clipsx
-npm run extension:pack -- examples/extensions/ask-ai examples/extensions/packages/ask-ai-1.0.3.clipsx
-npm run extension:pack -- examples/extensions/ask-local-ai examples/extensions/packages/ask-local-ai-1.0.0.clipsx
-npm run extension:pack -- examples/extensions/mermaid-viewer examples/extensions/packages/mermaid-viewer-1.0.1.clipsx
-npm run extension:pack -- examples/extensions/text-api examples/extensions/packages/text-api-1.0.0.clipsx
-npm run extension:validate -- examples/extensions/packages/color-tools-1.0.0.clipsx
-npm run extension:validate -- examples/extensions/packages/ask-ai-1.0.3.clipsx
-npm run extension:validate -- examples/extensions/packages/ask-local-ai-1.0.0.clipsx
-cargo test --manifest-path src-tauri/Cargo.toml downloadable_no_wasi_component_fits_runtime_limits -- --ignored
-npm run extension:validate -- examples/extensions/packages/mermaid-viewer-1.0.1.clipsx
-npm run extension:validate -- examples/extensions/packages/text-api-1.0.0.clipsx
+# In a sibling azure06/clipsx-extensions checkout:
+npm ci
+npm run build:mermaid-ui
+npm run sync:katex
+# Build each Rust guest for wasm32-unknown-unknown, copy it to its package as
+# component.wasm, then use `npm run tool -- pack|validate|test` for each release.
+# Release CI, rather than the ClipsX application build, publishes the immutable
+# .clipsx assets and deterministic registry-submission metadata.
 ```
 
 The revision must also pass command-registration drift, schema/reset,

@@ -5,6 +5,8 @@ export type ExtensionSummary = {
   version: string
   displayName: string
   description: string
+  iconSvg: string | null
+  iconSvgDark: string | null
   source: 'registry' | 'developer'
   enabled: boolean
   status: 'ready' | 'quarantined' | 'incompatible'
@@ -46,6 +48,10 @@ export type RegistryPackage = {
   homepageUrl?: string | null
   repositoryUrl?: string | null
   documentationUrl?: string | null
+  iconAssets?: {
+    light: { url: string; sha256: string; dataUrl?: string | null }
+    dark: { url: string; sha256: string; dataUrl?: string | null }
+  } | null
   permissionFingerprint?: string | null
 }
 
@@ -54,6 +60,7 @@ export type CatalogEntry = {
   installed: ExtensionSummary | null
   update: RegistryPackage | null
   autoUpdateEligible: boolean
+  revoked: boolean
 }
 
 export type ExtensionCatalog = {
@@ -88,6 +95,7 @@ export type PackageDetail = {
   autoUpdateEligible: boolean
   grantsRevokedOnUpdate: boolean
   diagnostics: string[]
+  revoked: boolean
 }
 
 export type CoreUtility = { id: string; kind: string; label: string; version: string }

@@ -1,4 +1,4 @@
-import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import {
   Archive,
   AtSign,
@@ -28,20 +28,10 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import mermaid from 'mermaid'
 import { useTranslation } from 'react-i18next'
-import {
-  useState,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  type ComponentPropsWithoutRef,
-  type ReactNode,
-} from 'react'
+import { useEffect, useState, useMemo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
-import { useTheme } from '../../shared/hooks/useTheme'
 import { managedAssetUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
@@ -421,24 +411,35 @@ const FilesView = ({
               <FolderOpen className="h-4 w-4" />
             </button>
           </div>
-          {isImage && (
-            <div className="flex items-center justify-center overflow-hidden rounded-lg border border-slate-200/60 bg-slate-100/60 p-2 dark:border-white/5 dark:bg-black/20">
-              <img
-                alt={entry.name}
-                className="max-h-48 w-auto rounded object-contain"
-                src={convertFileSrc(entry.path)}
-                onError={e => {
-                  const el = e.currentTarget.parentElement
-                  if (el) el.style.display = 'none'
-                }}
-              />
-            </div>
-          )}
+          {isImage && <LocalFilePreview clipId={clipId} path={entry.path} name={entry.name} />}
         </li>
       )
     })}
   </ul>
 )
+
+const LocalFilePreview = ({ clipId, path, name }: { clipId: string; path: string; name: string }) => {
+  const [source, setSource] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    void invoke<string>('get_clip_file_preview', { clipId, path })
+      .then(value => {
+        if (active) setSource(value)
+      })
+      .catch(() => {
+        if (active) setSource(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [clipId, path])
+  if (!source) return null
+  return (
+    <div className="flex items-center justify-center overflow-hidden rounded-lg border border-slate-200/60 bg-slate-100/60 p-2 dark:border-white/5 dark:bg-black/20">
+      <img alt={name} className="max-h-48 w-auto rounded object-contain" src={source} />
+    </div>
+  )
+}
 
 const semanticScalar = (payload: Record<string, unknown>, key: string): string | null => {
   const value = payload[key]
@@ -919,57 +920,6 @@ const SemanticView = ({
   )
 }
 
-const MermaidDiagram = ({ chart }: { chart: string }) => {
-  const { appliedTheme } = useTheme()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const rawId = useId()
-  const [hasError, setHasError] = useState(false)
-  const diagramId = useMemo(() => `mermaid-${rawId.replace(/[:]/g, '')}`, [rawId])
-
-  useEffect(() => {
-    let cancelled = false
-    const container = containerRef.current
-    const run = async () => {
-      if (!container) return
-      setHasError(false)
-      container.innerHTML = ''
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: appliedTheme === 'dark' ? 'dark' : 'default',
-      })
-      try {
-        const { svg } = await mermaid.render(diagramId, chart)
-        if (!cancelled) container.innerHTML = svg
-      } catch {
-        if (!cancelled) setHasError(true)
-      }
-    }
-    void run()
-    return () => {
-      cancelled = true
-      if (container) container.innerHTML = ''
-    }
-  }, [appliedTheme, chart, diagramId])
-
-  if (hasError) {
-    return (
-      <div className="rounded-lg border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-        Failed to render diagram
-      </div>
-    )
-  }
-  return (
-    <div className="rounded-xl border border-slate-200/80 bg-white/70 px-3 py-3 shadow-sm dark:border-white/10 dark:bg-black/20">
-      <div
-        ref={containerRef}
-        data-testid="mermaid-diagram"
-        className="overflow-x-auto [&_svg]:mx-auto [&_svg]:max-w-full"
-      />
-    </div>
-  )
-}
-
 const markdownChildrenToText = (children: ReactNode): string =>
   Array.isArray(children)
     ? children.map(markdownChildrenToText).join('')
@@ -1062,9 +1012,6 @@ const MarkdownView = ({ markdown }: { markdown: string }) => {
               {children}
             </code>
           )
-        }
-        if (language === 'mermaid') {
-          return <MermaidDiagram chart={code} />
         }
         return (
           <pre className="overflow-x-auto rounded-xl border border-slate-200/80 bg-slate-950 px-4 py-3 text-sm text-slate-100 shadow-sm dark:border-white/10">

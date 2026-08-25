@@ -62,7 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   excluded_apps: [],
   max_clips: 1000,
   max_age_days: 0,
-  max_item_size_mb: 10,
+  max_item_size_mb: 50,
   auto_clear_minutes: 0,
   hide_on_copy: false,
   clear_on_exit: false,

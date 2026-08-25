@@ -13,7 +13,7 @@ const THUMBNAIL_MAX_EDGE: u32 = 512;
 const THUMBNAIL_PRODUCER_ID: &str = "builtin.artifact.thumbnail";
 const THUMBNAIL_PRODUCER_VERSION: &str = "1";
 const OCR_PRODUCER_ID: &str = "builtin.artifact.ocr";
-const OCR_PRODUCER_VERSION: &str = "1";
+const OCR_PRODUCER_VERSION: &str = "2";
 
 /// Stable descriptor for a host-owned derived-data producer. Future extension
 /// packages use the same descriptor, but never receive direct database access.
@@ -41,6 +41,10 @@ pub fn registered_producers() -> &'static [ArtifactProducerDescriptor] {
         },
     ];
     &PRODUCERS
+}
+
+pub fn ocr_runtime_available() -> bool {
+    platform_ocr_available()
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -467,12 +471,24 @@ async fn platform_ocr(bytes: &[u8]) -> Result<String> {
 }
 
 #[cfg(target_os = "windows")]
-async fn platform_ocr(_bytes: &[u8]) -> Result<String> {
-    // The Windows Runtime bindings used by this crate expose asynchronous OCR
-    // operations. They must run on a WinRT-capable async apartment rather than
-    // a Tokio blocking worker. Until that host integration is available, report
-    // a precise unsupported state instead of claiming failed English-only OCR.
-    bail!("Windows OCR runtime integration is unavailable")
+async fn platform_ocr(bytes: &[u8]) -> Result<String> {
+    use tokio::sync::oneshot;
+
+    const MAX_OCR_INPUT_BYTES: usize = 20 * 1024 * 1024;
+    if bytes.is_empty() || bytes.len() > MAX_OCR_INPUT_BYTES {
+        bail!("Windows OCR input must contain between 1 byte and 20 MiB");
+    }
+    let sender = windows_ocr_sender()?;
+    let (result_sender, result_receiver) = oneshot::channel();
+    let request = WindowsOcrRequest::Recognize(bytes.to_vec(), result_sender);
+    tokio::task::spawn_blocking(move || sender.send(request))
+        .await
+        .context("Windows OCR queue task panicked")?
+        .map_err(|_| anyhow::anyhow!("Windows OCR executor stopped"))?;
+    result_receiver
+        .await
+        .context("Windows OCR executor dropped its response")?
+        .map_err(anyhow::Error::msg)
 }
 
 #[cfg(target_os = "macos")]
@@ -482,13 +498,104 @@ fn platform_ocr_available() -> bool {
 
 #[cfg(target_os = "windows")]
 fn platform_ocr_available() -> bool {
-    false
+    use std::sync::mpsc;
+
+    let Ok(sender) = windows_ocr_sender() else {
+        return false;
+    };
+    let (response_sender, response_receiver) = mpsc::sync_channel(1);
+    sender
+        .send(WindowsOcrRequest::Available(response_sender))
+        .is_ok()
+        && response_receiver.recv().unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+enum WindowsOcrRequest {
+    Recognize(
+        Vec<u8>,
+        tokio::sync::oneshot::Sender<std::result::Result<String, String>>,
+    ),
+    Available(std::sync::mpsc::SyncSender<bool>),
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ocr_sender() -> Result<std::sync::mpsc::SyncSender<WindowsOcrRequest>> {
+    use std::sync::{mpsc, OnceLock};
+
+    static SENDER: OnceLock<mpsc::SyncSender<WindowsOcrRequest>> = OnceLock::new();
+    if let Some(sender) = SENDER.get() {
+        return Ok(sender.clone());
+    }
+    let (sender, receiver) = mpsc::sync_channel(2);
+    std::thread::Builder::new()
+        .name("clipsx-winrt-ocr".into())
+        .spawn(move || windows_ocr_worker(receiver))
+        .context("unable to start the Windows OCR executor")?;
+    let _ = SENDER.set(sender.clone());
+    Ok(SENDER.get().cloned().unwrap_or(sender))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ocr_worker(receiver: std::sync::mpsc::Receiver<WindowsOcrRequest>) {
+    use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
+
+    let initialized = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+    for request in receiver {
+        match request {
+            WindowsOcrRequest::Available(response) => {
+                let available = initialized.is_ok() && windows_ocr_engine_available();
+                let _ = response.send(available);
+            }
+            WindowsOcrRequest::Recognize(bytes, response) => {
+                let result = if initialized.is_err() {
+                    Err("unable to initialize the WinRT MTA apartment".into())
+                } else {
+                    windows_recognize(&bytes).map_err(|error| error.to_string())
+                };
+                let _ = response.send(result);
+            }
+        }
+    }
+    if initialized.is_ok() {
+        unsafe { RoUninitialize() };
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_ocr_engine_available() -> bool {
+    use windows::Media::Ocr::OcrEngine;
+
+    OcrEngine::TryCreateFromUserProfileLanguages().is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_recognize(bytes: &[u8]) -> Result<String> {
+    use windows::{
+        Graphics::Imaging::BitmapDecoder,
+        Media::Ocr::OcrEngine,
+        Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
+    };
+
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+    writer.WriteBytes(bytes)?;
+    writer.StoreAsync()?.join()?;
+    writer.DetachStream()?;
+    stream.Seek(0)?;
+
+    let decoder = BitmapDecoder::CreateAsync(&stream)?.join()?;
+    let bitmap = decoder.GetSoftwareBitmapAsync()?.join()?;
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .context("Windows has no OCR language compatible with the user profile")?;
+    let result = engine.RecognizeAsync(&bitmap)?.join()?;
+    Ok(result.Text()?.to_string())
 }
 
 #[cfg(target_os = "linux")]
 fn platform_ocr_available() -> bool {
-    std::process::Command::new("which")
-        .arg("tesseract")
+    std::process::Command::new("tesseract")
+        .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -500,8 +607,8 @@ fn platform_ocr_available() -> bool {
 
 #[cfg(target_os = "linux")]
 async fn platform_ocr(bytes: &[u8]) -> Result<String> {
-    if std::process::Command::new("which")
-        .arg("tesseract")
+    if std::process::Command::new("tesseract")
+        .arg("--version")
         .output()
         .map(|o| !o.status.success())
         .unwrap_or(true)
@@ -513,16 +620,15 @@ async fn platform_ocr(bytes: &[u8]) -> Result<String> {
         let dir = tempfile::TempDir::new()?;
         let input = dir.path().join("input.png");
         std::fs::write(&input, &bytes_owned)?;
-        let output_base = dir.path().join("out");
-        let status = std::process::Command::new("tesseract")
+        let output = std::process::Command::new("tesseract")
             .arg(&input)
-            .arg(&output_base)
-            .status()?;
-        if !status.success() {
-            bail!("tesseract failed");
+            .arg("stdout")
+            .output()?;
+        if !output.status.success() {
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+            bail!("tesseract failed: {}", diagnostic.trim());
         }
-        let text = std::fs::read_to_string(output_base.with_extension("txt"))?;
-        Ok(text)
+        String::from_utf8(output.stdout).context("tesseract returned non-UTF-8 text")
     })
     .await
     .context("OCR task panicked")?
@@ -770,4 +876,63 @@ mod tests {
             }
         );
     }
+}
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_ocr_runtime_has_a_profile_language() {
+    assert!(
+        platform_ocr_available(),
+        "Windows.Media.Ocr must have at least one installed user-profile language"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_ocr_recognizes_a_bounded_bitmap_off_ui_thread() {
+    use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+    use std::io::Cursor;
+
+    let glyphs: [[&str; 7]; 4] = [
+        [
+            "11111", "00100", "00100", "00100", "00100", "00100", "00100",
+        ],
+        [
+            "11111", "10000", "10000", "11110", "10000", "10000", "11111",
+        ],
+        [
+            "11111", "10000", "10000", "11111", "00001", "00001", "11111",
+        ],
+        [
+            "11111", "00100", "00100", "00100", "00100", "00100", "00100",
+        ],
+    ];
+    let scale = 16u32;
+    let mut image = RgbaImage::from_pixel(420, 152, Rgba([255, 255, 255, 255]));
+    for (glyph_index, glyph) in glyphs.iter().enumerate() {
+        let origin_x = 18 + glyph_index as u32 * 100;
+        for (row, bits) in glyph.iter().enumerate() {
+            for (column, bit) in bits.bytes().enumerate() {
+                if bit == b'1' {
+                    for y in 0..scale {
+                        for x in 0..scale {
+                            image.put_pixel(
+                                origin_x + column as u32 * scale + x,
+                                18 + row as u32 * scale + y,
+                                Rgba([0, 0, 0, 255]),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(image)
+        .write_to(&mut png, ImageFormat::Png)
+        .unwrap();
+    let text = platform_ocr(png.get_ref()).await.unwrap();
+    assert!(
+        text.to_ascii_uppercase().contains("TEST"),
+        "expected TEST, got {text:?}"
+    );
 }

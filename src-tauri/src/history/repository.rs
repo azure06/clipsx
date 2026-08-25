@@ -4,7 +4,7 @@ use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, Row, SqlitePool};
+use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, Row, Sqlite, SqlitePool, Transaction};
 use std::{
     fs,
     io::Write,
@@ -624,6 +624,26 @@ impl HistoryRepository {
         self.drain_managed_file_deletions().await?;
         Ok(ids)
     }
+
+    pub async fn auto_clear_sensitive(&self, cutoff_ms: i64) -> Result<Vec<String>> {
+        let ids = sqlx::query_scalar::<_, String>(
+            "SELECT c.id FROM clip_items c WHERE c.lifecycle_state='ready' AND c.captured_at<=? AND EXISTS (SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret')",
+        )
+        .bind(cutoff_ms)
+        .fetch_all(&self.pool)
+        .await?;
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM clip_items WHERE lifecycle_state='ready' AND captured_at<=? AND EXISTS (SELECT 1 FROM content_clip_facets f WHERE f.clip_id=clip_items.id AND f.facet_id='core.security.secret')")
+            .bind(cutoff_ms)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        self.drain_managed_file_deletions().await?;
+        Ok(ids)
+    }
     pub async fn clips_for_tag(&self, tag_id: &str) -> Result<Vec<String>> {
         sqlx::query_scalar("SELECT clip_id FROM catalog_clip_tags WHERE tag_id=?")
             .bind(tag_id)
@@ -818,7 +838,9 @@ impl HistoryRepository {
     }
 
     pub async fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        settings.validate()?;
         self.update_settings(&settings.capture).await?;
+        let mut transaction = self.pool.begin().await?;
         for (key, value) in [
             ("ui.theme", serde_json::to_string(&settings.theme)?),
             ("ui.language", serde_json::to_string(&settings.language)?),
@@ -868,9 +890,20 @@ impl HistoryRepository {
             ),
         ] {
             let now = now_ms();
+            let previous: Option<String> =
+                sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key=?")
+                    .bind(key)
+                    .fetch_optional(&mut *transaction)
+                    .await?;
             sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
-                .bind(key).bind(value).bind(now).bind(now).execute(&self.pool).await?;
+                .bind(key).bind(&value).bind(now).bind(now).execute(&mut *transaction).await?;
+            if previous.as_deref() != Some(value.as_str())
+                && matches!(key, "ui.theme" | "ui.language")
+            {
+                Self::enqueue_profile_sync(&mut transaction, key, &value, now).await?;
+            }
         }
+        transaction.commit().await?;
         for (key, value) in [
             (
                 "capture.filters",
@@ -889,6 +922,55 @@ impl HistoryRepository {
             sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
                 .bind(key).bind(value).bind(now).bind(now).execute(&self.pool).await?;
         }
+        Ok(())
+    }
+
+    async fn enqueue_profile_sync(
+        transaction: &mut Transaction<'_, Sqlite>,
+        key: &str,
+        payload_json: &str,
+        now: i64,
+    ) -> Result<()> {
+        let identity: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT device_id,last_physical_ms,last_logical_counter FROM sync_device_identity WHERE singleton=1",
+        )
+        .fetch_optional(&mut **transaction)
+        .await?;
+        let (device_id, last_physical, last_counter) = match identity {
+            Some(value) => value,
+            None => {
+                let device_id = new_id();
+                sqlx::query("INSERT INTO sync_device_identity(singleton,device_id,display_name,created_at,last_physical_ms,last_logical_counter) VALUES(1,?,'This device',?,0,0)")
+                    .bind(&device_id)
+                    .bind(now)
+                    .execute(&mut **transaction)
+                    .await?;
+                (device_id, 0, 0)
+            }
+        };
+        let revision_physical = now.max(last_physical);
+        let revision_counter = if revision_physical > last_physical {
+            0
+        } else {
+            last_counter
+                .checked_add(1)
+                .context("sync logical revision overflow")?
+        };
+        sqlx::query("UPDATE sync_device_identity SET last_physical_ms=?,last_logical_counter=? WHERE singleton=1")
+            .bind(revision_physical)
+            .bind(revision_counter)
+            .execute(&mut **transaction)
+            .await?;
+        sqlx::query("INSERT INTO sync_outbox(record_kind,record_key,payload_json,tombstone,revision_physical_ms,revision_counter,source_device_id,attempts,next_attempt_at,last_error,created_at,updated_at) VALUES('profile_setting',?,?,0,?,?,?,0,NULL,NULL,?,?) ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=0,revision_physical_ms=excluded.revision_physical_ms,revision_counter=excluded.revision_counter,source_device_id=excluded.source_device_id,attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=excluded.updated_at")
+            .bind(key)
+            .bind(payload_json)
+            .bind(revision_physical)
+            .bind(revision_counter)
+            .bind(device_id)
+            .bind(now)
+            .bind(now)
+            .execute(&mut **transaction)
+            .await?;
         Ok(())
     }
     async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
@@ -1580,5 +1662,104 @@ mod tests {
         )
         .fetch_one(&repo.pool).await.unwrap();
         assert_eq!(missing, 0);
+    }
+
+    #[tokio::test]
+    async fn profile_settings_and_sync_outbox_commit_together() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let settings = AppSettings {
+            theme: "dark".into(),
+            language: "ja".into(),
+            excluded_apps: vec!["private-app".into()],
+            ..AppSettings::default()
+        };
+
+        repo.update_app_settings(&settings).await.unwrap();
+
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT record_key,payload_json,source_device_id FROM sync_outbox ORDER BY record_key",
+        )
+        .fetch_all(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, "ui.language");
+        assert_eq!(rows[0].1, "\"ja\"");
+        assert_eq!(rows[1].0, "ui.theme");
+        assert_eq!(rows[1].1, "\"dark\"");
+        assert_eq!(rows[0].2, rows[1].2);
+        assert!(!rows.iter().any(|row| row.1.contains("private-app")));
+    }
+
+    #[tokio::test]
+    async fn auto_clear_deletes_only_expired_secret_facets() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let snapshot = |token, text: &str| CapturedSnapshot {
+            token,
+            source_app_name: None,
+            source_app_id: None,
+            format_observations: Vec::new(),
+            representations: vec![CapturedRepresentation {
+                format_key: "text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text(text.into()),
+            }],
+        };
+        let (secret_id, _) = repo
+            .capture(snapshot(1, "secret value"), &CaptureSettings::default())
+            .await
+            .unwrap();
+        let (ordinary_id, _) = repo
+            .capture(snapshot(2, "ordinary value"), &CaptureSettings::default())
+            .await
+            .unwrap();
+        let representation_id: String =
+            sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=? LIMIT 1")
+                .bind(&secret_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES('core.security.secret','core','1','Secret')")
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version) VALUES(?,'core.security.secret',?,'builtin.secret','1')")
+            .bind(&secret_id)
+            .bind(representation_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE clip_items SET captured_at=1 WHERE id IN (?,?)")
+            .bind(&secret_id)
+            .bind(&ordinary_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            repo.auto_clear_sensitive(2).await.unwrap(),
+            vec![secret_id.clone()]
+        );
+        assert!(repo.detail(&secret_id).await.is_err());
+        assert!(repo.detail(&ordinary_id).await.is_ok());
     }
 }

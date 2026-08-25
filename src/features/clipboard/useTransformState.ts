@@ -63,6 +63,7 @@ type ContextActionRunResponse =
   | { kind: 'open_https_url'; url: string }
   | { kind: 'notification'; level: string; message: string }
   | { kind: 'open_dialog' }
+  | { kind: 'native_action' }
 
 export const useTransformState = ({
   clipId,
@@ -193,7 +194,9 @@ export const useTransformState = ({
         if (
           action.execution === 'capability_backed' ||
           action.effects.includes('open_https_url') ||
-          action.effects.includes('open_dialog')
+          action.effects.includes('open_dialog') ||
+          action.effects.includes('compose_email') ||
+          action.effects.includes('dial_phone')
         ) {
           if (action.consentRequired) {
             const destinations = [

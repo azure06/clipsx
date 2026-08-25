@@ -13,7 +13,6 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
   )
   const [value, setValue] = useState(note ?? '')
   const [isFocused, setIsFocused] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastCommittedRef = useRef<string | null>(note ?? null)
   const pendingCommitRef = useRef<string | null | undefined>(undefined)
@@ -22,13 +21,7 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
   const { updateClipNote } = useClipboardStore()
 
   useEffect(() => {
-    console.log('[NOTE_DEBUG][NoteField] clip changed / syncing local value', {
-      clipId,
-      storeNote: note,
-      expected: 'local input should reflect the selected clip note when not actively editing',
-    })
     setValue(note ?? '')
-    setIsSaving(false)
     lastCommittedRef.current = note ?? null
     pendingCommitRef.current = undefined
     queuedCommitRef.current = undefined
@@ -41,20 +34,10 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
     const resolvedPendingCommit =
       pendingCommitRef.current !== undefined && pendingCommitRef.current === nextStoreNote
 
-    console.log('[NOTE_DEBUG][NoteField] store note observed', {
-      clipId,
-      storeNote: nextStoreNote,
-      isFocused,
-      isSaving,
-      resolvedPendingCommit,
-      expected:
-        'after save succeeds, store note should become the saved note and local input should match it',
-    })
     storeNoteRef.current = nextStoreNote
 
     if (resolvedPendingCommit) {
       pendingCommitRef.current = undefined
-      setIsSaving(false)
     }
 
     if (!isFocused || resolvedPendingCommit) {
@@ -62,69 +45,31 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
     }
 
     lastCommittedRef.current = nextStoreNote
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipId, note, isFocused])
 
   const commitNote = async (rawValue: string) => {
     const normalizedValue = rawValue.trim() || null
-    console.log('[NOTE_DEBUG][NoteField] commit requested', {
-      clipId,
-      rawValue,
-      normalizedValue,
-      lastCommitted: lastCommittedRef.current,
-      pendingCommit: pendingCommitRef.current,
-      expected:
-        'normalizedValue should be sent to the backend only when it differs from the last committed note',
-    })
     if (pendingCommitRef.current !== undefined) {
       if (
         pendingCommitRef.current === normalizedValue ||
         queuedCommitRef.current === normalizedValue
       ) {
-        console.log('[NOTE_DEBUG][NoteField] commit skipped', {
-          clipId,
-          normalizedValue,
-          expected: 'skip save because this note value is already pending or queued',
-        })
         return
       }
 
       queuedCommitRef.current = normalizedValue
-      console.log('[NOTE_DEBUG][NoteField] commit queued', {
-        clipId,
-        normalizedValue,
-        pendingCommit: pendingCommitRef.current,
-        expected: 'save should run after the current in-flight request finishes',
-      })
       return
     }
 
     if (lastCommittedRef.current === normalizedValue) {
-      console.log('[NOTE_DEBUG][NoteField] commit skipped', {
-        clipId,
-        normalizedValue,
-        expected: 'skip save because the note did not change',
-      })
       return
     }
 
     pendingCommitRef.current = normalizedValue
     lastCommittedRef.current = normalizedValue
-    setIsSaving(true)
     try {
       await updateClipNote(clipId, normalizedValue)
-      console.log('[NOTE_DEBUG][NoteField] commit completed', {
-        clipId,
-        normalizedValue,
-        expected: 'backend should have saved the note and clipboardStore should soon reflect it',
-      })
     } catch (error) {
-      console.error('[NOTE_DEBUG][NoteField] commit failed', {
-        clipId,
-        normalizedValue,
-        error,
-        expected: 'no error here; failure means the backend save path rejected the note update',
-      })
       lastCommittedRef.current = storeNoteRef.current
       throw error
     } finally {
@@ -134,7 +79,6 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
         pendingCommitRef.current = undefined
       }
       queuedCommitRef.current = undefined
-      setIsSaving(false)
 
       if (queuedValue !== undefined && queuedValue !== storeNoteRef.current) {
         void commitNote(queuedValue ?? '').catch(() => {})
@@ -144,11 +88,6 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value
-    console.log('[NOTE_DEBUG][NoteField] onChange', {
-      clipId,
-      typedValue: next,
-      expected: 'debounced save should fire after 500ms of inactivity',
-    })
     setValue(next)
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -158,11 +97,6 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
   }
 
   const handleBlur = () => {
-    console.log('[NOTE_DEBUG][NoteField] onBlur', {
-      clipId,
-      localValue: value,
-      expected: 'blur should force one final save attempt with the current input value',
-    })
     setIsFocused(false)
     if (debounceRef.current) {
       clearTimeout(debounceRef.current)

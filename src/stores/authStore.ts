@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { invoke } from '@tauri-apps/api/core'
 
 import {
   completeSupabaseCallback,
@@ -104,6 +105,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!isSupabaseConfigured()) return
 
     try {
+      const userId = get().userId
+      if (userId) {
+        await invoke('set_sync_enabled', { userId, enabled: false }).catch(() => undefined)
+      }
       await signOutSupabase()
       set(signedOutState)
     } catch (error) {

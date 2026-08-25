@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/types'
+import { PROFILE_MUTATED_EVENT } from '../shared/sync/configSync'
 
 type V2Settings = {
   theme: string
@@ -116,6 +117,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({
         settings: fromV2(await invoke<V2Settings>('update_app_settings', { settings: toV2(next) })),
       })
+      window.dispatchEvent(new Event(PROFILE_MUTATED_EVENT))
     } catch (error) {
       set({ settings: current, error: String(error) })
       throw error
@@ -130,6 +132,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ),
         isLoading: false,
       })
+      window.dispatchEvent(new Event(PROFILE_MUTATED_EVENT))
     } catch (error) {
       set({ error: String(error), isLoading: false })
       throw error
