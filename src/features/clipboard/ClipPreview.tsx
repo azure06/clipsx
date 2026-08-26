@@ -27,7 +27,6 @@ const KIND_COLOR: Record<string, string> = {
   table: 'bg-cyan-500',
   markdown: 'bg-sky-500',
   image: 'bg-rose-500',
-  jwt: 'bg-purple-500',
   secret: 'bg-red-500',
   math: 'bg-indigo-500',
   date: 'bg-yellow-500',

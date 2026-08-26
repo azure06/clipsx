@@ -25,23 +25,34 @@ pub(crate) struct PreviewContext<'a> {
 }
 
 /// A valid extension compact presentation (one with a non-empty title) wholly
-/// replaces the built-in preview. Otherwise the built-in resolver runs.
+/// replaces the built-in preview. An icon-only presentation keeps the safe
+/// built-in text while borrowing the leading visual from the selected view.
 pub(crate) fn resolve_history_preview(
     ctx: PreviewContext<'_>,
     extension: Option<CompactPresentation>,
 ) -> HistoryPreview {
-    if let Some(extension) = extension {
-        if let Some(title) = extension.title.filter(|title| !title.trim().is_empty()) {
+    if let Some(extension) = &extension {
+        if let Some(title) = extension
+            .title
+            .as_ref()
+            .filter(|title| !title.trim().is_empty())
+        {
             return HistoryPreview {
-                leading: extension.leading,
-                title,
-                subtitle: extension.subtitle,
-                badge: extension.badge,
-                accessibility_label: extension.accessibility_label,
+                leading: extension.leading.clone(),
+                title: title.clone(),
+                subtitle: extension.subtitle.clone(),
+                badge: extension.badge.clone(),
+                accessibility_label: extension.accessibility_label.clone(),
             };
         }
     }
-    build_builtin_preview(ctx)
+    let mut preview = build_builtin_preview(ctx);
+    if let Some(extension) = extension {
+        if !matches!(extension.leading, LeadingVisual::None) {
+            preview.leading = extension.leading;
+        }
+    }
+    preview
 }
 
 pub(crate) fn build_builtin_preview(ctx: PreviewContext<'_>) -> HistoryPreview {
@@ -151,7 +162,7 @@ fn facet_icon(facet_id: Option<&str>) -> Option<LeadingVisual> {
         "core.text.code" => "code",
         "core.data.json" => "braces",
         "core.link.url" => "link",
-        "core.token.jwt" | "core.security.secret" => "key",
+        "core.security.secret" => "key",
         "core.value.color" => "palette",
         "core.data.table" => "table",
         "core.file.path" => "file",
@@ -360,6 +371,30 @@ mod tests {
         };
         let preview = resolve_history_preview(c, Some(extension));
         assert_eq!(preview.title, "fallback text");
+    }
+
+    #[test]
+    fn icon_only_extension_keeps_builtin_text_and_reuses_view_icon() {
+        let mut c = ctx("text");
+        c.text_snippet = Some("safe built-in text");
+        let leading = LeadingVisual::PackageIcon {
+            light: "data:image/svg+xml;base64,light".into(),
+            dark: Some("data:image/svg+xml;base64,dark".into()),
+            scale_percent: 100,
+        };
+        let extension = CompactPresentation {
+            leading: leading.clone(),
+            title: None,
+            subtitle: None,
+            badge: None,
+            accessibility_label: "JWT view".into(),
+        };
+
+        let preview = resolve_history_preview(c, Some(extension));
+
+        assert_eq!(preview.title, "safe built-in text");
+        assert_eq!(preview.leading, leading);
+        assert_eq!(preview.accessibility_label, "safe built-in text");
     }
 
     #[test]

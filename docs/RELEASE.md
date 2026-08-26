@@ -50,7 +50,6 @@ cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
 # In a sibling azure06/clipsx-extensions checkout:
 npm ci
 npm run build:mermaid-ui
-npm run sync:katex
 # Build each Rust guest for wasm32-unknown-unknown, copy it to its package as
 # component.wasm, then use `npm run tool -- pack|validate|test` for each release.
 # Release CI, rather than the ClipsX application build, publishes the immutable
@@ -208,8 +207,6 @@ Wayland is not covered by this matrix.
   covers install/use/disable/failure/quarantine/recovery/uninstall.
 - Cached compact presentation survives restart and history scrolling invokes no
   WASM; malformed output falls back to the core row.
-- Color Tools detail/compact swatch, HEX/RGB/HSL transforms, contextual Copy
-  actions, selected-clip shortcut targeting, conflict handling, and cleanup.
 - With local generation disabled, Ask Local AI is visibly disabled with a
   provider reason while local contributions continue to work. After configuring
   Ollama, consent once, run preview/copy/save, then update/disable the package
@@ -218,9 +215,7 @@ Wayland is not covered by this matrix.
   declarations (including `pie` and declarations after comments, init directives,
   or front matter), produces one **Mermaid** tab with its package icon, and renders
   hostile input offline in themed isolated detail/dialog views with source fallback;
-  disabling its renderer restores the generic facet-details tab. Text API cannot directly network,
-  redirect, reach private addresses, reflect credentials, open popups/downloads,
-  or retain a child view after deselection/close.
+  disabling its renderer restores the generic facet-details tab.
 - On Windows, macOS, and Linux/X11, verify extension child-view bounds, focus,
   keyboard traversal, screen-reader labels, theme synchronization, teardown,
   unresponsive-view recovery, and absence of inherited primary-webview Tauri

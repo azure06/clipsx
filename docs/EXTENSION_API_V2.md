@@ -204,19 +204,12 @@ and first-use consent.
 demonstrates offline standalone Mermaid and Mermaid-in-Markdown detection, a
 theme-native React/GFM detail and dialog UI, per-diagram navigation, accessible
 source fallback, host-owned settings, and no network permission.
-`extensions/color-tools` demonstrates a custom detail view, host-native compact
-model, transformer, and preset-action models.
-`extensions/math` demonstrates conservative WASM detection plus a
-permission-free isolated view with bundled KaTeX/fonts, host-owned settings,
-immediate readiness, and accessible source recovery.
 `extensions/communication-actions` demonstrates typed Compose and Dial
 handlers without guest URI, network, shell, or filesystem access.
 An enabled compatible renderer that claims an otherwise unknown facet on an
 exact source representation suppresses the host's generic key/value details
 tab. That generic tab returns automatically when the renderer is unavailable;
 known built-in semantic renderers remain additive.
-`extensions/text-api` demonstrates a consented custom dialog, exact
-origin/path/method HTTPS access, and copy/save output through the host bridge.
 `extensions/ask-local-ai` demonstrates a capability-backed WASM action,
 host-owned Ollama generation, dynamic action state, generated parameter controls,
 and preview/copy/save output without exposing provider configuration.

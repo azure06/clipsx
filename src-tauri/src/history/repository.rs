@@ -414,17 +414,26 @@ impl HistoryRepository {
         &self,
         clip_id: &str,
     ) -> Result<Option<crate::contracts::CompactPresentation>> {
-        let value: Option<String> = sqlx::query_scalar(
-            "SELECT model_json FROM content_compact_presentations WHERE clip_id=? ORDER BY updated_at DESC,renderer_id LIMIT 1",
+        let row = sqlx::query(
+            "SELECT cp.model_json,ci.light_svg_data_url,ci.dark_svg_data_url,ci.scale_percent FROM content_compact_presentations cp LEFT JOIN extension_contribution_icons ci ON ci.contribution_id=cp.renderer_id WHERE cp.clip_id=? ORDER BY cp.updated_at DESC,cp.renderer_id LIMIT 1",
         )
         .bind(clip_id)
         .fetch_optional(&self.pool)
         .await?;
-        value
-            .map(|json| {
-                serde_json::from_str(&json).context("stored compact presentation is invalid")
-            })
-            .transpose()
+        row.map(|row| {
+            let json: String = row.get(0);
+            let mut presentation: crate::contracts::CompactPresentation =
+                serde_json::from_str(&json).context("stored compact presentation is invalid")?;
+            if let Some(light) = row.get::<Option<String>, _>(1) {
+                presentation.leading = crate::contracts::LeadingVisual::PackageIcon {
+                    light,
+                    dark: row.get(2),
+                    scale_percent: row.get::<i64, _>(3) as u16,
+                };
+            }
+            Ok(presentation)
+        })
+        .transpose()
     }
     async fn tags_for(&self, clip_id: &str) -> Result<Vec<Tag>> {
         let rows=sqlx::query("SELECT t.id,t.name,t.color FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name").bind(clip_id).fetch_all(&self.pool).await?;
@@ -1309,6 +1318,93 @@ mod tests {
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
     }
+
+    #[tokio::test]
+    async fn compact_presentations_join_the_contribution_icon_without_storing_it_per_clip() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![CapturedRepresentation {
+                        format_key: "text/plain".into(),
+                        canonical_mime_type: Some("text/plain".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Text("encoded value".into()),
+                    }],
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let source_id: String =
+            sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=? LIMIT 1")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let extension_id = new_id();
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES(?,'firstparty.test','1.0.0','2','developer',?,'packages/test',1,1,1)")
+            .bind(&extension_id)
+            .bind("0".repeat(64))
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        let contribution_id = "firstparty.test/render";
+        let light = format!("data:image/svg+xml;base64,{}", "x".repeat(4_000));
+        sqlx::query("INSERT INTO extension_contribution_icons(extension_id,contribution_id,light_svg_data_url,dark_svg_data_url,scale_percent,updated_at) VALUES(?,?,?,?,?,1)")
+            .bind(&extension_id)
+            .bind(contribution_id)
+            .bind(&light)
+            .bind(Option::<String>::None)
+            .bind(110_i64)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        let stored = crate::contracts::CompactPresentation {
+            leading: crate::contracts::LeadingVisual::None,
+            title: None,
+            subtitle: None,
+            badge: None,
+            accessibility_label: "Extension view".into(),
+        };
+        let model_json = serde_json::to_string(&stored).unwrap();
+        assert!(model_json.len() <= 2048);
+        assert!(!model_json.contains(&light));
+        sqlx::query("INSERT INTO content_compact_presentations(clip_id,source_representation_id,renderer_id,renderer_version,model_json,updated_at) VALUES(?,?,?,?,?,1)")
+            .bind(&clip_id)
+            .bind(source_id)
+            .bind(contribution_id)
+            .bind("1.0.0")
+            .bind(model_json)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+
+        let hydrated = repo.compact_presentation(&clip_id).await.unwrap().unwrap();
+        assert_eq!(
+            hydrated.leading,
+            crate::contracts::LeadingVisual::PackageIcon {
+                light,
+                dark: None,
+                scale_percent: 110,
+            }
+        );
+    }
+
     #[tokio::test]
     async fn persists_atomic_multi_representation_snapshot_and_promotes_duplicate() {
         let temp = tempfile::TempDir::new().unwrap();

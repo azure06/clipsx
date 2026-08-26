@@ -5,7 +5,6 @@ use crate::{
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},
 };
 use anyhow::{bail, Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -140,7 +139,6 @@ struct JsonRenderer;
 struct TableRenderer;
 struct KeyValueRenderer;
 struct UrlRenderer;
-struct JwtRenderer;
 struct NumberRenderer;
 struct DateRenderer;
 fn renderer_descriptor(
@@ -153,7 +151,7 @@ fn renderer_descriptor(
         "builtin.original" => "source",
         "builtin.office" => "diagnostic",
         "builtin.json" | "builtin.table" => "structured",
-        "builtin.key_value" | "builtin.url" | "builtin.jwt" | "builtin.number" | "builtin.date"
+        "builtin.key_value" | "builtin.url" | "builtin.number" | "builtin.date"
         | "builtin.markdown" => "semantic",
         _ => "faithful",
     };
@@ -337,7 +335,6 @@ macro_rules! key_value_renderer {
     };
 }
 key_value_renderer!(UrlRenderer, "builtin.url", "URL", 85);
-key_value_renderer!(JwtRenderer, "builtin.jwt", "JWT", 85);
 key_value_renderer!(NumberRenderer, "builtin.number", "Number", 75);
 key_value_renderer!(DateRenderer, "builtin.date", "Date", 75);
 static ORIGINAL_RENDERER: OriginalRenderer = OriginalRenderer;
@@ -353,7 +350,6 @@ static JSON_RENDERER: JsonRenderer = JsonRenderer;
 static TABLE_RENDERER: TableRenderer = TableRenderer;
 static KEY_VALUE_RENDERER: KeyValueRenderer = KeyValueRenderer;
 static URL_RENDERER: UrlRenderer = UrlRenderer;
-static JWT_RENDERER: JwtRenderer = JwtRenderer;
 static NUMBER_RENDERER: NumberRenderer = NumberRenderer;
 static DATE_RENDERER: DateRenderer = DateRenderer;
 fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
@@ -371,7 +367,6 @@ fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
         &TABLE_RENDERER,
         &KEY_VALUE_RENDERER,
         &URL_RENDERER,
-        &JWT_RENDERER,
         &NUMBER_RENDERER,
         &DATE_RENDERER,
     ]
@@ -415,38 +410,6 @@ impl DetectorContribution for UrlDetector {
     }
     fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
         url::Url::parse(s.text.trim()).ok().filter(|u|matches!(u.scheme(),"http"|"https")).map(|u|vec![DetectedFacet{id:self.id(),name:self.name(),payload:json!({"schemaVersion":1,"href":u.as_str(),"host":u.host_str(),"path":u.path()})}]).unwrap_or_default()
-    }
-}
-struct JwtDetector;
-impl DetectorContribution for JwtDetector {
-    fn id(&self) -> &'static str {
-        "core.token.jwt"
-    }
-    fn name(&self) -> &'static str {
-        "JWT"
-    }
-    fn candidate(&self, s: &TextSource) -> bool {
-        s.text.trim().split('.').count() == 3
-    }
-    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
-        let p: Vec<_> = s.text.trim().split('.').collect();
-        if p.len() != 3 {
-            return vec![];
-        }
-        let decode = |part: &str| {
-            URL_SAFE_NO_PAD
-                .decode(part)
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        };
-        match (decode(p[0]), decode(p[1])) {
-            (Some(header), Some(claims)) => vec![DetectedFacet {
-                id: self.id(),
-                name: self.name(),
-                payload: json!({"schemaVersion":1,"header":header,"claims":claims}),
-            }],
-            _ => vec![],
-        }
     }
 }
 struct NumberDetector;
@@ -859,7 +822,6 @@ fn classify_secret(value: &str) -> Option<(&'static str, &'static str)> {
 
 static JSON: JsonDetector = JsonDetector;
 static URL: UrlDetector = UrlDetector;
-static JWT: JwtDetector = JwtDetector;
 static NUMBER: NumberDetector = NumberDetector;
 static DATE: DateDetector = DateDetector;
 static MARKDOWN: MarkdownDetector = MarkdownDetector;
@@ -873,7 +835,7 @@ static PATH: PathDetector = PathDetector;
 static SECRET: SecretDetector = SecretDetector;
 fn detectors() -> Vec<&'static dyn DetectorContribution> {
     vec![
-        &JSON, &URL, &JWT, &NUMBER, &DATE, &MARKDOWN, &TABLE, &EMAIL, &COLOR, &CODE, &MATH, &PHONE,
+        &JSON, &URL, &NUMBER, &DATE, &MARKDOWN, &TABLE, &EMAIL, &COLOR, &CODE, &MATH, &PHONE,
         &PATH, &SECRET,
     ]
 }
@@ -1212,7 +1174,6 @@ pub async fn views(
         };
         let (renderer, kind, priority) = match facet.id.as_str() {
             "core.security.secret" => ("builtin.key_value", "secret", 200),
-            "core.token.jwt" => ("builtin.jwt", "jwt", 190),
             "core.link.url" => ("builtin.url", "url", 180),
             "core.contact.email" => ("builtin.key_value", "email", 170),
             "core.value.color" => ("builtin.key_value", "color", 160),
@@ -1380,9 +1341,6 @@ pub async fn render(
         "builtin.url" => available_facets
             .iter()
             .find(|f| f.id == "core.link.url" && f.source_representation_id == source_id),
-        "builtin.jwt" => available_facets
-            .iter()
-            .find(|f| f.id == "core.token.jwt" && f.source_representation_id == source_id),
         "builtin.number" => available_facets
             .iter()
             .find(|f| f.id == "core.value.number" && f.source_representation_id == source_id),
@@ -1703,10 +1661,9 @@ mod tests {
     }
     #[test]
     fn core_seven_detectors_emit_versioned_payloads() {
-        let cases: [(&dyn DetectorContribution, &str); 7] = [
+        let cases: [(&dyn DetectorContribution, &str); 6] = [
             (&JSON, r#"{"ok":true}"#),
             (&URL, "https://example.com/path"),
-            (&JWT, "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0."),
             (&NUMBER, "12.5"),
             (&DATE, "2026-08-09T10:00:00Z"),
             (&MARKDOWN, "# Heading"),
@@ -1722,7 +1679,6 @@ mod tests {
     fn malformed_candidates_do_not_emit_facets() {
         assert!(JSON.detect(&source("{broken")).is_empty());
         assert!(URL.detect(&source("https://")).is_empty());
-        assert!(JWT.detect(&source("a.b.c")).is_empty());
         assert!(NUMBER.detect(&source("NaN")).is_empty());
         assert!(DATE.detect(&source("2026-99-99")).is_empty());
         assert!(TABLE.detect(&source("a,b\nonly-one")).is_empty());

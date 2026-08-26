@@ -822,6 +822,12 @@ async fn set_extension_enabled(
             .redetect_history(&state.history)
             .await
             .map_err(|error| error.to_string())?;
+    } else {
+        state
+            .extensions
+            .refresh_compact_history(&state.history)
+            .await
+            .map_err(|error| error.to_string())?;
     }
     if !enabled {
         close_extension_webviews(&app);
@@ -861,6 +867,11 @@ async fn uninstall_extension(
     state
         .extensions
         .uninstall(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .refresh_compact_history(&state.history)
         .await
         .map_err(|error| error.to_string())?;
     let _ = app.emit("extension-catalog-updated", ());
@@ -1036,6 +1047,7 @@ async fn create_transform_preview(
             &transformer_id,
             source,
             parameters.clone(),
+            None,
             invocation_token
                 .as_deref()
                 .map(|token| (clip_id.as_str(), source_id.as_str(), token)),

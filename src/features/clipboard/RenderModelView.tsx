@@ -18,7 +18,6 @@ import {
   FolderOpen,
   Image,
   ImageOff,
-  KeyRound,
   MessageSquare,
   Music,
   Palette,
@@ -762,44 +761,6 @@ const SemanticView = ({
           <CopyableRow label="Full path" value={path} clipId={clipId} />
           <CopyableRow label="Directory" value={dir} clipId={clipId} />
           {filename && <CopyableRow label="File name" value={filename} clipId={clipId} />}
-        </div>
-      </div>
-    )
-  }
-
-  if (kind === 'jwt') {
-    const header = model.payload['header'] as Record<string, unknown> | null
-    const alg = header && typeof header['alg'] === 'string' ? header['alg'] : null
-    const typ = header && typeof header['typ'] === 'string' ? header['typ'] : null
-    return (
-      <div className={SCROLL_AREA}>
-        <div className="flex items-center gap-2 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
-          <div className="rounded-lg bg-yellow-500/20 p-2 text-yellow-400 ring-1 ring-yellow-500/30">
-            <KeyRound className="h-4 w-4" />
-          </div>
-          <span className="text-xs font-semibold uppercase tracking-wider">JWT</span>
-          {alg && (
-            <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-medium text-yellow-400">
-              {alg}
-            </span>
-          )}
-          {typ && (
-            <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:border-white/10 dark:bg-white/10 dark:text-gray-400">
-              {typ}
-            </span>
-          )}
-        </div>
-        <div className="p-4">
-          <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            Header
-          </h3>
-          <div className="mb-4 font-mono text-sm">
-            {TreeNode({ value: model.payload['header'] })}
-          </div>
-          <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            Claims
-          </h3>
-          <div className="font-mono text-sm">{TreeNode({ value: model.payload['claims'] })}</div>
         </div>
       </div>
     )

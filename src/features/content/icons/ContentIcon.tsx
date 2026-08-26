@@ -7,7 +7,6 @@ import {
   Braces,
   FileText,
   FileSpreadsheet,
-  Key,
   Clock,
   Lock,
   FolderOpen,
@@ -51,8 +50,6 @@ const ContentIconComponent = ({ presentationKind, size = 'md' }: ContentIconProp
         return <Braces size={iconSize} strokeWidth={2.5} />
       case 'csv':
         return <FileText size={iconSize} strokeWidth={2.5} />
-      case 'jwt':
-        return <Key size={iconSize} strokeWidth={2.5} />
       case 'timestamp':
         return <Clock size={iconSize} strokeWidth={2.5} />
       case 'secret':
@@ -87,8 +84,6 @@ const ContentIconComponent = ({ presentationKind, size = 'md' }: ContentIconProp
         return 'bg-emerald-500/20 text-emerald-400 ring-emerald-500/30'
       case 'csv':
         return 'bg-lime-500/20 text-lime-400 ring-lime-500/30'
-      case 'jwt':
-        return 'bg-violet-500/20 text-violet-400 ring-violet-500/30'
       case 'timestamp':
         return 'bg-cyan-500/20 text-cyan-400 ring-cyan-500/30'
       case 'secret':

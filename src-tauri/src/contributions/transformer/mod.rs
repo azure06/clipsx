@@ -5,10 +5,7 @@ use crate::{
     history::{new_id, sha256, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 use anyhow::{bail, Context, Result};
-use base64::{
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine as _,
-};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -106,7 +103,6 @@ impl BuiltinTransformer {
             "builtin.transform.html.to_markdown" => {
                 matches!(presentation_kind, Some("html" | "rich_text"))
             }
-            "builtin.transform.jwt.decode" => presentation_kind == Some("jwt"),
             "builtin.transform.url.encode"
             | "builtin.transform.url.decode"
             | "builtin.transform.url.normalize"
@@ -153,7 +149,6 @@ impl TransformerContribution for BuiltinTransformer {
                 json_to_typescript(Self::text(input)?, parameters)
             }
             "builtin.transform.html.to_markdown" => html_to_markdown(Self::text(input)?),
-            "builtin.transform.jwt.decode" => jwt_decode(Self::text(input)?),
             "builtin.transform.url.encode" => Ok(text_output(
                 "text/plain",
                 &urlencoding::encode(Self::text(input)?),
@@ -242,12 +237,6 @@ fn registry() -> Vec<BuiltinTransformer> {
         BuiltinTransformer {
             id: "builtin.transform.html.to_markdown",
             label: "HTML to Markdown",
-            schema: no_parameters.clone(),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.jwt.decode",
-            label: "Decode JWT",
             schema: no_parameters.clone(),
             accepts_binary: false,
         },
@@ -831,22 +820,6 @@ fn strip_html_tags(input: &str) -> String {
         .replace("&gt;", ">")
         .replace("&amp;", "&")
 }
-fn jwt_decode(input: &str) -> Result<Vec<CapturedRepresentation>> {
-    let parts: Vec<_> = input.trim().split('.').collect();
-    if parts.len() != 3 {
-        bail!("JWT must contain three segments")
-    }
-    let decode = |part: &str| -> Result<Value> {
-        let bytes = URL_SAFE_NO_PAD
-            .decode(part)
-            .context("JWT segment is not base64url")?;
-        serde_json::from_slice(&bytes).context("JWT segment is not JSON")
-    };
-    let output = serde_json::to_string_pretty(
-        &json!({"header":decode(parts[0])?,"payload":decode(parts[1])?,"signature":"present; not verified"}),
-    )?;
-    Ok(text_output("application/json", &output))
-}
 fn url_normalize(input: &str) -> Result<Vec<CapturedRepresentation>> {
     let mut url = url::Url::parse(input.trim()).context("invalid URL")?;
     url.set_fragment(None);
@@ -1049,11 +1022,6 @@ mod tests {
         );
     }
     #[test]
-    fn jwt_is_not_a_verifier() {
-        assert!(jwt_decode("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.").is_ok());
-    }
-
-    #[test]
     fn transformer_discovery_is_presentation_specific() {
         let json = text_input("{\"answer\":42}", "application/json");
         let ids = descriptors_for(&json, Some("json"))
@@ -1062,7 +1030,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(ids.contains(&"builtin.transform.json.pretty".into()));
         assert!(!ids.contains(&"builtin.transform.csv.to_json".into()));
-        assert!(!ids.contains(&"builtin.transform.jwt.decode".into()));
     }
 
     #[test]

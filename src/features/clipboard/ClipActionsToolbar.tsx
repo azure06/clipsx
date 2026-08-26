@@ -1,17 +1,29 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
+  Blocks,
+  Braces,
   Check,
+  Code2,
   Copy,
   Database,
   ExternalLink,
+  File,
+  Globe2,
+  Hash,
+  KeyRound,
+  Link,
   Mail,
+  Palette,
   Phone,
   Pin,
   PenLine,
-  Star,
-  Trash2,
   Sparkles,
+  Star,
+  Table2,
+  Terminal,
+  Text,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -77,15 +89,34 @@ const editorExtension = (presentation: ClipPresentation): string | null => {
 }
 
 export const ExtensionIcon = ({
+  name,
   light,
   dark,
   scale,
 }: {
+  name: string | null
   light: string | null
   dark: string | null
   scale: number
 }) => {
-  if (!light) return <Sparkles className="h-4 w-4" />
+  if (!light) {
+    const Icon =
+      ({
+        braces: Braces,
+        code: Code2,
+        database: Database,
+        file: File,
+        globe: Globe2,
+        hash: Hash,
+        key: KeyRound,
+        link: Link,
+        palette: Palette,
+        table: Table2,
+        terminal: Terminal,
+        text: Text,
+      } as Record<string, LucideIcon>)[name ?? ''] ?? Blocks
+    return <Icon className="h-4 w-4" />
+  }
   const style = scale === 1 ? undefined : { transform: `scale(${scale})` }
   if (!dark) return <img src={light} alt="" className="h-4 w-4" style={style} />
   return (
@@ -254,6 +285,7 @@ export const ClipActionsToolbar = ({
             onClick={() => transformControls && void transformControls.runAction(action.id)}
           >
             <ExtensionIcon
+              name={action.icon}
               light={action.iconSvg}
               dark={action.iconSvgDark}
               scale={action.iconScale}

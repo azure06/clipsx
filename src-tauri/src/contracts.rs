@@ -119,6 +119,11 @@ pub enum LeadingVisual {
     HostIcon {
         name: String,
     },
+    PackageIcon {
+        light: String,
+        dark: Option<String>,
+        scale_percent: u16,
+    },
     Swatch {
         red: u8,
         green: u8,

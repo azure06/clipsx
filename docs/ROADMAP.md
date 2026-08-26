@@ -35,24 +35,33 @@ run and installed-candidate evidence required above are recorded.
 
 ## 3. Lean core and first-party extensions
 
-Core retains clipboard capture/reconstruction; faithful text, HTML/RTF, files, image, PDF, Office, and Original views; Markdown, JSON, URL, and table detection/rendering; secret detection and local-path handling; generic fallback rendering; and all host validation/broker primitives.
+Core retains clipboard capture/reconstruction; faithful text, HTML/RTF, files, image, PDF, Office, and Original views; cheap, bounded recognition of Markdown, JSON, URL, tables, colors, and Base64-shaped text; built-in Markdown, JSON, table, and basic color-swatch views; secret detection and local-path handling; generic fallback rendering; and all host validation/broker primitives. Recognition is additive derived data used for badges, filtering, search routing, and extension matching. It must not decode Base64, inspect JWT claims, activate links, or otherwise expose or act on latent clipboard content.
+
+Use this boundary for the first production release:
+
+| Layer | Core | First-party extensions |
+| --- | --- | --- |
+| Recognition | Markdown, JSON, URL, table, color, and conservative Base64-shaped-text facets | Niche or package-specific semantics |
+| Render/view | Faithful formats, Markdown, JSON, table, and a basic color swatch | Mermaid and explicit JWT inspection |
+| Transform/action | Clipboard reconstruction, local-path opening, and host validation/brokers | Base64 encode/decode, curl-to-fetch, Data Tools conversions, and communication actions |
+
+Core recognition does not imply a core action or rich renderer. In particular, table recognition and viewing stay useful without Data Tools; table export/conversion belongs to Data Tools. Base64 receives only a conservative label in core and is never decoded or previewed until the user explicitly invokes the installed Base64 package.
 
 No extension is installed by default. Users choose the following focused first-party packages from Discover. Small single-purpose packages avoid making users install unrelated tools; Data Tools and Communication Actions remain coherent bundles.
 
 - [x] **Mermaid:** standalone Mermaid and Mermaid fences inside a ClipsX-native enhanced Markdown renderer. Evidence: the offline React/GFM UI in [mermaid-viewer](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), three detector tests, light/dark rendered review, CLI pack/validate/inspect/test, and the host package-store install/load acceptance test pass (2026-08-25).
-- [x] **Color Tools:** color cards and conversions. Evidence: [color-tools](https://github.com/azure06/clipsx-extensions/tree/main/extensions/color-tools) provides a custom detail UI and native compact model, preserves alpha across HEX/RGB/HSL, and passes parser, package, and host lifecycle checks (2026-08-25).
-- [x] **Math:** offline math detection and rendering. Evidence: [math](https://github.com/azure06/clipsx-extensions/tree/main/extensions/math) bundles KaTeX with WOFF2-only fonts and no permissions, provides themed settings and accessible recovery, and passes detector and package checks (2026-08-25).
-- [ ] **JWT Inspector:** decoded token anatomy without claiming signature verification.
-- [ ] **Base64:** explicit encode/decode transforms with bounded previews.
+- [x] **JWT Inspector:** decoded token anatomy without claiming signature verification. The package exclusively owns detection, its structured detail view, payload extraction/copy, and JWT-specific catalog/contribution identity; history rows may reuse its icon but never decode claims into preview text, logs, or search. Evidence: [JWT Inspector](https://github.com/azure06/clipsx-extensions/tree/main/extensions/jwt-inspector), removal of the host detector/renderer/decoder in [contributions](../src-tauri/src/contributions/host.rs), package pack/validate/test, payload-copy regression test, and the full Rust suite pass (2026-08-26).
+- [x] **Base64:** explicit encode/decode transforms with bounded previews and no automatic decoding. Evidence: [Base64](https://github.com/azure06/clipsx-extensions/tree/main/extensions/base64) detects standard, URL-safe, unpadded, and MIME-bearing data-URL inputs; encodes captured text or binary representations; round-trips explicit media types without reading file-list paths; and passes codec, binary-image, and package tests (2026-08-27).
 - [ ] **curl to fetch:** local conversion with an editable, copy-ready result.
 - [ ] **Data Tools:** number/date views, JSON formatting/minification, CSV/JSON/Markdown conversion, URL transformations, and HTML-to-Markdown.
 - [ ] **Communication Actions:** email/phone detection with Compose and Dial actions.
 - [x] Remove Mermaid rendering and the `mermaid` dependency from the main app. Core Markdown shows Mermaid fences as code; installing Mermaid adds an offline enhanced renderer that receives the original Markdown representation and becomes the specific structured view. Evidence: [core renderer](../src/features/clipboard/RenderModelView.tsx), [offline package](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), `npm run build` (2026-08-24: main chunk 1.07 MB; no Mermaid/Cytoscape/KaTeX chunks), and package detector tests.
 - [x] Add manifest-declared host action handlers for `compose_email` and `dial_phone`. Rust extracts the value from the bound facet, validates it, and invokes only the corresponding OS handler; arbitrary URI schemes remain unavailable. Evidence: [manifest contract](../src-tauri/src/extensions/manifest.rs), [host execution](../src-tauri/src/extensions/service.rs), and [Communication Actions](https://github.com/azure06/clipsx-extensions/tree/main/extensions/communication-actions); focused Rust/package tests pass.
 - [ ] Keep local-path opening in core and do not expose generic filesystem activation to extensions.
+- [ ] Retain and test the cheap core color detector and its basic core swatch. Add a bounded conservative Base64-shaped-text detector that records no decoded bytes. Package removal must leave these labels useful without exposing latent content.
 - [ ] Reconcile retired built-in facets/jobs/definitions and stale renderer preferences as rebuildable data. Saved transform outputs remain valid.
 - [ ] Remove unused core detector/renderer/transform code and dependencies after package parity tests pass.
-- [ ] Keep Ask AI, Ask Local AI, and Text API as acceptance fixtures until separately approved for public catalog publication.
+- [ ] Keep Ask AI and Ask Local AI as acceptance fixtures until separately approved for public catalog publication.
 - [ ] **Extension quality gate:** every custom view uses host theme/locale/settings, remains keyboard and reduced-motion accessible, loads offline without remote fonts/scripts, signals readiness only after useful content is rendered, and passes its package performance budget.
 - [ ] **Exit gate:** disabling or uninstalling every package restores useful core views, never changes canonical clips, and the main application bundle no longer contains Mermaid's runtime.
 

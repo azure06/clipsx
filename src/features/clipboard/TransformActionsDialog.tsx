@@ -97,6 +97,7 @@ export const TransformActionsDialog = ({
                     >
                       <span className="flex min-w-0 items-center gap-1.5">
                         <ExtensionIcon
+                          name={action.icon}
                           light={action.iconSvg}
                           dark={action.iconSvgDark}
                           scale={action.iconScale}

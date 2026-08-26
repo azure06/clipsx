@@ -23,13 +23,13 @@ vi.mock('lucide-react', () => ({
   Database: () => <div data-testid="database-icon" />,
   File: () => <div data-testid="file-icon" />,
   FileCode2: () => <div data-testid="html-icon" />,
+  FileType: () => <div data-testid="text-file-icon" />,
   Globe: () => <div data-testid="globe-icon" />,
   KeyRound: () => <div data-testid="key-icon" />,
   Link: () => <div data-testid="link-icon" />,
   Palette: () => <div data-testid="palette-icon" />,
   Table2: () => <div data-testid="table-icon" />,
   Terminal: () => <div data-testid="terminal-icon" />,
-  Text: () => <div data-testid="text-icon" />,
 }))
 
 // Mock keyboard shortcuts

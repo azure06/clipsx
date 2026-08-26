@@ -121,7 +121,6 @@ const searchFilters: Record<string, { representationFamily?: string; facetId?: s
   math: { facetId: 'core.math.expression' },
   phone: { facetId: 'core.contact.phone' },
   path: { facetId: 'core.file.path' },
-  jwt: { facetId: 'core.token.jwt' },
   secret: { facetId: 'core.security.secret' },
   date: { facetId: 'core.time.date' },
   timestamp: { facetId: 'core.time.date' },

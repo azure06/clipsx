@@ -125,6 +125,7 @@ flowchart TB
 | `content_clip_facets` | Derived | Stores additive semantic findings for a clip with detector provenance. | Built-in or extension detectors through the host validation boundary | Owned by its clip and source representation and cascades with either. The referenced facet definition cannot be deleted while a facet uses it. Rebuildable/redetectable. |
 | `content_detection_jobs` | Operational | Tracks detector attempts, completion, unsupported inputs, and errors. | Detection scheduler/workers | Retryable recovery state owned by its target representation; cascades when that representation is deleted. |
 | `content_compact_presentations` | Derived | Caches bounded models used to render compact clip cards. | Extension contributions through the host validation boundary | Replaceable UI-derived data owned by its clip and contribution; never canonical clip state. |
+| `extension_contribution_icons` | Derived | Caches each installed contribution's validated light/dark SVG data once. | Installed extension manifests and package assets | Replaceable package-owned UI data joined to compact rows by renderer ID; never duplicated per clip. |
 
 Facets never replace representations. They explain content without changing captured bytes.
 

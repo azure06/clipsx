@@ -181,6 +181,7 @@ export type RenderModel =
 export type LeadingVisual =
   | { kind: 'none' }
   | { kind: 'host_icon'; name: string }
+  | { kind: 'package_icon'; light: string; dark: string | null; scalePercent: number }
   | { kind: 'swatch'; red: number; green: number; blue: number; alpha: number }
   | { kind: 'input_thumbnail' }
   | { kind: 'monogram'; text: string }

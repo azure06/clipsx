@@ -7,6 +7,7 @@ import {
   Database,
   File,
   FileCode2,
+  FileType,
   Globe,
   Hash,
   KeyRound,
@@ -14,7 +15,6 @@ import {
   Palette,
   Table2,
   Terminal,
-  Text,
   type LucideIcon,
 } from 'lucide-react'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
@@ -32,7 +32,7 @@ const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
   palette: Palette,
   table: Table2,
   terminal: Terminal,
-  text: Text,
+  text: FileType,
   html: FileCode2,
 }
 
@@ -57,9 +57,13 @@ const ICON_TINTS: Record<string, string> = {
 const CIRCLE_CLASS =
   'flex items-center justify-center rounded-full ring-2 shadow-sm transition-all duration-200 hover:scale-110 hover:shadow-md'
 
+// Extension glyphs bring their own color, so keep their shared container neutral.
+const EXTENSION_ICON_TINT =
+  'bg-gradient-to-br from-white/90 to-slate-100/70 ring-black/10 dark:from-white/15 dark:to-white/5 dark:ring-white/15'
+
 const SIZES = {
-  sm: { outer: 'h-[26px] w-[26px]', icon: 'h-3 w-3' },
-  lg: { outer: 'h-14 w-14', icon: 'h-6 w-6' },
+  sm: { outer: 'h-[26px] w-[26px]', icon: 'h-3 w-3', packageIcon: 'h-4 w-4' },
+  lg: { outer: 'h-14 w-14', icon: 'h-6 w-6', packageIcon: 'h-8 w-8' },
 } as const
 
 type PreviewLeadingVisualProps = {
@@ -92,6 +96,33 @@ export const PreviewLeadingVisual = ({ clip, preview, size }: PreviewLeadingVisu
         className={`${CIRCLE_CLASS} ${ICON_TINTS['file']} ${dims.outer} text-[10px] font-semibold`}
       >
         {preview.leading.text}
+      </div>
+    )
+  }
+  if (preview.leading.kind === 'package_icon') {
+    const style =
+      preview.leading.scalePercent === 100
+        ? undefined
+        : { transform: `scale(${preview.leading.scalePercent / 100})` }
+    return (
+      <div
+        aria-label={preview.accessibilityLabel}
+        className={`${CIRCLE_CLASS} ${EXTENSION_ICON_TINT} ${dims.outer}`}
+      >
+        <img
+          alt=""
+          className={`${dims.packageIcon} shrink-0 ${preview.leading.dark ? 'dark:hidden' : ''}`}
+          src={preview.leading.light}
+          style={style}
+        />
+        {preview.leading.dark && (
+          <img
+            alt=""
+            className={`hidden ${dims.packageIcon} shrink-0 dark:block`}
+            src={preview.leading.dark}
+            style={style}
+          />
+        )}
       </div>
     )
   }

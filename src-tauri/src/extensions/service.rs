@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     fs,
     path::Path,
@@ -948,101 +949,95 @@ impl ExtensionService {
         let renderers = self
             .active_contributions(repo, ContributionKind::Renderer)
             .await?;
-        let detail = repo.detail(clip_id).await?;
-        let facets = crate::contributions::facets(repo, clip_id).await?;
-        let preferences = crate::contributions::preferences(repo).await?;
-        let faithful_first = detail.representations.iter().any(|rep| {
-            matches!(
-                rep.format_family.as_str(),
-                "image" | "files" | "document" | "office"
-            )
-        });
-        let mut candidates = Vec::new();
-        for representation_detail in &detail.representations {
-            let (source, _) = repo
-                .source_representation(clip_id, &representation_detail.id)
-                .await?;
-            for renderer in &renderers {
-                if renderer.declaration.execution != ExecutionClass::Local
-                    || !renderer
-                        .declaration
-                        .surfaces
-                        .contains(&RenderSurface::Compact)
-                {
-                    continue;
-                }
-                if accepts(&renderer.declaration, &source, None) {
-                    candidates.push((
-                        compact_rank(
-                            renderer,
-                            representation_detail,
-                            None,
-                            &preferences,
-                            faithful_first,
-                            &source,
-                        ),
-                        renderer.clone(),
-                        source.clone(),
-                        representation_detail.id.clone(),
-                        None,
-                    ));
-                }
-                for facet in facets
-                    .iter()
-                    .filter(|facet| facet.source_representation_id == representation_detail.id)
-                {
-                    if accepts(&renderer.declaration, &source, Some(&facet.id)) {
-                        candidates.push((
-                            compact_rank(
-                                renderer,
-                                representation_detail,
-                                Some(facet),
-                                &preferences,
-                                faithful_first,
-                                &source,
-                            ),
-                            renderer.clone(),
-                            source.clone(),
-                            representation_detail.id.clone(),
-                            Some(facet.clone()),
-                        ));
-                    }
-                }
-            }
-        }
-        candidates.sort_by(|left, right| left.0.cmp(&right.0));
-        let Some((_, contribution, input, source_id, facet)) = candidates.into_iter().next() else {
+        let view_set = crate::contributions::views(repo, self, clip_id).await?;
+        let Some(primary_view) = view_set
+            .views
+            .iter()
+            .find(|view| view.id == view_set.primary_view_id)
+        else {
             return Ok(false);
         };
-        let model = self
-            .runtime
-            .render_compact(
-                &contribution.sha256,
-                &contribution.local_id,
-                representation(input.clone())?,
-                facet.clone().map(|facet| super::ExtensionFacet {
-                    id: facet.id,
-                    payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
-                }),
-            )
-            .await;
-        let model = match model {
-            Ok(model) => validate_compact(model, &input)?,
-            Err(error) => {
-                self.failure(repo, &contribution, &error).await?;
-                return Ok(false);
+        let Some(contribution) = renderers
+            .into_iter()
+            .find(|renderer| renderer.id == primary_view.renderer_id)
+        else {
+            return Ok(false);
+        };
+        if contribution.declaration.execution != ExecutionClass::Local {
+            return Ok(false);
+        }
+        let has_package_icon = contribution.declaration.icon_assets.is_some()
+            || contribution.declaration.icon_asset.is_some();
+        if has_package_icon {
+            self.ensure_contribution_icon_cached(repo, &contribution)
+                .await?;
+        }
+        let (input, _) = repo
+            .source_representation(clip_id, &primary_view.source_id)
+            .await?;
+        let facets = crate::contributions::facets(repo, clip_id).await?;
+        let facet = primary_view.facet_id.as_ref().and_then(|facet_id| {
+            facets.iter().find(|facet| {
+                facet.id == *facet_id && facet.source_representation_id == primary_view.source_id
+            })
+        });
+        let declared_host_icon = contribution
+            .declaration
+            .icon
+            .as_ref()
+            .map(|name| LeadingVisual::HostIcon { name: name.clone() });
+        let mut model = if contribution
+            .declaration
+            .surfaces
+            .contains(&RenderSurface::Compact)
+        {
+            let model = self
+                .runtime
+                .render_compact(
+                    &contribution.sha256,
+                    &contribution.local_id,
+                    representation(input.clone())?,
+                    facet.cloned().map(|facet| super::ExtensionFacet {
+                        id: facet.id,
+                        payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
+                    }),
+                )
+                .await;
+            match model {
+                Ok(model) => validate_compact(model, &input)?,
+                Err(error) => {
+                    self.failure(repo, &contribution, &error).await?;
+                    return Ok(false);
+                }
+            }
+        } else {
+            CompactPresentation {
+                leading: declared_host_icon
+                    .clone()
+                    .unwrap_or(LeadingVisual::None),
+                title: None,
+                subtitle: None,
+                badge: None,
+                accessibility_label: format!("{} view", contribution.declaration.display_name),
             }
         };
+        apply_declared_compact_leading(&mut model, declared_host_icon, has_package_icon);
+        if matches!(model.leading, LeadingVisual::None)
+            && model.title.is_none()
+            && !has_package_icon
+        {
+            return Ok(false);
+        }
         let model_json = serde_json::to_string(&model)?;
         if model_json.len() > 2048 {
             bail!("extension compact presentation exceeds 2 KiB");
         }
         sqlx::query("INSERT INTO content_compact_presentations(clip_id,source_representation_id,renderer_id,renderer_version,facet_id,model_json,updated_at) VALUES(?,?,?,?,?,?,?)")
             .bind(clip_id)
-            .bind(source_id)
+            .bind(&primary_view.source_id)
             .bind(&contribution.id)
             .bind(&contribution.version)
-            .bind(facet.map(|facet| facet.id).unwrap_or_default())
+            .bind(primary_view.facet_id.as_deref().unwrap_or_default())
             .bind(model_json)
             .bind(now_ms())
             .execute(&repo.pool)
@@ -1135,20 +1130,26 @@ impl ExtensionService {
         }
         let shortcuts = self.action_shortcuts(repo).await?;
         let pins = self.action_pins(repo).await?;
-        let active_facet = self
-            .action_facet(repo, clip_id, source_id, facet_id)
-            .await?;
+        let facets = crate::contributions::facets(repo, clip_id).await?;
         let mut actions = Vec::new();
         for item in self
             .active_contributions(repo, ContributionKind::Action)
             .await?
         {
             let Some((selected_source_id, source, selected_facet_id)) =
-                select_action_source(&item.declaration, source_id, facet_id, &sources)
+                select_action_source(&item.declaration, source_id, facet_id, &sources, &facets)
             else {
                 continue;
             };
-            let facet = selected_facet_id.as_deref().and(active_facet.clone());
+            let facet = selected_facet_id.as_deref().and_then(|selected_facet_id| {
+                facets
+                    .iter()
+                    .find(|facet| {
+                        facet.id == selected_facet_id
+                            && facet.source_representation_id == selected_source_id
+                    })
+                    .cloned()
+            });
             let state = self
                 .action_state(repo, &item, &source, facet.clone())
                 .await?;
@@ -1356,7 +1357,7 @@ impl ExtensionService {
                 let parameters = merge_parameters(preset, parameters)?;
                 let qualified = format!("{}/{}", contribution.package_id, transformer_id);
                 let (_, outputs) = self
-                    .transform(repo, &qualified, source.clone(), parameters, None)
+                    .transform(repo, &qualified, source.clone(), parameters, facet_id, None)
                     .await?
                     .context("action transformer is unavailable")?;
                 ActionOutcome::Output {
@@ -2170,23 +2171,57 @@ impl ExtensionService {
         &self,
         contribution: &ActiveContribution,
     ) -> (Option<String>, Option<String>) {
+        self.declared_contribution_icons(
+            &contribution.package_relative_path,
+            &contribution.declaration,
+        )
+    }
+
+    fn declared_contribution_icons(
+        &self,
+        package_relative_path: &Path,
+        declaration: &ManifestContribution,
+    ) -> (Option<String>, Option<String>) {
         let asset = |path: &str| {
             self.store
-                .package_asset(&contribution.package_relative_path, path)
+                .package_asset(package_relative_path, path)
                 .ok()
                 .map(|bytes| format!("data:image/svg+xml;base64,{}", BASE64.encode(bytes)))
         };
-        if let Some(icons) = &contribution.declaration.icon_assets {
+        if let Some(icons) = &declaration.icon_assets {
             return (asset(&icons.light), asset(&icons.dark));
         }
-        (
-            contribution
-                .declaration
-                .icon_asset
-                .as_deref()
-                .and_then(asset),
-            None,
+        (declaration.icon_asset.as_deref().and_then(asset), None)
+    }
+
+    async fn ensure_contribution_icon_cached(
+        &self,
+        repo: &HistoryRepository,
+        contribution: &ActiveContribution,
+    ) -> Result<()> {
+        let cached: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM extension_contribution_icons WHERE contribution_id=?)",
         )
+        .bind(&contribution.id)
+        .fetch_one(&repo.pool)
+        .await?;
+        if cached {
+            return Ok(());
+        }
+        let (light, dark) = self.contribution_icons(contribution);
+        let Some(light) = light else {
+            return Ok(());
+        };
+        sqlx::query("INSERT INTO extension_contribution_icons(extension_id,contribution_id,light_svg_data_url,dark_svg_data_url,scale_percent,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(contribution_id) DO UPDATE SET extension_id=excluded.extension_id,light_svg_data_url=excluded.light_svg_data_url,dark_svg_data_url=excluded.dark_svg_data_url,scale_percent=excluded.scale_percent,updated_at=excluded.updated_at")
+            .bind(&contribution.extension_id)
+            .bind(&contribution.id)
+            .bind(light)
+            .bind(dark)
+            .bind((contribution.declaration.icon_scale * 100.0).round() as i64)
+            .bind(now_ms())
+            .execute(&repo.pool)
+            .await?;
+        Ok(())
     }
 
     fn package_identity_icons(
@@ -2359,9 +2394,6 @@ impl ExtensionService {
             return Ok(ExtensionActionState::Disabled(
                 "Text generation provider is not configured".into(),
             ));
-        }
-        if !matches!(contribution.declaration.handler, Some(ActionHandler::Guest)) {
-            return Ok(ExtensionActionState::Enabled);
         }
         let state = self
             .runtime
@@ -2544,13 +2576,14 @@ impl ExtensionService {
         transformer_id: &str,
         input: CapturedRepresentation,
         parameters: serde_json::Value,
+        facet_id: Option<&str>,
         invocation_scope: Option<(&str, &str, &str)>,
     ) -> Result<Option<(String, Vec<CapturedRepresentation>)>> {
         let Some(contribution) = self
             .active_contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
-            .find(|item| item.id == transformer_id && accepts(&item.declaration, &input, None))
+            .find(|item| item.id == transformer_id && accepts(&item.declaration, &input, facet_id))
         else {
             return Ok(None);
         };
@@ -2655,6 +2688,27 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
+        sqlx::query("DELETE FROM extension_contribution_icons WHERE extension_id=?")
+            .bind(&id)
+            .execute(&mut *transaction)
+            .await?;
+        for contribution in &package.manifest.contributions {
+            let (light, dark) =
+                self.declared_contribution_icons(&package.relative_path, contribution);
+            let Some(light) = light else {
+                continue;
+            };
+            let contribution_id = package.manifest.qualified_contribution_id(&contribution.id);
+            sqlx::query("INSERT INTO extension_contribution_icons(extension_id,contribution_id,light_svg_data_url,dark_svg_data_url,scale_percent,updated_at) VALUES(?,?,?,?,?,?)")
+                .bind(&id)
+                .bind(contribution_id)
+                .bind(light)
+                .bind(dark)
+                .bind((contribution.icon_scale * 100.0).round() as i64)
+                .bind(now)
+                .execute(&mut *transaction)
+                .await?;
+        }
         // A package identity is stable but its bytes are not. Never carry a
         // data-egress approval across an update or developer replacement.
         sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=?")
@@ -2844,6 +2898,7 @@ fn select_action_source(
     active_source_id: &str,
     active_facet_id: Option<&str>,
     sources: &[(String, i64, i64, CapturedRepresentation)],
+    facets: &[crate::contributions::FacetDescriptor],
 ) -> Option<(String, CapturedRepresentation, Option<String>)> {
     if let Some((id, _, _, source)) = sources.iter().find(|(id, _, _, source)| {
         id == active_source_id && accepts(declaration, source, active_facet_id)
@@ -2857,9 +2912,34 @@ fn select_action_source(
 
     sources
         .iter()
-        .filter(|(_, _, _, source)| accepts(declaration, source, None))
-        .min_by_key(|(_, capture_priority, ordinal, _)| (*capture_priority, *ordinal))
-        .map(|(id, _, _, source)| (id.clone(), source.clone(), None))
+        .flat_map(|(id, capture_priority, ordinal, source)| {
+            std::iter::once(None)
+                .chain(
+                    facets
+                        .iter()
+                        .filter(move |facet| facet.source_representation_id == *id)
+                        .map(Some),
+                )
+                .filter_map(move |facet| {
+                    let facet_id = facet.map(|facet| facet.id.as_str());
+                    accepts(declaration, source, facet_id).then(|| {
+                        (
+                            Reverse(match_specificity(declaration, source, facet_id)),
+                            *capture_priority,
+                            *ordinal,
+                            id,
+                            source,
+                            facet_id,
+                        )
+                    })
+                })
+        })
+        .min_by_key(|(specificity, capture_priority, ordinal, _, _, _)| {
+            (*specificity, *capture_priority, *ordinal)
+        })
+        .map(|(_, _, _, id, source, facet_id)| {
+            (id.clone(), source.clone(), facet_id.map(str::to_string))
+        })
 }
 
 fn accepts(
@@ -3186,50 +3266,6 @@ fn extension_outputs(
     Ok(outputs)
 }
 
-fn compact_rank(
-    contribution: &ActiveContribution,
-    representation: &crate::history::RepresentationDetail,
-    facet: Option<&crate::contributions::FacetDescriptor>,
-    preferences: &crate::contributions::RendererPreferences,
-    faithful_first: bool,
-    input: &CapturedRepresentation,
-) -> (bool, i32, i32, i64, i64, String) {
-    let preferred = facet
-        .and_then(|facet| preferences.by_facet_id.get(&facet.id))
-        .or_else(|| {
-            preferences
-                .by_capability_id
-                .get(&representation.capability_id)
-        })
-        .or_else(|| {
-            representation
-                .canonical_mime_type
-                .as_ref()
-                .and_then(|mime| preferences.by_mime_type.get(mime))
-        })
-        .is_some_and(|renderer| renderer == &contribution.id);
-    let purpose = purpose_name(contribution.declaration.purpose);
-    let purpose_rank = match (faithful_first, purpose) {
-        (true, "faithful") | (false, "structured") => 0,
-        (true, "structured") | (false, "semantic") => 1,
-        (true, "semantic") | (false, "faithful") => 2,
-        (_, "source") => 3,
-        _ => 4,
-    };
-    (
-        !preferred,
-        purpose_rank,
-        -match_specificity(
-            &contribution.declaration,
-            input,
-            facet.map(|facet| facet.id.as_str()),
-        ),
-        representation.capture_priority,
-        representation.ordinal,
-        contribution.id.clone(),
-    )
-}
-
 fn representation(value: CapturedRepresentation) -> Result<ExtensionRepresentation> {
     let content = match value.payload {
         CapturedPayload::Text(value) => ExtensionContent::Text(value),
@@ -3370,6 +3406,18 @@ fn validate_compact(
         badge: value.badge,
         accessibility_label: value.accessibility_label,
     })
+}
+
+fn apply_declared_compact_leading(
+    model: &mut CompactPresentation,
+    declared_host_icon: Option<LeadingVisual>,
+    has_package_icon: bool,
+) {
+    if has_package_icon {
+        model.leading = LeadingVisual::None;
+    } else if let Some(leading) = declared_host_icon {
+        model.leading = leading;
+    }
 }
 
 fn platform() -> &'static str {
@@ -3592,6 +3640,24 @@ mod tests {
     }
 
     #[test]
+    fn facet_scoped_transformer_requires_the_action_facet() {
+        let mut declaration = renderer(vec![ContributionMatcher {
+            facet_ids: vec!["firstparty.jwt-inspector.jwt".into()],
+            ..Default::default()
+        }]);
+        declaration.kind = ContributionKind::Transformer;
+        declaration.surfaces.clear();
+        declaration.purpose = None;
+
+        assert!(!accepts(&declaration, &input(), None));
+        assert!(accepts(
+            &declaration,
+            &input(),
+            Some("firstparty.jwt-inspector.jwt")
+        ));
+    }
+
+    #[test]
     fn actions_fall_back_to_the_best_matching_clip_representation() {
         let declaration = renderer(vec![ContributionMatcher {
             mime_types: vec!["text/plain".into()],
@@ -3610,7 +3676,7 @@ mod tests {
             ("plain".into(), 10, 1, plain_text),
         ];
 
-        let selected = select_action_source(&declaration, "html", None, &sources).unwrap();
+        let selected = select_action_source(&declaration, "html", None, &sources, &[]).unwrap();
 
         assert_eq!(selected.0, "plain");
         assert_eq!(
@@ -3618,6 +3684,29 @@ mod tests {
             Some("text/plain")
         );
         assert_eq!(selected.2, None);
+    }
+
+    #[test]
+    fn actions_can_select_a_detected_facet_that_is_not_the_active_view() {
+        let declaration = renderer(vec![ContributionMatcher {
+            facet_ids: vec!["firstparty.base64.base64".into()],
+            ..Default::default()
+        }]);
+        let sources = vec![("plain".into(), 10, 0, input())];
+        let facets = vec![crate::contributions::FacetDescriptor {
+            id: "firstparty.base64.base64".into(),
+            display_name: "base64".into(),
+            source_representation_id: "plain".into(),
+            detector_id: "firstparty.base64/detect-base64".into(),
+            detector_version: "1.6.0".into(),
+            payload: json!({ "schemaVersion": 1 }),
+        }];
+
+        let selected =
+            select_action_source(&declaration, "plain", None, &sources, &facets).unwrap();
+
+        assert_eq!(selected.0, "plain");
+        assert_eq!(selected.2.as_deref(), Some("firstparty.base64.base64"));
     }
 
     #[test]
@@ -3650,6 +3739,33 @@ mod tests {
             &input(),
         );
         assert!(invalid_thumbnail.is_err());
+    }
+
+    #[test]
+    fn compact_storage_keeps_declared_package_icons_out_of_per_clip_json() {
+        let icon = "data:image/svg+xml,".to_string() + &"x".repeat(3_000);
+        let mut presentation = CompactPresentation {
+            leading: LeadingVisual::Swatch {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: 255,
+            },
+            title: None,
+            subtitle: None,
+            badge: None,
+            accessibility_label: "Extension view".into(),
+        };
+
+        apply_declared_compact_leading(
+            &mut presentation,
+            None,
+            true,
+        );
+        assert!(matches!(presentation.leading, LeadingVisual::None));
+        let serialized = serde_json::to_string(&presentation).unwrap();
+        assert!(serialized.len() <= 2048);
+        assert!(!serialized.contains(&icon));
     }
 
     #[test]
