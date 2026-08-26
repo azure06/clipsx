@@ -49,26 +49,26 @@ export const ContributionParametersDialog = ({
     >
       <form
         aria-label={`${request.label} parameters`}
-        className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-lg backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
+        className="flex max-h-full w-full max-w-sm flex-col gap-3 rounded-xl border border-slate-200/80 bg-white/95 p-3 shadow-lg backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
         onSubmit={event => {
           event.preventDefault()
           onSubmit(values)
         }}
       >
-        <div>
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+        <div className="shrink-0">
+          <h2 className="text-xs font-semibold text-gray-900 dark:text-gray-100">
             {request.label}
           </h2>
-          <p className="mt-1 text-xs text-gray-500">Configure this operation before it runs.</p>
+          <p className="mt-0.5 text-[11px] text-gray-500">Configure this operation before it runs.</p>
         </div>
-        <div className="max-h-[50vh] space-y-3 overflow-auto">
+        <div className="min-h-0 flex-1 space-y-2 overflow-auto">
           {Object.entries(properties).map(([id, property]) => {
             const label = typeof property['title'] === 'string' ? property['title'] : id
             const description =
               typeof property['description'] === 'string' ? property['description'] : null
             const enumValues = Array.isArray(property['enum']) ? property['enum'] : null
             return (
-              <label key={id} className="block space-y-1 text-xs text-gray-700 dark:text-gray-300">
+              <label key={id} className="block space-y-0.5 text-[11px] text-gray-700 dark:text-gray-300">
                 <span className="font-medium">
                   {label}
                   {required.has(id) ? ' *' : ''}
@@ -81,7 +81,7 @@ export const ContributionParametersDialog = ({
                   />
                 ) : enumValues ? (
                   <select
-                    className="w-full rounded-md border border-slate-200 bg-transparent px-2 py-1.5 dark:border-white/10"
+                    className="w-full rounded-md border border-slate-200 bg-transparent px-2 py-1 text-xs dark:border-white/10"
                     required={required.has(id)}
                     value={scalarString(values[id])}
                     onChange={event => setValue(id, event.target.value)}
@@ -95,7 +95,7 @@ export const ContributionParametersDialog = ({
                   </select>
                 ) : (
                   <input
-                    className="w-full rounded-md border border-slate-200 bg-transparent px-2 py-1.5 dark:border-white/10"
+                    className="w-full rounded-md border border-slate-200 bg-transparent px-2 py-1 text-xs dark:border-white/10"
                     type={
                       property['type'] === 'number' || property['type'] === 'integer'
                         ? 'number'
@@ -135,11 +135,13 @@ export const ContributionParametersDialog = ({
             )
           })}
         </div>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onCancel}>
+        <div className="flex shrink-0 justify-end gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit">Run</Button>
+          <Button type="submit" size="sm">
+            Run
+          </Button>
         </div>
       </form>
     </div>

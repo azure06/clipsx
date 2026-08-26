@@ -1,8 +1,13 @@
 import { useEffect } from 'react'
 import { Pin } from 'lucide-react'
 import { ExtensionIcon } from './ClipActionsToolbar'
-import { suggestionItemClass } from '../../shared/components/ui'
 import type { ContextAction, Transformer } from './useTransformState'
+
+// Deliberately not the shared suggestionItemClass: this picker needs to be
+// noticeably more compact than tag suggestions elsewhere, without shrinking
+// that shared token for every other consumer.
+const pickerItemClass =
+  'flex min-w-0 cursor-pointer items-center rounded-md px-2 py-1 text-left text-xs outline-none transition-colors hover:bg-violet-500/10 hover:text-violet-700 focus-visible:bg-violet-500/10 focus-visible:text-violet-700 dark:hover:bg-violet-500/15 dark:hover:text-violet-200 dark:focus-visible:bg-violet-500/15 dark:focus-visible:text-violet-200'
 
 export const TransformActionsDialog = ({
   items,
@@ -32,7 +37,7 @@ export const TransformActionsDialog = ({
 
   return (
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-[2px] dark:bg-black/40"
+      className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/20 p-3 backdrop-blur-[2px] dark:bg-black/40"
       role="presentation"
       onClick={onClose}
     >
@@ -40,19 +45,19 @@ export const TransformActionsDialog = ({
         role="dialog"
         aria-modal="true"
         aria-label="Transform & Actions"
-        className="w-full max-w-sm space-y-3 rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-lg backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
+        className="flex max-h-full w-full max-w-xs flex-col gap-2 rounded-xl border border-slate-200/80 bg-white/95 p-3 shadow-lg backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
         onClick={event => event.stopPropagation()}
       >
-        <div>
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+        <div className="shrink-0">
+          <h2 className="text-xs font-semibold text-gray-900 dark:text-gray-100">
             Transform & Actions
           </h2>
-          <p className="mt-1 text-xs text-gray-500">Choose what to do with this clip.</p>
+          <p className="mt-0.5 text-[11px] text-gray-500">Choose what to do with this clip.</p>
         </div>
-        <div className="max-h-[50vh] space-y-3 overflow-auto">
+        <div className="min-h-0 flex-1 space-y-2 overflow-auto">
           {hasTransforms && (
             <div>
-              <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[.15em] text-gray-400">
+              <div className="mb-0.5 px-1 text-[9px] font-semibold uppercase tracking-[.12em] text-gray-400">
                 Transform
               </div>
               <div className="space-y-0.5">
@@ -60,7 +65,7 @@ export const TransformActionsDialog = ({
                   <button
                     key={item.id}
                     type="button"
-                    className={`w-full ${suggestionItemClass}`}
+                    className={`w-full ${pickerItemClass}`}
                     onClick={() => {
                       onClose()
                       run(item.id)
@@ -74,23 +79,23 @@ export const TransformActionsDialog = ({
           )}
           {hasActions && (
             <div>
-              <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[.15em] text-gray-400">
+              <div className="mb-0.5 px-1 text-[9px] font-semibold uppercase tracking-[.12em] text-gray-400">
                 Actions
               </div>
               <div className="space-y-0.5">
                 {actions.map(action => (
-                  <div key={action.id} className="flex items-center gap-1">
+                  <div key={action.id} className="flex items-center gap-0.5">
                     <button
                       type="button"
                       disabled={!action.available}
                       title={action.unavailableReason ?? undefined}
-                      className={`min-w-0 flex-1 justify-between gap-2 disabled:pointer-events-none disabled:opacity-40 ${suggestionItemClass}`}
+                      className={`min-w-0 flex-1 justify-between gap-2 disabled:pointer-events-none disabled:opacity-40 ${pickerItemClass}`}
                       onClick={() => {
                         onClose()
                         runAction(action.id)
                       }}
                     >
-                      <span className="flex min-w-0 items-center gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5">
                         <ExtensionIcon
                           light={action.iconSvg}
                           dark={action.iconSvgDark}
@@ -99,7 +104,7 @@ export const TransformActionsDialog = ({
                         <span className="min-w-0 flex-1 truncate">{action.label}</span>
                       </span>
                       {action.shortcut && (
-                        <span className="shrink-0 text-[10px] text-gray-400">
+                        <span className="shrink-0 text-[9px] text-gray-400">
                           {action.shortcut}
                         </span>
                       )}
@@ -108,10 +113,10 @@ export const TransformActionsDialog = ({
                       type="button"
                       aria-label={`${action.pinned ? 'Unpin' : 'Pin'} ${action.label}`}
                       title={action.pinned ? 'Remove from toolbar' : 'Pin to toolbar'}
-                      className="shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-violet-500/10 hover:text-amber-500"
+                      className="shrink-0 rounded-md p-1 text-gray-400 transition-colors hover:bg-violet-500/10 hover:text-amber-500"
                       onClick={() => pinAction(action.id, !action.pinned)}
                     >
-                      <Pin className={`h-3.5 w-3.5 ${action.pinned ? 'fill-current' : ''}`} />
+                      <Pin className={`h-3 w-3 ${action.pinned ? 'fill-current' : ''}`} />
                     </button>
                   </div>
                 ))}
