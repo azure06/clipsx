@@ -53,9 +53,11 @@ Contribution kinds are detector, renderer, transformer, and action. WASM is
 required only when guest logic is declared. Actions require `preview_toolbar`,
 `action_menu`, or both; host UI controls overflow, pinning, and keyboard access.
 Transformers appear only in the host Transform menu and always produce a
-temporary result preview. Actions never appear in Transform: `preview_toolbar`
-requests a direct icon, while `action_menu` places the action in the separate
-Actions menu. The host may move toolbar actions into Actions when direct space
+temporary result preview, unless the contribution sets `exposeInMenu = false`,
+in which case it is invocable only as the backing operation of one or more
+`transformer_preset` actions and never listed on its own. Actions never
+appear in Transform: `preview_toolbar` requests a direct icon, while
+`action_menu` places the action in the separate Actions menu. The host may move toolbar actions into Actions when direct space
 is exhausted, and pinned actions remain available there for management.
 Matchers establish applicability. The `action-state` guest export returns
 `hidden`, `disabled(reason)`, or `enabled`; host constraints (provider support,

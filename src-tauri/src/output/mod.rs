@@ -182,7 +182,7 @@ mod tests {
             .preview(
                 &history,
                 &clip_id,
-                "builtin.transform.base64.encode",
+                "builtin.transform.url.encode",
                 &source_id,
                 json!({}),
             )

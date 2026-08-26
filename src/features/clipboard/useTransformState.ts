@@ -26,6 +26,7 @@ export type TransformControls = {
   run: (id: string, parameters?: Record<string, unknown>) => Promise<void>
   runAction: (id: string, parameters?: Record<string, unknown>) => Promise<void>
   pinAction: (id: string, pinned: boolean) => Promise<void>
+  openPicker: () => void
 }
 
 export type ContextAction = {
@@ -50,6 +51,24 @@ export type ContextAction = {
   externalNavigationOrigins: string[]
   httpOrigins: string[]
   providers: string[]
+}
+
+// Shared between the toolbar's pinned/preview_toolbar icon buttons and the
+// Transform & Actions picker, so an action pinned to the toolbar never also
+// appears redundantly in the picker's Actions list.
+export const splitExtensionActions = (actions: ContextAction[]) => {
+  const toolbarActions = actions
+    .filter(action => action.pinned || action.placements.includes('preview_toolbar'))
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned))
+    .slice(0, 2)
+  const directIds = new Set(toolbarActions.map(action => action.id))
+  const menuActions = actions.filter(
+    action =>
+      action.pinned ||
+      action.placements.includes('action_menu') ||
+      (action.placements.includes('preview_toolbar') && !directIds.has(action.id))
+  )
+  return { toolbarActions, menuActions }
 }
 
 type ActionInvocation = { token: string; expiresAt: number }
@@ -86,7 +105,21 @@ export const useTransformState = ({
   const [preview, setPreview] = useState<TransformPreview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [parameterRequest, setParameterRequest] = useState<ParameterRequest | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const presentationKind = basePresentation?.activeView.presentationKind
+
+  // A custom extension detail view is a native child webview that always
+  // paints above the DOM, so any host overlay must ask it to hide first —
+  // regardless of whether it's the transform/action picker or the parameter
+  // request that can follow a selection, and regardless of what triggered it
+  // (menu, pinned toolbar button, or keyboard shortcut).
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent('clipsx-host-overlay', {
+        detail: { open: Boolean(parameterRequest) || pickerOpen },
+      })
+    )
+  }, [parameterRequest, pickerOpen])
 
   useEffect(() => {
     if (!presentationKind || !sourceId) return
@@ -288,11 +321,15 @@ export const useTransformState = ({
     )
   }, [])
 
+  const openPicker = useCallback(() => setPickerOpen(true), [])
+
   useEffect(() => {
     onControls?.(
-      items.length > 0 || actions.length > 0 ? { items, actions, run, runAction, pinAction } : null
+      items.length > 0 || actions.length > 0
+        ? { items, actions, run, runAction, pinAction, openPicker }
+        : null
     )
-  }, [actions, items, onControls, pinAction, run, runAction])
+  }, [actions, items, onControls, openPicker, pinAction, run, runAction])
 
   useEffect(() => {
     const platform = getPlatform()
@@ -326,6 +363,11 @@ export const useTransformState = ({
   }
 
   return {
+    items,
+    actions,
+    run,
+    runAction,
+    pinAction,
     busy,
     activeTransformer,
     preview,
@@ -349,5 +391,7 @@ export const useTransformState = ({
       setError(null)
       setActiveTransformer(null)
     },
+    pickerOpen,
+    closePicker: () => setPickerOpen(false),
   }
 }

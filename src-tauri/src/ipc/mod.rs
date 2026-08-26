@@ -1011,6 +1011,7 @@ async fn list_transformer_contributions(
             descriptors.push(descriptor);
         }
     }
+    descriptors.retain(|descriptor| descriptor.expose_in_menu);
     Ok(descriptors)
 }
 
@@ -3108,6 +3109,9 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("main-app-commands")));
+        let main_permissions = include_str!("../../permissions/main-app-commands.toml");
+        assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
+        assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
     }
 
     #[test]

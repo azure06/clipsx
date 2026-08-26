@@ -36,6 +36,7 @@ pub struct TransformerDescriptor {
     pub consent_required: bool,
     pub http_origins: Vec<String>,
     pub providers: Vec<String>,
+    pub expose_in_menu: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,7 +94,7 @@ impl BuiltinTransformer {
         }
         let text = match &input.payload {
             CapturedPayload::Text(text) => text.trim(),
-            _ => return self.id == "builtin.transform.base64.encode",
+            _ => return false,
         };
         match self.id {
             "builtin.transform.json.pretty"
@@ -116,15 +117,6 @@ impl BuiltinTransformer {
             "builtin.transform.curl.to_fetch" => {
                 presentation_kind == Some("code") && text.starts_with("curl ")
             }
-            "builtin.transform.base64.decode" => {
-                text.starts_with("data:")
-                    || (text.len() >= 8
-                        && text.len() % 4 == 0
-                        && text
-                            .chars()
-                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')))
-            }
-            "builtin.transform.base64.encode" => true,
             _ => false,
         }
     }
@@ -142,6 +134,7 @@ impl TransformerContribution for BuiltinTransformer {
             consent_required: false,
             http_origins: vec![],
             providers: vec![],
+            expose_in_menu: true,
         }
     }
     fn accepts(&self, input: &CapturedRepresentation) -> bool {
@@ -155,8 +148,6 @@ impl TransformerContribution for BuiltinTransformer {
         match self.id {
             "builtin.transform.json.pretty" => json_transform(Self::text(input)?, true),
             "builtin.transform.json.minify" => json_transform(Self::text(input)?, false),
-            "builtin.transform.base64.encode" => base64_encode(input),
-            "builtin.transform.base64.decode" => base64_decode(Self::text(input)?),
             "builtin.transform.curl.to_fetch" => curl_to_fetch(Self::text(input)?),
             "builtin.transform.json.to_typescript" => {
                 json_to_typescript(Self::text(input)?, parameters)
@@ -233,18 +224,6 @@ fn registry() -> Vec<BuiltinTransformer> {
         BuiltinTransformer {
             id: "builtin.transform.json.minify",
             label: "Minify JSON",
-            schema: no_parameters.clone(),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.base64.encode",
-            label: "Encode Base64",
-            schema: no_parameters.clone(),
-            accepts_binary: true,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.base64.decode",
-            label: "Decode Base64",
             schema: no_parameters.clone(),
             accepts_binary: false,
         },
@@ -580,16 +559,6 @@ fn text_output(mime: &str, text: &str) -> Vec<CapturedRepresentation> {
     }
     output
 }
-fn binary_output(mime: &str, bytes: Vec<u8>) -> Vec<CapturedRepresentation> {
-    vec![CapturedRepresentation {
-        format_key: format!("{}:{}", platform(), mime),
-        canonical_mime_type: Some(mime.into()),
-        native_type: None,
-        platform: platform().into(),
-        capture_priority: 10,
-        payload: CapturedPayload::Binary(bytes),
-    }]
-}
 fn preview_model(outputs: &[CapturedRepresentation]) -> RenderModel {
     match outputs.first().map(|item| &item.payload) {
         Some(CapturedPayload::Text(text)) => RenderModel::Code {
@@ -645,46 +614,6 @@ fn json_transform(input: &str, pretty: bool) -> Result<Vec<CapturedRepresentatio
         serde_json::to_string(&value)?
     };
     Ok(text_output("application/json", &output))
-}
-fn base64_encode(input: &CapturedRepresentation) -> Result<Vec<CapturedRepresentation>> {
-    match &input.payload {
-        CapturedPayload::Text(text) => {
-            Ok(text_output("text/plain", &STANDARD.encode(text.as_bytes())))
-        }
-        CapturedPayload::Binary(bytes) => {
-            let mime = input
-                .canonical_mime_type
-                .as_deref()
-                .context("binary Base64 requires an explicit MIME type")?;
-            if !matches!(mime, "image/png" | "application/pdf") {
-                bail!("binary Base64 is supported only for explicit PNG or PDF data")
-            }
-            Ok(text_output(
-                "text/plain",
-                &format!("data:{mime};base64,{}", STANDARD.encode(bytes)),
-            ))
-        }
-        CapturedPayload::Files(_) => bail!("file lists cannot be Base64 encoded"),
-    }
-}
-fn base64_decode(input: &str) -> Result<Vec<CapturedRepresentation>> {
-    if let Some(value) = input.strip_prefix("data:") {
-        let (meta, data) = value.split_once(",").context("invalid data URI")?;
-        let mime = meta
-            .strip_suffix(";base64")
-            .context("data URI must use base64")?;
-        if !matches!(mime, "image/png" | "application/pdf") {
-            bail!("data URI MIME is not supported for clipboard reconstruction")
-        }
-        return Ok(binary_output(
-            mime,
-            STANDARD.decode(data.trim()).context("invalid Base64")?,
-        ));
-    }
-    let bytes = STANDARD.decode(input.trim()).context("invalid Base64")?;
-    let text = String::from_utf8(bytes)
-        .context("decoded Base64 is not UTF-8; use a typed data URI for supported binary data")?;
-    Ok(text_output("text/plain", &text))
 }
 fn curl_to_fetch(input: &str) -> Result<Vec<CapturedRepresentation>> {
     let tokens = shell_words(input)?;
@@ -1118,10 +1047,6 @@ mod tests {
         assert!(
             matches!((&a[0].payload, &b[0].payload), (CapturedPayload::Text(left), CapturedPayload::Text(right)) if left == right)
         );
-    }
-    #[test]
-    fn base64_rejects_untyped_binary() {
-        assert!(base64_decode("AP8=").is_err());
     }
     #[test]
     fn jwt_is_not_a_verifier() {

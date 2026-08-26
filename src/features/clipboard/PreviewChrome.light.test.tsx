@@ -107,6 +107,7 @@ const transformControls = (overrides: Partial<TransformControls> = {}): Transfor
   run: vi.fn(),
   runAction: vi.fn(),
   pinAction: vi.fn(),
+  openPicker: vi.fn(),
   ...overrides,
 })
 
@@ -345,30 +346,25 @@ describe('preview chrome light theme styling', () => {
       <ClipActionsToolbar
         presentation={textPresentation}
         context={actionContext}
-        transformControls={{
+        transformControls={transformControls({
           items: [{ id: 'format', label: 'Format', version: '1' }],
-          actions: [],
-          run: vi.fn(),
-          runAction: vi.fn(),
-          pinAction: vi.fn(),
-        }}
+        })}
       />
     )
 
-    await user.hover(screen.getByRole('button', { name: 'Transform' }))
+    await user.hover(screen.getByRole('button', { name: 'Transform & Actions' }))
 
     const tooltip = await screen.findByRole('tooltip', { hidden: true })
-    expect(tooltip).toHaveTextContent('Transform')
+    expect(tooltip).toHaveTextContent('Transform & Actions')
     expect(tooltip).toHaveTextContent(
       formatShortcut({ modifiers: ['primary'], key: 'T' }, getPlatform())
     )
     expect(tooltip.querySelector('svg')).toHaveClass('fill-white')
   })
 
-  it('keeps extension actions out of the Transform menu', async () => {
+  it('opens the transform/action picker via the toolbar trigger', async () => {
     const user = userEvent.setup()
-    const run = vi.fn()
-    const runAction = vi.fn()
+    const openPicker = vi.fn()
     render(
       <ClipActionsToolbar
         presentation={textPresentation}
@@ -376,21 +372,17 @@ describe('preview chrome light theme styling', () => {
         transformControls={transformControls({
           items: [{ id: 'format', label: 'Format', version: '1' }],
           actions: [extensionAction()],
-          run,
-          runAction,
+          openPicker,
         })}
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Transform' }))
+    await user.click(screen.getByRole('button', { name: 'Transform & Actions' }))
 
-    expect(screen.getByRole('menuitem', { name: 'Format' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: 'Ask AI' })).not.toBeInTheDocument()
+    expect(openPicker).toHaveBeenCalledTimes(1)
   })
 
-  it('shows declared and displaced extension actions in the Actions menu', async () => {
-    const user = userEvent.setup()
-    const runAction = vi.fn()
+  it('keeps toolbar-pinned actions out of the picker-eligible action set', () => {
     render(
       <ClipActionsToolbar
         presentation={textPresentation}
@@ -401,21 +393,15 @@ describe('preview chrome light theme styling', () => {
             extensionAction({ id: 'second', label: 'Second', placements: ['preview_toolbar'] }),
             extensionAction({ id: 'third', label: 'Third', placements: ['preview_toolbar'] }),
           ],
-          runAction,
         })}
       />
     )
 
-    expect(screen.queryByRole('button', { name: 'Transform' })).not.toBeInTheDocument()
+    // Only the first two preview_toolbar-eligible actions fill the two direct
+    // toolbar slots; 'third' is displaced and stays picker-only.
     expect(screen.getByRole('button', { name: 'First' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Second' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Actions' }))
-
-    expect(screen.getByRole('menuitem', { name: 'First' })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: 'Third' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: 'Second' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitem', { name: 'Third' }))
-    expect(runAction).toHaveBeenCalledWith('third')
+    expect(screen.queryByRole('button', { name: 'Third' })).not.toBeInTheDocument()
   })
 
   it('renders tag suggestions with light-safe dropdown classes', async () => {

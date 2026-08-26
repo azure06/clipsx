@@ -5,7 +5,6 @@ import {
   Copy,
   Database,
   ExternalLink,
-  Ellipsis,
   Mail,
   Phone,
   Pin,
@@ -25,14 +24,8 @@ import {
   getPlatform,
   type ShortcutDef,
 } from '../../shared/keyboard/shortcuts'
-import type { TransformControls } from './useTransformState'
+import { splitExtensionActions, type TransformControls } from './useTransformState'
 import { useToast } from '../../shared/contexts/ToastContext'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../../shared/components/ui'
 
 const platform = getPlatform()
 const representationsShortcut: ShortcutDef = { modifiers: ['primary'], key: 'I' }
@@ -83,7 +76,7 @@ const editorExtension = (presentation: ClipPresentation): string | null => {
   return null
 }
 
-const ExtensionIcon = ({
+export const ExtensionIcon = ({
   light,
   dark,
   scale,
@@ -233,17 +226,8 @@ export const ClipActionsToolbar = ({
     )
     return values
   }, [context, copied, performCopy, presentation, t, toast])
-  const extensionToolbarActions = (transformControls?.actions ?? [])
-    .filter(action => action.pinned || action.placements.includes('preview_toolbar'))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned))
-    .slice(0, 2)
-  const directExtensionActionIds = new Set(extensionToolbarActions.map(action => action.id))
-  const extensionMenuActions = (transformControls?.actions ?? []).filter(
-    action =>
-      action.pinned ||
-      action.placements.includes('action_menu') ||
-      (action.placements.includes('preview_toolbar') && !directExtensionActionIds.has(action.id))
-  )
+  const { toolbarActions: extensionToolbarActions, menuActions: extensionMenuActions } =
+    splitExtensionActions(transformControls?.actions ?? [])
 
   return (
     <Tooltip.Provider delayDuration={300}>
@@ -276,12 +260,10 @@ export const ClipActionsToolbar = ({
             />
           </button>
         ))}
-        {transformControls && transformControls.items.length > 0 && (
-          <TransformDropdown controls={transformControls} />
-        )}
-        {transformControls && extensionMenuActions.length > 0 && (
-          <ActionsDropdown controls={transformControls} actions={extensionMenuActions} />
-        )}
+        {transformControls &&
+          (transformControls.items.length > 0 || extensionMenuActions.length > 0) && (
+            <TransformActionsTrigger controls={transformControls} />
+          )}
       </div>
     </Tooltip.Provider>
   )
@@ -320,124 +302,26 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
   )
 }
 
-const TransformDropdown = ({ controls }: { controls: TransformControls }) => (
+const TransformActionsTrigger = ({ controls }: { controls: TransformControls }) => (
   <Tooltip.Root>
-    <DropdownMenu
-      onOpenChange={open =>
-        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
-      }
-    >
-      <Tooltip.Trigger asChild>
-        <DropdownMenuTrigger asChild>
-          <button
-            aria-label="Transform"
-            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
-          >
-            <Sparkles className="h-4 w-4" />
-          </button>
-        </DropdownMenuTrigger>
-      </Tooltip.Trigger>
-      <DropdownMenuContent className="min-w-40 p-1" align="end">
-        {controls.items.map(item => (
-          <DropdownMenuItem
-            key={item.id}
-            className="py-1.5"
-            onSelect={() => void controls.run(item.id)}
-          >
-            {item.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Tooltip.Trigger asChild>
+      <button
+        aria-label="Transform & Actions"
+        className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
+        onClick={controls.openPicker}
+      >
+        <Sparkles className="h-4 w-4" />
+      </button>
+    </Tooltip.Trigger>
     <Tooltip.Portal>
       <Tooltip.Content
         className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
         sideOffset={5}
       >
-        Transform
+        Transform & Actions
         <span className="ml-1.5 font-mono text-gray-400">
           {formatShortcut(transformShortcut, platform)}
         </span>
-        <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
-)
-
-const ActionsDropdown = ({
-  controls,
-  actions,
-}: {
-  controls: TransformControls
-  actions: TransformControls['actions']
-}) => (
-  <Tooltip.Root>
-    <DropdownMenu
-      onOpenChange={open =>
-        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
-      }
-    >
-      <Tooltip.Trigger asChild>
-        <DropdownMenuTrigger asChild>
-          <button
-            aria-label="Actions"
-            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
-          >
-            <Ellipsis className="h-4 w-4" />
-          </button>
-        </DropdownMenuTrigger>
-      </Tooltip.Trigger>
-      <DropdownMenuContent className="min-w-48 p-1" align="end">
-        {actions.map(action => (
-          <DropdownMenuItem
-            key={action.id}
-            aria-label={
-              action.unavailableReason
-                ? `${action.label}: ${action.unavailableReason}`
-                : action.label
-            }
-            disabled={!action.available}
-            title={action.unavailableReason ?? undefined}
-            className="justify-between gap-4 py-1.5"
-            onSelect={() => void controls.runAction(action.id)}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <ExtensionIcon
-                light={action.iconSvg}
-                dark={action.iconSvgDark}
-                scale={action.iconScale}
-              />
-              <span className="truncate">{action.label}</span>
-            </span>
-            <span className="flex shrink-0 items-center gap-2">
-              {action.shortcut && (
-                <span className="text-[10px] text-gray-400">{action.shortcut}</span>
-              )}
-              <button
-                type="button"
-                aria-label={`${action.pinned ? 'Unpin' : 'Pin'} ${action.label}`}
-                title={action.pinned ? 'Remove from toolbar' : 'Pin to toolbar'}
-                className="rounded p-0.5 text-gray-400 hover:text-amber-500"
-                onPointerDown={event => event.preventDefault()}
-                onClick={event => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  void controls.pinAction(action.id, !action.pinned)
-                }}
-              >
-                <Pin className={`h-3.5 w-3.5 ${action.pinned ? 'fill-current' : ''}`} />
-              </button>
-            </span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-    <Tooltip.Portal>
-      <Tooltip.Content
-        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
-        sideOffset={5}
-      >
-        Actions
         <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
       </Tooltip.Content>
     </Tooltip.Portal>

@@ -197,6 +197,12 @@ pub struct ManifestContribution {
     pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+    /// Transformer contributions default to appearing in the host's generic
+    /// Transform menu. Set to `false` when the transformer exists only to
+    /// back one or more `TransformerPreset` actions that already cover its
+    /// full parameter space, so the operation isn't offered twice.
+    #[serde(default = "default_true")]
+    pub expose_in_menu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +266,9 @@ fn default_version() -> String {
 }
 fn default_icon_scale() -> f32 {
     1.0
+}
+fn default_true() -> bool {
+    true
 }
 fn empty_object() -> Value {
     Value::Object(Default::default())
@@ -480,6 +489,9 @@ impl ExtensionManifest {
         }
         if contribution.kind != ContributionKind::Action && !contribution.placements.is_empty() {
             bail!("only action contributions may declare action placement");
+        }
+        if contribution.kind != ContributionKind::Transformer && !contribution.expose_in_menu {
+            bail!("only transformer contributions may set exposeInMenu to false");
         }
         if contribution.ui_surfaces.is_empty() != contribution.ui_entry.is_none() {
             bail!("custom UI requires both uiEntry and at least one UI surface");
@@ -937,6 +949,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: empty_object(),
+            expose_in_menu: true,
         }
     }
 

@@ -1083,6 +1083,7 @@ impl ExtensionService {
                     .map(|value| value.origin.clone())
                     .collect(),
                 providers: item.providers,
+                expose_in_menu: item.declaration.expose_in_menu,
             });
         }
         Ok(descriptors)
@@ -3569,6 +3570,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: json!({}),
+            expose_in_menu: true,
         }
     }
 

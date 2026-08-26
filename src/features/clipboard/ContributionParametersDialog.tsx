@@ -44,12 +44,12 @@ export const ContributionParametersDialog = ({
 
   return (
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+      className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-[2px] dark:bg-black/40"
       role="presentation"
     >
       <form
         aria-label={`${request.label} parameters`}
-        className="w-full max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-xl dark:border-white/10 dark:bg-slate-900"
+        className="w-full max-w-md space-y-4 rounded-2xl border border-slate-200/80 bg-white/95 p-5 shadow-lg backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
         onSubmit={event => {
           event.preventDefault()
           onSubmit(values)
