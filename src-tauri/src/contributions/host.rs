@@ -1,6 +1,6 @@
 //! Contribution host for detectors and renderers.
 use crate::{
-    contracts::{FilePresentation, OcrPresentation, RenderModel},
+    contracts::{FilePresentation, LeadingVisual, OcrPresentation, RenderModel},
     extensions::ExtensionService,
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},
 };
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, HashSet},
     sync::LazyLock,
     time::Duration,
@@ -28,6 +29,104 @@ pub struct FacetDescriptor {
     pub detector_id: String,
     pub detector_version: String,
     pub payload: Value,
+}
+
+pub(crate) fn facet_presentation_priority(facet_id: &str) -> i32 {
+    match facet_id {
+        "core.security.secret" => 200,
+        "core.link.url" => 180,
+        "core.contact.email" => 170,
+        "core.value.color" => 160,
+        "core.data.json" => 150,
+        "core.data.table" => 140,
+        "core.file.path" => 130,
+        "core.time.date" => 120,
+        "core.contact.phone" => 100,
+        "core.math.expression" => 90,
+        "core.text.markdown" => 80,
+        "core.text.code" => 70,
+        "core.value.number" => 60,
+        _ => 40,
+    }
+}
+
+pub(crate) fn history_leading_for_view(
+    view: &ClipViewDescriptor,
+    facets: &[FacetDescriptor],
+) -> LeadingVisual {
+    if let Some(facet_id) = view.facet_id.as_deref() {
+        if facet_id == "core.value.color" {
+            let swatch = facets
+                .iter()
+                .find(|facet| {
+                    facet.id == facet_id && facet.source_representation_id == view.source_id
+                })
+                .and_then(|facet| facet.payload.get("hex"))
+                .and_then(Value::as_str)
+                .and_then(color_swatch);
+            if let Some(swatch) = swatch {
+                return swatch;
+            }
+        }
+        let name = match facet_id {
+            "core.security.secret" => "key",
+            "core.link.url" => "link",
+            "core.contact.email" => "mail",
+            "core.value.color" => "palette",
+            "core.data.json" => "braces",
+            "core.data.table" => "table",
+            "core.file.path" => "folder",
+            "core.time.date" => "calendar",
+            "core.contact.phone" => "phone",
+            "core.math.expression" => "sigma",
+            "core.text.markdown" => "file_text",
+            "core.text.code" => "code",
+            "core.value.number" => "hash",
+            _ => "text",
+        };
+        return LeadingVisual::HostIcon { name: name.into() };
+    }
+
+    let name = match view.presentation_kind.as_str() {
+        "image" => return LeadingVisual::InputThumbnail,
+        "files" => "files",
+        "document" if view.mime_type.as_deref() == Some("image/svg+xml") => "image",
+        "document" => "file_text",
+        "office" => "briefcase",
+        "html" => "html",
+        "rich_text" | "text" => "text",
+        "source" => "file_code",
+        "unsupported" => "file_question",
+        _ => "file",
+    };
+    LeadingVisual::HostIcon { name: name.into() }
+}
+
+fn color_swatch(value: &str) -> Option<LeadingVisual> {
+    let hex = value.strip_prefix('#')?;
+    let expanded;
+    let hex = if hex.len() == 3 {
+        expanded = hex
+            .chars()
+            .flat_map(|value| [value, value])
+            .collect::<String>();
+        expanded.as_str()
+    } else {
+        hex
+    };
+    if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(LeadingVisual::Swatch {
+        red: u8::from_str_radix(&hex[0..2], 16).ok()?,
+        green: u8::from_str_radix(&hex[2..4], 16).ok()?,
+        blue: u8::from_str_radix(&hex[4..6], 16).ok()?,
+        alpha: if hex.len() == 8 {
+            u8::from_str_radix(&hex[6..8], 16).ok()?
+        } else {
+            255
+        },
+    })
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1048,13 +1147,13 @@ pub async fn views(
         )
     });
     let facets = facets(repo, clip_id).await?;
-    let mut candidates: Vec<(ClipViewDescriptor, i64, i64)> = Vec::new();
+    let mut candidates: Vec<(ClipViewDescriptor, i32, i64, i64)> = Vec::new();
     let mut add_view = |rep: &RepresentationDetail,
                         renderer_id: &str,
                         label: &str,
                         kind: &str,
                         facet_id: Option<String>,
-                        _renderer_priority: i32,
+                        renderer_priority: i32,
                         is_original: bool| {
         let purpose = if renderer_id == "builtin.office" {
             "diagnostic"
@@ -1094,6 +1193,7 @@ pub async fn views(
                 match_specificity,
                 placement: "alternate".into(),
             },
+            renderer_priority,
             rep.capture_priority,
             rep.ordinal,
         ));
@@ -1172,14 +1272,14 @@ pub async fn views(
         else {
             continue;
         };
-        let (renderer, kind, priority) = match facet.id.as_str() {
-            "core.security.secret" => ("builtin.key_value", "secret", 200),
-            "core.link.url" => ("builtin.url", "url", 180),
-            "core.contact.email" => ("builtin.key_value", "email", 170),
-            "core.value.color" => ("builtin.key_value", "color", 160),
-            "core.data.json" => ("builtin.json", "json", 150),
-            "core.data.table" => ("builtin.table", "table", 140),
-            "core.file.path" => ("builtin.key_value", "path", 130),
+        let (renderer, kind) = match facet.id.as_str() {
+            "core.security.secret" => ("builtin.key_value", "secret"),
+            "core.link.url" => ("builtin.url", "url"),
+            "core.contact.email" => ("builtin.key_value", "email"),
+            "core.value.color" => ("builtin.key_value", "color"),
+            "core.data.json" => ("builtin.json", "json"),
+            "core.data.table" => ("builtin.table", "table"),
+            "core.file.path" => ("builtin.key_value", "path"),
             "core.time.date" => (
                 "builtin.date",
                 if facet.payload["interpretation"]
@@ -1190,13 +1290,12 @@ pub async fn views(
                 } else {
                     "date"
                 },
-                120,
             ),
-            "core.contact.phone" => ("builtin.key_value", "phone", 100),
-            "core.math.expression" => ("builtin.key_value", "math", 90),
-            "core.text.markdown" => ("builtin.markdown", "markdown", 80),
-            "core.text.code" => ("builtin.key_value", "code", 70),
-            "core.value.number" => ("builtin.number", "number", 60),
+            "core.contact.phone" => ("builtin.key_value", "phone"),
+            "core.math.expression" => ("builtin.key_value", "math"),
+            "core.text.markdown" => ("builtin.markdown", "markdown"),
+            "core.text.code" => ("builtin.key_value", "code"),
+            "core.value.number" => ("builtin.number", "number"),
             _ if extension_claims_facet(
                 &claimed_extension_facets,
                 &facet.source_representation_id,
@@ -1205,7 +1304,7 @@ pub async fn views(
             {
                 continue
             }
-            _ => ("builtin.key_value", "details", 40),
+            _ => ("builtin.key_value", "details"),
         };
         add_view(
             rep,
@@ -1213,7 +1312,7 @@ pub async fn views(
             &facet.display_name,
             kind,
             Some(facet.id.clone()),
-            priority,
+            facet_presentation_priority(&facet.id),
             false,
         );
     }
@@ -1222,14 +1321,20 @@ pub async fn views(
             .representations
             .iter()
             .find(|rep| rep.id == view.source_id);
+        let renderer_priority = view
+            .facet_id
+            .as_deref()
+            .map(facet_presentation_priority)
+            .unwrap_or_default();
         candidates.push((
             view,
+            renderer_priority,
             rep.map_or(i64::MAX, |rep| rep.capture_priority),
             rep.map_or(i64::MAX, |rep| rep.ordinal),
         ));
     }
     let renderer_preferences = preferences(repo).await?;
-    candidates.sort_by_key(|(view, capture_priority, ordinal)| {
+    candidates.sort_by_key(|(view, renderer_priority, capture_priority, ordinal)| {
         let facet_preference = facets
             .iter()
             .find(|facet| view.facet_id.as_deref() == Some(facet.id.as_str()))
@@ -1256,6 +1361,7 @@ pub async fn views(
             !preferred,
             purpose_rank,
             -view.match_specificity,
+            Reverse(*renderer_priority),
             *capture_priority,
             *ordinal,
             view.id.clone(),
@@ -1263,12 +1369,12 @@ pub async fn views(
     });
     let primary_view_id = candidates
         .first()
-        .map(|(view, _, _)| view.id.clone())
+        .map(|(view, _, _, _)| view.id.clone())
         .context("clip has no renderable representation")?;
     let presentation_kind = candidates[0].0.presentation_kind.clone();
     let views = candidates
         .into_iter()
-        .map(|(mut view, _, _)| {
+        .map(|(mut view, _, _, _)| {
             if view.id == primary_view_id {
                 view.placement = "primary".into();
             }
@@ -1521,6 +1627,45 @@ mod tests {
         assert_eq!(image_view_label("image/png"), "PNG");
         assert_eq!(image_view_label("image/svg+xml"), "SVG");
         assert_eq!(image_view_label("image/unknown"), "Image");
+    }
+
+    #[test]
+    fn color_history_visual_uses_the_detected_value() {
+        let view = ClipViewDescriptor {
+            id: "builtin.key_value:rep-1:core.value.color".into(),
+            renderer_id: "builtin.key_value".into(),
+            label: "Color".into(),
+            source_id: "rep-1".into(),
+            mime_type: Some("text/plain".into()),
+            capability_id: "core.text.plain".into(),
+            facet_id: Some("core.value.color".into()),
+            icon_svg: None,
+            icon_svg_dark: None,
+            icon_scale: 1.0,
+            is_original: false,
+            presentation_kind: "color".into(),
+            purpose: "semantic".into(),
+            match_specificity: 500,
+            placement: "primary".into(),
+        };
+        let facets = vec![FacetDescriptor {
+            id: "core.value.color".into(),
+            display_name: "Color".into(),
+            source_representation_id: "rep-1".into(),
+            detector_id: "core.value.color".into(),
+            detector_version: "1".into(),
+            payload: json!({"schemaVersion": 1, "hex": "#33669980"}),
+        }];
+
+        assert_eq!(
+            history_leading_for_view(&view, &facets),
+            LeadingVisual::Swatch {
+                red: 0x33,
+                green: 0x66,
+                blue: 0x99,
+                alpha: 0x80,
+            }
+        );
     }
 
     #[test]
@@ -1784,6 +1929,61 @@ mod tests {
             .unwrap();
         assert_eq!(primary.renderer_id, "builtin.json");
         assert_eq!(primary.purpose, "structured");
+    }
+
+    #[tokio::test]
+    async fn resolver_uses_declared_facet_precedence_instead_of_view_id_order() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
+            format_key: "windows:CF_UNICODETEXT".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: Some("CF_UNICODETEXT".into()),
+            platform: "windows".into(),
+            capture_priority: 10,
+            payload: CapturedPayload::Text("# Example\n\n```js\nconst answer = 42\n```".into()),
+        }])
+        .await;
+
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        let primary = result
+            .views
+            .iter()
+            .find(|view| view.id == result.primary_view_id)
+            .unwrap();
+        assert!(result
+            .facets
+            .iter()
+            .any(|facet| facet.id == "core.text.code"));
+        assert_eq!(primary.facet_id.as_deref(), Some("core.text.markdown"));
+        assert_eq!(primary.renderer_id, "builtin.markdown");
+    }
+
+    #[tokio::test]
+    async fn compact_history_visual_tracks_the_primary_color_view() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
+            format_key: "windows:CF_UNICODETEXT".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: Some("CF_UNICODETEXT".into()),
+            platform: "windows".into(),
+            capture_priority: 10,
+            payload: CapturedPayload::Text("#33669980".into()),
+        }])
+        .await;
+
+        extensions
+            .refresh_compact_presentations(&repo, &clip_id)
+            .await
+            .unwrap();
+        let summary = repo.summary(&clip_id).await.unwrap();
+        assert_eq!(
+            summary.history_preview.leading,
+            LeadingVisual::Swatch {
+                red: 0x33,
+                green: 0x66,
+                blue: 0x99,
+                alpha: 0x80,
+            }
+        );
+        assert_eq!(summary.history_preview.badge.as_deref(), Some("Color"));
     }
 
     #[tokio::test]

@@ -387,18 +387,20 @@ impl HistoryRepository {
         let Some(representation_id) = representation_id else {
             return Ok((None, None));
         };
-        let row = sqlx::query(
+        let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT f.facet_id,d.display_name FROM content_clip_facets f \
              JOIN content_facet_definitions d ON d.id=f.facet_id \
-             WHERE f.source_representation_id=? ORDER BY f.facet_id LIMIT 1",
+             WHERE f.source_representation_id=?",
         )
         .bind(representation_id)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
-        Ok(match row {
-            Some(row) => (Some(row.get(0)), Some(row.get(1))),
-            None => (None, None),
-        })
+        let selected = rows.into_iter().min_by(|left, right| {
+            crate::contributions::facet_presentation_priority(&right.0)
+                .cmp(&crate::contributions::facet_presentation_priority(&left.0))
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        Ok(selected.map_or((None, None), |(id, name)| (Some(id), Some(name))))
     }
 
     pub async fn summary(&self, id: &str) -> Result<ClipSummary> {

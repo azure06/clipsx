@@ -51,6 +51,9 @@ pub(crate) fn resolve_history_preview(
         if !matches!(extension.leading, LeadingVisual::None) {
             preview.leading = extension.leading;
         }
+        if extension.badge.is_some() {
+            preview.badge = extension.badge;
+        }
     }
     preview
 }
@@ -162,10 +165,16 @@ fn facet_icon(facet_id: Option<&str>) -> Option<LeadingVisual> {
         "core.text.code" => "code",
         "core.data.json" => "braces",
         "core.link.url" => "link",
+        "core.contact.email" => "mail",
         "core.security.secret" => "key",
         "core.value.color" => "palette",
         "core.data.table" => "table",
-        "core.file.path" => "file",
+        "core.file.path" => "folder",
+        "core.time.date" => "calendar",
+        "core.contact.phone" => "phone",
+        "core.math.expression" => "sigma",
+        "core.text.markdown" => "file_text",
+        "core.value.number" => "hash",
         _ => return None,
     };
     Some(host_icon(name))
@@ -386,7 +395,7 @@ mod tests {
             leading: leading.clone(),
             title: None,
             subtitle: None,
-            badge: None,
+            badge: Some("Selected facet".into()),
             accessibility_label: "JWT view".into(),
         };
 
@@ -394,6 +403,7 @@ mod tests {
 
         assert_eq!(preview.title, "safe built-in text");
         assert_eq!(preview.leading, leading);
+        assert_eq!(preview.badge.as_deref(), Some("Selected facet"));
         assert_eq!(preview.accessibility_label, "safe built-in text");
     }
 

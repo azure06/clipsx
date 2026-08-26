@@ -91,8 +91,9 @@ are explicitly unsigned and never receive registry updates.
 `iconScale` may be set between `0.75` and `2` when a supplied asset contains
 prescribed viewBox clear space; the host scales the image without cropping or
 rewriting it.
-Validated renderer icons are also exposed on preview-tab descriptors. They do
-not replace the canonical representation icon used by history rows.
+Validated renderer icons are also exposed on preview-tab descriptors. When an
+extension renderer is the host-resolved primary view, its icon may also be used
+by the history row; alternate renderers never override that row independently.
 Installation rejects active/external SVG
 content including scripts, entities, event handlers, CSS URLs, foreignObject,
 animation, embedded HTML, and external references. Static local fragment

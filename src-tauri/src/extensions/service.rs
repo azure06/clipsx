@@ -946,9 +946,6 @@ impl ExtensionService {
             .bind(clip_id)
             .execute(&repo.pool)
             .await?;
-        let renderers = self
-            .active_contributions(repo, ContributionKind::Renderer)
-            .await?;
         let view_set = crate::contributions::views(repo, self, clip_id).await?;
         let Some(primary_view) = view_set
             .views
@@ -957,6 +954,42 @@ impl ExtensionService {
         else {
             return Ok(false);
         };
+        if primary_view.renderer_id.starts_with("builtin.") {
+            let model = CompactPresentation {
+                leading: crate::contributions::history_leading_for_view(
+                    primary_view,
+                    &view_set.facets,
+                ),
+                title: None,
+                subtitle: None,
+                badge: primary_view.facet_id.as_ref().and_then(|facet_id| {
+                    view_set
+                        .facets
+                        .iter()
+                        .find(|facet| {
+                            facet.id == *facet_id
+                                && facet.source_representation_id == primary_view.source_id
+                        })
+                        .map(|facet| facet.display_name.clone())
+                }),
+                accessibility_label: format!("{} view", primary_view.label),
+            };
+            let model_json = serde_json::to_string(&model)?;
+            sqlx::query("INSERT INTO content_compact_presentations(clip_id,source_representation_id,renderer_id,renderer_version,facet_id,model_json,updated_at) VALUES(?,?,?,?,?,?,?)")
+                .bind(clip_id)
+                .bind(&primary_view.source_id)
+                .bind(&primary_view.renderer_id)
+                .bind("1")
+                .bind(primary_view.facet_id.as_deref().unwrap_or_default())
+                .bind(model_json)
+                .bind(now_ms())
+                .execute(&repo.pool)
+                .await?;
+            return Ok(true);
+        }
+        let renderers = self
+            .active_contributions(repo, ContributionKind::Renderer)
+            .await?;
         let Some(contribution) = renderers
             .into_iter()
             .find(|renderer| renderer.id == primary_view.renderer_id)
@@ -975,9 +1008,8 @@ impl ExtensionService {
         let (input, _) = repo
             .source_representation(clip_id, &primary_view.source_id)
             .await?;
-        let facets = crate::contributions::facets(repo, clip_id).await?;
         let facet = primary_view.facet_id.as_ref().and_then(|facet_id| {
-            facets.iter().find(|facet| {
+            view_set.facets.iter().find(|facet| {
                 facet.id == *facet_id && facet.source_representation_id == primary_view.source_id
             })
         });
@@ -1012,9 +1044,7 @@ impl ExtensionService {
             }
         } else {
             CompactPresentation {
-                leading: declared_host_icon
-                    .clone()
-                    .unwrap_or(LeadingVisual::None),
+                leading: declared_host_icon.clone().unwrap_or(LeadingVisual::None),
                 title: None,
                 subtitle: None,
                 badge: None,
@@ -3757,11 +3787,7 @@ mod tests {
             accessibility_label: "Extension view".into(),
         };
 
-        apply_declared_compact_leading(
-            &mut presentation,
-            None,
-            true,
-        );
+        apply_declared_compact_leading(&mut presentation, None, true);
         assert!(matches!(presentation.leading, LeadingVisual::None));
         let serialized = serde_json::to_string(&presentation).unwrap();
         assert!(serialized.len() <= 2048);
