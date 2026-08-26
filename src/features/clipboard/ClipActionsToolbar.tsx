@@ -101,20 +101,22 @@ export const ExtensionIcon = ({
 }) => {
   if (!light) {
     const Icon =
-      ({
-        braces: Braces,
-        code: Code2,
-        database: Database,
-        file: File,
-        globe: Globe2,
-        hash: Hash,
-        key: KeyRound,
-        link: Link,
-        palette: Palette,
-        table: Table2,
-        terminal: Terminal,
-        text: Text,
-      } as Record<string, LucideIcon>)[name ?? ''] ?? Blocks
+      (
+        {
+          braces: Braces,
+          code: Code2,
+          database: Database,
+          file: File,
+          globe: Globe2,
+          hash: Hash,
+          key: KeyRound,
+          link: Link,
+          palette: Palette,
+          table: Table2,
+          terminal: Terminal,
+          text: Text,
+        } as Record<string, LucideIcon>
+      )[name ?? ''] ?? Blocks
     return <Icon className="h-4 w-4" />
   }
   const style = scale === 1 ? undefined : { transform: `scale(${scale})` }
