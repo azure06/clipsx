@@ -73,9 +73,7 @@ describe('TransformActionsDialog', () => {
     render(
       <TransformActionsDialog
         items={[]}
-        actions={[
-          action({ available: false, unavailableReason: 'Input is not UTF-8 Base64' }),
-        ]}
+        actions={[action({ available: false, unavailableReason: 'Input is not UTF-8 Base64' })]}
         run={vi.fn()}
         runAction={runAction}
         pinAction={vi.fn()}
