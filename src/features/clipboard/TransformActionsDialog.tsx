@@ -104,9 +104,7 @@ export const TransformActionsDialog = ({
                         <span className="min-w-0 flex-1 truncate">{action.label}</span>
                       </span>
                       {action.shortcut && (
-                        <span className="shrink-0 text-[9px] text-gray-400">
-                          {action.shortcut}
-                        </span>
+                        <span className="shrink-0 text-[9px] text-gray-400">{action.shortcut}</span>
                       )}
                     </button>
                     <button

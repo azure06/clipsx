@@ -59,7 +59,9 @@ export const ContributionParametersDialog = ({
           <h2 className="text-xs font-semibold text-gray-900 dark:text-gray-100">
             {request.label}
           </h2>
-          <p className="mt-0.5 text-[11px] text-gray-500">Configure this operation before it runs.</p>
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            Configure this operation before it runs.
+          </p>
         </div>
         <div className="min-h-0 flex-1 space-y-2 overflow-auto">
           {Object.entries(properties).map(([id, property]) => {
@@ -68,7 +70,10 @@ export const ContributionParametersDialog = ({
               typeof property['description'] === 'string' ? property['description'] : null
             const enumValues = Array.isArray(property['enum']) ? property['enum'] : null
             return (
-              <label key={id} className="block space-y-0.5 text-[11px] text-gray-700 dark:text-gray-300">
+              <label
+                key={id}
+                className="block space-y-0.5 text-[11px] text-gray-700 dark:text-gray-300"
+              >
                 <span className="font-medium">
                   {label}
                   {required.has(id) ? ' *' : ''}
