@@ -160,8 +160,15 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
         .create_if_missing(true)
         .foreign_keys(true);
     let mut connection = SqliteConnection::connect_with(&options).await?;
-    sqlx::migrate!("./migrations").run(&mut connection).await?;
-    Ok(SchemaState::Ready)
+    match sqlx::migrate!("./migrations").run(&mut connection).await {
+        Ok(()) => Ok(SchemaState::Ready),
+        Err(
+            sqlx::migrate::MigrateError::Dirty(_)
+            | sqlx::migrate::MigrateError::VersionMissing(_)
+            | sqlx::migrate::MigrateError::VersionMismatch(_),
+        ) => Ok(SchemaState::UnsupportedSchema),
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn inspect_database(path: &Path) -> Result<SchemaState> {
@@ -341,6 +348,30 @@ mod tests {
         drop(conn);
         assert_eq!(
             inspect_database(&path).await.unwrap(),
+            SchemaState::UnsupportedSchema
+        );
+    }
+    #[tokio::test]
+    async fn requires_reset_when_an_applied_migration_checksum_changes() {
+        let root = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: root.path().join("data"),
+            config: root.path().join("config"),
+        };
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+
+        let mut connection =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(roots.database()))
+                .await
+                .unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum=X'' WHERE version=2")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            prepare(&roots).await.unwrap(),
             SchemaState::UnsupportedSchema
         );
     }
