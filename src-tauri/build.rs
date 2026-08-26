@@ -78,6 +78,8 @@ fn main() {
             "get_clip_views",
             "render_clip_view",
             "retry_clip_ocr",
+            "get_ocr_runtime_status",
+            "update_ocr_settings",
             "list_renderer_contributions",
             "list_core_utilities",
             "get_renderer_preferences",
