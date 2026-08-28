@@ -243,7 +243,7 @@ describe('RenderModelView', () => {
       <RenderModelView
         presentation={presentation({
           kind: 'image',
-          assetId: 'image-1',
+          source: { kind: 'managed', assetId: 'image-1' },
           ocr: { state: 'ready', text: 'hello' },
         })}
       />
@@ -252,6 +252,22 @@ describe('RenderModelView', () => {
     expect(image).toHaveAttribute('src', 'http://clipsx-asset.localhost/image-1')
     fireEvent.error(image)
     expect(screen.getByText('No image source found')).toBeInTheDocument()
+  })
+
+  it('renders decoded images from the expiring transform-result source', () => {
+    render(
+      <RenderModelView
+        presentation={presentation({
+          kind: 'image',
+          source: { kind: 'transform_result', resultId: 'result-1', outputIndex: 0 },
+          ocr: { state: 'disabled' },
+        })}
+      />
+    )
+    expect(screen.getByRole('img', { name: /clipboard image/i })).toHaveAttribute(
+      'src',
+      'http://clipsx-transform.localhost/result-1/0'
+    )
   })
 
   it('derives text statistics only from models that actually contain text', () => {

@@ -203,6 +203,8 @@ pub struct ClipSummary {
     pub thumbnail_asset_id: Option<String>,
     pub has_embedding: bool,
     pub ocr_status: Option<String>,
+    #[serde(skip)]
+    pub history_renderer_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

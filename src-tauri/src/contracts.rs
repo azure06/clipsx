@@ -70,7 +70,7 @@ pub enum RenderModel {
         fields: Vec<(String, String)>,
     },
     Image {
-        asset_id: String,
+        source: ImageSource,
         ocr: OcrPresentation,
     },
     Html {
@@ -105,6 +105,22 @@ pub enum RenderModel {
     },
     Error {
         message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ImageSource {
+    Managed {
+        asset_id: String,
+    },
+    TransformResult {
+        result_id: String,
+        output_index: usize,
     },
 }
 
@@ -269,12 +285,14 @@ mod tests {
             ),
             (
                 RenderModel::Image {
-                    asset_id: "asset-1".into(),
+                    source: ImageSource::Managed {
+                        asset_id: "asset-1".into(),
+                    },
                     ocr: OcrPresentation::Ready {
                         text: String::new(),
                     },
                 },
-                json!({"kind": "image", "assetId": "asset-1", "ocr": {"state": "ready", "text": ""}}),
+                json!({"kind": "image", "source": {"kind": "managed", "assetId": "asset-1"}, "ocr": {"state": "ready", "text": ""}}),
             ),
             (
                 RenderModel::Html {

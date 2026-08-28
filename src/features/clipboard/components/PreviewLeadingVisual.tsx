@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClipSummary, HistoryPreview } from '../../../shared/types/v2'
 import {
+  Binary,
   Braces,
   Briefcase,
   CalendarDays,
@@ -31,6 +32,7 @@ import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { managedAssetUrl } from '../../../shared/utils/assetUrl'
 
 const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
+  binary: Binary,
   braces: Braces,
   briefcase: Briefcase,
   calendar: CalendarDays,
@@ -60,6 +62,7 @@ const HOST_ICON_CATALOG: Record<string, LucideIcon> = {
 // Same recipe as ContentIcon: a tinted ring + soft bg per content type, so the
 // history list reads as colorful and alive rather than one flat gray blob.
 const ICON_TINTS: Record<string, string> = {
+  binary: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
   braces: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
   briefcase: 'bg-blue-500/15 text-blue-600 ring-blue-500/25 dark:text-blue-300',
   calendar: 'bg-teal-500/15 text-teal-600 ring-teal-500/25 dark:text-teal-300',

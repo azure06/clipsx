@@ -162,7 +162,13 @@ export type RenderModel =
       subtitle: string | null
       fields: [string, string][]
     }
-  | { kind: 'image'; assetId: string; ocr: OcrPresentation }
+  | {
+      kind: 'image'
+      source:
+        | { kind: 'managed'; assetId: string }
+        | { kind: 'transform_result'; resultId: string; outputIndex: number }
+      ocr: OcrPresentation
+    }
   | { kind: 'html'; sanitizedHtml: string }
   | { kind: 'rich_text'; sanitizedHtml: string | null; plainText: string }
   | { kind: 'files'; entries: FilePresentation[] }

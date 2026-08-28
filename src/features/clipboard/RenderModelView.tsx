@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Archive,
   AtSign,
+  Binary,
   Braces,
   Calculator,
   CalendarDays,
@@ -31,10 +32,33 @@ import { useTranslation } from 'react-i18next'
 import { useEffect, useState, useMemo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
-import { managedAssetUrl } from '../../shared/utils/assetUrl'
+import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
+}
+
+const CARD_HOST_ICONS: Record<string, typeof File> = {
+  binary: Binary,
+  braces: Braces,
+  code: Code2,
+  database: Archive,
+  file: File,
+  globe: ExternalLink,
+  hash: AtSign,
+  key: ShieldAlert,
+  palette: Palette,
+  table: FileSpreadsheet,
+  terminal: Archive,
+  text: FileText,
+}
+
+const CARD_ICON_TINTS: Record<string, string> = {
+  binary: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
+  code: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
+  hash: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
+  palette: 'bg-fuchsia-500/15 text-fuchsia-600 ring-fuchsia-500/25 dark:text-fuchsia-300',
+  text: 'bg-slate-500/15 text-slate-600 ring-slate-400/25 dark:text-slate-300',
 }
 
 // ── Color utilities ────────────────────────────────────────────────────────
@@ -341,8 +365,16 @@ const KeyValueView = ({ entries }: { entries: [string, string][] }) => (
 
 const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => {
   const { t } = useTranslation()
+  const sourceKey =
+    model.source.kind === 'managed'
+      ? model.source.assetId
+      : `${model.source.resultId}:${model.source.outputIndex}`
   const [failedAssetId, setFailedAssetId] = useState<string | null>(null)
-  const failed = failedAssetId === model.assetId
+  const failed = failedAssetId === sourceKey
+  const sourceUrl =
+    model.source.kind === 'managed'
+      ? managedAssetUrl(model.source.assetId)
+      : transformImageUrl(model.source.resultId, model.source.outputIndex)
 
   return (
     <div
@@ -356,9 +388,9 @@ const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }
       ) : (
         <img
           className="max-h-full max-w-full rounded object-contain"
-          src={managedAssetUrl(model.assetId)}
+          src={sourceUrl}
           alt="Clipboard image"
-          onError={() => setFailedAssetId(model.assetId)}
+          onError={() => setFailedAssetId(sourceKey)}
         />
       )}
     </div>
@@ -1067,36 +1099,69 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
         leading.kind === 'swatch'
           ? `rgba(${leading.red}, ${leading.green}, ${leading.blue}, ${leading.alpha / 255})`
           : null
-      const CardIcon = leading.kind === 'host_icon' && leading.name === 'palette' ? Palette : File
+      const iconName = leading.kind === 'host_icon' ? leading.name : 'file'
+      const CardIcon = CARD_HOST_ICONS[iconName] ?? File
+      const iconTint = CARD_ICON_TINTS[iconName] ?? CARD_ICON_TINTS['text']
       return (
-        <div className={`${SCROLL_AREA} p-6`}>
-          <div className="mx-auto max-w-xl rounded-2xl border border-slate-200/70 bg-white/60 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
-            <div className="flex items-center gap-4">
+        <div className={`${SCROLL_AREA} p-3`}>
+          <div className="relative mx-auto max-w-3xl overflow-hidden rounded-2xl border border-slate-200/70 bg-gradient-to-br from-white/90 via-white/70 to-violet-50/55 shadow-[0_10px_35px_-22px_rgba(79,70,229,0.55)] backdrop-blur-sm dark:border-white/10 dark:from-white/[0.07] dark:via-white/[0.035] dark:to-violet-500/[0.055]">
+            <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/70 to-transparent" />
+            <div className="flex items-center gap-2 border-b border-slate-200/60 px-3 py-2 dark:border-white/10">
               {swatch && (
                 <div
                   aria-label={model.title}
-                  className="h-14 w-14 shrink-0 rounded-full border border-black/15 shadow-inner dark:border-white/25"
+                  className="h-7 w-7 shrink-0 rounded-full border border-black/15 shadow-inner dark:border-white/25"
                   style={{ backgroundColor: swatch }}
                 />
               )}
               {leading.kind === 'monogram' && (
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-200 font-semibold dark:bg-slate-700">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold dark:bg-slate-700">
                   {leading.text}
                 </div>
               )}
               {leading.kind === 'host_icon' && (
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-white/10">
-                  <CardIcon className="h-7 w-7 text-gray-500" aria-hidden="true" />
+                <div
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-2 shadow-sm ${iconTint}`}
+                >
+                  <CardIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 </div>
               )}
               <div className="min-w-0">
-                <h3 className="truncate text-lg font-semibold">{model.title}</h3>
-                {model.subtitle && <p className="text-sm text-gray-500">{model.subtitle}</p>}
+                <h3 className="truncate text-xs font-semibold tracking-tight">{model.title}</h3>
+                {model.subtitle && (
+                  <p className="truncate text-[10px] text-gray-500">{model.subtitle}</p>
+                )}
               </div>
             </div>
             {model.fields.length > 0 && (
-              <div className="mt-5">
-                <KeyValueView entries={model.fields} />
+              <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
+                {model.fields.map(([label, value], index) => {
+                  const spansFinalRow =
+                    model.fields.length > 1 &&
+                    model.fields.length % 2 === 1 &&
+                    index === model.fields.length - 1
+                  return (
+                    <div
+                      className={`group relative min-w-0 overflow-hidden rounded-xl border border-slate-200/70 bg-gradient-to-br from-white/80 to-slate-50/60 px-3 py-2 shadow-sm transition-colors hover:border-violet-300/60 dark:border-white/10 dark:from-white/[0.055] dark:to-white/[0.025] dark:hover:border-violet-400/25 ${spansFinalRow ? 'sm:col-span-2' : ''}`}
+                      key={`${label}:${index}`}
+                    >
+                      <div className="absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/35 to-transparent" />
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1 truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                          {label}
+                        </div>
+                        <CopyButton
+                          className="-mr-1 -mt-0.5 opacity-60 group-hover:opacity-100"
+                          clipId={presentation.id}
+                          text={value}
+                        />
+                      </div>
+                      <div className="custom-scrollbar mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
+                        {value}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

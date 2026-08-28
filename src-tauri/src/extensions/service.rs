@@ -868,21 +868,19 @@ impl ExtensionService {
             let (input, _) = repo
                 .source_representation(clip_id, &representation_detail.id)
                 .await?;
-            if !matches!(input.payload, CapturedPayload::Text(_))
-                || payload_bytes(&input) > 1024 * 1024
-            {
+            if !matches!(input.payload, CapturedPayload::Text(_)) {
                 continue;
             }
-            for contribution in detectors
-                .iter()
-                .filter(|item| accepts(&item.declaration, &input, None))
-            {
+            for contribution in detectors.iter().filter(|item| {
+                accepts(&item.declaration, &input, None)
+                    && payload_bytes(&input) <= item.declaration.input_limit_bytes
+            }) {
                 let facets = self
                     .runtime
                     .detect(
                         &contribution.sha256,
                         &contribution.local_id,
-                        representation(input.clone())?,
+                        representation(input.clone(), contribution.declaration.input_limit_bytes)?,
                     )
                     .await;
                 match facets {
@@ -1001,13 +999,12 @@ impl ExtensionService {
         }
         let has_package_icon = contribution.declaration.icon_assets.is_some()
             || contribution.declaration.icon_asset.is_some();
-        if has_package_icon {
-            self.ensure_contribution_icon_cached(repo, &contribution)
-                .await?;
-        }
         let (input, _) = repo
             .source_representation(clip_id, &primary_view.source_id)
             .await?;
+        if payload_bytes(&input) > contribution.declaration.input_limit_bytes {
+            return Ok(false);
+        }
         let facet = primary_view.facet_id.as_ref().and_then(|facet_id| {
             view_set.facets.iter().find(|facet| {
                 facet.id == *facet_id && facet.source_representation_id == primary_view.source_id
@@ -1028,7 +1025,7 @@ impl ExtensionService {
                 .render_compact(
                     &contribution.sha256,
                     &contribution.local_id,
-                    representation(input.clone())?,
+                    representation(input.clone(), contribution.declaration.input_limit_bytes)?,
                     facet.cloned().map(|facet| super::ExtensionFacet {
                         id: facet.id,
                         payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
@@ -1094,7 +1091,7 @@ impl ExtensionService {
                 version: item.version,
                 label: item.declaration.display_name,
                 parameter_schema: item.declaration.parameter_schema,
-                input_limit_bytes: 1024 * 1024,
+                input_limit_bytes: item.declaration.input_limit_bytes,
                 timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
                     125_000
                 } else {
@@ -1409,7 +1406,7 @@ impl ExtensionService {
                     .run_action(
                         &contribution.sha256,
                         &contribution.local_id,
-                        representation(source)?,
+                        representation(source, contribution.declaration.input_limit_bytes)?,
                         facet.map(|facet| super::ExtensionFacet {
                             id: facet.id,
                             payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
@@ -2224,34 +2221,56 @@ impl ExtensionService {
         (declaration.icon_asset.as_deref().and_then(asset), None)
     }
 
-    async fn ensure_contribution_icon_cached(
+    pub async fn apply_history_extension_icons<'a>(
         &self,
         repo: &HistoryRepository,
-        contribution: &ActiveContribution,
-    ) -> Result<()> {
-        let cached: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM extension_contribution_icons WHERE contribution_id=?)",
-        )
-        .bind(&contribution.id)
-        .fetch_one(&repo.pool)
-        .await?;
-        if cached {
-            return Ok(());
+        summaries: impl IntoIterator<Item = &'a mut crate::history::ClipSummary>,
+    ) {
+        let mut summaries = summaries.into_iter().collect::<Vec<_>>();
+        let wanted = summaries
+            .iter()
+            .filter_map(|summary| summary.history_renderer_id.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        if wanted.is_empty() {
+            return;
         }
-        let (light, dark) = self.contribution_icons(contribution);
-        let Some(light) = light else {
-            return Ok(());
+        let mut icons = HashMap::new();
+        let Ok(contributions) = self
+            .active_contributions(repo, ContributionKind::Renderer)
+            .await
+        else {
+            return;
         };
-        sqlx::query("INSERT INTO extension_contribution_icons(extension_id,contribution_id,light_svg_data_url,dark_svg_data_url,scale_percent,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(contribution_id) DO UPDATE SET extension_id=excluded.extension_id,light_svg_data_url=excluded.light_svg_data_url,dark_svg_data_url=excluded.dark_svg_data_url,scale_percent=excluded.scale_percent,updated_at=excluded.updated_at")
-            .bind(&contribution.extension_id)
-            .bind(&contribution.id)
-            .bind(light)
-            .bind(dark)
-            .bind((contribution.declaration.icon_scale * 100.0).round() as i64)
-            .bind(now_ms())
-            .execute(&repo.pool)
-            .await?;
-        Ok(())
+        for contribution in contributions
+            .into_iter()
+            .filter(|contribution| wanted.contains(&contribution.id))
+        {
+            let (light, dark) = self.contribution_icons(&contribution);
+            let leading = if let Some(light) = light {
+                Some(LeadingVisual::PackageIcon {
+                    light,
+                    dark,
+                    scale_percent: (contribution.declaration.icon_scale * 100.0).round() as u16,
+                })
+            } else {
+                contribution
+                    .declaration
+                    .icon
+                    .map(|name| LeadingVisual::HostIcon { name })
+            };
+            if let Some(leading) = leading {
+                icons.insert(contribution.id, leading);
+            }
+        }
+        for summary in &mut summaries {
+            if let Some(leading) = summary
+                .history_renderer_id
+                .as_ref()
+                .and_then(|renderer_id| icons.get(renderer_id))
+            {
+                summary.history_preview.leading = leading.clone();
+            }
+        }
     }
 
     fn package_identity_icons(
@@ -2415,6 +2434,12 @@ impl ExtensionService {
         source: &CapturedRepresentation,
         facet: Option<crate::contributions::FacetDescriptor>,
     ) -> Result<ExtensionActionState> {
+        if payload_bytes(source) > contribution.declaration.input_limit_bytes {
+            return Ok(ExtensionActionState::Disabled(format!(
+                "Input exceeds this action's {} MiB limit",
+                contribution.declaration.input_limit_bytes / (1024 * 1024)
+            )));
+        }
         if contribution
             .providers
             .iter()
@@ -2430,7 +2455,7 @@ impl ExtensionService {
             .action_state(
                 &contribution.sha256,
                 &contribution.local_id,
-                representation(source.clone())?,
+                representation(source.clone(), contribution.declaration.input_limit_bytes)?,
                 facet.map(|facet| super::ExtensionFacet {
                     id: facet.id,
                     payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
@@ -2470,6 +2495,7 @@ impl ExtensionService {
                         .declaration
                         .surfaces
                         .contains(&RenderSurface::Detail)
+                    || payload_bytes(&source) > renderer.declaration.input_limit_bytes
                 {
                     continue;
                 }
@@ -2581,7 +2607,7 @@ impl ExtensionService {
             .render_detail(
                 &contribution.sha256,
                 &contribution.local_id,
-                representation(input)?,
+                representation(input, contribution.declaration.input_limit_bytes)?,
                 facet.map(|facet| super::ExtensionFacet {
                     id: facet.id,
                     payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
@@ -2644,7 +2670,7 @@ impl ExtensionService {
             .transform(
                 &contribution.sha256,
                 &contribution.local_id,
-                representation(input)?,
+                representation(input, contribution.declaration.input_limit_bytes)?,
                 serde_json::to_string(&parameters)?,
                 broker,
             )
@@ -2718,27 +2744,6 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
-        sqlx::query("DELETE FROM extension_contribution_icons WHERE extension_id=?")
-            .bind(&id)
-            .execute(&mut *transaction)
-            .await?;
-        for contribution in &package.manifest.contributions {
-            let (light, dark) =
-                self.declared_contribution_icons(&package.relative_path, contribution);
-            let Some(light) = light else {
-                continue;
-            };
-            let contribution_id = package.manifest.qualified_contribution_id(&contribution.id);
-            sqlx::query("INSERT INTO extension_contribution_icons(extension_id,contribution_id,light_svg_data_url,dark_svg_data_url,scale_percent,updated_at) VALUES(?,?,?,?,?,?)")
-                .bind(&id)
-                .bind(contribution_id)
-                .bind(light)
-                .bind(dark)
-                .bind((contribution.icon_scale * 100.0).round() as i64)
-                .bind(now)
-                .execute(&mut *transaction)
-                .await?;
-        }
         // A package identity is stable but its bytes are not. Never carry a
         // data-egress approval across an update or developer replacement.
         sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=?")
@@ -3296,7 +3301,10 @@ fn extension_outputs(
     Ok(outputs)
 }
 
-fn representation(value: CapturedRepresentation) -> Result<ExtensionRepresentation> {
+fn representation(
+    value: CapturedRepresentation,
+    input_limit_bytes: usize,
+) -> Result<ExtensionRepresentation> {
     let content = match value.payload {
         CapturedPayload::Text(value) => ExtensionContent::Text(value),
         CapturedPayload::Binary(value) => ExtensionContent::Binary(value),
@@ -3307,8 +3315,8 @@ fn representation(value: CapturedRepresentation) -> Result<ExtensionRepresentati
         ExtensionContent::Binary(value) => value.len(),
         ExtensionContent::Files(value) => value.iter().map(String::len).sum(),
     };
-    if size > 1024 * 1024 {
-        bail!("extension input exceeds 1 MiB");
+    if size > input_limit_bytes {
+        bail!("extension input exceeds its declared limit");
     }
     Ok(ExtensionRepresentation {
         format_key: value.format_key,
@@ -3648,6 +3656,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: json!({}),
+            input_limit_bytes: 1024 * 1024,
             expose_in_menu: true,
         }
     }

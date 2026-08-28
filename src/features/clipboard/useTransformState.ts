@@ -18,7 +18,11 @@ export type Transformer = {
   httpOrigins?: string[]
   providers?: string[]
 }
-export type TransformPreview = { resultId: string; model: RenderModel }
+export type TransformPreview = {
+  resultId: string
+  outputs: Array<{ canonicalMimeType: string | null; byteLength: number }>
+  model: RenderModel
+}
 
 export type TransformControls = {
   items: Transformer[]

@@ -78,7 +78,7 @@
         "enable": false,
         "scope": []
       },
-      "csp": "default-src 'self' http://localhost:5173; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost; media-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost; connect-src 'self' http://localhost:5173 ipc://localhost; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self' http://localhost:5173; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost clipsx-transform: http://clipsx-transform.localhost; media-src 'self' data: blob: clipsx-asset: http://clipsx-asset.localhost; connect-src 'self' http://localhost:5173 ipc://localhost; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     },
     "withGlobalTauri": false
   }

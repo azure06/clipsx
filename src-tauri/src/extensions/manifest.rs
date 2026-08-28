@@ -11,6 +11,7 @@ use super::API_VERSION;
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_SELECTOR_VALUES: usize = 32;
 const MAX_HTTP_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+pub(crate) const MAX_EXTENSION_INPUT_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -197,6 +198,10 @@ pub struct ManifestContribution {
     pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+    /// Maximum representation bytes the host may copy into this contribution.
+    /// Packages that intentionally process larger local assets opt in here.
+    #[serde(default = "default_extension_input_bytes")]
+    pub input_limit_bytes: usize,
     /// Transformer contributions default to appearing in the host's generic
     /// Transform menu. Set to `false` when the transformer exists only to
     /// back one or more `TransformerPreset` actions that already cover its
@@ -269,6 +274,9 @@ fn default_icon_scale() -> f32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_extension_input_bytes() -> usize {
+    1024 * 1024
 }
 fn empty_object() -> Value {
     Value::Object(Default::default())
@@ -534,6 +542,11 @@ impl ExtensionManifest {
         if !contribution.icon_scale.is_finite() || !(0.75..=2.0).contains(&contribution.icon_scale)
         {
             bail!("iconScale must be between 0.75 and 2");
+        }
+        if contribution.input_limit_bytes == 0
+            || contribution.input_limit_bytes > MAX_EXTENSION_INPUT_BYTES
+        {
+            bail!("inputLimitBytes must be between 1 byte and 10 MiB");
         }
         Ok(())
     }
@@ -866,6 +879,7 @@ pub fn valid_host_icon(value: &str) -> Result<()> {
     if !matches!(
         value,
         "braces"
+            | "binary"
             | "code"
             | "database"
             | "file"
@@ -949,6 +963,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: empty_object(),
+            input_limit_bytes: 1024 * 1024,
             expose_in_menu: true,
         }
     }
@@ -1002,6 +1017,16 @@ mod tests {
     fn icon_scale_is_bounded() {
         let mut value = contribution(ContributionKind::Detector);
         value.icon_scale = 2.1;
+        assert!(manifest(value).validate().is_err());
+    }
+
+    #[test]
+    fn contribution_input_limit_is_opt_in_and_bounded() {
+        let mut value = contribution(ContributionKind::Detector);
+        assert_eq!(value.input_limit_bytes, 1024 * 1024);
+        value.input_limit_bytes = MAX_EXTENSION_INPUT_BYTES;
+        assert!(manifest(value.clone()).validate().is_ok());
+        value.input_limit_bytes += 1;
         assert!(manifest(value).validate().is_err());
     }
 

@@ -1,6 +1,6 @@
 //! Contribution host for detectors and renderers.
 use crate::{
-    contracts::{FilePresentation, LeadingVisual, OcrPresentation, RenderModel},
+    contracts::{FilePresentation, ImageSource, LeadingVisual, OcrPresentation, RenderModel},
     extensions::ExtensionService,
     history::{new_id, now_ms, HistoryRepository, RepresentationDetail},
 };
@@ -311,7 +311,9 @@ impl RendererContribution for ImageRenderer {
     }
     fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
         Ok(RenderModel::Image {
-            asset_id: r.binary_file_id.clone().context("image unavailable")?,
+            source: ImageSource::Managed {
+                asset_id: r.binary_file_id.clone().context("image unavailable")?,
+            },
             ocr: OcrPresentation::Pending,
         })
     }

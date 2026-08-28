@@ -912,18 +912,32 @@ async fn list_clips(
     request: ListRequest,
     state: State<'_, AppState>,
 ) -> Result<history::ClipPage, String> {
-    state.history.list(request).await.map_err(|e| e.to_string())
+    let mut page = state
+        .history
+        .list(request)
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .apply_history_extension_icons(&state.history, &mut page.items)
+        .await;
+    Ok(page)
 }
 #[tauri::command]
 async fn get_clip_detail(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<history::ClipDetail, String> {
-    state
+    let mut detail = state
         .history
         .detail(&clip_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .apply_history_extension_icons(&state.history, std::iter::once(&mut detail.clip))
+        .await;
+    Ok(detail)
 }
 #[tauri::command]
 async fn capture_clipboard(
@@ -2246,9 +2260,17 @@ async fn search_clips(
     let settings = search::get_settings(&state.history.pool)
         .await
         .map_err(|e| e.to_string())?;
-    search::search(&state.history, &request, &settings)
+    let mut page = search::search(&state.history, &request, &settings)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .apply_history_extension_icons(
+            &state.history,
+            page.items.iter_mut().map(|result| &mut result.clip),
+        )
+        .await;
+    Ok(page)
 }
 
 #[tauri::command]
@@ -2324,9 +2346,14 @@ async fn get_text_embedding_status(
 async fn list_failed_text_embedding_jobs(
     state: State<'_, AppState>,
 ) -> Result<Vec<embeddings::FailedEmbeddingJob>, String> {
-    embeddings::failed_jobs(&state.history, 5)
+    let mut jobs = embeddings::failed_jobs(&state.history, 5)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .apply_history_extension_icons(&state.history, jobs.iter_mut().map(|job| &mut job.clip))
+        .await;
+    Ok(jobs)
 }
 #[tauri::command]
 async fn configure_text_generation_provider(
@@ -2507,6 +2534,36 @@ pub(crate) fn run() {
                     .status(404)
                     .header("Content-Type", "text/plain")
                     .body(b"artifact not found".to_vec())
+                    .unwrap(),
+            }
+        })
+        .register_uri_scheme_protocol("clipsx-transform", |context, request| {
+            let path = request.uri().path().trim_start_matches('/');
+            let mut parts = path.split('/');
+            let result_id = parts.next().unwrap_or_default();
+            let output_index = parts.next().and_then(|value| value.parse::<usize>().ok());
+            let response = context
+                .app_handle()
+                .try_state::<AppState>()
+                .and_then(|state| {
+                    output_index.and_then(|index| {
+                        state.transforms.image_output(result_id, index).ok()
+                    })
+                });
+            match response {
+                Some((bytes, mime)) => tauri::http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", mime)
+                    .header("Cache-Control", "no-store")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Referrer-Policy", "no-referrer")
+                    .body(bytes)
+                    .unwrap(),
+                None => tauri::http::Response::builder()
+                    .status(404)
+                    .header("Content-Type", "text/plain")
+                    .header("Cache-Control", "no-store")
+                    .body(b"transform image unavailable".to_vec())
                     .unwrap(),
             }
         })

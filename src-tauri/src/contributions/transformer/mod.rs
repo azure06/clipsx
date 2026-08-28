@@ -1,7 +1,7 @@
 //! Transformer contributions. Results are deliberately ephemeral;
 //! M5 can adapt WASM packages to this same pure input/output boundary.
 use crate::{
-    contracts::RenderModel,
+    contracts::{ImageSource, OcrPresentation, RenderModel},
     history::{new_id, sha256, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 use anyhow::{bail, Context, Result};
@@ -355,7 +355,7 @@ impl TransformService {
                     byte_length: payload_bytes(item),
                 })
                 .collect(),
-            model: preview_model(&outputs),
+            model: preview_model(&outputs, &result_id),
         };
         let cached = CachedResult {
             preview: preview.clone(),
@@ -425,7 +425,7 @@ impl TransformService {
                     byte_length: payload_bytes(item),
                 })
                 .collect(),
-            model: preview_model(&outputs),
+            model: preview_model(&outputs, &result_id),
         };
         let cached = CachedResult {
             preview: preview.clone(),
@@ -445,6 +445,22 @@ impl TransformService {
     }
     pub fn transformed(&self, result_id: &str) -> Result<Vec<CapturedRepresentation>> {
         Ok(self.get(result_id)?.outputs)
+    }
+    pub fn image_output(&self, result_id: &str, output_index: usize) -> Result<(Vec<u8>, String)> {
+        let result = self.get(result_id)?;
+        let output = result
+            .outputs
+            .get(output_index)
+            .context("transform output not found")?;
+        let mime = output
+            .canonical_mime_type
+            .as_deref()
+            .filter(|mime| previewable_raster_mime(mime))
+            .context("transform output is not a previewable raster image")?;
+        let CapturedPayload::Binary(bytes) = &output.payload else {
+            bail!("transform output is not binary")
+        };
+        Ok((bytes.clone(), mime.into()))
     }
     pub fn saved_metadata(&self, result_id: &str) -> Result<(TransformPreview, String, String)> {
         let value = self.get(result_id)?;
@@ -548,12 +564,26 @@ fn text_output(mime: &str, text: &str) -> Vec<CapturedRepresentation> {
     }
     output
 }
-fn preview_model(outputs: &[CapturedRepresentation]) -> RenderModel {
+fn preview_model(outputs: &[CapturedRepresentation], result_id: &str) -> RenderModel {
     match outputs.first().map(|item| &item.payload) {
         Some(CapturedPayload::Text(text)) => RenderModel::Code {
             language: outputs[0].canonical_mime_type.clone(),
             text: text.clone(),
         },
+        Some(CapturedPayload::Binary(_))
+            if outputs[0]
+                .canonical_mime_type
+                .as_deref()
+                .is_some_and(previewable_raster_mime) =>
+        {
+            RenderModel::Image {
+                source: ImageSource::TransformResult {
+                    result_id: result_id.into(),
+                    output_index: 0,
+                },
+                ocr: OcrPresentation::Disabled,
+            }
+        }
         Some(CapturedPayload::Binary(bytes)) => RenderModel::Text {
             text: format!(
                 "Binary {} output ({} bytes)",
@@ -568,6 +598,19 @@ fn preview_model(outputs: &[CapturedRepresentation]) -> RenderModel {
             message: "transform produced no output".into(),
         },
     }
+}
+
+fn previewable_raster_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/png"
+            | "image/jpeg"
+            | "image/webp"
+            | "image/gif"
+            | "image/avif"
+            | "image/bmp"
+            | "image/x-icon"
+    )
 }
 fn validate_parameters(id: &str, parameters: &Value) -> Result<()> {
     let object = parameters
@@ -1037,6 +1080,43 @@ mod tests {
         let output = csv_to_markdown("name,note\nAda,one|two").unwrap();
         assert!(
             matches!(&output[0].payload, CapturedPayload::Text(value) if value == "| name | note |\n| --- | --- |\n| Ada | one\\|two |")
+        );
+    }
+
+    #[test]
+    fn raster_transform_results_use_the_expiring_image_source() {
+        let service = TransformService::default();
+        let bytes = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        let preview = service
+            .cache_external(
+                "clip".into(),
+                "extension/decode".into(),
+                "1.0.0".into(),
+                "source".into(),
+                json!({}),
+                vec![CapturedRepresentation {
+                    format_key: "mime:image/png".into(),
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type: None,
+                    platform: "test".into(),
+                    capture_priority: 1,
+                    payload: CapturedPayload::Binary(bytes.clone()),
+                }],
+            )
+            .unwrap();
+        assert!(matches!(
+            &preview.model,
+            RenderModel::Image {
+                source: ImageSource::TransformResult {
+                    result_id,
+                    output_index: 0
+                },
+                ..
+            } if result_id == &preview.result_id
+        ));
+        assert_eq!(
+            service.image_output(&preview.result_id, 0).unwrap(),
+            (bytes, "image/png".into())
         );
     }
 }

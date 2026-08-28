@@ -293,6 +293,7 @@ const TransformAction = ({
 const TransformResultTab = ({
   label,
   presentation,
+  outputs,
   busy,
   error,
   applyResult,
@@ -300,6 +301,7 @@ const TransformResultTab = ({
 }: {
   label: string
   presentation: ClipPresentation | null
+  outputs: Array<{ canonicalMimeType: string | null; byteLength: number }>
   busy: boolean
   error: string | null
   applyResult: (action: 'copy' | 'save') => Promise<void>
@@ -312,6 +314,14 @@ const TransformResultTab = ({
         <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-gray-500">
           {label}
         </span>
+        {outputs.map((output, index) => (
+          <span
+            className="hidden shrink-0 rounded-md border border-violet-200/70 bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] text-violet-700 sm:inline dark:border-violet-400/20 dark:bg-violet-400/10 dark:text-violet-200"
+            key={`${output.canonicalMimeType}:${index}`}
+          >
+            {output.canonicalMimeType ?? 'binary'} · {formatBytes(output.byteLength)}
+          </span>
+        ))}
         {presentation && (
           <div className="flex items-center gap-0.5">
             <TransformAction label="Copy" onClick={() => void applyResult('copy')}>
@@ -788,6 +798,7 @@ export const V2ViewPanel = ({
           <TransformResultTab
             label={transformState.activeTransformer?.label ?? 'Transform'}
             presentation={transformPresentation}
+            outputs={transformState.preview?.outputs ?? []}
             busy={!!transformState.busy}
             error={transformState.error}
             applyResult={transformState.applyResult}

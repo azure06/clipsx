@@ -64,6 +64,12 @@ Matchers establish applicability. The `action-state` guest export returns
 grant, input support, and session) can only downgrade that state and are checked
 again immediately before execution.
 
+Every contribution defaults to a 1 MiB representation-transfer ceiling.
+`inputLimitBytes` may opt one contribution into a larger local transfer, up to
+the host maximum of 10 MiB; the host enforces it before copying bytes into
+WASM. Larger limits do not raise transform output, memory, fuel, or timeout
+budgets. Prefer the smallest limit that covers the contribution's task.
+
 Contextual actions match the complete clip rather than only the currently
 visible renderer. The host prefers the active view's representation when it
 matches; otherwise it binds the action to the highest-priority ready
@@ -113,7 +119,10 @@ Only an action output with the `preview` disposition opens a temporary result
 tab. Copy, paste, save, navigation, notification, and dialog effects keep the
 currently selected clip view active; failures are reported without creating an
 empty result tab. Renderer detail views and declared dialogs are likewise never
-listed as transforms.
+listed as transforms. UTF-8 results use native text/code models; supported
+raster results use a host-owned no-store URL into the expiring transform cache.
+This is generic output presentation and does not transfer parsing or detection
+ownership from the package to core.
 
 ## Custom UI and broker
 
