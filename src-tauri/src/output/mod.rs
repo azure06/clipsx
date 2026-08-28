@@ -179,14 +179,14 @@ mod tests {
             .clone();
         let transforms = TransformService::default();
         let transformed = transforms
-            .preview(
-                &history,
-                &clip_id,
-                "builtin.transform.url.encode",
-                &source_id,
+            .cache_external(
+                clip_id.clone(),
+                "firstparty.test/transform".into(),
+                "1.0.0".into(),
+                source_id,
                 json!({}),
+                vec![plain_text_representation("transformed".into())],
             )
-            .await
             .unwrap();
         let sources = [
             ClipboardOutputSource::Original {
