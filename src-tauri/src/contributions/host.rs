@@ -233,6 +233,7 @@ struct FilesRenderer;
 struct DocumentRenderer;
 struct JsonRenderer;
 struct TableRenderer;
+struct CodeRenderer;
 struct KeyValueRenderer;
 struct UrlRenderer;
 struct DateRenderer;
@@ -365,7 +366,13 @@ impl RendererContribution for JsonRenderer {
     fn descriptor(&self) -> RendererDescriptor {
         renderer_descriptor("builtin.json", "JSON", 90, false)
     }
-    fn render(&self, _: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
+    fn render(&self, r: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        if r.canonical_mime_type.as_deref() == Some("application/json") {
+            return Ok(typed_text_render_model(
+                r.canonical_mime_type.as_deref(),
+                r.text_value.as_deref().context("JSON unavailable")?,
+            ));
+        }
         Ok(RenderModel::Tree {
             value: f.context("JSON facet unavailable")?.payload["value"].clone(),
         })
@@ -375,12 +382,32 @@ impl RendererContribution for TableRenderer {
     fn descriptor(&self) -> RendererDescriptor {
         renderer_descriptor("builtin.table", "Table", 80, false)
     }
-    fn render(&self, _: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
+    fn render(&self, r: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        if matches!(
+            r.canonical_mime_type.as_deref(),
+            Some("text/csv" | "text/tab-separated-values")
+        ) {
+            return Ok(typed_text_render_model(
+                r.canonical_mime_type.as_deref(),
+                r.text_value.as_deref().context("table unavailable")?,
+            ));
+        }
         let payload = &f.context("table facet unavailable")?.payload;
         Ok(RenderModel::Table {
             columns: serde_json::from_value(payload["columns"].clone())?,
             rows: serde_json::from_value(payload["rows"].clone())?,
         })
+    }
+}
+impl RendererContribution for CodeRenderer {
+    fn descriptor(&self) -> RendererDescriptor {
+        renderer_descriptor("builtin.code", "Code", 70, false)
+    }
+    fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
+        Ok(typed_text_render_model(
+            r.canonical_mime_type.as_deref(),
+            r.text_value.as_deref().context("code unavailable")?,
+        ))
     }
 }
 impl RendererContribution for KeyValueRenderer {
@@ -429,6 +456,7 @@ static FILES_RENDERER: FilesRenderer = FilesRenderer;
 static DOCUMENT_RENDERER: DocumentRenderer = DocumentRenderer;
 static JSON_RENDERER: JsonRenderer = JsonRenderer;
 static TABLE_RENDERER: TableRenderer = TableRenderer;
+static CODE_RENDERER: CodeRenderer = CodeRenderer;
 static KEY_VALUE_RENDERER: KeyValueRenderer = KeyValueRenderer;
 static URL_RENDERER: UrlRenderer = UrlRenderer;
 static DATE_RENDERER: DateRenderer = DateRenderer;
@@ -444,6 +472,7 @@ fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
         &DOCUMENT_RENDERER,
         &JSON_RENDERER,
         &TABLE_RENDERER,
+        &CODE_RENDERER,
         &KEY_VALUE_RENDERER,
         &URL_RENDERER,
         &DATE_RENDERER,
@@ -1117,6 +1146,73 @@ pub(crate) fn image_view_label(mime: &str) -> &'static str {
     }
 }
 
+/// Produces the native host preview for text whose declared MIME type has a
+/// known structured or code-oriented presentation. Both saved clips and
+/// expiring transform previews use this policy so their rendering cannot drift.
+pub(crate) fn typed_text_render_model(mime: Option<&str>, text: &str) -> RenderModel {
+    match mime {
+        Some("application/json") => serde_json::from_str(text)
+            .map(|value| RenderModel::Tree { value })
+            .unwrap_or_else(|_| RenderModel::Code {
+                language: Some("json".into()),
+                text: text.into(),
+            }),
+        Some("text/markdown") => RenderModel::Markdown {
+            markdown: text.into(),
+        },
+        Some("text/csv") => typed_table_render_model(text, b','),
+        Some("text/tab-separated-values") => typed_table_render_model(text, b'\t'),
+        Some("text/typescript") => RenderModel::Code {
+            language: Some("typescript".into()),
+            text: text.into(),
+        },
+        Some("application/yaml" | "application/x-yaml") => RenderModel::Code {
+            language: Some("yaml".into()),
+            text: text.into(),
+        },
+        Some("application/toml") => RenderModel::Code {
+            language: Some("toml".into()),
+            text: text.into(),
+        },
+        _ => RenderModel::Text { text: text.into() },
+    }
+}
+
+fn typed_table_render_model(text: &str, delimiter: u8) -> RenderModel {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .delimiter(delimiter)
+        .flexible(false)
+        .from_reader(text.as_bytes());
+    let rows = reader.records().collect::<std::result::Result<Vec<_>, _>>();
+    match rows {
+        Ok(rows) if !rows.is_empty() => RenderModel::Table {
+            columns: rows[0].iter().map(str::to_owned).collect(),
+            rows: rows[1..]
+                .iter()
+                .map(|row| row.iter().map(str::to_owned).collect())
+                .collect(),
+        },
+        _ => RenderModel::Code {
+            language: Some(if delimiter == b'\t' { "tsv" } else { "csv" }.into()),
+            text: text.into(),
+        },
+    }
+}
+
+fn typed_text_view(mime: &str) -> Option<(&'static str, &'static str, &'static str, i32)> {
+    match mime {
+        "application/json" => Some(("builtin.json", "JSON", "json", 90)),
+        "text/markdown" => Some(("builtin.markdown", "Markdown", "markdown", 75)),
+        "text/csv" => Some(("builtin.table", "CSV", "table", 80)),
+        "text/tab-separated-values" => Some(("builtin.table", "TSV", "table", 80)),
+        "text/typescript" => Some(("builtin.code", "TypeScript", "code", 70)),
+        "application/yaml" | "application/x-yaml" => Some(("builtin.code", "YAML", "code", 70)),
+        "application/toml" => Some(("builtin.code", "TOML", "code", 70)),
+        _ => None,
+    }
+}
+
 pub async fn views(
     repo: &HistoryRepository,
     extensions: &ExtensionService,
@@ -1228,6 +1324,9 @@ pub async fn views(
                 100,
                 false,
             );
+        } else if let Some((renderer, label, kind, priority)) = typed_text_view(mime) {
+            add_view(rep, renderer, label, kind, None, priority, false);
+            add_view(rep, "builtin.original", "Source", "source", None, 20, true);
         } else if mime == "text/plain" {
             add_view(rep, "builtin.text", "Text", "text", None, 50, false);
         } else {
@@ -1294,6 +1393,11 @@ pub async fn views(
             }
             _ => ("builtin.key_value", "details"),
         };
+        if typed_text_view(rep.canonical_mime_type.as_deref().unwrap_or_default())
+            .is_some_and(|(typed_renderer, _, _, _)| typed_renderer == renderer)
+        {
+            continue;
+        }
         add_view(
             rep,
             renderer,
@@ -1615,6 +1719,44 @@ mod tests {
     }
 
     #[test]
+    fn typed_text_models_cover_the_supported_extension_outputs() {
+        assert!(matches!(
+            typed_text_render_model(Some("text/markdown"), "| name |\n| --- |\n| Ada |"),
+            RenderModel::Markdown { .. }
+        ));
+        assert!(matches!(
+            typed_text_render_model(Some("text/csv"), "name,value\nAda,1"),
+            RenderModel::Table { .. }
+        ));
+        assert!(matches!(
+            typed_text_render_model(Some("text/tab-separated-values"), "name\tvalue\nAda\t1"),
+            RenderModel::Table { .. }
+        ));
+        assert!(matches!(
+            typed_text_render_model(Some("application/json"), "{\"ok\":true}"),
+            RenderModel::Tree { .. }
+        ));
+        assert!(matches!(
+            typed_text_render_model(Some("application/json"), "{not valid JSON"),
+            RenderModel::Code { language: Some(language), .. } if language == "json"
+        ));
+        for (mime, text, language) in [
+            ("application/yaml", "ok: true", "yaml"),
+            ("application/toml", "ok = true", "toml"),
+            ("text/typescript", "export type Root = string", "typescript"),
+        ] {
+            assert!(matches!(
+                typed_text_render_model(Some(mime), text),
+                RenderModel::Code { language: Some(actual), .. } if actual == language
+            ));
+        }
+        assert!(matches!(
+            typed_text_render_model(Some("text/csv"), "name,value\nAda"),
+            RenderModel::Code { language: Some(language), .. } if language == "csv"
+        ));
+    }
+
+    #[test]
     fn color_history_visual_uses_the_detected_value() {
         let view = ClipViewDescriptor {
             id: "builtin.key_value:rep-1:core.value.color".into(),
@@ -1844,6 +1986,80 @@ mod tests {
             .unwrap();
         detect_clip(&repo, &clip_id).await.unwrap();
         (temp, repo, extensions, clip_id)
+    }
+
+    #[tokio::test]
+    async fn declared_typed_text_mimes_use_native_views_and_keep_source() {
+        let cases = [
+            (
+                "text/markdown",
+                "| name |\n| --- |\n| Ada |",
+                "builtin.markdown",
+            ),
+            ("text/csv", "name,value\nAda,1", "builtin.table"),
+            (
+                "text/tab-separated-values",
+                "name\tvalue\nAda\t1",
+                "builtin.table",
+            ),
+            ("application/json", "{\"ok\":true}", "builtin.json"),
+            ("application/yaml", "ok: true", "builtin.code"),
+            ("application/toml", "ok = true", "builtin.code"),
+            (
+                "text/typescript",
+                "export type Root = string",
+                "builtin.code",
+            ),
+        ];
+
+        for (mime, text, renderer_id) in cases {
+            let (_temp, repo, extensions, clip_id) =
+                resolver_fixture(vec![CapturedRepresentation {
+                    format_key: format!("mime:{mime}"),
+                    canonical_mime_type: Some(mime.into()),
+                    native_type: None,
+                    platform: "windows".into(),
+                    capture_priority: 10,
+                    payload: CapturedPayload::Text(text.into()),
+                }])
+                .await;
+
+            let view_set = views(&repo, &extensions, &clip_id).await.unwrap();
+            let typed_views: Vec<_> = view_set
+                .views
+                .iter()
+                .filter(|view| view.renderer_id == renderer_id)
+                .collect();
+            assert_eq!(
+                typed_views.len(),
+                1,
+                "{mime} must not create duplicate typed views"
+            );
+            let typed_view = typed_views[0];
+            assert!(typed_view.facet_id.is_none());
+            assert!(view_set.views.iter().any(|view| {
+                view.renderer_id == "builtin.original"
+                    && view.source_id == typed_view.source_id
+                    && view.label == "Source"
+            }));
+
+            let saved_model = render(
+                &repo,
+                &extensions,
+                &clip_id,
+                &typed_view.renderer_id,
+                &typed_view.source_id,
+                None,
+            )
+            .await
+            .unwrap();
+            let preview_model = typed_text_render_model(Some(mime), text);
+            assert_eq!(
+                std::mem::discriminant(&saved_model),
+                std::mem::discriminant(&preview_model),
+                "saved {mime} must use the same model as its transform preview"
+            );
+        }
     }
 
     #[tokio::test]

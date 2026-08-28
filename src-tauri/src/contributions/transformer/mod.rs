@@ -2,6 +2,7 @@
 //! supplied by optional extension packages.
 use crate::{
     contracts::{ImageSource, OcrPresentation, RenderModel},
+    contributions::host::typed_text_render_model,
     history::{new_id, sha256, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 use anyhow::{bail, Context, Result};
@@ -253,7 +254,7 @@ fn payload_bytes(value: &CapturedRepresentation) -> usize {
 fn preview_model(outputs: &[CapturedRepresentation], result_id: &str) -> RenderModel {
     match outputs.first().map(|item| &item.payload) {
         Some(CapturedPayload::Text(text)) => {
-            text_preview_model(outputs[0].canonical_mime_type.as_deref(), text)
+            typed_text_render_model(outputs[0].canonical_mime_type.as_deref(), text)
         }
         Some(CapturedPayload::Binary(_))
             if outputs[0]
@@ -285,57 +286,6 @@ fn preview_model(outputs: &[CapturedRepresentation], result_id: &str) -> RenderM
     }
 }
 
-fn text_preview_model(mime: Option<&str>, text: &str) -> RenderModel {
-    match mime {
-        Some("application/json") => serde_json::from_str(text)
-            .map(|value| RenderModel::Tree { value })
-            .unwrap_or_else(|_| RenderModel::Code {
-                language: Some("json".into()),
-                text: text.into(),
-            }),
-        Some("text/markdown") => RenderModel::Markdown {
-            markdown: text.into(),
-        },
-        Some("text/csv") => table_preview_model(text, b','),
-        Some("text/tab-separated-values") => table_preview_model(text, b'\t'),
-        Some("text/typescript") => RenderModel::Code {
-            language: Some("typescript".into()),
-            text: text.into(),
-        },
-        Some("application/yaml" | "application/x-yaml") => RenderModel::Code {
-            language: Some("yaml".into()),
-            text: text.into(),
-        },
-        Some("application/toml") => RenderModel::Code {
-            language: Some("toml".into()),
-            text: text.into(),
-        },
-        _ => RenderModel::Text { text: text.into() },
-    }
-}
-
-fn table_preview_model(text: &str, delimiter: u8) -> RenderModel {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .delimiter(delimiter)
-        .flexible(false)
-        .from_reader(text.as_bytes());
-    let rows = reader.records().collect::<std::result::Result<Vec<_>, _>>();
-    match rows {
-        Ok(rows) if !rows.is_empty() => RenderModel::Table {
-            columns: rows[0].iter().map(str::to_owned).collect(),
-            rows: rows[1..]
-                .iter()
-                .map(|row| row.iter().map(str::to_owned).collect())
-                .collect(),
-        },
-        _ => RenderModel::Code {
-            language: Some(if delimiter == b'\t' { "tsv" } else { "csv" }.into()),
-            text: text.into(),
-        },
-    }
-}
-
 fn previewable_raster_mime(mime: &str) -> bool {
     matches!(
         mime,
@@ -360,20 +310,20 @@ mod tests {
     #[test]
     fn extension_text_results_use_native_host_preview_models() {
         assert!(matches!(
-            text_preview_model(Some("application/json"), "{\"ok\":true}"),
+            typed_text_render_model(Some("application/json"), "{\"ok\":true}"),
             RenderModel::Tree { .. }
         ));
         assert!(matches!(
-            text_preview_model(Some("text/csv"), "name,value\r\nAda,1"),
+            typed_text_render_model(Some("text/csv"), "name,value\r\nAda,1"),
             RenderModel::Table { columns, rows }
                 if columns == ["name", "value"] && rows == [vec!["Ada", "1"]]
         ));
         assert!(matches!(
-            text_preview_model(Some("text/markdown"), "| a |\n| --- |"),
+            typed_text_render_model(Some("text/markdown"), "| a |\n| --- |"),
             RenderModel::Markdown { .. }
         ));
         assert!(matches!(
-            text_preview_model(Some("text/typescript"), "export type Root = string;"),
+            typed_text_render_model(Some("text/typescript"), "export type Root = string;"),
             RenderModel::Code { language: Some(language), .. } if language == "typescript"
         ));
     }
