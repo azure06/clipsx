@@ -487,6 +487,18 @@ const semanticScalar = (payload: Record<string, unknown>, key: string): string |
     : null
 }
 
+const parseSemanticDate = (raw: string, interpretation: string | null): Date | null => {
+  const numeric = Number(raw)
+  const value =
+    interpretation === 'unix_seconds' && Number.isFinite(numeric)
+      ? numeric * 1000
+      : interpretation === 'unix_milliseconds' && Number.isFinite(numeric)
+        ? numeric
+        : raw
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 const CopyButton = ({
   text,
   clipId,
@@ -561,7 +573,7 @@ const SemanticView = ({
   clipId: string
 }) => {
   const [revealedSecretId, setRevealedSecretId] = useState<string | null>(null)
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const secretId = `${clipId}:${model.facetId}:${model.text}`
   const revealed = revealedSecretId === secretId
 
@@ -851,53 +863,68 @@ const SemanticView = ({
   }
 
   if (kind === 'date' || kind === 'timestamp') {
-    const raw = model.text
-    const parsed = new Date(raw)
-    const valid = !isNaN(parsed.getTime())
+    const raw = semanticScalar(model.payload, 'value') ?? model.text
+    const interpretation = semanticScalar(model.payload, 'interpretation')
+    const parsed = parseSemanticDate(raw, interpretation)
     const DateIcon = kind === 'date' ? CalendarDays : Clock
-    const relativeTime = valid
-      ? (() => {
-          const diffMs = Date.now() - parsed.getTime()
-          const diffSec = Math.round(diffMs / 1000)
-          const diffMin = Math.round(diffSec / 60)
-          const diffHour = Math.round(diffMin / 60)
-          const diffDay = Math.round(diffHour / 24)
-          if (Math.abs(diffSec) < 60) return 'just now'
-          if (Math.abs(diffMin) < 60) return diffMin > 0 ? `${diffMin}m ago` : `in ${-diffMin}m`
-          if (Math.abs(diffHour) < 24) return diffHour > 0 ? `${diffHour}h ago` : `in ${-diffHour}h`
-          if (Math.abs(diffDay) < 30) return diffDay > 0 ? `${diffDay}d ago` : `in ${-diffDay}d`
-          return null
-        })()
-      : null
+    const locale = i18n.resolvedLanguage
+    const month = parsed?.toLocaleDateString(locale, { month: 'short' }).toUpperCase()
+    const day = parsed?.toLocaleDateString(locale, { day: '2-digit' })
+    const year = parsed?.toLocaleDateString(locale, { year: 'numeric' })
     return (
-      <div className={`${SCROLL_AREA} flex flex-col`}>
-        <div className="flex items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-white/5">
-          <div className="rounded-lg bg-yellow-500/20 p-2 text-yellow-500 ring-1 ring-yellow-500/30 shrink-0">
-            <DateIcon className="h-4 w-4" />
+      <div className={`${SCROLL_AREA} p-3`}>
+        <div className="overflow-hidden rounded-2xl border border-sky-500/20 bg-linear-to-br from-sky-500/[0.09] via-white/70 to-indigo-500/[0.08] shadow-[0_16px_40px_-28px_rgba(14,165,233,0.8)] dark:via-white/[0.035]">
+          <div className="flex items-center gap-2 border-b border-sky-500/15 px-3 py-2">
+            <div className="shrink-0 rounded-lg bg-sky-500/15 p-1.5 text-sky-600 ring-1 ring-sky-500/25 dark:text-sky-300">
+              <DateIcon className="h-3.5 w-3.5" />
+            </div>
+            <code className="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300">
+              {raw}
+            </code>
+            <CopyButton text={raw} clipId={clipId} />
           </div>
-          <code className="min-w-0 break-all text-sm flex-1">{raw}</code>
-          {relativeTime && (
-            <span className="shrink-0 rounded-full border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-[10px] font-medium text-yellow-600 dark:text-yellow-400">
-              {relativeTime}
-            </span>
+          {parsed ? (
+            <>
+              <div className="grid grid-cols-[5.5rem_1fr] items-stretch">
+                <div className="flex flex-col items-center justify-center border-r border-sky-500/15 bg-sky-500/[0.07] px-3 py-4 tabular-nums">
+                  <span className="text-[10px] font-bold tracking-[0.2em] text-sky-600 dark:text-sky-300">
+                    {month}
+                  </span>
+                  <span className="text-3xl font-semibold leading-none tracking-tight text-slate-800 dark:text-white">
+                    {day}
+                  </span>
+                  <span className="mt-1 text-[10px] text-slate-500">{year}</span>
+                </div>
+                <div className="flex min-w-0 flex-col justify-center px-4 py-3">
+                  <span className="text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">
+                    {parsed.toLocaleTimeString(locale, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                  <span className="mt-0.5 text-xs text-slate-500">
+                    {parsed.toLocaleDateString(locale, { weekday: 'long' })}
+                  </span>
+                </div>
+              </div>
+              <div className="border-t border-sky-500/15 p-2">
+                <CopyableRow label="Local" value={parsed.toLocaleString(locale)} clipId={clipId} />
+                <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
+                <CopyableRow
+                  label="Unix seconds"
+                  value={String(Math.floor(parsed.getTime() / 1000))}
+                  clipId={clipId}
+                />
+                <CopyableRow label="UTC" value={parsed.toUTCString()} clipId={clipId} />
+              </div>
+            </>
+          ) : (
+            <div className="px-4 py-5 text-center text-sm text-slate-500">
+              This date could not be interpreted.
+            </div>
           )}
         </div>
-        {valid && (
-          <div className="p-2">
-            <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-              Formats
-            </div>
-            <CopyableRow label="Local" value={parsed.toLocaleString()} clipId={clipId} />
-            <CopyableRow label="Date" value={parsed.toLocaleDateString()} clipId={clipId} />
-            <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
-            <CopyableRow
-              label="Unix epoch"
-              value={String(Math.floor(parsed.getTime() / 1000))}
-              clipId={clipId}
-            />
-            <CopyableRow label="UTC" value={parsed.toUTCString()} clipId={clipId} />
-          </div>
-        )}
       </div>
     )
   }
@@ -1211,20 +1238,6 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
         >
           <p className="p-4 text-sm">Document preview unavailable.</p>
         </object>
-      )
-    case 'office':
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-          <FileText className="h-10 w-10 text-blue-400" />
-          <strong>Office/native representation</strong>
-          <span className="text-xs text-gray-500">
-            {model.nativeType ?? model.formatKey} · {model.byteLength.toLocaleString()} bytes
-          </span>
-          <span className="text-xs text-gray-400">
-            Choose a formatted alternate above when available. Original copy preserves this
-            representation.
-          </span>
-        </div>
       )
     case 'semantic':
       return (

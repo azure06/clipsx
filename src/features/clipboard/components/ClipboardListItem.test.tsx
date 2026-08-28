@@ -18,6 +18,7 @@ vi.mock('lucide-react', () => ({
   Command: () => <div data-testid="command-icon" />,
   CornerDownLeft: () => <div data-testid="corner-icon" />,
   ScanText: () => <div data-testid="scan-icon" />,
+  Binary: () => <div data-testid="binary-icon" />,
   Braces: () => <div data-testid="braces-icon" />,
   Briefcase: () => <div data-testid="briefcase-icon" />,
   CalendarDays: () => <div data-testid="calendar-icon" />,

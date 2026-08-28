@@ -45,7 +45,6 @@ pub(crate) fn facet_presentation_priority(facet_id: &str) -> i32 {
         "core.math.expression" => 90,
         "core.text.markdown" => 80,
         "core.text.code" => 70,
-        "core.value.number" => 60,
         _ => 40,
     }
 }
@@ -81,7 +80,6 @@ pub(crate) fn history_leading_for_view(
             "core.math.expression" => "sigma",
             "core.text.markdown" => "file_text",
             "core.text.code" => "code",
-            "core.value.number" => "hash",
             _ => "text",
         };
         return LeadingVisual::HostIcon { name: name.into() };
@@ -233,12 +231,10 @@ struct ImageRenderer;
 struct RichTextRenderer;
 struct FilesRenderer;
 struct DocumentRenderer;
-struct OfficeRenderer;
 struct JsonRenderer;
 struct TableRenderer;
 struct KeyValueRenderer;
 struct UrlRenderer;
-struct NumberRenderer;
 struct DateRenderer;
 fn renderer_descriptor(
     id: &str,
@@ -248,10 +244,8 @@ fn renderer_descriptor(
 ) -> RendererDescriptor {
     let purpose = match id {
         "builtin.original" => "source",
-        "builtin.office" => "diagnostic",
         "builtin.json" | "builtin.table" => "structured",
-        "builtin.key_value" | "builtin.url" | "builtin.number" | "builtin.date"
-        | "builtin.markdown" => "semantic",
+        "builtin.key_value" | "builtin.url" | "builtin.date" | "builtin.markdown" => "semantic",
         _ => "faithful",
     };
     RendererDescriptor {
@@ -367,18 +361,6 @@ impl RendererContribution for DocumentRenderer {
         })
     }
 }
-impl RendererContribution for OfficeRenderer {
-    fn descriptor(&self) -> RendererDescriptor {
-        renderer_descriptor("builtin.office", "Office/native", 95, false)
-    }
-    fn render(&self, r: &RepresentationDetail, _: Option<&FacetDescriptor>) -> Result<RenderModel> {
-        Ok(RenderModel::Office {
-            format_key: r.format_key.clone(),
-            native_type: r.native_type.clone(),
-            byte_length: r.byte_length,
-        })
-    }
-}
 impl RendererContribution for JsonRenderer {
     fn descriptor(&self) -> RendererDescriptor {
         renderer_descriptor("builtin.json", "JSON", 90, false)
@@ -436,7 +418,6 @@ macro_rules! key_value_renderer {
     };
 }
 key_value_renderer!(UrlRenderer, "builtin.url", "URL", 85);
-key_value_renderer!(NumberRenderer, "builtin.number", "Number", 75);
 key_value_renderer!(DateRenderer, "builtin.date", "Date", 75);
 static ORIGINAL_RENDERER: OriginalRenderer = OriginalRenderer;
 static TEXT_RENDERER: TextRenderer = TextRenderer;
@@ -446,12 +427,10 @@ static IMAGE_RENDERER: ImageRenderer = ImageRenderer;
 static RICH_TEXT_RENDERER: RichTextRenderer = RichTextRenderer;
 static FILES_RENDERER: FilesRenderer = FilesRenderer;
 static DOCUMENT_RENDERER: DocumentRenderer = DocumentRenderer;
-static OFFICE_RENDERER: OfficeRenderer = OfficeRenderer;
 static JSON_RENDERER: JsonRenderer = JsonRenderer;
 static TABLE_RENDERER: TableRenderer = TableRenderer;
 static KEY_VALUE_RENDERER: KeyValueRenderer = KeyValueRenderer;
 static URL_RENDERER: UrlRenderer = UrlRenderer;
-static NUMBER_RENDERER: NumberRenderer = NumberRenderer;
 static DATE_RENDERER: DateRenderer = DateRenderer;
 fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
     vec![
@@ -463,12 +442,10 @@ fn renderer_registry() -> Vec<&'static dyn RendererContribution> {
         &RICH_TEXT_RENDERER,
         &FILES_RENDERER,
         &DOCUMENT_RENDERER,
-        &OFFICE_RENDERER,
         &JSON_RENDERER,
         &TABLE_RENDERER,
         &KEY_VALUE_RENDERER,
         &URL_RENDERER,
-        &NUMBER_RENDERER,
         &DATE_RENDERER,
     ]
 }
@@ -511,33 +488,6 @@ impl DetectorContribution for UrlDetector {
     }
     fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
         url::Url::parse(s.text.trim()).ok().filter(|u|matches!(u.scheme(),"http"|"https")).map(|u|vec![DetectedFacet{id:self.id(),name:self.name(),payload:json!({"schemaVersion":1,"href":u.as_str(),"host":u.host_str(),"path":u.path()})}]).unwrap_or_default()
-    }
-}
-struct NumberDetector;
-impl DetectorContribution for NumberDetector {
-    fn id(&self) -> &'static str {
-        "core.value.number"
-    }
-    fn name(&self) -> &'static str {
-        "Number"
-    }
-    fn candidate(&self, s: &TextSource) -> bool {
-        s.text.trim().len() <= 64
-    }
-    fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
-        s.text
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|n| n.is_finite())
-            .map(|n| {
-                vec![DetectedFacet {
-                    id: self.id(),
-                    name: self.name(),
-                    payload: json!({"schemaVersion":1,"value":n}),
-                }]
-            })
-            .unwrap_or_default()
     }
 }
 struct DateDetector;
@@ -923,7 +873,6 @@ fn classify_secret(value: &str) -> Option<(&'static str, &'static str)> {
 
 static JSON: JsonDetector = JsonDetector;
 static URL: UrlDetector = UrlDetector;
-static NUMBER: NumberDetector = NumberDetector;
 static DATE: DateDetector = DateDetector;
 static MARKDOWN: MarkdownDetector = MarkdownDetector;
 static TABLE: TableDetector = TableDetector;
@@ -936,8 +885,7 @@ static PATH: PathDetector = PathDetector;
 static SECRET: SecretDetector = SecretDetector;
 fn detectors() -> Vec<&'static dyn DetectorContribution> {
     vec![
-        &JSON, &URL, &NUMBER, &DATE, &MARKDOWN, &TABLE, &EMAIL, &COLOR, &CODE, &MATH, &PHONE,
-        &PATH, &SECRET,
+        &JSON, &URL, &DATE, &MARKDOWN, &TABLE, &EMAIL, &COLOR, &CODE, &MATH, &PHONE, &PATH, &SECRET,
     ]
 }
 
@@ -956,6 +904,39 @@ pub async fn initialize(repo: &HistoryRepository) -> Result<()> {
     for detector in detectors() {
         let now = now_ms();
         sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(owner_id,id) DO UPDATE SET version=excluded.version,display_name=excluded.display_name,updated_at=excluded.updated_at").bind(detector.id()).bind("builtin").bind(detector.version()).bind(detector.name()).bind(now).bind(now).execute(&repo.pool).await?;
+    }
+    let active_ids = detectors()
+        .into_iter()
+        .map(DetectorContribution::id)
+        .collect::<HashSet<_>>();
+    let retired_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM content_facet_definitions WHERE owner_id='builtin'",
+    )
+    .fetch_all(&repo.pool)
+    .await?;
+    for retired_id in retired_ids
+        .into_iter()
+        .filter(|id| !active_ids.contains(id.as_str()))
+    {
+        let mut tx = repo.pool.begin().await?;
+        sqlx::query("DELETE FROM content_compact_presentations WHERE facet_id=?")
+            .bind(&retired_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM content_clip_facets WHERE detector_id=? OR facet_id=?")
+            .bind(&retired_id)
+            .bind(&retired_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM content_detection_jobs WHERE detector_id=?")
+            .bind(&retired_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM content_facet_definitions WHERE owner_id='builtin' AND id=?")
+            .bind(&retired_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
     }
     Ok(())
 }
@@ -1157,9 +1138,7 @@ pub async fn views(
                         facet_id: Option<String>,
                         renderer_priority: i32,
                         is_original: bool| {
-        let purpose = if renderer_id == "builtin.office" {
-            "diagnostic"
-        } else if renderer_id == "builtin.original" {
+        let purpose = if renderer_id == "builtin.original" {
             if kind == "unsupported" {
                 "diagnostic"
             } else {
@@ -1204,7 +1183,15 @@ pub async fn views(
         let mime = rep.canonical_mime_type.as_deref().unwrap_or_default();
         let office = rep.format_family == "office";
         if office {
-            add_view(rep, "builtin.office", "Office", "office", None, 95, false);
+            add_view(
+                rep,
+                "builtin.original",
+                "Office data",
+                "unsupported",
+                None,
+                0,
+                true,
+            );
         } else if rep.storage_kind == "file_list" {
             add_view(rep, "builtin.files", "Files", "files", None, 110, false);
         } else if mime == "text/html" {
@@ -1297,7 +1284,6 @@ pub async fn views(
             "core.math.expression" => ("builtin.key_value", "math"),
             "core.text.markdown" => ("builtin.markdown", "markdown"),
             "core.text.code" => ("builtin.key_value", "code"),
-            "core.value.number" => ("builtin.number", "number"),
             _ if extension_claims_facet(
                 &claimed_extension_facets,
                 &facet.source_representation_id,
@@ -1449,9 +1435,6 @@ pub async fn render(
         "builtin.url" => available_facets
             .iter()
             .find(|f| f.id == "core.link.url" && f.source_representation_id == source_id),
-        "builtin.number" => available_facets
-            .iter()
-            .find(|f| f.id == "core.value.number" && f.source_representation_id == source_id),
         "builtin.date" => available_facets
             .iter()
             .find(|f| f.id == "core.time.date" && f.source_representation_id == source_id),
@@ -1797,21 +1780,18 @@ mod tests {
             format: "text/plain".into(),
             text: "42".into(),
         };
-        assert_eq!(NUMBER.detect(&source).len(), 1);
         assert!(!JSON.candidate(&source));
     }
     #[test]
-    fn unix_timestamp_is_both_number_and_date() {
+    fn unix_timestamp_is_a_date() {
         let source = source("1700000000");
-        assert_eq!(NUMBER.detect(&source).len(), 1);
         assert_eq!(DATE.detect(&source).len(), 1);
     }
     #[test]
-    fn core_seven_detectors_emit_versioned_payloads() {
-        let cases: [(&dyn DetectorContribution, &str); 6] = [
+    fn core_structure_detectors_emit_versioned_payloads() {
+        let cases: [(&dyn DetectorContribution, &str); 5] = [
             (&JSON, r#"{"ok":true}"#),
             (&URL, "https://example.com/path"),
-            (&NUMBER, "12.5"),
             (&DATE, "2026-08-09T10:00:00Z"),
             (&MARKDOWN, "# Heading"),
             (&TABLE, "name,value\na,1"),
@@ -1826,7 +1806,6 @@ mod tests {
     fn malformed_candidates_do_not_emit_facets() {
         assert!(JSON.detect(&source("{broken")).is_empty());
         assert!(URL.detect(&source("https://")).is_empty());
-        assert!(NUMBER.detect(&source("NaN")).is_empty());
         assert!(DATE.detect(&source("2026-99-99")).is_empty());
         assert!(TABLE.detect(&source("a,b\nonly-one")).is_empty());
     }
@@ -1989,23 +1968,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolver_prefers_formatted_alternate_over_opaque_office_native() {
+    async fn resolver_prefers_powerpoint_image_over_opaque_office_native() {
         let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
             CapturedRepresentation {
-                format_key: "windows:Biff12".into(),
+                format_key: "windows:PowerPoint 14.0 Slides Package".into(),
                 canonical_mime_type: None,
-                native_type: Some("Biff12".into()),
+                native_type: Some("PowerPoint 14.0 Slides Package".into()),
                 platform: "windows".into(),
-                capture_priority: 1,
+                capture_priority: 9,
                 payload: CapturedPayload::Binary(vec![1, 2, 3]),
             },
             CapturedRepresentation {
-                format_key: "windows:HTML Format".into(),
-                canonical_mime_type: Some("text/html".into()),
-                native_type: Some("HTML Format".into()),
+                format_key: "windows:PNG".into(),
+                canonical_mime_type: Some("image/png".into()),
+                native_type: Some("PNG".into()),
                 platform: "windows".into(),
                 capture_priority: 20,
-                payload: CapturedPayload::Text("<table><tr><td>Useful</td></tr></table>".into()),
+                payload: CapturedPayload::Binary(vec![137, 80, 78, 71]),
             },
         ])
         .await;
@@ -2015,11 +1994,18 @@ mod tests {
             .iter()
             .find(|view| view.id == result.primary_view_id)
             .unwrap();
-        assert_eq!(primary.renderer_id, "builtin.html");
+        assert_eq!(primary.renderer_id, "builtin.image");
         assert!(result
             .views
             .iter()
-            .any(|view| view.renderer_id == "builtin.office"));
+            .any(|view| view.label == "Office data" && view.renderer_id == "builtin.original"));
+        assert_eq!(
+            repo.summary(&clip_id)
+                .await
+                .unwrap()
+                .primary_presentation_kind,
+            "image"
+        );
     }
 
     #[tokio::test]
@@ -2121,7 +2107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolver_keeps_number_and_timestamp_as_additive_views() {
+    async fn resolver_uses_one_timestamp_view() {
         let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
             format_key: "windows:CF_UNICODETEXT".into(),
             canonical_mime_type: Some("text/plain".into()),
@@ -2134,10 +2120,14 @@ mod tests {
 
         let result = views(&repo, &extensions, &clip_id).await.unwrap();
         assert_eq!(result.presentation_kind, "timestamp");
-        assert!(result
-            .views
-            .iter()
-            .any(|view| view.facet_id.as_deref() == Some("core.value.number")));
+        assert_eq!(
+            result
+                .views
+                .iter()
+                .filter(|view| view.presentation_kind == "timestamp")
+                .count(),
+            1
+        );
         assert!(result
             .views
             .iter()

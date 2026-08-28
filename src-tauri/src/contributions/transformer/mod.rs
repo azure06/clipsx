@@ -5,7 +5,6 @@ use crate::{
     history::{new_id, sha256, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 use anyhow::{bail, Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -94,14 +93,8 @@ impl BuiltinTransformer {
             _ => return false,
         };
         match self.id {
-            "builtin.transform.json.pretty"
-            | "builtin.transform.json.minify"
-            | "builtin.transform.json.to_typescript"
-            | "builtin.transform.json.to_csv" => {
+            "builtin.transform.json.to_typescript" | "builtin.transform.json.to_csv" => {
                 presentation_kind == Some("json") && serde_json::from_str::<Value>(text).is_ok()
-            }
-            "builtin.transform.html.to_markdown" => {
-                matches!(presentation_kind, Some("html" | "rich_text"))
             }
             "builtin.transform.url.encode"
             | "builtin.transform.url.decode"
@@ -109,9 +102,6 @@ impl BuiltinTransformer {
             | "builtin.transform.url.query_to_json" => presentation_kind == Some("url"),
             "builtin.transform.csv.to_json" | "builtin.transform.csv.to_markdown" => {
                 matches!(presentation_kind, Some("csv" | "table"))
-            }
-            "builtin.transform.curl.to_fetch" => {
-                presentation_kind == Some("code") && text.starts_with("curl ")
             }
             _ => false,
         }
@@ -142,13 +132,9 @@ impl TransformerContribution for BuiltinTransformer {
         parameters: &Value,
     ) -> Result<Vec<CapturedRepresentation>> {
         match self.id {
-            "builtin.transform.json.pretty" => json_transform(Self::text(input)?, true),
-            "builtin.transform.json.minify" => json_transform(Self::text(input)?, false),
-            "builtin.transform.curl.to_fetch" => curl_to_fetch(Self::text(input)?),
             "builtin.transform.json.to_typescript" => {
                 json_to_typescript(Self::text(input)?, parameters)
             }
-            "builtin.transform.html.to_markdown" => html_to_markdown(Self::text(input)?),
             "builtin.transform.url.encode" => Ok(text_output(
                 "text/plain",
                 &urlencoding::encode(Self::text(input)?),
@@ -211,33 +197,9 @@ fn registry() -> Vec<BuiltinTransformer> {
     let no_parameters = json!({"type":"object","additionalProperties":false});
     vec![
         BuiltinTransformer {
-            id: "builtin.transform.json.pretty",
-            label: "Format JSON",
-            schema: no_parameters.clone(),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.json.minify",
-            label: "Minify JSON",
-            schema: no_parameters.clone(),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.curl.to_fetch",
-            label: "curl to fetch",
-            schema: no_parameters.clone(),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
             id: "builtin.transform.json.to_typescript",
             label: "JSON to TypeScript",
             schema: json!({"type":"object","properties":{"rootName":{"type":"string","default":"Root","maxLength":80}},"additionalProperties":false}),
-            accepts_binary: false,
-        },
-        BuiltinTransformer {
-            id: "builtin.transform.html.to_markdown",
-            label: "HTML to Markdown",
-            schema: no_parameters.clone(),
             accepts_binary: false,
         },
         BuiltinTransformer {
@@ -638,127 +600,6 @@ fn validate_parameters(id: &str, parameters: &Value) -> Result<()> {
     }
     Ok(())
 }
-fn json_transform(input: &str, pretty: bool) -> Result<Vec<CapturedRepresentation>> {
-    let value: Value = serde_json::from_str(input).context("invalid JSON")?;
-    let output = if pretty {
-        serde_json::to_string_pretty(&value)?
-    } else {
-        serde_json::to_string(&value)?
-    };
-    Ok(text_output("application/json", &output))
-}
-fn curl_to_fetch(input: &str) -> Result<Vec<CapturedRepresentation>> {
-    let tokens = shell_words(input)?;
-    if tokens.first().map(String::as_str) != Some("curl") {
-        bail!("input must begin with curl")
-    }
-    let mut method = "GET".to_string();
-    let mut headers = Vec::new();
-    let mut body = None;
-    let mut url = None;
-    let mut index = 1;
-    while index < tokens.len() {
-        let token = &tokens[index];
-        let next = || tokens.get(index + 1).context("curl flag requires a value");
-        match token.as_str() {
-            "-X" | "--request" => {
-                method = next()?.to_ascii_uppercase();
-                index += 2
-            }
-            "-H" | "--header" => {
-                headers.push(next()?.clone());
-                index += 2
-            }
-            "-d" | "--data" | "--data-raw" | "--data-binary" => {
-                body = Some(next()?.clone());
-                index += 2
-            }
-            "-u" | "--user" => {
-                let credential = next()?;
-                let encoded = STANDARD.encode(credential);
-                headers.push(format!("Authorization: Basic {encoded}"));
-                index += 2
-            }
-            "--url" => {
-                url = Some(next()?.clone());
-                index += 2
-            }
-            flag if flag.starts_with('-') => bail!("unsupported curl option: {flag}"),
-            value => {
-                if url.replace(value.into()).is_some() {
-                    bail!("curl contains more than one URL")
-                };
-                index += 1
-            }
-        }
-    }
-    let url = url.context("curl URL is required")?;
-    if url.contains('$') || url.contains('`') || url.contains("@") {
-        bail!("shell expansion and file references are not supported")
-    }
-    let mut options = Vec::new();
-    if !headers.is_empty() {
-        let entries = headers
-            .into_iter()
-            .map(|header| -> Result<String> {
-                let (name, value) = header.split_once(':').unwrap_or((header.as_str(), ""));
-                Ok(format!(
-                    "    {}: {},",
-                    serde_json::to_string(name.trim())?,
-                    serde_json::to_string(value.trim())?
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        options.push(format!("  headers: {{\n{}\n  }}", entries.join("\n")));
-    }
-    if let Some(body) = body {
-        options.push(format!("  body: {}", serde_json::to_string(&body)?));
-        if method == "GET" {
-            method = "POST".into();
-        }
-    }
-    if method != "GET" {
-        options.insert(0, format!("  method: {}", serde_json::to_string(&method)?));
-    }
-    let output = if options.is_empty() {
-        format!("fetch({});", serde_json::to_string(&url)?)
-    } else {
-        format!(
-            "fetch({}, {{\n{}\n}});",
-            serde_json::to_string(&url)?,
-            options.join(",\n")
-        )
-    };
-    Ok(text_output("text/javascript", &output))
-}
-fn shell_words(input: &str) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    for ch in input.chars() {
-        match quote {
-            Some(q) if ch == q => quote = None,
-            Some(_) => current.push(ch),
-            None if ch == '\'' || ch == '\"' => quote = Some(ch),
-            None if ch.is_whitespace() => {
-                if !current.is_empty() {
-                    out.push(std::mem::take(&mut current));
-                }
-            }
-            None if ch == '$' || ch == '`' || ch == '\\' => {
-                bail!("shell expansion and escapes are not supported")
-            }
-            None => current.push(ch),
-        }
-    }
-    if quote.is_some() {
-        bail!("unterminated shell quote")
-    }
-    if !current.is_empty() {
-        out.push(current)
-    }
-    Ok(out)
-}
 fn json_to_typescript(input: &str, parameters: &Value) -> Result<Vec<CapturedRepresentation>> {
     let value: Value = serde_json::from_str(input).context("invalid JSON")?;
     let root = parameters
@@ -818,50 +659,6 @@ fn typescript_key(value: &str) -> String {
     } else {
         serde_json::to_string(value).unwrap_or_else(|_| "key".into())
     }
-}
-fn html_to_markdown(input: &str) -> Result<Vec<CapturedRepresentation>> {
-    let mut text = input.replace("\r\n", "\n");
-    for level in (1..=6).rev() {
-        text = text.replace(&format!("<h{level}>"), &format!("\n{} ", "#".repeat(level)));
-        text = text.replace(&format!("</h{level}>"), "\n");
-    }
-    for (tag, replacement) in [
-        ("br", "\n"),
-        ("p", "\n"),
-        ("/p", "\n"),
-        ("li", "\n- "),
-        ("/li", ""),
-        ("blockquote", "\n> "),
-        ("/blockquote", "\n"),
-        ("pre", "\n```\n"),
-        ("/pre", "\n```\n"),
-    ] {
-        text = text.replace(&format!("<{tag}>"), replacement);
-    }
-    text = strip_html_tags(&text);
-    let output = text
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string();
-    Ok(text_output("text/markdown", &output))
-}
-fn strip_html_tags(input: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for character in input.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(character),
-            _ => {}
-        }
-    }
-    out.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
 }
 fn url_normalize(input: &str) -> Result<Vec<CapturedRepresentation>> {
     let mut url = url::Url::parse(input.trim()).context("invalid URL")?;
@@ -1057,21 +854,13 @@ mod tests {
     }
 
     #[test]
-    fn json_format_is_deterministic() {
-        let a = json_transform("{\"b\":2,\"a\":1}", true).unwrap();
-        let b = json_transform("{\"a\":1,\"b\":2}", true).unwrap();
-        assert!(
-            matches!((&a[0].payload, &b[0].payload), (CapturedPayload::Text(left), CapturedPayload::Text(right)) if left == right)
-        );
-    }
-    #[test]
     fn transformer_discovery_is_presentation_specific() {
         let json = text_input("{\"answer\":42}", "application/json");
         let ids = descriptors_for(&json, Some("json"))
             .into_iter()
             .map(|item| item.id)
             .collect::<Vec<_>>();
-        assert!(ids.contains(&"builtin.transform.json.pretty".into()));
+        assert!(ids.contains(&"builtin.transform.json.to_typescript".into()));
         assert!(!ids.contains(&"builtin.transform.csv.to_json".into()));
     }
 

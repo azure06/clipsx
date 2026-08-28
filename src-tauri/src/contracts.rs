@@ -87,11 +87,6 @@ pub enum RenderModel {
         asset_id: String,
         mime_type: String,
     },
-    Office {
-        format_key: String,
-        native_type: Option<String>,
-        byte_length: i64,
-    },
     Semantic {
         facet_id: String,
         text: String,
@@ -322,14 +317,6 @@ mod tests {
                     mime_type: "application/pdf".into(),
                 },
                 json!({"kind": "document", "assetId": "asset-2", "mimeType": "application/pdf"}),
-            ),
-            (
-                RenderModel::Office {
-                    format_key: "windows:office".into(),
-                    native_type: Some("Office".into()),
-                    byte_length: 12,
-                },
-                json!({"kind": "office", "formatKey": "windows:office", "nativeType": "Office", "byteLength": 12}),
             ),
             (
                 RenderModel::Semantic {

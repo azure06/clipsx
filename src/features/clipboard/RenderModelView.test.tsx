@@ -69,10 +69,6 @@ describe('RenderModelView', () => {
       'Document preview unavailable.',
     ],
     [
-      { kind: 'office', formatKey: 'windows:Office', nativeType: 'Office', byteLength: 12 },
-      'Office/native representation',
-    ],
-    [
       {
         kind: 'semantic',
         facetId: 'core.link.url',
@@ -157,6 +153,29 @@ describe('RenderModelView', () => {
       />
     )
     expect(container.firstElementChild).toHaveClass('custom-scrollbar', 'overscroll-contain')
+  })
+
+  it('renders Unix seconds as the default date preview', () => {
+    render(
+      <RenderModelView
+        presentation={presentation(
+          {
+            kind: 'semantic',
+            facetId: 'core.time.date',
+            text: '1700000000',
+            payload: {
+              schemaVersion: 1,
+              value: '1700000000',
+              interpretation: 'unix_seconds',
+            },
+          },
+          'timestamp'
+        )}
+      />
+    )
+
+    expect(screen.getByText('2023-11-14T22:13:20.000Z')).toBeInTheDocument()
+    expect(screen.getAllByText('1700000000')).toHaveLength(2)
   })
 
   it('routes every color renderer format through source-linked literal output', async () => {

@@ -174,7 +174,6 @@ fn facet_icon(facet_id: Option<&str>) -> Option<LeadingVisual> {
         "core.contact.phone" => "phone",
         "core.math.expression" => "sigma",
         "core.text.markdown" => "file_text",
-        "core.value.number" => "hash",
         _ => return None,
     };
     Some(host_icon(name))

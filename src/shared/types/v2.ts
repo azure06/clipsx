@@ -173,7 +173,6 @@ export type RenderModel =
   | { kind: 'rich_text'; sanitizedHtml: string | null; plainText: string }
   | { kind: 'files'; entries: FilePresentation[] }
   | { kind: 'document'; assetId: string; mimeType: string }
-  | { kind: 'office'; formatKey: string; nativeType: string | null; byteLength: number }
   | { kind: 'semantic'; facetId: string; text: string; payload: Record<string, unknown> }
   | {
       kind: 'unsupported'

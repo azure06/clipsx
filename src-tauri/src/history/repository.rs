@@ -299,8 +299,14 @@ impl HistoryRepository {
         let history_renderer_id = compact_presentation
             .as_ref()
             .map(|(renderer_id, _)| renderer_id.clone());
-        let primary_presentation_kind: String = row.get(10);
+        let mut primary_presentation_kind: String = row.get(10);
         let thumbnail_asset_id: Option<String> = row.get(11);
+        // Office applications often put their opaque native payload first and a
+        // faithful PNG alternate immediately after it. The native bytes remain
+        // canonical for reconstruction, but the image is the useful preview.
+        if primary_presentation_kind == "office" && thumbnail_asset_id.is_some() {
+            primary_presentation_kind = "image".into();
+        }
         let ocr_status: Option<String> = row.get(13);
         let text_snippet: Option<String> = row.get(9);
         let leading_representation_id: Option<String> = row.get(14);
