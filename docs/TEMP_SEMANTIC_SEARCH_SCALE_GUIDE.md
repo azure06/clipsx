@@ -671,6 +671,14 @@ the checksum or behavior of any canonical clip representation.
 
 ### Phase 3: bound chunking and provider work
 
+**Progress:** the pipeline now enforces 64 chunks per clip. When a clip exceeds
+that budget, it keeps note/tag chunks, samples content across the full document
+instead of taking only the beginning, and adds one bounded routing summary from
+omitted regions. Equal complete embedding texts are sent to the provider once,
+provider vector counts are checked exactly, and adaptive overflow retries stop
+at a hard per-clip request budget. Changing this policy bumped the pipeline
+version so an old index cannot silently claim to use it.
+
 - Introduce one deterministic chunking policy.
 - Add the 64-chunk initial safety limit.
 - Add routing/outline chunks for large inputs.

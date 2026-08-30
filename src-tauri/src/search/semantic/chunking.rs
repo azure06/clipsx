@@ -2,13 +2,14 @@ use anyhow::Result;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use scraper::{ElementRef, Html, Selector};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-pub const PIPELINE_VERSION: &str = "3";
+pub const PIPELINE_VERSION: &str = "4";
 pub const TARGET_EMBED_BYTES: usize = 1_536;
 pub const MAX_EMBED_BYTES: usize = 2_048;
 pub const MAX_CONTEXT_BYTES: usize = 384;
 pub const FALLBACK_OVERLAP_BYTES: usize = 256;
+pub const MAX_CHUNKS_PER_CLIP: usize = 64;
 
 const STRATEGY_VERSION: &str = "1";
 
@@ -106,6 +107,104 @@ pub fn chunk_input(input: &SemanticInput) -> Result<Vec<SemanticChunk>> {
         }
     }
     Ok(Vec::new())
+}
+
+/// Applies the clip-level work budget after every independent representation,
+/// note, tag, and artifact has been chunked.
+pub fn bound_clip_chunks(
+    clip_id: &str,
+    chunks: Vec<(SemanticInput, SemanticChunk)>,
+) -> Vec<(SemanticInput, SemanticChunk)> {
+    if chunks.len() <= MAX_CHUNKS_PER_CLIP {
+        return chunks;
+    }
+
+    let content_budget = MAX_CHUNKS_PER_CLIP - 1;
+    let mut selected = chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, (input, _))| matches!(input.source_kind.as_str(), "note" | "tags"))
+        .map(|(index, _)| index)
+        .take(8)
+        .collect::<BTreeSet<_>>();
+    let remaining = (0..chunks.len())
+        .filter(|index| !selected.contains(index))
+        .collect::<Vec<_>>();
+    let slots = content_budget
+        .saturating_sub(selected.len())
+        .min(remaining.len());
+    for position in evenly_spaced_positions(remaining.len(), slots) {
+        selected.insert(remaining[position]);
+    }
+
+    let omitted = (0..chunks.len())
+        .filter(|index| !selected.contains(index))
+        .collect::<Vec<_>>();
+    let routing_text = routing_summary(&chunks, &omitted);
+    let routing_input = SemanticInput {
+        source_kind: "routing".into(),
+        source_id: format!("{clip_id}:routing"),
+        representation_id: None,
+        artifact_id: None,
+        mime_type: Some("text/plain".into()),
+        format_family: Some("derived-routing".into()),
+        facets: Vec::new(),
+        text: routing_text.clone(),
+        source_ordinal: i64::MAX,
+    };
+    let routing_chunk = SemanticChunk {
+        display_text: routing_text.clone(),
+        embedding_text: routing_text,
+        kind: "routing".into(),
+        context_path: Vec::new(),
+        strategy_id: "builtin.chunker.clip-router".into(),
+        strategy_version: STRATEGY_VERSION.into(),
+        fallback_reason: Some(format!(
+            "clip exceeded {MAX_CHUNKS_PER_CLIP} semantic chunks"
+        )),
+    };
+
+    let mut bounded = chunks
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| selected.contains(index))
+        .map(|(_, chunk)| chunk)
+        .collect::<Vec<_>>();
+    bounded.push((routing_input, routing_chunk));
+    bounded
+}
+
+fn evenly_spaced_positions(length: usize, count: usize) -> Vec<usize> {
+    match count {
+        0 => Vec::new(),
+        1 => vec![length / 2],
+        _ => (0..count)
+            .map(|index| index * (length - 1) / (count - 1))
+            .collect(),
+    }
+}
+
+fn routing_summary(chunks: &[(SemanticInput, SemanticChunk)], omitted: &[usize]) -> String {
+    let mut summary = format!(
+        "Large document routing summary. {} of {} detailed chunks were omitted from the bounded semantic index.",
+        omitted.len(),
+        chunks.len()
+    );
+    for position in evenly_spaced_positions(omitted.len(), omitted.len().min(12)) {
+        let (_, chunk) = &chunks[omitted[position]];
+        let context = if chunk.context_path.is_empty() {
+            chunk.kind.clone()
+        } else {
+            chunk.context_path.join(" > ")
+        };
+        let excerpt = truncate_utf8(&collapse_whitespace(&chunk.display_text), 128);
+        let line = format!("\n- {context}: {excerpt}");
+        if summary.len() + line.len() > MAX_EMBED_BYTES {
+            break;
+        }
+        summary.push_str(&line);
+    }
+    summary
 }
 
 pub fn strategy_quality(input: &SemanticInput) -> u8 {
@@ -1177,5 +1276,71 @@ mod tests {
         let selected = deduplicate_inputs(vec![plain, html]);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].source_id, "html");
+    }
+
+    #[test]
+    fn large_markdown_is_sampled_across_the_document_with_one_routing_chunk() {
+        let markdown = (0..200)
+            .map(|index| {
+                format!(
+                    "# Section {index}\n\nDistinct topic number {index}. {}",
+                    "x".repeat(200)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let source = input("text/markdown", &markdown, &[]);
+        let unbounded = chunk_input(&source)
+            .unwrap()
+            .into_iter()
+            .map(|chunk| (source.clone(), chunk))
+            .collect::<Vec<_>>();
+        assert!(unbounded.len() > MAX_CHUNKS_PER_CLIP);
+
+        let bounded = bound_clip_chunks("clip-1", unbounded);
+        assert_eq!(bounded.len(), MAX_CHUNKS_PER_CLIP);
+        assert!(bounded
+            .first()
+            .is_some_and(|(_, chunk)| chunk.embedding_text.contains("Section 0")));
+        assert!(bounded
+            .iter()
+            .any(|(_, chunk)| chunk.embedding_text.contains("Section 199")));
+        let routers = bounded
+            .iter()
+            .filter(|(_, chunk)| chunk.kind == "routing")
+            .collect::<Vec<_>>();
+        assert_eq!(routers.len(), 1);
+        assert!(routers[0].1.embedding_text.len() <= MAX_EMBED_BYTES);
+        assert!(routers[0].1.embedding_text.contains("were omitted"));
+    }
+
+    #[test]
+    fn clip_budget_always_preserves_note_and_tag_chunks() {
+        let source = input("text/plain", "source", &[]);
+        let mut chunks = (0..80)
+            .map(|index| {
+                let mut chunk = chunk_input(&input(
+                    "text/plain",
+                    &format!("body {index} {}", "x".repeat(100)),
+                    &[],
+                ))
+                .unwrap()
+                .remove(0);
+                chunk.display_text = format!("body {index}");
+                (source.clone(), chunk)
+            })
+            .collect::<Vec<_>>();
+        for kind in ["note", "tags"] {
+            let mut metadata = source.clone();
+            metadata.source_kind = kind.into();
+            let chunk = chunk_input(&metadata).unwrap().remove(0);
+            chunks.push((metadata, chunk));
+        }
+
+        let bounded = bound_clip_chunks("clip-1", chunks);
+        assert_eq!(bounded.len(), MAX_CHUNKS_PER_CLIP);
+        for kind in ["note", "tags"] {
+            assert!(bounded.iter().any(|(input, _)| input.source_kind == kind));
+        }
     }
 }

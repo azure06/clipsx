@@ -19,12 +19,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::{
     cmp::{Ordering, Reverse},
-    collections::{BinaryHeap, HashSet, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
 };
 
 const PROVIDER_CONFIG_KEY: &str = "providers.text_embedding.active";
 const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
+const MAX_EMBED_REQUESTS_PER_CLIP: usize = 128;
 const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
   trim(COALESCE(c.note,'')) <> ''
   OR EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id)
@@ -461,6 +462,7 @@ async fn index_clip(
             chunks.push((input.clone(), chunk));
         }
     }
+    let chunks = chunking::bound_clip_chunks(clip_id, chunks);
     let projection = semantic_projection_hash(&chunks)?;
     if chunks.is_empty() {
         sqlx::query("DELETE FROM search_chunks WHERE generation_id=? AND clip_id=?")
@@ -1169,54 +1171,98 @@ async fn embed_chunks_adaptively(
     provider: &dyn TextEmbeddingProvider,
     chunks: Vec<(SemanticInput, SemanticChunk)>,
 ) -> Result<Vec<(SemanticInput, SemanticChunk, Vec<f32>)>> {
-    let texts = chunks
+    let groups = group_equal_embedding_inputs(chunks);
+    let texts = groups
         .iter()
-        .map(|(_, chunk)| chunk.embedding_text.clone())
+        .map(|group| group[0].1.embedding_text.clone())
         .collect::<Vec<_>>();
     match provider.embed_documents(&texts).await {
         Ok(vectors) => {
-            return Ok(chunks
+            if vectors.len() != groups.len() {
+                bail!("embedding provider returned a different vector count than requested");
+            }
+            return Ok(groups
                 .into_iter()
                 .zip(vectors)
-                .map(|((input, chunk), vector)| (input, chunk, vector))
-                .collect())
+                .flat_map(|(group, vector)| {
+                    group
+                        .into_iter()
+                        .map(move |(input, chunk)| (input, chunk, vector.clone()))
+                })
+                .collect());
         }
         Err(error) if !error.is_context_overflow() => return Err(error.into()),
         Err(_) => {}
     }
-    let mut queue: VecDeque<(SemanticInput, SemanticChunk, u8)> = chunks
-        .into_iter()
-        .map(|(input, chunk)| (input, chunk, 0))
-        .collect();
+    let mut requests = 1;
+    let mut queue: VecDeque<(Vec<(SemanticInput, SemanticChunk)>, u8)> =
+        groups.into_iter().map(|group| (group, 0)).collect();
     let mut embedded = Vec::new();
-    while let Some((input, chunk, depth)) = queue.pop_front() {
+    while let Some((group, depth)) = queue.pop_front() {
+        if requests >= MAX_EMBED_REQUESTS_PER_CLIP {
+            bail!("embedding provider retry budget exceeded for one clip");
+        }
+        requests += 1;
+        let representative = &group[0].1;
         match provider
-            .embed_documents(std::slice::from_ref(&chunk.embedding_text))
+            .embed_documents(std::slice::from_ref(&representative.embedding_text))
             .await
         {
-            Ok(mut vectors) => embedded.push((
-                input,
-                chunk,
-                vectors.pop().context("missing chunk embedding")?,
-            )),
+            Ok(mut vectors) if vectors.len() == 1 => {
+                let vector = vectors.pop().expect("one vector was checked");
+                embedded.extend(
+                    group
+                        .into_iter()
+                        .map(|(input, chunk)| (input, chunk, vector.clone())),
+                );
+            }
+            Ok(_) => bail!("embedding provider returned a different vector count than requested"),
             Err(error)
                 if error.is_context_overflow()
                     && depth < MAX_FALLBACK_DEPTH
-                    && chunk.display_text.len() > MIN_FALLBACK_BYTES =>
+                    && representative.display_text.len() > MIN_FALLBACK_BYTES =>
             {
-                let target = (chunk.display_text.len() / 2).max(MIN_FALLBACK_BYTES);
-                let split = chunking::subdivide_chunk(&chunk, target);
-                if split.len() < 2 {
+                let target = (representative.display_text.len() / 2).max(MIN_FALLBACK_BYTES);
+                let mut children = Vec::new();
+                for (input, chunk) in group {
+                    children.extend(
+                        chunking::subdivide_chunk(&chunk, target)
+                            .into_iter()
+                            .map(|child| (input.clone(), child)),
+                    );
+                }
+                let child_groups = group_equal_embedding_inputs(children);
+                if child_groups.len() < 2 {
                     return Err(error.into());
                 }
-                for child in split.into_iter().rev() {
-                    queue.push_front((input.clone(), child, depth + 1));
+                for child_group in child_groups.into_iter().rev() {
+                    queue.push_front((child_group, depth + 1));
                 }
             }
             Err(error) => return Err(error.into()),
         }
     }
+    if embedded.len() > chunking::MAX_CHUNKS_PER_CLIP {
+        bail!("provider subdivision exceeded the per-clip semantic chunk budget");
+    }
     Ok(embedded)
+}
+
+fn group_equal_embedding_inputs(
+    chunks: Vec<(SemanticInput, SemanticChunk)>,
+) -> Vec<Vec<(SemanticInput, SemanticChunk)>> {
+    let mut positions = HashMap::<String, usize>::new();
+    let mut groups = Vec::<Vec<(SemanticInput, SemanticChunk)>>::new();
+    for item in chunks {
+        let text = item.1.embedding_text.clone();
+        if let Some(position) = positions.get(&text) {
+            groups[*position].push(item);
+        } else {
+            positions.insert(text, groups.len());
+            groups.push(vec![item]);
+        }
+    }
+    groups
 }
 
 fn validate_vector(vector: &[f32], dimensions: Option<usize>) -> Result<()> {
@@ -1262,8 +1308,13 @@ mod tests {
         providers::{contracts::ProviderDescriptor, error::ProviderResult},
     };
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct FakeProvider;
+
+    struct CountingProvider {
+        embedded_inputs: AtomicUsize,
+    }
 
     #[async_trait]
     impl TextEmbeddingProvider for FakeProvider {
@@ -1271,6 +1322,21 @@ mod tests {
             Ok(test_space())
         }
         async fn embed_documents(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
+            Ok(inputs.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+        async fn embed_queries(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
+            Ok(inputs.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[async_trait]
+    impl TextEmbeddingProvider for CountingProvider {
+        async fn describe(&self) -> ProviderResult<TextEmbeddingSpace> {
+            Ok(test_space())
+        }
+        async fn embed_documents(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
+            self.embedded_inputs
+                .fetch_add(inputs.len(), AtomicOrdering::SeqCst);
             Ok(inputs.iter().map(|_| vec![1.0, 0.0]).collect())
         }
         async fn embed_queries(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
@@ -1290,6 +1356,50 @@ mod tests {
             normalization: "l2".into(),
             distance_metric: "cosine".into(),
         }
+    }
+
+    fn duplicate_embedding_chunk(source_id: &str) -> (SemanticInput, SemanticChunk) {
+        (
+            SemanticInput {
+                source_kind: "representation".into(),
+                source_id: source_id.into(),
+                representation_id: Some(source_id.into()),
+                artifact_id: None,
+                mime_type: Some("text/plain".into()),
+                format_family: Some("text".into()),
+                facets: Vec::new(),
+                text: "same visible text".into(),
+                source_ordinal: 0,
+            },
+            SemanticChunk {
+                display_text: "same visible text".into(),
+                embedding_text: "Section: shared\n\nsame visible text".into(),
+                kind: "paragraph".into(),
+                context_path: vec!["shared".into()],
+                strategy_id: "test".into(),
+                strategy_version: "1".into(),
+                fallback_reason: None,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn complete_embedding_inputs_are_sent_to_provider_once() {
+        let provider = CountingProvider {
+            embedded_inputs: AtomicUsize::new(0),
+        };
+        let embedded = embed_chunks_adaptively(
+            &provider,
+            vec![
+                duplicate_embedding_chunk("first"),
+                duplicate_embedding_chunk("second"),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(embedded.len(), 2);
+        assert_eq!(provider.embedded_inputs.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(embedded[0].2, embedded[1].2);
     }
 
     async fn repository() -> (tempfile::TempDir, HistoryRepository) {

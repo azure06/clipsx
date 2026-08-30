@@ -143,7 +143,7 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - [x] Qualify the 60,000-clip capacity design and reject backends that fail correctness, packaging, or rebuild-cost gates. Evidence: [qualification report](SEMANTIC_SEARCH_QUALIFICATION.md).
 - [x] Select one dependency-free int8 candidate scan with float32 reranking; do not retain `vec1`, HNSW, or the full float32 scan as alternate production backends.
 - [ ] Move generation-owned chunks and vectors from `clips.db` into validated `search-index/generation-{id}.sqlite` sidecars.
-- [ ] Bound each clip to 64 semantic chunks, add a routing chunk for truncated long documents, and deduplicate complete enriched embedding inputs.
+- [x] Bound each clip to 64 semantic chunks, add a routing chunk for truncated long documents, and deduplicate complete enriched embedding inputs. Evidence: deterministic clip-level sampling and routing in [semantic chunking](../src-tauri/src/search/semantic/chunking.rs), plus provider-input deduplication and bounded adaptive retries in [semantic service](../src-tauri/src/search/semantic/service.rs).
 - [ ] Make sidecar-first job completion and generation activation recoverable under injected interruption and corruption.
 - [ ] Replace string-ID eligibility materialization with stable ordinals and compact bitsets; rerank 100 candidates exactly before RRF.
 - [ ] Batch history-summary hydration, virtualize list/grid rendering, and replace the load-all End shortcut.
