@@ -236,6 +236,12 @@ impl BuildingSidecar {
         Ok(())
     }
 
+    /// Closes an incomplete build without marking it ready for activation.
+    pub async fn close(self) -> Result<()> {
+        self.connection.close().await?;
+        Ok(())
+    }
+
     /// Marks the sidecar complete, closes SQLite, and returns its immutable identity.
     pub async fn finalize(self) -> Result<FinalizedSidecar> {
         let BuildingSidecar {
@@ -367,6 +373,30 @@ impl SemanticIndexStore {
         })
     }
 
+    /// Reopens an interrupted incomplete generation for its single writer.
+    pub async fn open_building(
+        &self,
+        relative_path: &str,
+        generation_id: &str,
+        dimensions: usize,
+    ) -> Result<BuildingSidecar> {
+        validate_generation_id(generation_id)?;
+        let path = self.resolve(relative_path)?;
+        require_regular_file(&path)?;
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .journal_mode(SqliteJournalMode::Wal)
+            .foreign_keys(true);
+        let mut connection = SqliteConnection::connect_with(&options).await?;
+        validate_meta(&mut connection, generation_id, dimensions, 0).await?;
+        quick_check(&mut connection).await?;
+        Ok(BuildingSidecar {
+            connection,
+            path,
+            relative_path: relative_path.into(),
+        })
+    }
+
     /// Validates identity, format, completeness, checksum, and SQLite integrity.
     pub async fn validate(
         &self,
@@ -377,11 +407,7 @@ impl SemanticIndexStore {
     ) -> Result<()> {
         validate_generation_id(generation_id)?;
         let path = self.resolve(relative_path)?;
-        let metadata = fs::symlink_metadata(&path)
-            .with_context(|| format!("semantic sidecar is missing: {}", path.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            bail!("semantic sidecar must be a regular file");
-        }
+        require_regular_file(&path)?;
         if let Some(expected) = expected_sha256 {
             if !expected.eq_ignore_ascii_case(&file_sha256(&path)?) {
                 bail!("semantic sidecar checksum does not match");
@@ -393,31 +419,37 @@ impl SemanticIndexStore {
             .read_only(true)
             .foreign_keys(true);
         let mut connection = SqliteConnection::connect_with(&options).await?;
-        let meta = sqlx::query(
-            "SELECT schema_version, generation_id, dimensions, backend_id,
-                    vector_encoding, candidate_limit, complete
-             FROM semantic_sidecar_meta WHERE singleton = 1",
-        )
-        .fetch_one(&mut connection)
-        .await?;
-        if meta.get::<i64, _>("schema_version") != SIDECAR_SCHEMA_VERSION
-            || meta.get::<String, _>("generation_id") != generation_id
-            || meta.get::<i64, _>("dimensions") != i64::try_from(dimensions)?
-            || meta.get::<String, _>("backend_id") != BACKEND_ID
-            || meta.get::<String, _>("vector_encoding") != VECTOR_ENCODING
-            || meta.get::<i64, _>("candidate_limit") != DEFAULT_CANDIDATE_LIMIT
-            || meta.get::<i64, _>("complete") != 1
-        {
-            bail!("semantic sidecar metadata does not match the requested generation");
-        }
-        let integrity: String = sqlx::query_scalar("PRAGMA quick_check")
-            .fetch_one(&mut connection)
-            .await?;
-        if integrity != "ok" {
-            bail!("semantic sidecar failed SQLite integrity check: {integrity}");
-        }
+        validate_meta(&mut connection, generation_id, dimensions, 1).await?;
+        quick_check(&mut connection).await?;
         connection.close().await?;
         Ok(())
+    }
+
+    /// Deletes unreferenced files that match the store's exact owned naming contract.
+    pub fn remove_orphans(
+        &self,
+        retained_relative_paths: &std::collections::HashSet<String>,
+    ) -> Result<Vec<String>> {
+        let mut removed = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let Some(relative_path) = file_name.to_str() else {
+                continue;
+            };
+            if retained_relative_paths.contains(relative_path)
+                || !owned_generation_filename(relative_path)
+            {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if metadata.is_file() && !metadata.file_type().is_symlink() {
+                self.remove(relative_path)?;
+                removed.push(relative_path.into());
+            }
+        }
+        removed.sort();
+        Ok(removed)
     }
 
     /// Removes only the validated generation filename and its SQLite transient files.
@@ -436,6 +468,58 @@ impl SemanticIndexStore {
         }
         Ok(self.root.join(relative))
     }
+}
+
+async fn validate_meta(
+    connection: &mut SqliteConnection,
+    generation_id: &str,
+    dimensions: usize,
+    complete: i64,
+) -> Result<()> {
+    let meta = sqlx::query(
+        "SELECT schema_version, generation_id, dimensions, backend_id,
+                vector_encoding, candidate_limit, complete
+         FROM semantic_sidecar_meta WHERE singleton = 1",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    if meta.get::<i64, _>("schema_version") != SIDECAR_SCHEMA_VERSION
+        || meta.get::<String, _>("generation_id") != generation_id
+        || meta.get::<i64, _>("dimensions") != i64::try_from(dimensions)?
+        || meta.get::<String, _>("backend_id") != BACKEND_ID
+        || meta.get::<String, _>("vector_encoding") != VECTOR_ENCODING
+        || meta.get::<i64, _>("candidate_limit") != DEFAULT_CANDIDATE_LIMIT
+        || meta.get::<i64, _>("complete") != complete
+    {
+        bail!("semantic sidecar metadata does not match the requested generation");
+    }
+    Ok(())
+}
+
+async fn quick_check(connection: &mut SqliteConnection) -> Result<()> {
+    let integrity: String = sqlx::query_scalar("PRAGMA quick_check")
+        .fetch_one(connection)
+        .await?;
+    if integrity != "ok" {
+        bail!("semantic sidecar failed SQLite integrity check: {integrity}");
+    }
+    Ok(())
+}
+
+fn require_regular_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("semantic sidecar is missing: {}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("semantic sidecar must be a regular file");
+    }
+    Ok(())
+}
+
+fn owned_generation_filename(relative_path: &str) -> bool {
+    relative_path
+        .strip_prefix("generation-")
+        .and_then(|value| value.strip_suffix(".sqlite"))
+        .is_some_and(|generation_id| validate_generation_id(generation_id).is_ok())
 }
 
 fn validate_generation_id(generation_id: &str) -> Result<()> {
@@ -645,5 +729,57 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stored_i8, vec![127, 0, 129]);
+    }
+
+    #[tokio::test]
+    async fn interrupted_build_reopens_and_orphan_cleanup_is_strictly_scoped() {
+        let directory = tempdir().unwrap();
+        let store = SemanticIndexStore::new(directory.path()).unwrap();
+        let relative_path = "generation-interrupted.sqlite";
+        let mut building = store.create("interrupted", 3).await.unwrap();
+        building
+            .replace_clip("clip-1", &[chunk('a', "before restart", vec![0.0; 3])])
+            .await
+            .unwrap();
+        building.close().await.unwrap();
+
+        let mut reopened = store
+            .open_building(relative_path, "interrupted", 3)
+            .await
+            .unwrap();
+        reopened
+            .replace_clip("clip-1", &[chunk('b', "after restart", vec![0.5; 3])])
+            .await
+            .unwrap();
+        let finalized = reopened.finalize().await.unwrap();
+        store
+            .validate(relative_path, "interrupted", 3, Some(&finalized.sha256))
+            .await
+            .unwrap();
+
+        store
+            .create("orphan", 3)
+            .await
+            .unwrap()
+            .close()
+            .await
+            .unwrap();
+        fs::write(directory.path().join("notes.sqlite"), b"not owned").unwrap();
+        fs::write(
+            directory.path().join("generation-invalid_name.sqlite"),
+            b"not owned",
+        )
+        .unwrap();
+        let retained = std::collections::HashSet::from([relative_path.into()]);
+        assert_eq!(
+            store.remove_orphans(&retained).unwrap(),
+            vec!["generation-orphan.sqlite"]
+        );
+        assert!(directory.path().join(relative_path).exists());
+        assert!(directory.path().join("notes.sqlite").exists());
+        assert!(directory
+            .path()
+            .join("generation-invalid_name.sqlite")
+            .exists());
     }
 }

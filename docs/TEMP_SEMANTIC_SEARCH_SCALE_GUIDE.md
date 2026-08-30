@@ -646,6 +646,16 @@ yet redirected, so the remaining bullets stay open rather than maintaining two
 live persistence paths. Sidecar writes now replace one clip atomically, retain
 its stable clip/chunk ordinals, deduplicate complete embedding inputs by hash,
 and garbage-collect vectors after their final chunk reference disappears.
+Interrupted incomplete builds can be reopened safely, and orphan cleanup
+deletes only files matching the exact owned generation filename contract.
+
+An activation checksum is a durable checkpoint, not a promise that an active
+index can never change. Clipboard capture must update the active generation
+without copying the entire sidecar. Before such a write, the coordinator clears
+the checkpoint checksum; after a bounded checkpoint it may record a new one.
+SQLite transactions, WAL recovery, schema identity, and integrity checks protect
+the live file between checkpoints. Pipeline/model changes still build and
+activate a separate generation.
 
 - Add the owned `search-index/` root.
 - Implement `SemanticIndexStore`.
