@@ -638,6 +638,13 @@ activation and deletion before persistence code lands.
 
 ### Phase 2: implement sidecar persistence
 
+**Progress:** the owned root and the first `SemanticIndexStore` lifecycle slice
+are implemented. Creation refuses overwrite, finalization checkpoints and
+closes SQLite before hashing, opening validates identity/completeness/checksum,
+and removal accepts only one owned filename. The generation coordinator is not
+yet redirected, so the remaining bullets stay open rather than maintaining two
+live persistence paths.
+
 - Add the owned `search-index/` root.
 - Implement `SemanticIndexStore`.
 - Create, open, validate and remove generation files.
@@ -755,7 +762,7 @@ search/
     ├── mod.rs             public semantic-search API
     ├── service.rs         generation/job coordinator
     ├── chunking.rs        format-aware deterministic chunking
-    ├── index_store.rs     sidecar lifecycle and selected vector backend
+    ├── store.rs           sidecar lifecycle and selected vector backend
     ├── retrieval.rs       candidate search and exact reranking
     └── reconciliation.rs  startup repair and orphan cleanup
 ```
