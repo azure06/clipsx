@@ -110,3 +110,138 @@ fn semantic_scale_qualification() {
     );
     assert_eq!(report.clips, TARGET_CLIPS);
 }
+
+#[test]
+#[ignore]
+fn quantized_flat_scale_qualification() {
+    const ROWS: usize = 540_000;
+    const DIMENSIONS: usize = 1_024;
+    const RUNS: usize = 10;
+    let threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(8);
+    let mut vectors = vec![0_i8; ROWS * DIMENSIONS];
+    for (index, value) in vectors.iter_mut().enumerate() {
+        *value = ((index.wrapping_mul(31).wrapping_add(index / DIMENSIONS * 17) % 255) as i16 - 127)
+            as i8;
+    }
+    let query = vectors[(ROWS / 2) * DIMENSIONS..(ROWS / 2 + 1) * DIMENSIONS].to_vec();
+    let rows_per_worker = ROWS.div_ceil(threads);
+    let mut elapsed = Vec::with_capacity(RUNS);
+    let mut checksum = 0_i64;
+    for _ in 0..RUNS {
+        let started = Instant::now();
+        checksum = std::thread::scope(|scope| {
+            let mut workers = Vec::with_capacity(threads);
+            for worker in 0..threads {
+                let start_row = worker * rows_per_worker;
+                let end_row = ((worker + 1) * rows_per_worker).min(ROWS);
+                let slice = &vectors[start_row * DIMENSIONS..end_row * DIMENSIONS];
+                let query = &query;
+                workers.push(scope.spawn(move || {
+                    slice
+                        .chunks_exact(DIMENSIONS)
+                        .map(|vector| {
+                            vector
+                                .iter()
+                                .zip(query)
+                                .map(|(&left, &right)| i32::from(left) * i32::from(right))
+                                .sum::<i32>()
+                        })
+                        .max()
+                        .unwrap_or_default() as i64
+                }));
+            }
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .sum()
+        });
+        elapsed.push(started.elapsed().as_micros());
+    }
+    elapsed.sort_unstable();
+    eprintln!(
+        "quantized-flat-report={{\"rows\":{ROWS},\"dimensions\":{DIMENSIONS},\"threads\":{threads},\"bytes\":{},\"checksum\":{checksum},\"p50_us\":{},\"p95_us\":{},\"p99_us\":{}}}",
+        vectors.len(),
+        elapsed[RUNS / 2],
+        elapsed[RUNS - 1],
+        elapsed[RUNS - 1],
+    );
+    assert_ne!(checksum, 0);
+}
+
+fn deterministic_unit_vector(key: u64, dimensions: usize) -> Vec<f32> {
+    let mut state = key ^ 0x9E37_79B9_7F4A_7C15;
+    let mut vector = Vec::with_capacity(dimensions);
+    for _ in 0..dimensions {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        vector.push(((state >> 40) as i32 - (1 << 23)) as f32 / (1 << 23) as f32);
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    vector.iter_mut().for_each(|value| *value /= norm);
+    vector
+}
+
+#[test]
+#[ignore]
+fn quantized_flat_recall_qualification() {
+    const ROWS: usize = 10_000;
+    const DIMENSIONS: usize = 256;
+    const CANDIDATES: usize = 100;
+    let vectors: Vec<Vec<f32>> = (1..=ROWS)
+        .map(|key| deterministic_unit_vector(key as u64, DIMENSIONS))
+        .collect();
+    let quantized: Vec<Vec<i8>> = vectors
+        .iter()
+        .map(|vector| {
+            vector
+                .iter()
+                .map(|value| (value * 127.0).round().clamp(-127.0, 127.0) as i8)
+                .collect()
+        })
+        .collect();
+    let mut recalls = Vec::new();
+    for query_row in (0..ROWS).step_by(1_000) {
+        let query = &vectors[query_row];
+        let quantized_query = &quantized[query_row];
+        let mut exact: Vec<_> = vectors
+            .iter()
+            .enumerate()
+            .map(|(row, vector)| {
+                (
+                    row,
+                    vector.iter().zip(query).map(|(a, b)| a * b).sum::<f32>(),
+                )
+            })
+            .collect();
+        exact.sort_unstable_by(|left, right| right.1.total_cmp(&left.1));
+        let truth: HashSet<_> = exact.iter().take(10).map(|item| item.0).collect();
+        let mut approximate: Vec<_> = quantized
+            .iter()
+            .enumerate()
+            .map(|(row, vector)| {
+                (
+                    row,
+                    vector
+                        .iter()
+                        .zip(quantized_query)
+                        .map(|(&a, &b)| i32::from(a) * i32::from(b))
+                        .sum::<i32>(),
+                )
+            })
+            .collect();
+        approximate.sort_unstable_by_key(|item| std::cmp::Reverse(item.1));
+        let candidates: HashSet<_> = approximate
+            .iter()
+            .take(CANDIDATES)
+            .map(|item| item.0)
+            .collect();
+        recalls.push(truth.intersection(&candidates).count() as f64 / 10.0);
+    }
+    let recall = recalls.iter().sum::<f64>() / recalls.len() as f64;
+    eprintln!("quantized-flat-recall={{\"rows\":{ROWS},\"dimensions\":{DIMENSIONS},\"candidates\":{CANDIDATES},\"recall_at_10\":{recall:.3}}}");
+    assert!(recall >= 0.95);
+}

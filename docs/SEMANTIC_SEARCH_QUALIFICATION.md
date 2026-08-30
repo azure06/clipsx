@@ -1,7 +1,8 @@
 # Semantic Search Qualification
 
-Status: SQLite `vec1` rejected on the Windows qualification gate. This
-document records measurements; it does not make a release claim.
+Status: SQLite `vec1` and USearch HNSW rejected; parallel int8 flat retrieval
+selected for implementation. This document records measurements; it does not
+make a cross-platform release claim.
 
 ## Decision under test
 
@@ -62,9 +63,18 @@ steady/rebuild disk, peak memory, interruption, and corruption.
 - Windows x64, Linux x64, macOS x64, and macOS arm64 packages load and query
   the statically packaged extension.
 
-The experiment stopped because correctness and integrity failed. A quantized
-HNSW backend must now be qualified separately; ClipsX will not retain `vec1`
-as a second production backend.
+The `vec1` experiment stopped because correctness and integrity failed. A
+USearch HNSW experiment then passed basic save/reopen behavior without its
+optional SIMD dependency, but the full target build remained incomplete after
+90 minutes while using eight workers and roughly 951 MiB. Its default optional
+SIMD package also failed to compile under MSVC. The dependency and experiment
+were removed.
+
+The selected design is instead a parallel signed-int8 flat scan followed by
+exact float32 reranking of 100 candidates. It has no trained model, graph,
+second production implementation, or new native dependency. Inserts and
+deletes are ordinary derived-row changes. A corrupt or missing file can be
+discarded and rebuilt without repairing graph topology.
 
 ## Evidence table
 
@@ -80,9 +90,16 @@ as a second production backend.
 | Build and storage | 9.618 s insert; 98.680 s training; 77.700 s build; 2,515,091,456-byte database | Recorded |
 | Committed close/reopen integrity | `PRAGMA integrity_check` reported stored PQ mismatch at row 217680 | Failed integrity |
 | Other release targets | Not run after hard Windows rejection | Stopped |
+| USearch core persistence | Save, close, reopen, nearest match, and delete passed on Windows | Basic behavior passed |
+| USearch default packaging | Optional NumKong failed to compile with MSVC | Failed simplicity/packaging |
+| USearch 540k × 1,024 BF16 HNSW build | Terminated after more than 90 minutes; ~951 MiB resident, eight workers | Failed build-cost gate |
+| Parallel int8 flat scan, 540k × 1,024 | p50 15.086 ms; p95/p99 18.399 ms; 552,960,000 vector bytes | Passed 75 ms gate |
+| Int8 candidate recall against float32 | recall@10 100% on 10k × 256 deterministic dense vectors with 100 candidates | Passed provisional 95% gate |
 
 The dense corpus is synthetic and not a substitute for a labelled clipboard
 quality set. Its recall alone would require more investigation, but the
 committed close/reopen integrity failure independently rejects the candidate.
-Phase 1 may define a replaceable backend boundary and sidecar ownership, but
-production retrieval must use a separately qualified backend.
+Phase 1 may now define the sidecar around the quantized-flat representation.
+Installed-build certification must still measure labelled clipboard recall,
+exact reranking, filters, peak memory, corruption recovery, and every release
+target before making the 60,000-item product claim.

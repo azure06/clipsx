@@ -28,8 +28,8 @@ The proposed solution is:
 - Keep full-text search (FTS) in `clips.db`.
 - Put large, disposable semantic-search data in one sidecar database file per
   index generation.
-- Use an approximate-nearest-neighbor index after it passes performance,
-  quality, recovery, and desktop-packaging tests.
+- Use one parallel int8 scan followed by exact float32 reranking; it has passed
+  provisional performance and quality tests without adding a graph engine.
 - Keep only one production vector-search implementation.
 - Bound the amount of semantic work one unusually large clip can create.
 - Batch history-row loading and render only visible rows.
@@ -86,8 +86,8 @@ At an average of nine vectors per clip:
 540,000 x 4,096 bytes = 2,211,840,000 bytes, about 2.06 GiB
 ```
 
-That is only the raw vector data. Chunk text, database pages, lookup indexes,
-and ANN structures require additional space.
+That is only the raw float32 vector data. The int8 scan projection adds about
+527 MiB at this capacity; chunk text, database pages, and mappings add more.
 
 ### 2.2 Why does one clip have multiple vectors?
 
@@ -257,7 +257,7 @@ Proposed ownership:
 | Location | Authority |
 | --- | --- |
 | `clips.db` | Clips, representations, metadata, FTS, provider configuration, embedding spaces, generation lifecycle and jobs |
-| `search-index/generation-{id}.sqlite` | Chunks, unique embedding inputs, vectors, mappings and ANN structures for exactly one generation |
+| `search-index/generation-{id}.sqlite` | Chunks, unique inputs, int8 scan vectors, float32 rerank vectors, and stable ordinal mappings for one generation |
 | `SemanticIndexService` | The only component allowed to coordinate semantic index state |
 
 Benefits:
@@ -272,7 +272,7 @@ The sidecar does **not** automatically make the vectors smaller. Size reduction
 comes from deduplication, bounded chunking, and—only where measurements prove it
 safe—vector-index compression or quantization.
 
-## 6. Exact search and ANN
+## 6. Quantized candidate search and exact reranking
 
 ### 6.1 Exact vector search
 
@@ -292,46 +292,47 @@ Exact search is valuable as:
 
 - A correctness reference for tests.
 - A reasonable strategy for a small index.
-- The source of truth when measuring ANN recall.
+- The source of truth when measuring quantized candidate recall.
 
-It should not remain as a separate production backend after the ANN cutover.
-The chosen vector engine should expose both its exact-small and ANN-large modes
-through one implementation.
+The full float32 scan remains a test oracle, not a second production backend.
 
-### 6.2 Approximate-nearest-neighbor search
+### 6.2 Quantized flat candidate search
 
-ANN builds a data structure that avoids comparing the query with every vector.
-It asks, approximately, “which areas of this vector space are promising?” and
-searches those areas first.
-
-This trades a small amount of recall for a large speed improvement.
+The selected backend converts normalized vectors to signed int8 values and
+scans them in parallel. It still visits every eligible vector, but each value
+uses one byte instead of four and integer dot products are cheap. There is no
+trained model or graph to build, corrupt, tune, or synchronize.
 
 **Recall@10** answers this question:
 
-> Of the true exact top ten results, how many did ANN return?
+> Of the true exact top ten results, how many did the int8 candidate pass return?
 
-If ANN finds 19 of the exact top 20 results over many representative queries,
+If the candidate pass finds 19 of the exact top 20 results over many representative queries,
 its recall@20 is 95%.
 
 SQLite's official `vec1` extension was evaluated first. It supports exact and
 approximate modes, regular inserts/deletes, filtered retrieval, and exact
 reranking, but version 0.7 failed the Phase 0 correctness and persisted-index
-integrity gates at the target size. ClipsX therefore does not adopt it. The
-next isolated experiment evaluates a quantized HNSW backend; only one backend
-may enter production.
+integrity gates at the target size. ClipsX therefore does not adopt it. A
+subsequent USearch HNSW experiment failed the build-cost and default Windows
+packaging gates. ClipsX selects a parallel int8 flat scan with exact float32
+reranking: it met the provisional latency and recall gates, has no trained
+graph, and keeps one simple production retrieval path.
 
 ### 6.3 Candidate retrieval and reranking
 
-ANN should not directly decide the final user-visible order.
+Quantized scores do not directly decide the final user-visible order.
 
 Instead:
 
-1. ANN returns perhaps 200–500 promising vector IDs.
+1. The int8 scan returns 100 promising vector ordinals.
 2. ClipsX computes exact cosine scores for that small candidate set.
 3. Multiple chunks are reduced to the best chunk per clip.
 4. FTS and semantic candidates are fused.
 
-This keeps ANN fast while recovering much of exact ranking's quality.
+This keeps retrieval fast while recovering float32 ranking quality. Canonical
+filters become a compact eligible-clip ordinal bitset, not a Rust hash set of
+every string ID; the scan skips ineligible ordinals before scoring.
 
 ## 7. Distance, cosine similarity and normalization
 
@@ -578,7 +579,7 @@ To keep the design small and maintainable:
 - No persisted renderer selection.
 - No arbitrary tokenizer pretending to match every embedding model.
 - No per-component indexing workers.
-- No user-configurable collection of low-level ANN parameters.
+- No user-configurable collection of low-level vector-engine parameters.
 - No silent exclusion of old history from Meaning Search.
 - No promise that a sidecar alone reduces disk size.
 
@@ -598,7 +599,7 @@ Measure:
 - Unique enriched-input ratio.
 - Vector dimensions and raw bytes.
 - Exact baseline latency.
-- ANN p50, p95 and p99 latency.
+- Quantized candidate-scan p50, p95 and p99 latency.
 - Recall@10 and recall@50 against exact search.
 - Incremental insert, update and deletion cost.
 - Full-build duration.
@@ -617,8 +618,9 @@ Provisional acceptance gates:
 - Missing/corrupt sidecars degrade safely to FTS.
 - The backend passes installed-build tests on every advertised platform.
 
-If `vec1` fails, stop. Evaluate a quantized HNSW backend as a replacement in a
-new qualification experiment. Do not keep both implementations.
+`vec1` and HNSW failed their qualification gates and are not retained. The
+selected parallel int8 flat scan remains subject to installed-build and
+labelled-corpus certification. Do not keep multiple production implementations.
 
 ### Phase 1: approve architecture and reset contract
 
@@ -684,7 +686,7 @@ or partially active index.
 - Embed the query in the active generation's space.
 - Search the chosen vector backend.
 - Apply canonical filters without materializing every eligible clip ID in Rust.
-- Retrieve a bounded ANN candidate set.
+- Retrieve 100 int8 candidates using an eligible-clip ordinal bitset.
 - Rerank candidates exactly.
 - Keep the best chunk per clip.
 - Add the literal lexical tier and retain RRF for other results.
@@ -769,11 +771,11 @@ These should not be decided from intuition alone:
 1. What are the real chunk-count median, p95 and maximum?
 2. How many enriched embedding inputs are duplicates?
 3. Is 64 chunks per clip sufficient for search quality?
-4. Which ANN settings meet recall and latency targets?
+4. Does the fixed int8 candidate count meet labelled recall and latency targets?
 5. What are steady and rebuild-peak disk sizes?
-6. Is `vec1` safe and easy to statically package on every release target?
-7. How much RAM does training, building and querying use?
-8. How often do narrow filters require deeper ANN candidate retrieval?
+6. Does the dependency-free int8 scanner pass every release target?
+7. How much RAM do building and querying use?
+8. Do ordinal eligibility bitsets preserve narrow-filter recall?
 9. Is history-summary batching enough, or is a persisted preview cache needed?
 10. Does retaining every intentionally loaded summary fit the frontend memory
     budget, or is a bounded page cache justified?
