@@ -138,6 +138,19 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - Windows OCR blocks release; Linux OCR may rely on system Tesseract only when installation and recovery are explicit and certified.
 - Configuration sync blocks release; clipboard-content sync remains post-release.
 
+## Semantic search scale
+
+- [x] Qualify the 60,000-clip capacity design and reject backends that fail correctness, packaging, or rebuild-cost gates. Evidence: [qualification report](SEMANTIC_SEARCH_QUALIFICATION.md).
+- [x] Select one dependency-free int8 candidate scan with float32 reranking; do not retain `vec1`, HNSW, or the full float32 scan as alternate production backends.
+- [ ] Move generation-owned chunks and vectors from `clips.db` into validated `search-index/generation-{id}.sqlite` sidecars.
+- [ ] Bound each clip to 64 semantic chunks, add a routing chunk for truncated long documents, and deduplicate complete enriched embedding inputs.
+- [ ] Make sidecar-first job completion and generation activation recoverable under injected interruption and corruption.
+- [ ] Replace string-ID eligibility materialization with stable ordinals and compact bitsets; rerank 100 candidates exactly before RRF.
+- [ ] Batch history-summary hydration, virtualize list/grid rendering, and replace the load-all End shortcut.
+- [ ] Add Meaning Search progress, disk estimate, rebuild, retry, delete-index, and FTS-fallback operations.
+- [ ] Add Recall as a separate bounded generation action after search scale is complete; secrets remain excluded by default and automatic Recall never includes them.
+- [ ] Certify labelled recall, latency, memory, disk, recovery, and installed packages on Windows x64, Linux x64, macOS x64, and macOS arm64.
+
 ## Delivery principles
 
 - Preserve independent raw representations before deriving meaning or previews.

@@ -35,7 +35,7 @@ React owns interaction and renders typed presentation models. Rust owns native c
 - Platform adapters alone interpret native clipboard identifiers. ClipsX never guesses UTI, OLE, or equivalent native types.
 - Renderer selection is ephemeral UI policy. It never changes canonical data or Original/Plain Text clipboard output.
 - Binary payloads live in managed application files; SQLite stores metadata and relative references, never a generic clipboard BLOB.
-- The schema is fresh and currently version 7. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
+- The schema is fresh and currently version 8. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
 - Community extensions are untrusted WebAssembly Components. Providers are host-owned because credentials, consent, scheduling, and vector-space integrity are privileged concerns.
 
 ## Capture and persistence
@@ -119,7 +119,7 @@ flowchart LR
 
 `builtin.search.fts` is always enabled. It builds one derived FTS projection per clip from notes, tags, ready textual representations, and completed OCR. HTML and RTF contribute only safely extracted visible text; raw markup/control streams never enter FTS. Equivalent normalized visible text from sibling representations or OCR contributes once, while genuinely distinct text remains searchable. Simple syntax turns whitespace tokens into prefix terms with implicit AND, so `doc` matches `document`; advanced mode passes FTS5 syntax through and reports typed query errors.
 
-Keyword and filter-only search apply eligibility predicates inside SQLite; the normal FTS path does not first materialize every eligible clip ID in application memory. Semantic search currently still resolves that set because its exact-vector implementation requires it; approximate nearest-neighbor indexing is a separate future scale decision.
+Keyword and filter-only search apply eligibility predicates inside SQLite. Semantic filtering resolves matching clip ordinals into a compact bitset; it does not materialize a hash set of every string clip ID. The quantized scan checks this bitset before scoring.
 
 Optional sources run independently over the same eligible set. The current optional source, `builtin.search.semantic_text`, can contribute semantic-only clips. Source failures retain FTS results with diagnostics. Candidate lists are bounded at 5,000 entries per source; results record source ranks, use equal-weight reciprocal-rank fusion, sort deterministically, then paginate. FTS and semantic source participation are persisted separately, so disabling Meaning Search never stops indexing.
 
@@ -139,7 +139,9 @@ Semantic inputs are independently built from notes, tags, every ready text repre
 
 Blocks sharing structural context pack toward 1,536 UTF-8 bytes. A contextual Ollama input never exceeds 2,048 bytes; structural prefixes are bounded to 384 bytes and stored only in the embedding input. Normal structural chunks do not overlap. An oversized atom is split Unicode-safely with at most 256 bytes of overlap, and a reported provider overflow recursively subdivides only the failing chunk.
 
-`search_chunks` stores clean snippet text plus strategy/version and representation/artifact provenance; `search_embeddings` stores only one vector per chunk. Pipeline version 3 invalidates old routing/chunk behavior. Relational, monotonic generations allow one active and one building generation per source. The old active generation remains searchable until every replacement job succeeds, then promotion is atomic.
+Large semantic data lives in one disposable `search-index/generation-{id}.sqlite` sidecar per generation. A sidecar stores clean snippets, strategy/source provenance, stable clip/chunk ordinals, signed-int8 scan vectors, and float32 rerank vectors. `clips.db` stores embedding-space identity, generation/job lifecycle, the safe relative sidecar path, size, checksum, backend ID, encoding, and candidate policy. Pipeline changes create a replacement generation; they never mutate the active sidecar in place.
+
+The only production retrieval path is a dependency-free parallel int8 flat scan followed by exact float32 reranking of 100 candidates and best-chunk-per-clip reduction. The active generation remains searchable while a replacement builds. Activation occurs only after the sidecar is durable and validated; the old generation is superseded only after the active pointer commits. Missing or corrupt sidecars make the optional semantic source unavailable while FTS continues normally.
 
 ### Providers
 
@@ -159,13 +161,13 @@ Hosted providers and visual embedding runtimes are not implemented. They require
 | Canonical history | `history/`, `foundation/`    | domain records, SQLite, managed-file lifecycle, settings, reset             |
 | Contributions     | `contributions/`             | built-in detectors, renderer resolution, transforms                         |
 | Artifacts         | `artifacts/`                 | thumbnails, OCR, artifact lifecycle                                         |
-| Search            | `search/`                    | FTS, source planner, semantic spaces/jobs/chunks/vectors                    |
+| Search            | `search/`                    | FTS, source planner, semantic generation coordinator and sidecar store      |
 | Extensions        | `extensions/`, `wit/`        | manifests, packages, WASM runtime, registry and quarantine                  |
 | Providers         | `providers/`                 | host-owned capability contracts and future adapters                         |
 
 SQLite keeps canonical clip tables separate from derived `artifact_*`, `search_*`, and extension runtime/cache tables. Artifacts have an explicit owning clip; input edges are same-clip provenance. Saved transformed clips survive source deletion because live links are nullable and bounded provenance snapshots remain. Managed files are removed only after their final canonical or derived reference disappears. Do not persist renderer trees, JSON ASTs, decoded tokens, parsed URLs, generic metadata blobs, or unsaved transform output as canonical clip metadata.
 
-Semantic retrieval uses exact cosine ranking for release portability: SQL filters eligible clips before Float32 vectors stream through a best-chunk-per-clip bounded heap. ANN is deferred until an active space exceeds 50,000 chunks or local ranking p95 exceeds 100 ms, excluding provider latency; SQLite `vec1` is preferred only once its testing and desktop packaging are release-ready.
+Semantic sidecars are derived data, not canonical databases. Factory reset removes `search-index/`; “Delete Meaning Search index” removes sidecars and generation/job state without touching clips or FTS. The selected int8 scan measured 18.4 ms p95 at the conservative 540,000 × 1,024 target on the qualification machine. Labelled-corpus recall, filters, recovery, memory, and every installed release target remain certification gates.
 
 ## Legacy reference policy
 

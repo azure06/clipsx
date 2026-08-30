@@ -14,7 +14,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v2";
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,9 @@ impl AppRoots {
     }
     pub fn extensions(&self) -> PathBuf {
         self.data.join("extensions")
+    }
+    pub fn search_index(&self) -> PathBuf {
+        self.data.join("search-index")
     }
 }
 
@@ -222,6 +225,7 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
         roots.database().with_extension("db-shm"),
         roots.clipboard_data(),
         roots.extensions(),
+        roots.search_index(),
     ] {
         match remove_owned(&path, &roots.data) {
             Ok(true) => deleted.push(path.display().to_string()),
@@ -383,6 +387,26 @@ mod tests {
             config: root.path().join("config"),
         };
         assert!(factory_reset(&roots, "no").is_err());
+    }
+    #[test]
+    fn reset_removes_the_owned_search_index_root() {
+        let root = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: root.path().join("data"),
+            config: root.path().join("config"),
+        };
+        fs::create_dir_all(roots.search_index()).unwrap();
+        fs::write(
+            roots.search_index().join("generation-test.sqlite"),
+            b"derived",
+        )
+        .unwrap();
+        let result = factory_reset(&roots, "RESET CLIPSX").unwrap();
+        assert!(!roots.search_index().exists());
+        assert!(result
+            .deleted
+            .iter()
+            .any(|path| path.ends_with("search-index")));
     }
     #[test]
     fn managed_file_stages_and_deduplicates_by_hash() {

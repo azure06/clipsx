@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations). Runtime boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 7 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 8 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
 
 ## Data flow
 
@@ -161,10 +161,11 @@ flowchart TB
     D --> F[search_documents_fts]
     S[search_embedding_spaces] --> G[search_index_generations]
     G --> J[search_index_jobs]
-    G --> H[search_chunks]
-    C --> H
-    H --> V[search_embeddings]
-    V -. measured future boundary .-> A[(ANN / SQLite vec1)]
+    G --> X[(generation sidecar)]
+    C -. rebuild input .-> X
+    X --> H[chunks and ordinal mappings]
+    X --> Q[int8 scan vectors]
+    X --> V[float32 rerank vectors]
 ```
 
 | Table | Class | Purpose | Write authority | Lifecycle / ownership |
@@ -172,14 +173,13 @@ flowchart TB
 | `search_documents` | Derived | Stores the normalized per-clip text document used by lexical search. | Search projection/indexing services | Owned by the clip, rebuildable, and deleted by cascade. Database triggers keep FTS synchronized. |
 | `search_documents_fts` | Derived | Provides the FTS5 inverted index queried for lexical candidates. | SQLite FTS5 through ClipsX-defined synchronization triggers | Framework-maintained projection of `search_documents`; rebuildable and never canonical content. |
 | `search_embedding_spaces` | Infrastructure | Identifies an immutable provider/model vector space, including revision, dimensions, normalization, and distance metric. | Provider discovery/probing and semantic-index setup | Long-lived compatibility boundary. Prevents embeddings from incompatible vector spaces being mixed. |
-| `search_index_generations` | Operational | Tracks a monotonic semantic-index build as `building`, `active`, `failed`, or `superseded`. | Semantic indexing coordinator | Generation-scoped lifecycle supports atomic promotion and retention of the previous active index. |
+| `search_index_generations` | Operational | Tracks lifecycle plus backend ID, encoding, candidate count, safe sidecar path, byte size, and checksum. | Semantic indexing coordinator | Generation-scoped lifecycle supports validated activation and retention of the previous active sidecar. |
 | `search_index_jobs` | Operational | Tracks per-generation, per-clip indexing progress, attempts, and failures. | Semantic indexing coordinator/workers | Retryable recovery state owned by its generation/clip scope; cascades with either side. |
-| `search_chunks` | Derived | Stores clean bounded text chunks and strategy/source provenance for a generation and clip. | Structure-aware chunking pipeline | Owned by generation + clip. Rebuildable; optional representation/artifact links record origin without changing ownership. |
-| `search_embeddings` | Derived | Stores one Float32 vector BLOB for each semantic chunk. | Configured text-embedding provider through indexing workers | Owned by its chunk and rebuildable. Dimension triggers enforce compatibility through chunk → generation → embedding space. |
+| Generation sidecar | Derived file | Stores bounded chunks, provenance, stable ordinals, int8 scan vectors, float32 rerank vectors, and mappings for exactly one generation. | `SemanticIndexStore` only | Rebuildable and generation-owned. It contains no canonical clip data and is addressed only by an owned relative path from `search_index_generations`. |
 
 Promotion is atomic: a building generation becomes active only after every job succeeds; otherwise the previous active generation remains searchable. Reindexing replaces a clip’s chunks transactionally.
 
-Release search is exact cosine ranking. SQL first restricts eligible clip IDs, vectors stream from Float32 BLOBs, and only the best chunk per clip enters a bounded top-candidate heap. This is simple and portable but remains linear in eligible chunks. Evaluate ANN only above 50,000 active chunks or when local ranking p95 exceeds 100 ms (provider latency excluded); prefer official SQLite `vec1` only when testing and cross-platform packaging are release-ready.
+Release search builds a compact eligible-clip ordinal bitset, scans normalized int8 vectors in parallel, retains 100 candidates, then reranks those candidates with float32 cosine similarity. This remains linear but is deterministic, dependency-free, immediately mutable, and has no trained graph. The full float32 scan exists only as a test oracle.
 
 ## 7. Extensions
 
@@ -205,4 +205,4 @@ Extension tables store package/runtime infrastructure, not arbitrary extension-o
 
 The architecture is appropriate for a local-first pre-1.0 clipboard: canonical truth is normalized, configuration has explicit scope, derived data is rebuildable, operational state is recoverable, ownership is enforceable, and files are deleted durably after database commits. The main cost is more lifecycle tables and joins, accepted in exchange for recovery and provenance.
 
-The deliberate limits are measurable: exact vector scans may eventually need ANN, JSON preferences depend on typed application validation, and factory reset remains acceptable only before the first stable release. These are explicit boundaries, not hidden data-model debt.
+The deliberate limits are measurable: int8 candidate recall requires labelled certification, JSON preferences depend on typed application validation, and factory reset remains acceptable only before the first stable release. These are explicit boundaries, not hidden data-model debt.
