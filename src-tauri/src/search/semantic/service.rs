@@ -1480,36 +1480,42 @@ mod tests {
         assert!(dot_blob(&[1.0], &vector_blob(&[1.0, 0.0])).is_err());
     }
 
-    /// Reproducible local scan baseline; run with
-    /// `cargo test exact_vector_scan_benchmark -- --ignored --nocapture`.
+    /// Reproducible conservative-capacity scan baseline; run in release mode:
+    /// `cargo test --release exact_vector_scan_benchmark -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn exact_vector_scan_benchmark() {
         use std::time::Instant;
 
-        const DIMENSIONS: usize = 768;
-        const LIMIT: usize = 5_000;
+        const DIMENSIONS: usize = 1_024;
+        const LIMIT: usize = 100;
+        const RUNS: usize = 7;
         let query = vec![1.0_f32 / (DIMENSIONS as f32).sqrt(); DIMENSIONS];
         let blob = vector_blob(&query);
-        for chunks in [1_000_usize, 10_000, 50_000] {
-            let started = Instant::now();
-            let mut heap = BinaryHeap::with_capacity(LIMIT + 1);
-            for index in 0..chunks {
-                push_bounded(
-                    &mut heap,
-                    ScoreEntry {
-                        clip_id: format!("clip-{index:08}"),
-                        score: dot_blob(&query, &blob).unwrap(),
-                        text: String::new(),
-                    },
-                    LIMIT,
-                );
+        for chunks in [5_000_usize, 540_000] {
+            let mut elapsed = Vec::with_capacity(RUNS);
+            for _ in 0..RUNS {
+                let started = Instant::now();
+                let mut heap = BinaryHeap::with_capacity(LIMIT + 1);
+                for index in 0..chunks {
+                    push_bounded(
+                        &mut heap,
+                        ScoreEntry {
+                            clip_id: format!("clip-{index:08}"),
+                            score: dot_blob(&query, &blob).unwrap(),
+                            text: String::new(),
+                        },
+                        LIMIT,
+                    );
+                }
+                assert_eq!(heap.len(), chunks.min(LIMIT));
+                elapsed.push(started.elapsed().as_micros());
             }
+            elapsed.sort_unstable();
             eprintln!(
-                "exact-vector-scan chunks={chunks} dimensions={DIMENSIONS} elapsed_ms={}",
-                started.elapsed().as_millis()
+                "exact-vector-scan chunks={chunks} dimensions={DIMENSIONS} limit={LIMIT} runs={RUNS} p50_us={} p95_us={} p99_us={}",
+                elapsed[RUNS / 2], elapsed[RUNS - 1], elapsed[RUNS - 1]
             );
-            assert_eq!(heap.len(), chunks.min(LIMIT));
         }
     }
 }
