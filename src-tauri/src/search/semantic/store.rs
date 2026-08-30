@@ -1,6 +1,7 @@
 //! Owns the disposable SQLite sidecar for one semantic-index generation.
 
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
@@ -55,7 +56,7 @@ CREATE TABLE semantic_chunks (
     source_manifest TEXT NOT NULL,
     projection_hash TEXT NOT NULL,
     chunker_id TEXT NOT NULL,
-    chunker_version INTEGER NOT NULL CHECK (chunker_version > 0),
+    chunker_version TEXT NOT NULL,
     UNIQUE (clip_ordinal, ordinal_in_clip)
 ) STRICT;
 
@@ -89,7 +90,152 @@ pub struct BuildingSidecar {
     relative_path: String,
 }
 
+/// One fully prepared chunk written through the generation's single writer.
+/// The input hash covers the complete provider input, including bounded context.
+#[derive(Debug, Clone)]
+pub struct SidecarChunk {
+    pub input_hash: String,
+    pub vector: Vec<f32>,
+    pub kind: String,
+    pub text: String,
+    pub representation_id: Option<String>,
+    pub artifact_id: Option<String>,
+    pub source_manifest: String,
+    pub projection_hash: String,
+    pub chunker_id: String,
+    pub chunker_version: String,
+}
+
 impl BuildingSidecar {
+    /// Atomically replaces all derived semantic rows for one clip.
+    ///
+    /// Clip ordinals survive replacements. Equal complete embedding inputs share
+    /// one vector row, and inputs no longer referenced by any chunk are removed.
+    pub async fn replace_clip(&mut self, clip_id: &str, chunks: &[SidecarChunk]) -> Result<()> {
+        if clip_id.is_empty() {
+            bail!("semantic clip id cannot be empty");
+        }
+        let dimensions: i64 =
+            sqlx::query_scalar("SELECT dimensions FROM semantic_sidecar_meta WHERE singleton = 1")
+                .fetch_one(&mut self.connection)
+                .await?;
+        let dimensions = usize::try_from(dimensions)?;
+        let prepared = chunks
+            .iter()
+            .map(|chunk| prepare_chunk(chunk, dimensions))
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut transaction = self.connection.begin().await?;
+        let clip_ordinal = if let Some(ordinal) = sqlx::query_scalar::<_, i64>(
+            "SELECT clip_ordinal FROM semantic_clips WHERE clip_id = ?",
+        )
+        .bind(clip_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        {
+            ordinal
+        } else {
+            let ordinal: i64 =
+                sqlx::query_scalar("SELECT COALESCE(MAX(clip_ordinal) + 1, 0) FROM semantic_clips")
+                    .fetch_one(&mut *transaction)
+                    .await?;
+            sqlx::query("INSERT INTO semantic_clips (clip_ordinal, clip_id) VALUES (?, ?)")
+                .bind(ordinal)
+                .bind(clip_id)
+                .execute(&mut *transaction)
+                .await?;
+            ordinal
+        };
+
+        let old_chunk_ordinals: HashMap<i64, i64> = sqlx::query_as(
+            "SELECT ordinal_in_clip, chunk_ordinal FROM semantic_chunks WHERE clip_ordinal = ?",
+        )
+        .bind(clip_ordinal)
+        .fetch_all(&mut *transaction)
+        .await?
+        .into_iter()
+        .collect();
+        let mut next_chunk_ordinal: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(chunk_ordinal) + 1, 0) FROM semantic_chunks")
+                .fetch_one(&mut *transaction)
+                .await?;
+        sqlx::query("DELETE FROM semantic_chunks WHERE clip_ordinal = ?")
+            .bind(clip_ordinal)
+            .execute(&mut *transaction)
+            .await?;
+
+        for (ordinal_in_clip, chunk) in prepared.into_iter().enumerate() {
+            let ordinal_in_clip = i64::try_from(ordinal_in_clip)?;
+            let chunk_ordinal = old_chunk_ordinals
+                .get(&ordinal_in_clip)
+                .copied()
+                .unwrap_or_else(|| {
+                    let ordinal = next_chunk_ordinal;
+                    next_chunk_ordinal += 1;
+                    ordinal
+                });
+            let input_ordinal = if let Some(ordinal) = sqlx::query_scalar::<_, i64>(
+                "SELECT input_ordinal FROM semantic_inputs WHERE input_hash = ?",
+            )
+            .bind(&chunk.source.input_hash)
+            .fetch_optional(&mut *transaction)
+            .await?
+            {
+                ordinal
+            } else {
+                let ordinal: i64 = sqlx::query_scalar(
+                    "SELECT COALESCE(MAX(input_ordinal) + 1, 0) FROM semantic_inputs",
+                )
+                .fetch_one(&mut *transaction)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO semantic_inputs
+                     (input_ordinal, input_hash, vector_f32, vector_i8) VALUES (?, ?, ?, ?)",
+                )
+                .bind(ordinal)
+                .bind(&chunk.source.input_hash)
+                .bind(&chunk.vector_f32)
+                .bind(&chunk.vector_i8)
+                .execute(&mut *transaction)
+                .await?;
+                ordinal
+            };
+            sqlx::query(
+                "INSERT INTO semantic_chunks (
+                    chunk_ordinal, chunk_id, clip_ordinal, input_ordinal, ordinal_in_clip,
+                    kind, text, representation_id, artifact_id, source_manifest,
+                    projection_hash, chunker_id, chunker_version
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(chunk_ordinal)
+            .bind(format!("{clip_id}:{ordinal_in_clip}"))
+            .bind(clip_ordinal)
+            .bind(input_ordinal)
+            .bind(ordinal_in_clip)
+            .bind(&chunk.source.kind)
+            .bind(&chunk.source.text)
+            .bind(&chunk.source.representation_id)
+            .bind(&chunk.source.artifact_id)
+            .bind(&chunk.source.source_manifest)
+            .bind(&chunk.source.projection_hash)
+            .bind(&chunk.source.chunker_id)
+            .bind(&chunk.source.chunker_version)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        sqlx::query(
+            "DELETE FROM semantic_inputs
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM semantic_chunks
+                 WHERE semantic_chunks.input_ordinal = semantic_inputs.input_ordinal
+             )",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
     /// Marks the sidecar complete, closes SQLite, and returns its immutable identity.
     pub async fn finalize(self) -> Result<FinalizedSidecar> {
         let BuildingSidecar {
@@ -112,6 +258,47 @@ impl BuildingSidecar {
             sha256: file_sha256(&path)?,
         })
     }
+}
+
+struct PreparedChunk<'a> {
+    source: &'a SidecarChunk,
+    vector_f32: Vec<u8>,
+    vector_i8: Vec<u8>,
+}
+
+fn prepare_chunk(chunk: &SidecarChunk, dimensions: usize) -> Result<PreparedChunk<'_>> {
+    if chunk.input_hash.len() != 64
+        || !chunk
+            .input_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        bail!("semantic input hash must be a 64-character hexadecimal SHA-256");
+    }
+    if chunk.vector.len() != dimensions || chunk.vector.iter().any(|value| !value.is_finite()) {
+        bail!("semantic vector dimensions or values are invalid");
+    }
+    if chunk.kind.is_empty()
+        || chunk.text.is_empty()
+        || chunk.source_manifest.is_empty()
+        || chunk.projection_hash.is_empty()
+        || chunk.chunker_id.is_empty()
+        || chunk.chunker_version.is_empty()
+    {
+        bail!("semantic chunk metadata cannot be empty");
+    }
+    let mut vector_f32 = Vec::with_capacity(dimensions * 4);
+    let mut vector_i8 = Vec::with_capacity(dimensions);
+    for value in &chunk.vector {
+        vector_f32.extend_from_slice(&value.to_le_bytes());
+        let quantized = (value.clamp(-1.0, 1.0) * 127.0).round() as i8;
+        vector_i8.push(quantized as u8);
+    }
+    Ok(PreparedChunk {
+        source: chunk,
+        vector_f32,
+        vector_i8,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -297,6 +484,21 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn chunk(hash_digit: char, text: &str, vector: Vec<f32>) -> SidecarChunk {
+        SidecarChunk {
+            input_hash: hash_digit.to_string().repeat(64),
+            vector,
+            kind: "paragraph".into(),
+            text: text.into(),
+            representation_id: Some("representation-1".into()),
+            artifact_id: None,
+            source_manifest: "{}".into(),
+            projection_hash: "projection".into(),
+            chunker_id: "builtin.chunker.plain".into(),
+            chunker_version: "1".into(),
+        }
+    }
+
     #[tokio::test]
     async fn finalized_sidecar_is_valid_disposable_and_isolated_from_canonical_data() {
         let directory = tempdir().unwrap();
@@ -365,5 +567,83 @@ mod tests {
             )
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn replacement_is_atomic_idempotent_and_deduplicates_inputs() {
+        let directory = tempdir().unwrap();
+        let store = SemanticIndexStore::new(directory.path()).unwrap();
+        let mut building = store.create("replace", 3).await.unwrap();
+        let shared = chunk('a', "shared", vec![1.0, 0.0, -1.0]);
+
+        building
+            .replace_clip("clip-1", &[shared.clone(), chunk('b', "old", vec![0.0; 3])])
+            .await
+            .unwrap();
+        let original_first_chunk_ordinal: i64 = sqlx::query_scalar(
+            "SELECT chunk_ordinal FROM semantic_chunks
+             WHERE clip_ordinal = 0 AND ordinal_in_clip = 0",
+        )
+        .fetch_one(&mut building.connection)
+        .await
+        .unwrap();
+        building
+            .replace_clip("clip-2", std::slice::from_ref(&shared))
+            .await
+            .unwrap();
+        building
+            .replace_clip("clip-1", &[chunk('c', "new", vec![0.5; 3])])
+            .await
+            .unwrap();
+
+        let clip_ordinals: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT clip_id, clip_ordinal FROM semantic_clips ORDER BY clip_ordinal",
+        )
+        .fetch_all(&mut building.connection)
+        .await
+        .unwrap();
+        assert_eq!(
+            clip_ordinals,
+            vec![("clip-1".into(), 0), ("clip-2".into(), 1)]
+        );
+        let texts: Vec<String> =
+            sqlx::query_scalar("SELECT text FROM semantic_chunks ORDER BY clip_ordinal")
+                .fetch_all(&mut building.connection)
+                .await
+                .unwrap();
+        assert_eq!(texts, vec!["new", "shared"]);
+        let replaced_first_chunk_ordinal: i64 = sqlx::query_scalar(
+            "SELECT chunk_ordinal FROM semantic_chunks
+             WHERE clip_ordinal = 0 AND ordinal_in_clip = 0",
+        )
+        .fetch_one(&mut building.connection)
+        .await
+        .unwrap();
+        assert_eq!(replaced_first_chunk_ordinal, original_first_chunk_ordinal);
+        let input_hashes: Vec<String> =
+            sqlx::query_scalar("SELECT input_hash FROM semantic_inputs ORDER BY input_hash")
+                .fetch_all(&mut building.connection)
+                .await
+                .unwrap();
+        assert_eq!(input_hashes, vec!["a".repeat(64), "c".repeat(64)]);
+
+        let invalid = chunk('d', "invalid", vec![f32::NAN, 0.0, 0.0]);
+        assert!(building.replace_clip("clip-1", &[invalid]).await.is_err());
+        let retained: String = sqlx::query_scalar(
+            "SELECT text FROM semantic_chunks c JOIN semantic_clips s USING (clip_ordinal)
+             WHERE s.clip_id = 'clip-1'",
+        )
+        .fetch_one(&mut building.connection)
+        .await
+        .unwrap();
+        assert_eq!(retained, "new");
+
+        let stored_i8: Vec<u8> =
+            sqlx::query_scalar("SELECT vector_i8 FROM semantic_inputs WHERE input_hash = ?")
+                .bind("a".repeat(64))
+                .fetch_one(&mut building.connection)
+                .await
+                .unwrap();
+        assert_eq!(stored_i8, vec![127, 0, 129]);
     }
 }

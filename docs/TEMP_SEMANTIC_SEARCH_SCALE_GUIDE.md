@@ -643,7 +643,9 @@ are implemented. Creation refuses overwrite, finalization checkpoints and
 closes SQLite before hashing, opening validates identity/completeness/checksum,
 and removal accepts only one owned filename. The generation coordinator is not
 yet redirected, so the remaining bullets stay open rather than maintaining two
-live persistence paths.
+live persistence paths. Sidecar writes now replace one clip atomically, retain
+its stable clip/chunk ordinals, deduplicate complete embedding inputs by hash,
+and garbage-collect vectors after their final chunk reference disappears.
 
 - Add the owned `search-index/` root.
 - Implement `SemanticIndexStore`.
