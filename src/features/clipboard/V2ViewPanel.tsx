@@ -13,13 +13,7 @@ import type {
   RenderModel,
 } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
-import {
-  splitExtensionActions,
-  useTransformState,
-  type TransformControls,
-} from './useTransformState'
-import { ContributionParametersDialog } from './ContributionParametersDialog'
-import { TransformActionsDialog } from './TransformActionsDialog'
+import { useTransformState, type TransformControls } from './useTransformState'
 import { useTheme } from '../../shared/hooks/useTheme'
 
 const OCR_TAB_ID = '__ocr__'
@@ -817,23 +811,6 @@ export const V2ViewPanel = ({
         )}
       </div>
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}
-      {transformState.pickerOpen && (
-        <TransformActionsDialog
-          items={transformState.items}
-          actions={splitExtensionActions(transformState.actions).menuActions}
-          run={id => void transformState.run(id)}
-          runAction={id => void transformState.runAction(id)}
-          pinAction={(id, pinned) => void transformState.pinAction(id, pinned)}
-          onClose={transformState.closePicker}
-        />
-      )}
-      {transformState.parameterRequest && (
-        <ContributionParametersDialog
-          request={transformState.parameterRequest}
-          onCancel={transformState.cancelParameterRequest}
-          onSubmit={transformState.submitParameters}
-        />
-      )}
     </div>
   )
 }

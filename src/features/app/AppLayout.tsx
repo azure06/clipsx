@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -48,7 +54,9 @@ export const AppLayout = () => {
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const splitViewRef = useRef<HTMLDivElement>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
+  const [historyWidth, setHistoryWidth] = useState(50)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
 
   const openSettings = useCallback(
@@ -293,6 +301,30 @@ export const AppLayout = () => {
     resetSearch()
   }
 
+  const beginSplitResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const container = splitViewRef.current
+    if (!container) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: true } }))
+
+    const resize = (pointerEvent: PointerEvent) => {
+      const bounds = container.getBoundingClientRect()
+      if (bounds.width <= 0) return
+      const minimum = Math.min(34, (280 / bounds.width) * 100)
+      const maximum = Math.max(60, 100 - (420 / bounds.width) * 100)
+      const next = ((pointerEvent.clientX - bounds.left) / bounds.width) * 100
+      setHistoryWidth(Math.min(maximum, Math.max(minimum, next)))
+    }
+    const finish = () => {
+      window.removeEventListener('pointermove', resize)
+      window.removeEventListener('pointerup', finish)
+      window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } }))
+    }
+    window.addEventListener('pointermove', resize)
+    window.addEventListener('pointerup', finish, { once: true })
+  }, [])
+
   return (
     // Main Container - Single Background Color/Gradient Source
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10">
@@ -334,17 +366,31 @@ export const AppLayout = () => {
                 </div>
 
                 {/* Split View Container */}
-                <div className="flex-1 flex gap-6 min-h-0 overflow-auto">
+                <div ref={splitViewRef} className="flex min-h-0 flex-1 overflow-hidden">
                   {/* LEFT PANEL — glass L1, peers with Preview */}
-                  <div className="flex-1 min-w-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left">
+                  <div
+                    className="min-w-0 shrink-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left"
+                    style={{ width: `${historyWidth}%` }}
+                  >
                     <ClipboardHistory
                       searchQuery={searchQuery}
                       className="flex-1"
                       onPreviewItem={setPreviewClipId}
                     />
                   </div>
+                  <button
+                    type="button"
+                    role="separator"
+                    aria-label="Resize history and preview"
+                    aria-orientation="vertical"
+                    aria-valuenow={Math.round(historyWidth)}
+                    className="group relative w-6 shrink-0 cursor-col-resize touch-none outline-none"
+                    onPointerDown={beginSplitResize}
+                  >
+                    <span className="absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full bg-slate-300/55 transition-colors group-hover:bg-violet-400/70 group-focus-visible:bg-violet-500 dark:bg-white/10" />
+                  </button>
                   {/* RIGHT PANEL: Preview & Actions */}
-                  <div className="w-1/2 shrink-0 flex flex-col gap-6 overflow-hidden">
+                  <div className="min-w-0 flex-1 flex flex-col gap-6 overflow-hidden">
                     {(() => {
                       const displayedClip = previewClip
                       if (displayedClip) {

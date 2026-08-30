@@ -21,13 +21,6 @@ interface types {
     input-thumbnail,
     monogram(string),
   }
-  record card-field { label: string, value: string }
-  record card-model {
-    leading: leading-visual,
-    title: string,
-    subtitle: option<string>,
-    fields: list<card-field>,
-  }
   record compact-model {
     leading: leading-visual,
     title: option<string>,
@@ -48,7 +41,6 @@ interface types {
     tree(string),
     key-value(list<key-value-entry>),
     image(image-model),
-    card(card-model),
     error(string),
   }
 

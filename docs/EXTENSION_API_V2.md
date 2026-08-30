@@ -64,6 +64,11 @@ Matchers establish applicability. The `action-state` guest export returns
 grant, input support, and session) can only downgrade that state and are checked
 again immediately before execution.
 
+The host exposes a `transformer_preset` action to the UI as a transform, not an
+extension action. This keeps direct conversion shortcuts such as Encode Base64
+or CSV to JSON with the transformations they run; Actions contains only
+operations that do not invoke a transformer preset.
+
 Every contribution defaults to a 1 MiB representation-transfer ceiling.
 `inputLimitBytes` may opt one contribution into a larger local transfer, up to
 the host maximum of 10 MiB; the host enforces it before copying bytes into
@@ -107,14 +112,9 @@ references such as `url(#gradient)` are allowed. Accepted icons are rendered as
 images, not injected into the main DOM.
 
 Actions may preview, copy, paste, save a new clip, open a declared URL, notify,
-open a declared dialog, or use the typed `compose_email` and `dial_phone` host
-handlers. A typed native handler declares exactly one matching effect and a
-bounded `facetValuePointer`; the host extracts that string from the action's
-bound facet and validates it before constructing the OS request. It never
-accepts an extension-provided URI. Typed native actions use local execution and
-a short-lived invocation token but require no data-egress permission. They
-cannot update/delete clips, inspect arbitrary
-history, or access filesystem, shell, database, or host clipboard APIs.
+or open a declared dialog. They cannot update/delete clips, inspect arbitrary
+history, or access filesystem, shell, database, host clipboard APIs, or native
+URI handlers.
 Only an action output with the `preview` disposition opens a temporary result
 tab. Copy, paste, save, navigation, notification, and dialog effects keep the
 currently selected clip view active; failures are reported without creating an
@@ -214,8 +214,6 @@ and first-use consent.
 demonstrates offline standalone Mermaid and Mermaid-in-Markdown detection, a
 theme-native React/GFM detail and dialog UI, per-diagram navigation, accessible
 source fallback, host-owned settings, and no network permission.
-`extensions/communication-actions` demonstrates typed Compose and Dial
-handlers without guest URI, network, shell, or filesystem access.
 An enabled compatible renderer that claims an otherwise unknown facet on an
 exact source representation suppresses the host's generic key/value details
 tab. That generic tab returns automatically when the renderer is unavailable;

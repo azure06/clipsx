@@ -18,7 +18,6 @@ import {
   Phone,
   Pin,
   PenLine,
-  Sparkles,
   Star,
   Table2,
   Terminal,
@@ -36,12 +35,10 @@ import {
   getPlatform,
   type ShortcutDef,
 } from '../../shared/keyboard/shortcuts'
-import { splitExtensionActions, type TransformControls } from './useTransformState'
 import { useToast } from '../../shared/contexts/ToastContext'
 
 const platform = getPlatform()
 const representationsShortcut: ShortcutDef = { modifiers: ['primary'], key: 'I' }
-const transformShortcut: ShortcutDef = { modifiers: ['primary'], key: 'T' }
 
 export interface PresentationActionContext {
   onDelete: (id: string) => void
@@ -132,11 +129,9 @@ export const ExtensionIcon = ({
 export const ClipActionsToolbar = ({
   presentation,
   context,
-  transformControls,
 }: {
   presentation: ClipPresentation
   context: PresentationActionContext
-  transformControls?: TransformControls | null
 }) => {
   const [copied, setCopied] = useState(false)
   const { toast } = useToast()
@@ -259,9 +254,6 @@ export const ClipActionsToolbar = ({
     )
     return values
   }, [context, copied, performCopy, presentation, t, toast])
-  const { toolbarActions: extensionToolbarActions, menuActions: extensionMenuActions } =
-    splitExtensionActions(transformControls?.actions ?? [])
-
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
@@ -276,28 +268,6 @@ export const ClipActionsToolbar = ({
             <ActionButton action={action} key={action.id} />
           </>
         ))}
-        {extensionToolbarActions.map(action => (
-          <button
-            key={action.id}
-            type="button"
-            aria-label={action.label}
-            disabled={!action.available}
-            title={action.unavailableReason ?? action.label}
-            className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10"
-            onClick={() => transformControls && void transformControls.runAction(action.id)}
-          >
-            <ExtensionIcon
-              name={action.icon}
-              light={action.iconSvg}
-              dark={action.iconSvgDark}
-              scale={action.iconScale}
-            />
-          </button>
-        ))}
-        {transformControls &&
-          (transformControls.items.length > 0 || extensionMenuActions.length > 0) && (
-            <TransformActionsTrigger controls={transformControls} />
-          )}
       </div>
     </Tooltip.Provider>
   )
@@ -335,29 +305,3 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
     </Tooltip.Root>
   )
 }
-
-const TransformActionsTrigger = ({ controls }: { controls: TransformControls }) => (
-  <Tooltip.Root>
-    <Tooltip.Trigger asChild>
-      <button
-        aria-label="Transform & Actions"
-        className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 dark:hover:bg-white/10"
-        onClick={controls.openPicker}
-      >
-        <Sparkles className="h-4 w-4" />
-      </button>
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-      <Tooltip.Content
-        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
-        sideOffset={5}
-      >
-        Transform & Actions
-        <span className="ml-1.5 font-mono text-gray-400">
-          {formatShortcut(transformShortcut, platform)}
-        </span>
-        <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
-)

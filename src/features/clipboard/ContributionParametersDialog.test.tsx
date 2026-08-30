@@ -1,13 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { ContributionParametersDialog } from './ContributionParametersDialog'
+import { ContributionParametersPanel } from './ContributionParametersDialog'
 import { schemaHasParameters } from './contributionParameters'
 
-describe('ContributionParametersDialog', () => {
+describe('ContributionParametersPanel', () => {
   it('renders declared controls and submits typed values with defaults', () => {
     const onSubmit = vi.fn()
     render(
-      <ContributionParametersDialog
+      <ContributionParametersPanel
         request={{
           kind: 'action',
           id: 'example/action',

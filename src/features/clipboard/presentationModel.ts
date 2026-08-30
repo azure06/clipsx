@@ -15,14 +15,6 @@ export const renderModelText = (model: RenderModel): string | null => {
       return JSON.stringify(model.value, null, 2)
     case 'key_value':
       return model.entries.map(([key, value]) => `${key}: ${value}`).join('\n')
-    case 'card':
-      return [
-        model.title,
-        model.subtitle,
-        ...model.fields.map(([key, value]) => `${key}: ${value}`),
-      ]
-        .filter(Boolean)
-        .join('\n')
     default:
       return null
   }

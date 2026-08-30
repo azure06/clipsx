@@ -82,12 +82,6 @@ pub enum ExtensionRenderModel {
     Tree(String),
     KeyValue(Vec<(String, String)>),
     Image,
-    Card {
-        leading: ExtensionLeadingVisual,
-        title: String,
-        subtitle: Option<String>,
-        fields: Vec<(String, String)>,
-    },
     Error(String),
 }
 
@@ -608,16 +602,6 @@ fn from_wit_render_model(
                 .collect(),
         ),
         RenderModel::Image(_) => ExtensionRenderModel::Image,
-        RenderModel::Card(value) => ExtensionRenderModel::Card {
-            leading: from_wit_leading(value.leading),
-            title: value.title,
-            subtitle: value.subtitle,
-            fields: value
-                .fields
-                .into_iter()
-                .map(|field| (field.label, field.value))
-                .collect(),
-        },
         RenderModel::Error(value) => ExtensionRenderModel::Error(value),
     }
 }

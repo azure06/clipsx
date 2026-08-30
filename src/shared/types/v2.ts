@@ -156,13 +156,6 @@ export type RenderModel =
   | { kind: 'tree'; value: unknown }
   | { kind: 'key_value'; entries: [string, string][] }
   | {
-      kind: 'card'
-      leading: LeadingVisual
-      title: string
-      subtitle: string | null
-      fields: [string, string][]
-    }
-  | {
       kind: 'image'
       source:
         | { kind: 'managed'; assetId: string }

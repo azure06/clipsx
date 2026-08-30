@@ -88,21 +88,27 @@ describe('RenderModelView', () => {
       'Unsupported preview',
     ],
     [{ kind: 'error', message: 'render failed' }, 'render failed'],
-    [
-      {
-        kind: 'card',
-        leading: { kind: 'swatch', red: 255, green: 0, blue: 64, alpha: 255 },
-        title: '#FF0040',
-        subtitle: 'Color',
-        fields: [['RGB', '255, 0, 64']],
-      },
-      '255, 0, 64',
-    ],
   ]
 
   it.each(fixtures)('renders the %s model without a legacy Content adapter', (model, expected) => {
     render(<RenderModelView presentation={presentation(model)} />)
     expect(screen.getAllByText(expected, { exact: false })[0]).toBeInTheDocument()
+  })
+
+  it('offers a compact copy control for each key/value entry', () => {
+    render(
+      <RenderModelView
+        presentation={presentation({
+          kind: 'key_value',
+          entries: [
+            ['Encoded', 'aGVsbG8='],
+            ['Decoded', 'hello'],
+          ],
+        })}
+      />
+    )
+
+    expect(screen.getAllByTitle('Copy')).toHaveLength(2)
   })
 
   it('keeps table cells structured instead of flattening them to tab text', () => {

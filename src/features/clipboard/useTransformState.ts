@@ -30,7 +30,13 @@ export type TransformControls = {
   run: (id: string, parameters?: Record<string, unknown>) => Promise<void>
   runAction: (id: string, parameters?: Record<string, unknown>) => Promise<void>
   pinAction: (id: string, pinned: boolean) => Promise<void>
+  busy: string | null
+  parameterRequest: ParameterRequest | null
+  cancelParameterRequest: () => void
+  submitParameters: (parameters: Record<string, unknown>) => void
+  pickerOpen: boolean
   openPicker: () => void
+  closePicker: () => void
 }
 
 export type ContextAction = {
@@ -45,6 +51,7 @@ export type ContextAction = {
   iconScale: number
   placements: Array<'preview_toolbar' | 'action_menu'>
   effects: string[]
+  transformPreset: boolean
   execution: 'local' | 'capability_backed'
   available: boolean
   unavailableReason: string | null
@@ -55,24 +62,6 @@ export type ContextAction = {
   externalNavigationOrigins: string[]
   httpOrigins: string[]
   providers: string[]
-}
-
-// Shared between the toolbar's pinned/preview_toolbar icon buttons and the
-// Transform & Actions picker, so an action pinned to the toolbar never also
-// appears redundantly in the picker's Actions list.
-export const splitExtensionActions = (actions: ContextAction[]) => {
-  const toolbarActions = actions
-    .filter(action => action.pinned || action.placements.includes('preview_toolbar'))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned))
-    .slice(0, 2)
-  const directIds = new Set(toolbarActions.map(action => action.id))
-  const menuActions = actions.filter(
-    action =>
-      action.pinned ||
-      action.placements.includes('action_menu') ||
-      (action.placements.includes('preview_toolbar') && !directIds.has(action.id))
-  )
-  return { toolbarActions, menuActions }
 }
 
 type ActionInvocation = { token: string; expiresAt: number }
@@ -111,19 +100,6 @@ export const useTransformState = ({
   const [parameterRequest, setParameterRequest] = useState<ParameterRequest | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const presentationKind = basePresentation?.activeView.presentationKind
-
-  // A custom extension detail view is a native child webview that always
-  // paints above the DOM, so any host overlay must ask it to hide first —
-  // regardless of whether it's the transform/action picker or the parameter
-  // request that can follow a selection, and regardless of what triggered it
-  // (menu, pinned toolbar button, or keyboard shortcut).
-  useEffect(() => {
-    window.dispatchEvent(
-      new CustomEvent('clipsx-host-overlay', {
-        detail: { open: Boolean(parameterRequest) || pickerOpen },
-      })
-    )
-  }, [parameterRequest, pickerOpen])
 
   useEffect(() => {
     if (!presentationKind || !sourceId) return
@@ -326,14 +302,59 @@ export const useTransformState = ({
   }, [])
 
   const openPicker = useCallback(() => setPickerOpen(true), [])
+  const closePicker = useCallback(() => setPickerOpen(false), [])
+  const cancelParameterRequest = useCallback(() => {
+    setParameterRequest(null)
+    setPickerOpen(true)
+  }, [])
+  const submitParameters = useCallback(
+    (parameters: Record<string, unknown>) => {
+      const request = parameterRequest
+      setParameterRequest(null)
+      if (!request) return
+      void (request.kind === 'action'
+        ? runAction(request.id, parameters)
+        : run(request.id, parameters))
+    },
+    [parameterRequest, run, runAction]
+  )
 
   useEffect(() => {
     onControls?.(
       items.length > 0 || actions.length > 0
-        ? { items, actions, run, runAction, pinAction, openPicker }
+        ? {
+            items,
+            actions,
+            run,
+            runAction,
+            pinAction,
+            busy,
+            parameterRequest,
+            cancelParameterRequest,
+            submitParameters,
+            pickerOpen,
+            openPicker,
+            closePicker,
+          }
         : null
     )
-  }, [actions, items, onControls, openPicker, pinAction, run, runAction])
+  }, [
+    actions,
+    busy,
+    cancelParameterRequest,
+    closePicker,
+    items,
+    onControls,
+    openPicker,
+    parameterRequest,
+    pickerOpen,
+    pinAction,
+    run,
+    runAction,
+    submitParameters,
+  ])
+
+  useEffect(() => () => onControls?.(null), [onControls])
 
   useEffect(() => {
     const platform = getPlatform()
@@ -377,15 +398,8 @@ export const useTransformState = ({
     preview,
     error,
     parameterRequest,
-    cancelParameterRequest: () => setParameterRequest(null),
-    submitParameters: (parameters: Record<string, unknown>) => {
-      const request = parameterRequest
-      setParameterRequest(null)
-      if (!request) return
-      void (request.kind === 'action'
-        ? runAction(request.id, parameters)
-        : run(request.id, parameters))
-    },
+    cancelParameterRequest,
+    submitParameters,
     applyResult,
     dismissPreview: () => {
       setPreview(null)
@@ -396,6 +410,7 @@ export const useTransformState = ({
       setActiveTransformer(null)
     },
     pickerOpen,
-    closePicker: () => setPickerOpen(false),
+    openPicker,
+    closePicker,
   }
 }

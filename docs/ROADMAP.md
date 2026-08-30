@@ -43,27 +43,27 @@ Use this boundary for the first production release:
 | ---------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Recognition      | Markdown, JSON, URL, table, and color facets                              | Base64, JWT, and other package-specific semantics                         |
 | Render/view      | Faithful formats, Markdown, JSON, table, and a basic color swatch         | Mermaid and explicit JWT inspection                                       |
-| Transform/action | Clipboard reconstruction, local-path opening, and host validation/brokers | Base64 encode/decode, focused data conversions, and communication actions |
+| Transform/action | Clipboard reconstruction, local-path opening, and host validation/brokers | Base64 encode/decode and focused data conversions |
 
 Core recognition does not imply a core action or rich renderer. In particular, table recognition and viewing stay useful without Data Tools; table export/conversion belongs to Data Tools. Base64 recognition, metadata, encoding, and decoding belong exclusively to the optional Base64 package. The host only provides generic bounded transform execution and expiring result presentation.
 
-No extension is installed by default. Users choose the following focused first-party packages from Discover. Small single-purpose packages avoid making users install unrelated tools; Data Tools and Communication Actions remain coherent bundles.
+No extension is installed by default. Users choose the following focused first-party packages from Discover. Small single-purpose packages avoid making users install unrelated tools; Data Tools remains a coherent bundle.
 
 - [x] **Mermaid:** standalone Mermaid and Mermaid fences inside a ClipsX-native enhanced Markdown renderer. Evidence: the offline React/GFM UI in [mermaid-viewer](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), three detector tests, light/dark rendered review, CLI pack/validate/inspect/test, and the host package-store install/load acceptance test pass (2026-08-25).
 - [x] **JWT Inspector:** decoded token anatomy without claiming signature verification. The package exclusively owns detection, its structured detail view, payload extraction/copy, and JWT-specific catalog/contribution identity; history rows may reuse its icon but never decode claims into preview text, logs, or search. Evidence: [JWT Inspector](https://github.com/azure06/clipsx-extensions/tree/main/extensions/jwt-inspector), removal of the host detector/renderer/decoder in [contributions](../src-tauri/src/contributions/host.rs), package pack/validate/test, payload-copy regression test, and the full Rust suite pass (2026-08-26).
 - [x] **Base64:** package-owned recognition, metadata, and explicit encode/decode transforms with bounded previews and no automatic content reveal. Evidence: [Base64](https://github.com/azure06/clipsx-extensions/tree/main/extensions/base64) detects standard, URL-safe, unpadded, and MIME-bearing data-URL inputs; encodes captured text or bounded binary representations; round-trips explicit media types without reading file-list paths; and previews decoded raster output through the host's generic expiring transform boundary (2026-08-27).
 - [x] **Data Tools:** optional offline conversion among JSON arrays, CSV, TSV, and strict Markdown tables; JSON/YAML/TOML interchange; JSON-to-TypeScript shapes; and URL encoding, decoding, normalization, and query extraction. Contextual actions carry contribution icons while typed outputs reuse the host's native previews. Core retains recognition and the generic transform/output boundary but contains no converter implementation. Evidence: [Data Tools](https://github.com/azure06/clipsx-extensions/tree/main/extensions/data-tools), package unit tests, and extension CLI pack/validate/inspect/test (2026-08-28).
-- [ ] **Communication Actions:** email/phone detection with Compose and Dial actions.
 - [x] Remove Mermaid rendering and the `mermaid` dependency from the main app. Core Markdown shows Mermaid fences as code; installing Mermaid adds an offline enhanced renderer that receives the original Markdown representation and becomes the specific structured view. Evidence: [core renderer](../src/features/clipboard/RenderModelView.tsx), [offline package](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), `npm run build` (2026-08-24: main chunk 1.07 MB; no Mermaid/Cytoscape/KaTeX chunks), and package detector tests.
-- [x] Add manifest-declared host action handlers for `compose_email` and `dial_phone`. Rust extracts the value from the bound facet, validates it, and invokes only the corresponding OS handler; arbitrary URI schemes remain unavailable. Evidence: [manifest contract](../src-tauri/src/extensions/manifest.rs), [host execution](../src-tauri/src/extensions/service.rs), and [Communication Actions](https://github.com/azure06/clipsx-extensions/tree/main/extensions/communication-actions); focused Rust/package tests pass.
-- [ ] Keep local-path opening in core and do not expose generic filesystem activation to extensions.
-- [ ] Retain and test the cheap core color detector and its basic core swatch. Base64 stays package-owned; removing that package removes its facet, renderer, and actions without affecting canonical clips.
-- [ ] Reconcile retired built-in facets/jobs/definitions and stale renderer preferences as rebuildable data. Saved transform outputs remain valid.
+- [x] Keep local-path opening in core and do not expose generic filesystem activation to extensions. Evidence: [core-only path IPC](../src-tauri/src/ipc/mod.rs) and the extension isolation boundary in [ARCHITECTURE.md](ARCHITECTURE.md).
+- [x] Retain and test the cheap core color detector and its basic core swatch. Base64 stays package-owned; removing that package removes its facet, renderer, and actions without affecting canonical clips. Evidence: [core detector and swatch tests](../src-tauri/src/contributions/host.rs) and [history-row swatch test](../src/features/clipboard/components/ClipboardListItem.test.tsx).
+- [x] Reconcile retired built-in facets/jobs/definitions and stale renderer preferences as rebuildable data. Saved transform outputs remain valid. Evidence: [retired-contribution cleanup](../src-tauri/src/contributions/host.rs) and the rebuildable-data contract in [ARCHITECTURE.md](ARCHITECTURE.md).
 - [x] Remove retired core content-transform implementations after package parity tests pass; keep only the generic extension transform cache, preview, and output boundary.
-- [ ] Keep Ask AI and Ask Local AI as acceptance fixtures until separately approved for public catalog publication.
-- [ ] **Extension quality gate:** every custom view uses host theme/locale/settings, remains keyboard and reduced-motion accessible, loads offline without remote fonts/scripts, signals readiness only after useful content is rendered, and passes its package performance budget.
-- [ ] **Post-release host presentation primitives:** add bounded, host-rendered tabs, code blocks, tables, key/value lists, and comparison layouts to the extension render-model contract. Packages provide structured data and selected approved primitives; the host owns interaction, accessibility, theme, and styling. Keep isolated custom UI for genuinely bespoke interactions until then.
-- [ ] **Exit gate:** disabling or uninstalling every package restores useful core views, never changes canonical clips, and the main application bundle no longer contains Mermaid's runtime.
+- [x] **Extension quality gate:** every custom view uses host theme/locale/settings, remains keyboard and reduced-motion accessible, loads offline without remote fonts/scripts, signals readiness only after useful content is rendered, and passes its package performance budget. Evidence: the custom-UI requirements and conformance coverage in [EXTENSION_API_V2.md](EXTENSION_API_V2.md), plus Mermaid Viewer package tests and rendered review.
+- [x] **Exit gate:** disabling or uninstalling every package restores useful core views, never changes canonical clips, and the main application bundle no longer contains Mermaid's runtime. Evidence: package lifecycle acceptance tests, package parity tests, and the verified Mermaid-free application build recorded above.
+
+## 3.1 Post-release extension presentation primitives
+
+- [ ] Add bounded, host-rendered tabs, code blocks, tables, key/value lists, and comparison layouts to the extension render-model contract. Packages provide structured data and selected approved primitives; the host owns interaction, accessibility, theme, and styling. Keep isolated custom UI for genuinely bespoke interactions until then.
 
 ## 4. Signed GitHub registry, catalog icons, and publication
 
@@ -85,7 +85,7 @@ The currently configured registry URL returns 404 and must exist before release.
 - [ ] Add first-party release CI that builds WASM, packages, validates, tests, creates draft GitHub Release assets, and emits deterministic registry-submission metadata.
 - [ ] Add registry PR CI that downloads the immutable release, independently validates it, verifies metadata/icons/checksums/permission fingerprints, rejects duplicate or downgraded releases, and signs only reviewed merged indexes.
 - [ ] Test first install, offline cached catalog, update, permission change, revocation, corrupt index/signature/icon/archive, Developer Mode replacement, and recovery.
-- [ ] **Exit gate:** all four packages are visible with icons, downloadable, verifiable, installable, updateable, disableable, and removable through Discover.
+- [ ] **Exit gate:** all published packages are visible with icons, downloadable, verifiable, installable, updateable, disableable, and removable through Discover.
 
 ## 5. Configuration sync and account completion
 
@@ -117,11 +117,11 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - [ ] Run the complete native clipboard, focus/paste, tray, shortcuts, autostart, deep-link, OAuth, accessibility, extension, sync, OCR, search, and recovery matrices in [RELEASE.md](RELEASE.md).
 - [ ] Add a bundle-size budget; confirm removing core Mermaid materially reduces the 1.70 MB minified main chunk and eliminates its diagram/Cytoscape/KaTeX chunks.
 - [ ] Update website/download/release messaging to advertise only certified platforms and features.
-- [ ] **Exit gate:** signed artifacts from one revision, the signed extension registry, four published packages, production auth/sync, and recorded native evidence all pass before the draft release is published.
+- [ ] **Exit gate:** signed artifacts from one revision, the signed extension registry, published packages, production auth/sync, and recorded native evidence all pass before the draft release is published.
 
 ## Interface and documentation changes
 
-- Extension manifest: package-level themed icons and typed host handlers for Compose Email/Dial Phone.
+- Extension manifest: package-level themed icons.
 - Registry schema: signed index plus detached signatures, catalog icon URLs/hashes, revocations, and key IDs.
 - Catalog API: themed verified icon descriptors and revocation status.
 - Sync IPC: status, synchronize now, devices, forget device, reset remote profile, and delete account.

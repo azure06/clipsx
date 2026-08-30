@@ -11,7 +11,6 @@ import {
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { ViewTabIcon } from './ClipPreview'
 import { TagChips } from './components/TagChips'
-import type { ContextAction, TransformControls } from './useTransformState'
 const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
 const clipboardStoreState = {
   clips: [],
@@ -77,39 +76,6 @@ const actionContext = {
   onTogglePin: vi.fn(),
   onToggleFavorite: vi.fn(),
 }
-
-const extensionAction = (overrides: Partial<ContextAction> = {}): ContextAction => ({
-  id: 'ask-ai',
-  packageId: 'example.ask-ai',
-  label: 'Ask AI',
-  icon: null,
-  iconSvg: null,
-  iconSvgDark: null,
-  iconScale: 1,
-  placements: ['preview_toolbar', 'action_menu'],
-  effects: ['open_https_url'],
-  execution: 'local',
-  available: true,
-  unavailableReason: null,
-  parameterSchema: {},
-  shortcut: null,
-  pinned: false,
-  consentRequired: false,
-  externalNavigationOrigins: [],
-  httpOrigins: [],
-  providers: [],
-  ...overrides,
-})
-
-const transformControls = (overrides: Partial<TransformControls> = {}): TransformControls => ({
-  items: [],
-  actions: [],
-  run: vi.fn(),
-  runAction: vi.fn(),
-  pinAction: vi.fn(),
-  openPicker: vi.fn(),
-  ...overrides,
-})
 
 describe('preview chrome light theme styling', () => {
   beforeEach(() => {
@@ -338,70 +304,6 @@ describe('preview chrome light theme styling', () => {
     expect(tooltip).toHaveTextContent(
       formatShortcut({ modifiers: ['primary'], key: 'I' }, getPlatform())
     )
-  })
-
-  it('previews the deferred Transform shortcut and renders its themed arrow', async () => {
-    const user = userEvent.setup()
-    render(
-      <ClipActionsToolbar
-        presentation={textPresentation}
-        context={actionContext}
-        transformControls={transformControls({
-          items: [{ id: 'format', label: 'Format', version: '1' }],
-        })}
-      />
-    )
-
-    await user.hover(screen.getByRole('button', { name: 'Transform & Actions' }))
-
-    const tooltip = await screen.findByRole('tooltip', { hidden: true })
-    expect(tooltip).toHaveTextContent('Transform & Actions')
-    expect(tooltip).toHaveTextContent(
-      formatShortcut({ modifiers: ['primary'], key: 'T' }, getPlatform())
-    )
-    expect(tooltip.querySelector('svg')).toHaveClass('fill-white')
-  })
-
-  it('opens the transform/action picker via the toolbar trigger', async () => {
-    const user = userEvent.setup()
-    const openPicker = vi.fn()
-    render(
-      <ClipActionsToolbar
-        presentation={textPresentation}
-        context={actionContext}
-        transformControls={transformControls({
-          items: [{ id: 'format', label: 'Format', version: '1' }],
-          actions: [extensionAction()],
-          openPicker,
-        })}
-      />
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Transform & Actions' }))
-
-    expect(openPicker).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps toolbar-pinned actions out of the picker-eligible action set', () => {
-    render(
-      <ClipActionsToolbar
-        presentation={textPresentation}
-        context={actionContext}
-        transformControls={transformControls({
-          actions: [
-            extensionAction({ id: 'first', label: 'First' }),
-            extensionAction({ id: 'second', label: 'Second', placements: ['preview_toolbar'] }),
-            extensionAction({ id: 'third', label: 'Third', placements: ['preview_toolbar'] }),
-          ],
-        })}
-      />
-    )
-
-    // Only the first two preview_toolbar-eligible actions fill the two direct
-    // toolbar slots; 'third' is displaced and stays picker-only.
-    expect(screen.getByRole('button', { name: 'First' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Second' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Third' })).not.toBeInTheDocument()
   })
 
   it('renders tag suggestions with light-safe dropdown classes', async () => {

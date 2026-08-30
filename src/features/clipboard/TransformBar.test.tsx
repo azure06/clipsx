@@ -89,6 +89,7 @@ const askAction = {
   iconScale: 1,
   placements: ['preview_toolbar', 'action_menu'] as const,
   effects: ['open_https_url'],
+  transformPreset: false,
   execution: 'local' as const,
   available: true,
   unavailableReason: null,

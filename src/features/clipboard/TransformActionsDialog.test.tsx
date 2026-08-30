@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { TransformActionsDialog } from './TransformActionsDialog'
+import { TransformActionsPanel } from './TransformActionsDialog'
 import type { ContextAction } from './useTransformState'
 
 const action = (overrides: Partial<ContextAction> = {}): ContextAction => ({
@@ -14,6 +14,7 @@ const action = (overrides: Partial<ContextAction> = {}): ContextAction => ({
   iconScale: 1,
   placements: ['action_menu'],
   effects: ['preview'],
+  transformPreset: false,
   execution: 'local',
   available: true,
   unavailableReason: null,
@@ -27,12 +28,16 @@ const action = (overrides: Partial<ContextAction> = {}): ContextAction => ({
   ...overrides,
 })
 
-describe('TransformActionsDialog', () => {
-  it('separates transforms from actions under their own section headings', () => {
+describe('TransformActionsPanel', () => {
+  it('groups transformer presets with transforms instead of extension actions', () => {
     render(
-      <TransformActionsDialog
+      <TransformActionsPanel
         items={[{ id: 'format', label: 'Format', version: '1' }]}
-        actions={[action({ id: 'encode-base64', label: 'Encode with Base64' })]}
+        actions={[
+          action({ id: 'encode-base64', label: 'Encode with Base64', transformPreset: true }),
+          action({ id: 'ask-ai', label: 'Ask AI' }),
+        ]}
+        busy={null}
         run={vi.fn()}
         runAction={vi.fn()}
         pinAction={vi.fn()}
@@ -41,19 +46,27 @@ describe('TransformActionsDialog', () => {
     )
 
     expect(screen.getByText('Transform')).toBeInTheDocument()
-    expect(screen.getByText('Actions')).toBeInTheDocument()
+    expect(screen.getByText('Tools')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Format' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Encode with Base64' })).toBeInTheDocument()
+    const transforms = screen.getByRole('heading', { name: 'Transform' }).parentElement
+    const extensionActions = screen.getByRole('heading', {
+      name: 'Extension actions',
+    }).parentElement
+    expect(transforms).toHaveTextContent('Encode with Base64')
+    expect(transforms).not.toHaveTextContent('Ask AI')
+    expect(extensionActions).toHaveTextContent('Ask AI')
   })
 
-  it('runs the selected transform and closes', async () => {
+  it('runs the selected transform', async () => {
     const user = userEvent.setup()
     const run = vi.fn()
     const onClose = vi.fn()
     render(
-      <TransformActionsDialog
+      <TransformActionsPanel
         items={[{ id: 'format', label: 'Format', version: '1' }]}
         actions={[]}
+        busy={null}
         run={run}
         runAction={vi.fn()}
         pinAction={vi.fn()}
@@ -64,16 +77,17 @@ describe('TransformActionsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Format' }))
 
     expect(run).toHaveBeenCalledWith('format')
-    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('does not run an unavailable action', async () => {
     const user = userEvent.setup()
     const runAction = vi.fn()
     render(
-      <TransformActionsDialog
+      <TransformActionsPanel
         items={[]}
         actions={[action({ available: false, unavailableReason: 'Input is not UTF-8 Base64' })]}
+        busy={null}
         run={vi.fn()}
         runAction={runAction}
         pinAction={vi.fn()}
@@ -91,9 +105,10 @@ describe('TransformActionsDialog', () => {
     const pinAction = vi.fn()
     const onClose = vi.fn()
     render(
-      <TransformActionsDialog
+      <TransformActionsPanel
         items={[]}
         actions={[action()]}
+        busy={null}
         run={vi.fn()}
         runAction={vi.fn()}
         pinAction={pinAction}
@@ -107,13 +122,50 @@ describe('TransformActionsDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('closes on backdrop click and on Escape', async () => {
+  it('shows pinned actions and transform presets first without duplication', () => {
+    render(
+      <TransformActionsPanel
+        items={[]}
+        actions={[
+          action({ id: 'pinned-action', label: 'Pinned action', pinned: true }),
+          action({
+            id: 'pinned-transform',
+            label: 'Pinned decoder',
+            pinned: true,
+            transformPreset: true,
+          }),
+          action({ id: 'regular-action', label: 'Regular action' }),
+          action({ id: 'regular-transform', label: 'Regular decoder', transformPreset: true }),
+        ]}
+        busy={null}
+        run={vi.fn()}
+        runAction={vi.fn()}
+        pinAction={vi.fn()}
+        onClose={vi.fn()}
+      />
+    )
+
+    const headings = screen.getAllByRole('heading').map(heading => heading.textContent)
+    const pinnedSection = screen.getByRole('heading', { name: 'Pinned' }).parentElement
+    const regularSection = screen.getByRole('heading', { name: 'Extension actions' }).parentElement
+    const transforms = screen.getByRole('heading', { name: 'Transform' }).parentElement
+    expect(headings).toEqual(['Tools', 'Pinned', 'Extension actions', 'Transform'])
+    expect(pinnedSection).toHaveTextContent('Pinned action')
+    expect(pinnedSection).toHaveTextContent('Pinned decoder')
+    expect(regularSection).toHaveTextContent('Regular action')
+    expect(regularSection).not.toHaveTextContent('Pinned action')
+    expect(transforms).toHaveTextContent('Regular decoder')
+    expect(transforms).not.toHaveTextContent('Pinned decoder')
+  })
+
+  it('collapses from its header control', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     render(
-      <TransformActionsDialog
+      <TransformActionsPanel
         items={[{ id: 'format', label: 'Format', version: '1' }]}
         actions={[]}
+        busy={null}
         run={vi.fn()}
         runAction={vi.fn()}
         pinAction={vi.fn()}
@@ -121,10 +173,7 @@ describe('TransformActionsDialog', () => {
       />
     )
 
-    await user.click(screen.getByRole('presentation'))
+    await user.click(screen.getByRole('button', { name: 'Collapse tools' }))
     expect(onClose).toHaveBeenCalledTimes(1)
-
-    await user.keyboard('{Escape}')
-    expect(onClose).toHaveBeenCalledTimes(2)
   })
 })

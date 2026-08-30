@@ -63,12 +63,6 @@ pub enum RenderModel {
     KeyValue {
         entries: Vec<(String, String)>,
     },
-    Card {
-        leading: LeadingVisual,
-        title: String,
-        subtitle: Option<String>,
-        fields: Vec<(String, String)>,
-    },
     Image {
         source: ImageSource,
         ocr: OcrPresentation,
@@ -263,20 +257,6 @@ mod tests {
                     entries: vec![("a".into(), "1".into())],
                 },
                 json!({"kind": "key_value", "entries": [["a", "1"]]}),
-            ),
-            (
-                RenderModel::Card {
-                    leading: LeadingVisual::Swatch {
-                        red: 239,
-                        green: 68,
-                        blue: 68,
-                        alpha: 255,
-                    },
-                    title: "#EF4444".into(),
-                    subtitle: Some("rgb(239 68 68)".into()),
-                    fields: vec![("HEX".into(), "#EF4444".into())],
-                },
-                json!({"kind": "card", "leading": {"kind": "swatch", "red": 239, "green": 68, "blue": 68, "alpha": 255}, "title": "#EF4444", "subtitle": "rgb(239 68 68)", "fields": [["HEX", "#EF4444"]]}),
             ),
             (
                 RenderModel::Image {

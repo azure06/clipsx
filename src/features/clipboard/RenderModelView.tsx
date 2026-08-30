@@ -2,7 +2,6 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Archive,
   AtSign,
-  Binary,
   Braces,
   Calculator,
   CalendarDays,
@@ -21,7 +20,6 @@ import {
   ImageOff,
   MessageSquare,
   Music,
-  Palette,
   Phone,
   Send,
   ShieldAlert,
@@ -36,29 +34,6 @@ import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
-}
-
-const CARD_HOST_ICONS: Record<string, typeof File> = {
-  binary: Binary,
-  braces: Braces,
-  code: Code2,
-  database: Archive,
-  file: File,
-  globe: ExternalLink,
-  hash: AtSign,
-  key: ShieldAlert,
-  palette: Palette,
-  table: FileSpreadsheet,
-  terminal: Archive,
-  text: FileText,
-}
-
-const CARD_ICON_TINTS: Record<string, string> = {
-  binary: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
-  code: 'bg-violet-500/15 text-violet-600 ring-violet-500/25 dark:text-violet-300',
-  hash: 'bg-cyan-500/15 text-cyan-600 ring-cyan-500/25 dark:text-cyan-300',
-  palette: 'bg-fuchsia-500/15 text-fuchsia-600 ring-fuchsia-500/25 dark:text-fuchsia-300',
-  text: 'bg-slate-500/15 text-slate-600 ring-slate-400/25 dark:text-slate-300',
 }
 
 // ── Color utilities ────────────────────────────────────────────────────────
@@ -352,16 +327,35 @@ const TreeNode = ({ value }: { value: unknown }): ReactNode => {
   return <span>Unsupported value</span>
 }
 
-const KeyValueView = ({ entries }: { entries: [string, string][] }) => (
-  <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 p-4 text-sm">
-    {entries.map(([key, value], index) => (
-      <div className="contents" key={`${key}:${index}`}>
-        <dt className="font-semibold text-gray-500">{key}</dt>
-        <dd className="min-w-0 break-words">{value}</dd>
-      </div>
-    ))}
-  </dl>
-)
+const KeyValueView = ({ entries, clipId }: { entries: [string, string][]; clipId: string }) => {
+  if (entries.length === 0) {
+    return <p className="px-4 py-8 text-center text-sm text-slate-500">No details</p>
+  }
+
+  return (
+    <dl className="divide-y divide-slate-200/70 dark:divide-white/[0.07]">
+      {entries.map(([key, value], index) => (
+        <div
+          className="group relative grid grid-cols-[minmax(6.5rem,22%)_minmax(0,1fr)_auto] items-start gap-x-3 px-4 py-2.5 transition-colors duration-150 hover:bg-violet-500/[0.045] dark:hover:bg-violet-400/[0.055]"
+          key={`${key}:${index}`}
+        >
+          <span className="absolute inset-y-2 left-0 w-0.5 scale-y-50 rounded-full bg-violet-500 opacity-0 transition-all duration-150 group-hover:scale-y-100 group-hover:opacity-70" />
+          <dt className="pt-0.5 text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-500 dark:text-slate-400">
+            {key}
+          </dt>
+          <dd className="custom-scrollbar max-h-32 min-w-0 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-slate-700 dark:text-slate-200">
+            {value}
+          </dd>
+          <CopyButton
+            className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100"
+            clipId={clipId}
+            text={value}
+          />
+        </div>
+      ))}
+    </dl>
+  )
+}
 
 const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => {
   const { t } = useTranslation()
@@ -872,59 +866,59 @@ const SemanticView = ({
     const day = parsed?.toLocaleDateString(locale, { day: '2-digit' })
     const year = parsed?.toLocaleDateString(locale, { year: 'numeric' })
     return (
-      <div className={`${SCROLL_AREA} p-3`}>
-        <div className="overflow-hidden rounded-2xl border border-sky-500/20 bg-linear-to-br from-sky-500/[0.09] via-white/70 to-indigo-500/[0.08] shadow-[0_16px_40px_-28px_rgba(14,165,233,0.8)] dark:via-white/[0.035]">
-          <div className="flex items-center gap-2 border-b border-sky-500/15 px-3 py-2">
-            <div className="shrink-0 rounded-lg bg-sky-500/15 p-1.5 text-sky-600 ring-1 ring-sky-500/25 dark:text-sky-300">
-              <DateIcon className="h-3.5 w-3.5" />
-            </div>
-            <code className="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300">
-              {raw}
-            </code>
-            <CopyButton text={raw} clipId={clipId} />
+      <div
+        className={`${SCROLL_AREA} flex flex-col bg-linear-to-br from-sky-500/[0.09] via-white/70 to-indigo-500/[0.08] dark:via-white/[0.035]`}
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-sky-500/15 px-4 py-3">
+          <div className="shrink-0 rounded-lg bg-sky-500/15 p-1.5 text-sky-600 ring-1 ring-sky-500/25 dark:text-sky-300">
+            <DateIcon className="h-3.5 w-3.5" />
           </div>
-          {parsed ? (
-            <>
-              <div className="grid grid-cols-[5.5rem_1fr] items-stretch">
-                <div className="flex flex-col items-center justify-center border-r border-sky-500/15 bg-sky-500/[0.07] px-3 py-4 tabular-nums">
-                  <span className="text-[10px] font-bold tracking-[0.2em] text-sky-600 dark:text-sky-300">
-                    {month}
-                  </span>
-                  <span className="text-3xl font-semibold leading-none tracking-tight text-slate-800 dark:text-white">
-                    {day}
-                  </span>
-                  <span className="mt-1 text-[10px] text-slate-500">{year}</span>
-                </div>
-                <div className="flex min-w-0 flex-col justify-center px-4 py-3">
-                  <span className="text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">
-                    {parsed.toLocaleTimeString(locale, {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}
-                  </span>
-                  <span className="mt-0.5 text-xs text-slate-500">
-                    {parsed.toLocaleDateString(locale, { weekday: 'long' })}
-                  </span>
-                </div>
-              </div>
-              <div className="border-t border-sky-500/15 p-2">
-                <CopyableRow label="Local" value={parsed.toLocaleString(locale)} clipId={clipId} />
-                <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
-                <CopyableRow
-                  label="Unix seconds"
-                  value={String(Math.floor(parsed.getTime() / 1000))}
-                  clipId={clipId}
-                />
-                <CopyableRow label="UTC" value={parsed.toUTCString()} clipId={clipId} />
-              </div>
-            </>
-          ) : (
-            <div className="px-4 py-5 text-center text-sm text-slate-500">
-              This date could not be interpreted.
-            </div>
-          )}
+          <code className="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300">
+            {raw}
+          </code>
+          <CopyButton text={raw} clipId={clipId} />
         </div>
+        {parsed ? (
+          <>
+            <div className="grid min-h-32 flex-1 grid-cols-[minmax(7rem,22%)_1fr] grid-rows-[minmax(8rem,1fr)] items-stretch">
+              <div className="flex flex-col items-center justify-center border-r border-sky-500/15 bg-sky-500/[0.07] px-4 py-2 tabular-nums">
+                <span className="text-[10px] font-bold tracking-[0.2em] text-sky-600 dark:text-sky-300">
+                  {month}
+                </span>
+                <span className="text-5xl font-semibold leading-none tracking-tight text-slate-800 dark:text-white">
+                  {day}
+                </span>
+                <span className="mt-1 text-[10px] text-slate-500">{year}</span>
+              </div>
+              <div className="flex min-w-0 flex-col justify-center px-6 py-3">
+                <span className="text-2xl font-semibold tracking-tight text-slate-800 dark:text-slate-100">
+                  {parsed.toLocaleTimeString(locale, {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </span>
+                <span className="mt-0.5 text-xs text-slate-500">
+                  {parsed.toLocaleDateString(locale, { weekday: 'long' })}
+                </span>
+              </div>
+            </div>
+            <div className="shrink-0 border-t border-sky-500/15 p-3">
+              <CopyableRow label="Local" value={parsed.toLocaleString(locale)} clipId={clipId} />
+              <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
+              <CopyableRow
+                label="Unix seconds"
+                value={String(Math.floor(parsed.getTime() / 1000))}
+                clipId={clipId}
+              />
+              <CopyableRow label="UTC" value={parsed.toUTCString()} clipId={clipId} />
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center px-4 py-12 text-center text-sm text-slate-500">
+            This date could not be interpreted.
+          </div>
+        )}
       </div>
     )
   }
@@ -940,7 +934,7 @@ const SemanticView = ({
         {kind}
       </div>
       {entries.length > 0 ? (
-        <KeyValueView entries={entries} />
+        <KeyValueView entries={entries} clipId={clipId} />
       ) : (
         <TextBlock>{model.text}</TextBlock>
       )}
@@ -1117,84 +1111,9 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
     case 'key_value':
       return (
         <div className={SCROLL_AREA}>
-          <KeyValueView entries={model.entries} />
+          <KeyValueView entries={model.entries} clipId={presentation.id} />
         </div>
       )
-    case 'card': {
-      const leading = model.leading
-      const swatch =
-        leading.kind === 'swatch'
-          ? `rgba(${leading.red}, ${leading.green}, ${leading.blue}, ${leading.alpha / 255})`
-          : null
-      const iconName = leading.kind === 'host_icon' ? leading.name : 'file'
-      const CardIcon = CARD_HOST_ICONS[iconName] ?? File
-      const iconTint = CARD_ICON_TINTS[iconName] ?? CARD_ICON_TINTS['text']
-      return (
-        <div className={`${SCROLL_AREA} p-3`}>
-          <div className="relative mx-auto max-w-3xl overflow-hidden rounded-2xl border border-slate-200/70 bg-gradient-to-br from-white/90 via-white/70 to-violet-50/55 shadow-[0_10px_35px_-22px_rgba(79,70,229,0.55)] backdrop-blur-sm dark:border-white/10 dark:from-white/[0.07] dark:via-white/[0.035] dark:to-violet-500/[0.055]">
-            <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/70 to-transparent" />
-            <div className="flex items-center gap-2 border-b border-slate-200/60 px-3 py-2 dark:border-white/10">
-              {swatch && (
-                <div
-                  aria-label={model.title}
-                  className="h-7 w-7 shrink-0 rounded-full border border-black/15 shadow-inner dark:border-white/25"
-                  style={{ backgroundColor: swatch }}
-                />
-              )}
-              {leading.kind === 'monogram' && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold dark:bg-slate-700">
-                  {leading.text}
-                </div>
-              )}
-              {leading.kind === 'host_icon' && (
-                <div
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ring-2 shadow-sm ${iconTint}`}
-                >
-                  <CardIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                </div>
-              )}
-              <div className="min-w-0">
-                <h3 className="truncate text-xs font-semibold tracking-tight">{model.title}</h3>
-                {model.subtitle && (
-                  <p className="truncate text-[10px] text-gray-500">{model.subtitle}</p>
-                )}
-              </div>
-            </div>
-            {model.fields.length > 0 && (
-              <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2">
-                {model.fields.map(([label, value], index) => {
-                  const spansFinalRow =
-                    model.fields.length > 1 &&
-                    model.fields.length % 2 === 1 &&
-                    index === model.fields.length - 1
-                  return (
-                    <div
-                      className={`group relative min-w-0 overflow-hidden rounded-xl border border-slate-200/70 bg-gradient-to-br from-white/80 to-slate-50/60 px-3 py-2 shadow-sm transition-colors hover:border-violet-300/60 dark:border-white/10 dark:from-white/[0.055] dark:to-white/[0.025] dark:hover:border-violet-400/25 ${spansFinalRow ? 'sm:col-span-2' : ''}`}
-                      key={`${label}:${index}`}
-                    >
-                      <div className="absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-violet-400/35 to-transparent" />
-                      <div className="flex items-center gap-2">
-                        <div className="min-w-0 flex-1 truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                          {label}
-                        </div>
-                        <CopyButton
-                          className="-mr-1 -mt-0.5 opacity-60 group-hover:opacity-100"
-                          clipId={presentation.id}
-                          text={value}
-                        />
-                      </div>
-                      <div className="custom-scrollbar mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-slate-700 dark:text-slate-200">
-                        {value}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )
-    }
     case 'image':
       return <ImageView model={model} />
     case 'html':

@@ -44,6 +44,7 @@ pub struct ContextActionDescriptor {
     pub icon_scale: f32,
     pub placements: Vec<String>,
     pub effects: Vec<String>,
+    pub transform_preset: bool,
     pub execution: String,
     pub available: bool,
     pub unavailable_reason: Option<String>,
@@ -1190,6 +1191,10 @@ impl ExtensionService {
             };
             let consent_required = self.consent_required(repo, &item).await?;
             let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
+            let transform_preset = matches!(
+                &item.declaration.handler,
+                Some(ActionHandler::TransformerPreset { .. })
+            );
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
                 pinned: pins.contains(&item.id),
@@ -1218,6 +1223,7 @@ impl ExtensionService {
                     .map(action_effect_name)
                     .map(str::to_string)
                     .collect(),
+                transform_preset,
                 execution: execution_name(item.declaration.execution).into(),
                 available,
                 unavailable_reason,
@@ -1249,6 +1255,10 @@ impl ExtensionService {
             .map(|item| {
                 let available = true;
                 let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
+                let transform_preset = matches!(
+                    &item.declaration.handler,
+                    Some(ActionHandler::TransformerPreset { .. })
+                );
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
                     pinned: pins.contains(&item.id),
@@ -1277,6 +1287,7 @@ impl ExtensionService {
                         .map(action_effect_name)
                         .map(str::to_string)
                         .collect(),
+                    transform_preset,
                     execution: execution_name(item.declaration.execution).into(),
                     available,
                     unavailable_reason: None,
@@ -3340,20 +3351,9 @@ fn render_model(value: ExtensionRenderModel) -> Result<RenderModel> {
         ExtensionRenderModel::Tree(value) => RenderModel::Tree {
             value: serde_json::from_str(&value).context("extension tree is not JSON")?,
         },
-        ExtensionRenderModel::KeyValue(entries) => RenderModel::KeyValue { entries },
-        ExtensionRenderModel::Card {
-            leading,
-            title,
-            subtitle,
-            fields,
-        } => {
-            validate_card(&title, subtitle.as_deref(), &fields)?;
-            RenderModel::Card {
-                leading: leading_visual(leading)?,
-                title,
-                subtitle,
-                fields,
-            }
+        ExtensionRenderModel::KeyValue(entries) => {
+            validate_key_value(&entries)?;
+            RenderModel::KeyValue { entries }
         }
         ExtensionRenderModel::Image => RenderModel::Error {
             message: "community image renderers must reference a host-owned preview artifact"
@@ -3393,16 +3393,13 @@ fn leading_visual(value: ExtensionLeadingVisual) -> Result<LeadingVisual> {
     })
 }
 
-fn validate_card(title: &str, subtitle: Option<&str>, fields: &[(String, String)]) -> Result<()> {
-    if title.is_empty()
-        || title.chars().count() > 120
-        || subtitle.is_some_and(|value| value.chars().count() > 200)
-        || fields.len() > 32
-        || fields.iter().any(|(label, value)| {
-            label.is_empty() || label.chars().count() > 80 || value.chars().count() > 500
+fn validate_key_value(entries: &[(String, String)]) -> Result<()> {
+    if entries.len() > 32
+        || entries.iter().any(|(key, value)| {
+            key.is_empty() || key.chars().count() > 80 || value.chars().count() > 500
         })
     {
-        bail!("extension card output exceeds host limits");
+        bail!("extension key/value model exceeds host limits");
     }
     Ok(())
 }
@@ -3778,6 +3775,28 @@ mod tests {
             &input(),
         );
         assert!(invalid_thumbnail.is_err());
+    }
+
+    #[test]
+    fn key_value_models_are_bounded() {
+        let valid = render_model(ExtensionRenderModel::KeyValue(vec![(
+            "Encoded".into(),
+            "aGVsbG8=".into(),
+        )]));
+        assert!(valid.is_ok());
+
+        let too_many = render_model(ExtensionRenderModel::KeyValue(
+            (0..33)
+                .map(|index| (format!("Field {index}"), "value".into()))
+                .collect(),
+        ));
+        assert!(too_many.is_err());
+
+        let too_long = render_model(ExtensionRenderModel::KeyValue(vec![(
+            "Decoded".into(),
+            "x".repeat(501),
+        )]));
+        assert!(too_long.is_err());
     }
 
     #[test]
