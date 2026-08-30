@@ -313,10 +313,12 @@ This trades a small amount of recall for a large speed improvement.
 If ANN finds 19 of the exact top 20 results over many representative queries,
 its recall@20 is 95%.
 
-The plan first evaluates SQLite's official `vec1` extension. It supports exact
-and approximate modes, regular inserts/deletes, filtered retrieval, and exact
-reranking. It is still below version 1.0, so ClipsX must not commit to it until
-quality, corruption recovery, and every desktop package pass.
+SQLite's official `vec1` extension was evaluated first. It supports exact and
+approximate modes, regular inserts/deletes, filtered retrieval, and exact
+reranking, but version 0.7 failed the Phase 0 correctness and persisted-index
+integrity gates at the target size. ClipsX therefore does not adopt it. The
+next isolated experiment evaluates a quantized HNSW backend; only one backend
+may enter production.
 
 ### 6.3 Candidate retrieval and reranking
 
