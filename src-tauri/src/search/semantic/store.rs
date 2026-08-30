@@ -1,20 +1,23 @@
 //! Owns the disposable SQLite sidecar for one semantic-index generation.
 
 use std::{
+    cmp::{Ordering, Reverse},
     collections::HashMap,
+    collections::{BinaryHeap, HashSet},
     fs::{self, File},
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
+use futures::{future::try_join_all, TryStreamExt};
 use sha2::{Digest, Sha256};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode},
-    Connection, Row, SqliteConnection,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
+    Connection, QueryBuilder, Row, Sqlite, SqliteConnection,
 };
 
-pub const SIDECAR_SCHEMA_VERSION: i64 = 1;
+pub const SIDECAR_SCHEMA_VERSION: i64 = 2;
 pub const BACKEND_ID: &str = "builtin.quantized-flat.v1";
 pub const VECTOR_ENCODING: &str = "int8_scan_float32_rerank";
 pub const DEFAULT_CANDIDATE_LIMIT: i64 = 100;
@@ -63,6 +66,12 @@ CREATE TABLE semantic_chunks (
 CREATE INDEX semantic_chunks_by_clip ON semantic_chunks(clip_ordinal);
 CREATE INDEX semantic_chunks_by_input ON semantic_chunks(input_ordinal);
 
+CREATE TABLE semantic_clip_scans (
+    clip_ordinal INTEGER PRIMARY KEY REFERENCES semantic_clips(clip_ordinal) ON DELETE CASCADE,
+    chunk_count INTEGER NOT NULL CHECK (chunk_count >= 0),
+    vectors_i8 BLOB NOT NULL
+) STRICT;
+
 CREATE TRIGGER semantic_inputs_validate_lengths
 BEFORE INSERT ON semantic_inputs
 BEGIN
@@ -75,6 +84,16 @@ BEGIN
         THEN RAISE(ABORT, 'int8 vector length does not match dimensions')
     END;
 END;
+
+CREATE TRIGGER semantic_clip_scans_validate_length
+BEFORE INSERT ON semantic_clip_scans
+BEGIN
+    SELECT CASE
+        WHEN length(NEW.vectors_i8) != NEW.chunk_count *
+             (SELECT dimensions FROM semantic_sidecar_meta WHERE singleton = 1)
+        THEN RAISE(ABORT, 'packed int8 scan length does not match chunk count and dimensions')
+    END;
+END;
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +101,36 @@ pub struct FinalizedSidecar {
     pub relative_path: String,
     pub byte_length: u64,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticHit {
+    pub clip_id: String,
+    pub score: f64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ApproximateHit {
+    clip_ordinal: i64,
+    ordinal_in_clip: i64,
+    clip_id: String,
+    score: i32,
+}
+
+impl Ord for ApproximateHit {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.score
+            .cmp(&other.score)
+            .then_with(|| other.clip_ordinal.cmp(&self.clip_ordinal))
+            .then_with(|| other.ordinal_in_clip.cmp(&self.ordinal_in_clip))
+    }
+}
+
+impl PartialOrd for ApproximateHit {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 pub struct BuildingSidecar {
@@ -124,6 +173,10 @@ impl BuildingSidecar {
             .iter()
             .map(|chunk| prepare_chunk(chunk, dimensions))
             .collect::<Result<Vec<_>>>()?;
+        let packed_scan = prepared
+            .iter()
+            .flat_map(|chunk| chunk.vector_i8.iter().copied())
+            .collect::<Vec<_>>();
 
         let mut transaction = self.connection.begin().await?;
         let clip_ordinal = if let Some(ordinal) = sqlx::query_scalar::<_, i64>(
@@ -223,6 +276,15 @@ impl BuildingSidecar {
             .execute(&mut *transaction)
             .await?;
         }
+        sqlx::query(
+            "INSERT OR REPLACE INTO semantic_clip_scans
+             (clip_ordinal, chunk_count, vectors_i8) VALUES (?, ?, ?)",
+        )
+        .bind(clip_ordinal)
+        .bind(i64::try_from(chunks.len())?)
+        .bind(packed_scan)
+        .execute(&mut *transaction)
+        .await?;
         sqlx::query(
             "DELETE FROM semantic_inputs
              WHERE NOT EXISTS (
@@ -425,6 +487,123 @@ impl SemanticIndexStore {
         Ok(())
     }
 
+    /// Runs the selected two-stage retrieval path against one complete generation.
+    pub async fn search(
+        &self,
+        relative_path: &str,
+        generation_id: &str,
+        dimensions: usize,
+        query_vector: &[f32],
+        eligible_clip_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<SemanticHit>> {
+        if limit == 0 || eligible_clip_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        validate_query_vector(query_vector, dimensions)?;
+        validate_generation_id(generation_id)?;
+        let path = self.resolve(relative_path)?;
+        require_regular_file(&path)?;
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .read_only(true)
+            .foreign_keys(true);
+        let workers = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .clamp(1, 8);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(workers as u32)
+            .connect_with(options)
+            .await?;
+        {
+            let mut connection = pool.acquire().await?;
+            validate_meta(&mut connection, generation_id, dimensions, 1).await?;
+        }
+        let max_ordinal: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(clip_ordinal) FROM semantic_clip_scans")
+                .fetch_one(&pool)
+                .await?;
+        let Some(max_ordinal) = max_ordinal else {
+            pool.close().await;
+            return Ok(Vec::new());
+        };
+
+        let query_i8 = std::sync::Arc::new(quantize_vector(query_vector));
+        let eligible = std::sync::Arc::new(eligible_clip_ids.clone());
+        let range_size = (max_ordinal + 1 + workers as i64 - 1) / workers as i64;
+        let tasks = (0..workers).map(|worker| {
+            let pool = pool.clone();
+            let query_i8 = query_i8.clone();
+            let eligible = eligible.clone();
+            tokio::spawn(async move {
+                let start = worker as i64 * range_size;
+                let end = ((worker as i64 + 1) * range_size).min(max_ordinal + 1);
+                scan_partition(&pool, start, end, &query_i8, &eligible).await
+            })
+        });
+        let mut candidates = try_join_all(tasks)
+            .await?
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| right.cmp(left));
+        candidates.truncate(DEFAULT_CANDIDATE_LIMIT as usize);
+
+        let candidate_clips = candidates
+            .iter()
+            .map(|candidate| candidate.clip_ordinal)
+            .collect::<HashSet<_>>();
+        let mut rerank_rows = HashMap::<(i64, i64), (Vec<u8>, String)>::new();
+        if !candidate_clips.is_empty() {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "SELECT c.clip_ordinal, c.ordinal_in_clip, inputs.vector_f32, c.text
+                 FROM semantic_chunks c
+                 JOIN semantic_inputs inputs ON inputs.input_ordinal = c.input_ordinal
+                 WHERE c.clip_ordinal IN (",
+            );
+            let mut separated = query.separated(",");
+            for ordinal in candidate_clips {
+                separated.push_bind(ordinal);
+            }
+            separated.push_unseparated(")");
+            for row in query.build().fetch_all(&pool).await? {
+                rerank_rows.insert((row.get(0), row.get(1)), (row.get(2), row.get(3)));
+            }
+        }
+        pool.close().await;
+
+        let mut best_by_clip = HashMap::<String, SemanticHit>::new();
+        for candidate in candidates {
+            let (vector, text) = rerank_rows
+                .get(&(candidate.clip_ordinal, candidate.ordinal_in_clip))
+                .context("shortlisted semantic vector is missing")?;
+            let score = dot_f32_blob(query_vector, vector)?;
+            let hit = SemanticHit {
+                clip_id: candidate.clip_id.clone(),
+                score,
+                text: text.clone(),
+            };
+            match best_by_clip.get(&candidate.clip_id) {
+                Some(existing) if existing.score >= score => {}
+                _ => {
+                    best_by_clip.insert(candidate.clip_id, hit);
+                }
+            }
+        }
+        let mut hits = best_by_clip.into_values().collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.clip_id.cmp(&right.clip_id))
+        });
+        hits.truncate(limit);
+        Ok(hits)
+    }
+
     /// Deletes unreferenced files that match the store's exact owned naming contract.
     pub fn remove_orphans(
         &self,
@@ -468,6 +647,94 @@ impl SemanticIndexStore {
         }
         Ok(self.root.join(relative))
     }
+}
+
+async fn scan_partition(
+    pool: &sqlx::SqlitePool,
+    start: i64,
+    end: i64,
+    query: &[u8],
+    eligible: &HashSet<String>,
+) -> Result<Vec<ApproximateHit>> {
+    if start >= end {
+        return Ok(Vec::new());
+    }
+    let mut rows = sqlx::query(
+        "SELECT scans.clip_ordinal, clips.clip_id, scans.chunk_count, scans.vectors_i8
+         FROM semantic_clip_scans scans
+         JOIN semantic_clips clips ON clips.clip_ordinal = scans.clip_ordinal
+         WHERE scans.clip_ordinal >= ? AND scans.clip_ordinal < ?
+         ORDER BY scans.clip_ordinal",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch(pool);
+    let mut heap = BinaryHeap::<Reverse<ApproximateHit>>::new();
+    while let Some(row) = rows.try_next().await? {
+        let clip_ordinal: i64 = row.get(0);
+        let clip_id: String = row.get(1);
+        if !eligible.contains(&clip_id) {
+            continue;
+        }
+        let chunk_count: i64 = row.get(2);
+        let vectors: Vec<u8> = row.get(3);
+        if chunk_count < 0 || vectors.len() != chunk_count as usize * query.len() {
+            bail!("stored packed int8 vectors do not match chunk count and dimensions");
+        }
+        for (ordinal_in_clip, vector) in vectors.chunks_exact(query.len()).enumerate() {
+            let score = query
+                .iter()
+                .zip(vector)
+                .map(|(left, right)| i32::from(*left as i8) * i32::from(*right as i8))
+                .sum();
+            let hit = ApproximateHit {
+                clip_ordinal,
+                ordinal_in_clip: i64::try_from(ordinal_in_clip)?,
+                clip_id: clip_id.clone(),
+                score,
+            };
+            if heap.len() < DEFAULT_CANDIDATE_LIMIT as usize {
+                heap.push(Reverse(hit));
+            } else if heap.peek().is_some_and(|Reverse(worst)| hit > *worst) {
+                heap.pop();
+                heap.push(Reverse(hit));
+            }
+        }
+    }
+    Ok(heap.into_iter().map(|Reverse(hit)| hit).collect())
+}
+
+fn validate_query_vector(vector: &[f32], dimensions: usize) -> Result<()> {
+    if dimensions == 0
+        || vector.len() != dimensions
+        || vector.iter().any(|value| !value.is_finite())
+    {
+        bail!("semantic query vector dimensions or values are invalid");
+    }
+    Ok(())
+}
+
+fn quantize_vector(vector: &[f32]) -> Vec<u8> {
+    vector
+        .iter()
+        .map(|value| ((value.clamp(-1.0, 1.0) * 127.0).round() as i8) as u8)
+        .collect()
+}
+
+fn dot_f32_blob(query: &[f32], bytes: &[u8]) -> Result<f64> {
+    if bytes.len() != query.len() * 4 {
+        bail!("stored float32 vector dimensions do not match query");
+    }
+    Ok(query
+        .iter()
+        .zip(bytes.chunks_exact(4))
+        .map(|(left, right)| {
+            f64::from(*left)
+                * f64::from(f32::from_le_bytes(
+                    right.try_into().expect("four-byte chunk"),
+                ))
+        })
+        .sum())
 }
 
 async fn validate_meta(
@@ -781,5 +1048,57 @@ mod tests {
             .path()
             .join("generation-invalid_name.sqlite")
             .exists());
+    }
+
+    #[tokio::test]
+    async fn quantized_candidates_match_the_exact_float_ranking() {
+        let directory = tempdir().unwrap();
+        let store = SemanticIndexStore::new(directory.path()).unwrap();
+        let mut building = store.create("retrieval", 2).await.unwrap();
+        let mut exact = Vec::new();
+        let mut eligible = HashSet::new();
+        for index in 0..150 {
+            let angle = index as f32 * std::f32::consts::TAU / 150.0;
+            let vector = vec![angle.cos(), angle.sin()];
+            let clip_id = format!("clip-{index:03}");
+            if index % 7 != 0 {
+                eligible.insert(clip_id.clone());
+                exact.push((clip_id.clone(), f64::from(vector[0])));
+            }
+            let input_hash = format!("{:x}", Sha256::digest(format!("input-{index}").as_bytes()));
+            let mut value = chunk('a', &format!("text {index}"), vector);
+            value.input_hash = input_hash;
+            building.replace_clip(&clip_id, &[value]).await.unwrap();
+        }
+        let finalized = building.finalize().await.unwrap();
+        exact.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+
+        let hits = store
+            .search(
+                &finalized.relative_path,
+                "retrieval",
+                2,
+                &[1.0, 0.0],
+                &eligible,
+                10,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.clip_id.as_str())
+                .collect::<Vec<_>>(),
+            exact
+                .iter()
+                .take(10)
+                .map(|(clip_id, _)| clip_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(hits.windows(2).all(|pair| pair[0].score >= pair[1].score));
     }
 }

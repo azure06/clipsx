@@ -43,12 +43,7 @@ fn fixture(index: usize) -> SemanticInput {
         ),
     };
     SemanticInput {
-        source_kind: if family == 4 {
-            "representation"
-        } else {
-            "representation"
-        }
-        .into(),
+        source_kind: "representation".into(),
         source_id: format!("fixture-{index}"),
         representation_id: Some(format!("representation-{index}")),
         artifact_id: None,

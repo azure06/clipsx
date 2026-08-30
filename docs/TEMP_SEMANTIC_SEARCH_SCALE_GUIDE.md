@@ -710,6 +710,15 @@ or partially active index.
 
 ### Phase 5: replace semantic retrieval
 
+**Progress:** `SemanticIndexStore` now owns the two-stage retrieval algorithm.
+It scans packed per-clip int8 projections across up to eight runtime tasks,
+retains 100 global chunk candidates, loads float32 data only for that shortlist,
+reranks exactly, then keeps the best chunk per clip. A deterministic test checks
+the final top ten against a full float32 oracle while applying an eligibility
+filter. The packed SQLite physical path still needs the full 540,000-vector
+release benchmark; the earlier 18.4 ms result measured the algorithm's
+contiguous-memory qualification layout, not SQLite row traversal.
+
 - Embed the query in the active generation's space.
 - Search the chosen vector backend.
 - Apply canonical filters without materializing every eligible clip ID in Rust.
