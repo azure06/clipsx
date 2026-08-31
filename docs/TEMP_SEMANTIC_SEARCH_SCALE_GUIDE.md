@@ -770,11 +770,12 @@ quality/performance gates pass at the target corpus size.
 
 ### Phase 6: scale normal history browsing
 
-**Progress:** list pages now hydrate tags and compact presentations in two
-page-scoped queries instead of two additional queries per row. Single-clip
-summary/detail reads reuse the same summary-construction path. Conditional OCR,
-file and facet preview inputs still need category batching before this phase is
-complete.
+**Progress:** list pages now hydrate tags, compact presentations, OCR text,
+leading file information, and leading facets with page/category-scoped queries
+instead of per-row queries. Query count is now bounded independently of page
+length, and single-clip summary/detail reads reuse the same preview resolver.
+Frontend virtualization and bounded End-key navigation remain before this phase
+is complete.
 
 - Replace per-item summary enrichment with batch hydration.
 - Confirm indexes cover every browse scope and cursor order.

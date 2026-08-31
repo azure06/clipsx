@@ -25,6 +25,13 @@ pub struct HistoryRepository {
     pub semantic_index_root: PathBuf,
 }
 
+#[derive(Default)]
+struct PreviewHydration {
+    ocr_text: Option<String>,
+    file: (Option<String>, i64),
+    facet: (Option<String>, Option<String>),
+}
+
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -298,18 +305,54 @@ impl HistoryRepository {
             .iter()
             .map(|row| row.get::<String, _>(0))
             .collect::<Vec<_>>();
-        let (mut tags, mut presentations) = tokio::try_join!(
+        let ocr_clip_ids = rows
+            .iter()
+            .filter(|row| {
+                let kind = row.get::<String, _>(10);
+                (kind == "image"
+                    || (kind == "office" && row.get::<Option<String>, _>(11).is_some()))
+                    && row.get::<Option<String>, _>(13).as_deref() == Some("completed")
+            })
+            .map(|row| row.get::<String, _>(0))
+            .collect::<Vec<_>>();
+        let file_representation_ids = rows
+            .iter()
+            .filter(|row| row.get::<String, _>(10) == "files")
+            .filter_map(|row| row.get::<Option<String>, _>(14))
+            .collect::<Vec<_>>();
+        let facet_representation_ids = rows
+            .iter()
+            .filter(|row| matches!(row.get::<String, _>(10).as_str(), "text" | "html"))
+            .filter_map(|row| row.get::<Option<String>, _>(14))
+            .collect::<Vec<_>>();
+        let (mut tags, mut presentations, mut ocr, mut files, mut facets) = tokio::try_join!(
             self.tags_for_many(&ids),
-            self.compact_presentations_for_many(&ids)
+            self.compact_presentations_for_many(&ids),
+            self.ocr_text_for_many(&ocr_clip_ids),
+            self.leading_file_entries_for_many(&file_representation_ids),
+            self.leading_facets_for_many(&facet_representation_ids)
         )?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let id: String = row.get(0);
+            let leading_representation_id: Option<String> = row.get(14);
+            let preview = PreviewHydration {
+                ocr_text: ocr.remove(&id),
+                file: leading_representation_id
+                    .as_ref()
+                    .and_then(|id| files.remove(id))
+                    .unwrap_or_default(),
+                facet: leading_representation_id
+                    .as_ref()
+                    .and_then(|id| facets.remove(id))
+                    .unwrap_or_default(),
+            };
             items.push(
                 self.summary_from_row_with(
                     row,
                     tags.remove(&id).unwrap_or_default(),
                     presentations.remove(&id),
+                    Some(preview),
                 )
                 .await?,
             );
@@ -325,7 +368,7 @@ impl HistoryRepository {
         let id: String = row.get(0);
         let tags = self.tags_for(&id).await?;
         let compact_presentation = self.compact_presentation(&id).await?;
-        self.summary_from_row_with(row, tags, compact_presentation)
+        self.summary_from_row_with(row, tags, compact_presentation, None)
             .await
     }
 
@@ -334,6 +377,7 @@ impl HistoryRepository {
         row: sqlx::sqlite::SqliteRow,
         tags: Vec<Tag>,
         compact_presentation: Option<(String, crate::contracts::CompactPresentation)>,
+        preview_hydration: Option<PreviewHydration>,
     ) -> Result<ClipSummary> {
         let id: String = row.get(0);
         let history_renderer_id = compact_presentation
@@ -354,24 +398,30 @@ impl HistoryRepository {
         let leading_format_family: Option<String> = row.get(16);
         let plain_text_fallback: Option<String> = row.get(17);
 
-        let ocr_text =
-            if primary_presentation_kind == "image" && ocr_status.as_deref() == Some("completed") {
-                crate::artifacts::ocr_text(self, &id).await
+        let (ocr_text, (file_name, file_count), (facet_id, facet_display_name)) =
+            if let Some(hydration) = preview_hydration {
+                (hydration.ocr_text, hydration.file, hydration.facet)
             } else {
-                None
-            };
-        let (file_name, file_count) = if primary_presentation_kind == "files" {
-            self.leading_file_entry(leading_representation_id.as_deref())
-                .await?
-        } else {
-            (None, 0)
-        };
-        let (facet_id, facet_display_name) =
-            if matches!(primary_presentation_kind.as_str(), "text" | "html") {
-                self.leading_facet(leading_representation_id.as_deref())
-                    .await?
-            } else {
-                (None, None)
+                let ocr_text = if primary_presentation_kind == "image"
+                    && ocr_status.as_deref() == Some("completed")
+                {
+                    crate::artifacts::ocr_text(self, &id).await
+                } else {
+                    None
+                };
+                let file = if primary_presentation_kind == "files" {
+                    self.leading_file_entry(leading_representation_id.as_deref())
+                        .await?
+                } else {
+                    (None, 0)
+                };
+                let facet = if matches!(primary_presentation_kind.as_str(), "text" | "html") {
+                    self.leading_facet(leading_representation_id.as_deref())
+                        .await?
+                } else {
+                    (None, None)
+                };
+                (ocr_text, file, facet)
             };
         let history_preview = resolve_history_preview(
             PreviewContext {
@@ -430,6 +480,39 @@ impl HistoryRepository {
         });
         Ok((name, files.len() as i64))
     }
+    async fn leading_file_entries_for_many(
+        &self,
+        representation_ids: &[String],
+    ) -> Result<HashMap<String, (Option<String>, i64)>> {
+        if representation_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT representation_id,file_reference FROM clip_file_list_entries
+             WHERE representation_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in representation_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(") ORDER BY representation_id,ordinal");
+        let mut files = HashMap::<String, (Option<String>, i64)>::new();
+        for row in query.build().fetch_all(&self.pool).await? {
+            let representation_id: String = row.get(0);
+            let reference: String = row.get(1);
+            let entry = files.entry(representation_id).or_default();
+            if entry.0.is_none() {
+                entry.0 = Some(
+                    Path::new(&reference)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or(reference),
+                );
+            }
+            entry.1 += 1;
+        }
+        Ok(files)
+    }
     async fn leading_facet(
         &self,
         representation_id: Option<&str>,
@@ -451,6 +534,67 @@ impl HistoryRepository {
                 .then_with(|| left.0.cmp(&right.0))
         });
         Ok(selected.map_or((None, None), |(id, name)| (Some(id), Some(name))))
+    }
+    async fn leading_facets_for_many(
+        &self,
+        representation_ids: &[String],
+    ) -> Result<HashMap<String, (Option<String>, Option<String>)>> {
+        if representation_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT f.source_representation_id,f.facet_id,d.display_name
+             FROM content_clip_facets f JOIN content_facet_definitions d ON d.id=f.facet_id
+             WHERE f.source_representation_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in representation_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+        let mut facets = HashMap::<String, (String, String)>::new();
+        for row in query.build().fetch_all(&self.pool).await? {
+            let representation_id: String = row.get(0);
+            let candidate = (row.get::<String, _>(1), row.get::<String, _>(2));
+            let replace = facets.get(&representation_id).is_none_or(|current| {
+                crate::contributions::facet_presentation_priority(&candidate.0)
+                    > crate::contributions::facet_presentation_priority(&current.0)
+                    || (crate::contributions::facet_presentation_priority(&candidate.0)
+                        == crate::contributions::facet_presentation_priority(&current.0)
+                        && candidate.0 < current.0)
+            });
+            if replace {
+                facets.insert(representation_id, candidate);
+            }
+        }
+        Ok(facets
+            .into_iter()
+            .map(|(representation, (id, name))| (representation, (Some(id), Some(name))))
+            .collect())
+    }
+
+    async fn ocr_text_for_many(&self, clip_ids: &[String]) -> Result<HashMap<String, String>> {
+        if clip_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT cr.clip_id,atv.text_value FROM artifact_records ar
+             JOIN artifact_inputs ai ON ai.artifact_id=ar.id
+             JOIN artifact_text_values atv ON atv.artifact_id=ar.id
+             JOIN clip_representations cr ON cr.id=ai.representation_id
+             WHERE ar.producer_id='builtin.artifact.ocr' AND ar.producer_version='3'
+             AND ar.lifecycle_state='ready' AND cr.clip_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in clip_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(") ORDER BY cr.clip_id,ar.created_at DESC,ar.id");
+        let mut texts = HashMap::new();
+        for row in query.build().fetch_all(&self.pool).await? {
+            texts.entry(row.get(0)).or_insert_with(|| row.get(1));
+        }
+        Ok(texts)
     }
 
     pub async fn summary(&self, id: &str) -> Result<ClipSummary> {
