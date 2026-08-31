@@ -22,7 +22,11 @@ import { Plugins } from '../settings/Plugins'
 import { IntelligencePage } from '../intelligence/IntelligencePage'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
+import type {
+  RecallResult,
+  SearchSourceDescriptor,
+  TextEmbeddingStatus,
+} from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 import { PROFILE_MUTATED_EVENT, synchronizeIfEnabled } from '../../shared/sync/configSync'
 
@@ -52,12 +56,41 @@ export const AppLayout = () => {
   const authUserId = useAuthStore(state => state.userId)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
+  const [recallResult, setRecallResult] = useState<RecallResult | null>(null)
+  const [recallError, setRecallError] = useState<string | null>(null)
+  const [isRecalling, setIsRecalling] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
   const [historyWidth, setHistoryWidth] = useState(50)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+
+  useEffect(() => {
+    setRecallResult(null)
+    setRecallError(null)
+  }, [searchQuery])
+
+  const runRecall = async () => {
+    const question = searchQuery.trim()
+    const clipIds = clips.slice(0, 10).map(clip => clip.id)
+    if (!question || clipIds.length === 0 || isRecalling) return
+    setIsRecalling(true)
+    setRecallResult(null)
+    setRecallError(null)
+    try {
+      setRecallResult(
+        await invoke<RecallResult>('recall_search', {
+          question,
+          clipIds,
+        })
+      )
+    } catch (error) {
+      setRecallError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsRecalling(false)
+    }
+  }
 
   const openSettings = useCallback(
     (tab: SettingsTab) => {
@@ -362,7 +395,51 @@ export const AppLayout = () => {
                     searchSources={searchSources}
                     onToggleSource={sourceId => void handleToggleSource(sourceId)}
                     sourceOutcomes={searchSourceOutcomes}
+                    canRecall={searchQuery.trim().length > 0 && clips.length > 0}
+                    isRecalling={isRecalling}
+                    onRecall={() => void runRecall()}
                   />
+                  {(recallResult || recallError) && (
+                    <div className="mt-3 rounded-xl border border-violet-200/70 bg-white/80 p-4 text-sm shadow-sm dark:border-violet-400/20 dark:bg-slate-900/80">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+                            Recall · local generation
+                          </p>
+                          {recallResult ? (
+                            <>
+                              <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap leading-6 text-slate-800 dark:text-slate-100">
+                                {recallResult.answer}
+                              </p>
+                              <p className="mt-2 text-[10px] text-slate-500">
+                                Used {recallResult.includedCount} ranked result
+                                {recallResult.includedCount === 1 ? '' : 's'}
+                                {recallResult.excludedCount > 0
+                                  ? `; excluded ${recallResult.excludedCount} sensitive or non-text result${recallResult.excludedCount === 1 ? '' : 's'}`
+                                  : ''}
+                                . Verify important answers against the clips.
+                              </p>
+                            </>
+                          ) : (
+                            <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">
+                              {recallError}
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          aria-label="Close Recall answer"
+                          className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                          onClick={() => {
+                            setRecallResult(null)
+                            setRecallError(null)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Split View Container */}

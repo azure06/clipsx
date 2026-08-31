@@ -127,6 +127,8 @@ Optional sources run independently over the same eligible set. The current optio
 
 ### Structure-aware semantic indexing
 
+The storage, retrieval, rebuild, and Recall flows are illustrated with beginner-oriented rationale in [Meaning Search and Recall architecture](SEMANTIC_SEARCH_ARCHITECTURE.md).
+
 Semantic inputs are independently built from notes, tags, every ready text representation, and completed OCR artifacts. Equivalent normalized visible text is embedded once, preferring the richest successfully parsed source; genuinely distinct representations remain searchable.
 
 | Input              | Semantic atoms and embedding context                                                      |
@@ -152,6 +154,8 @@ The Intelligence surface reads lifecycle, coverage, dimensions, active-sidecar b
 ### Providers
 
 Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Ollama endpoint validation, model discovery, bounded HTTP transport, wire types, and typed errors implement both `TextEmbeddingProvider` and `GenerationProvider` under `providers/ollama`. Search owns chunking, generations, jobs, indexing, and retrieval; application state owns its background worker. Device configuration stores generation and embedding endpoint/model/enablement separately; extensions see only provider availability and generated output, never provider configuration.
+
+Recall is an explicit bounded search action, not an automatic search source. It accepts at most the first ten already-ranked result IDs, deduplicates them, reloads their derived search text through a host-owned query, excludes clips carrying `core.security.secret`, bounds each source to 8 KiB, the question to 2 KiB, and the answer to 32 KiB, and then invokes the configured local generation provider. Clipboard source text is delimited as untrusted data, output is presented as generated and fallible, and neither prompts nor answers become canonical clip metadata.
 
 Configuration sync is record-based and opt-in. SQLite owns a device identity, hybrid-logical clock, monotonic server cursor, transactional outbox, and invalid-remote quarantine. A supported profile mutation and its outbox record commit together. The client synchronizes at startup, after mutations, periodically, on reconnect, and manually; deterministic `(physical time, logical counter, source device)` ordering resolves conflicts and tombstones. The remote contract derives ownership from `auth.uid()` behind RLS and a security-invoker batch RPC. Only explicitly whitelisted profile records cross this boundary. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables local sync but preserves local data.
 

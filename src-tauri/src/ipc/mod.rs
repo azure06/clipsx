@@ -2380,6 +2380,16 @@ async fn get_text_generation_status(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
+async fn recall_search(
+    question: String,
+    clip_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<search::recall::RecallResult, String> {
+    search::recall::answer(&state.history, &question, clip_ids)
+        .await
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
 async fn reindex_text_embeddings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -2993,6 +3003,7 @@ pub(crate) fn run() {
             configure_text_generation_provider,
             disable_text_generation_provider,
             get_text_generation_status,
+            recall_search,
             retry_text_embedding_provider,
             reindex_text_embeddings,
             index_missing_text_embeddings,

@@ -113,6 +113,9 @@ interface SearchBarProps {
   searchSources?: SearchSourceDescriptor[]
   onToggleSource?: (sourceId: string) => void
   sourceOutcomes?: SearchSourceOutcome[]
+  canRecall?: boolean
+  isRecalling?: boolean
+  onRecall?: () => void
 }
 
 export interface SearchBarHandle {
@@ -134,6 +137,9 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     searchSources = [],
     onToggleSource,
     sourceOutcomes = [],
+    canRecall = false,
+    isRecalling = false,
+    onRecall,
   },
   ref
 ) {
@@ -340,6 +346,18 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
         {/* Right Actions */}
         <div className="pr-4 flex items-center gap-2">
+          {canRecall && (
+            <button
+              type="button"
+              onClick={onRecall}
+              disabled={isRecalling}
+              className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 disabled:opacity-50 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
+              title="Ask the configured local model to answer from the first 10 results"
+            >
+              <Sparkles className={`h-3.5 w-3.5 ${isRecalling ? 'animate-pulse' : ''}`} />
+              {isRecalling ? 'Reading…' : 'Recall'}
+            </button>
+          )}
           {/* Search sources */}
           {searchSources.length > 0 ? (
             <DropdownMenu>

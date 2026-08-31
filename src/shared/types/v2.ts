@@ -59,6 +59,7 @@ export type SearchSourceOutcome = {
   status: 'used' | 'unavailable' | 'failed'
   diagnostic: string | null
 }
+export type RecallResult = { answer: string; includedCount: number; excludedCount: number }
 
 export type ClipSummary = {
   id: string

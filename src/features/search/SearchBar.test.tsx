@@ -37,6 +37,28 @@ const ScopeHarness = ({
 }
 
 describe('SearchBar scope slash commands', () => {
+  it('offers Recall only for bounded search results and reports its running state', () => {
+    const onRecall = vi.fn()
+    const { rerender } = render(
+      <SearchBar value="water" onChange={vi.fn()} onClear={vi.fn()} canRecall onRecall={onRecall} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Recall' }))
+    expect(onRecall).toHaveBeenCalledOnce()
+
+    rerender(
+      <SearchBar
+        value="water"
+        onChange={vi.fn()}
+        onClear={vi.fn()}
+        canRecall
+        isRecalling
+        onRecall={onRecall}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Reading…' })).toBeDisabled()
+  })
+
   it('exposes slash suggestions as a keyboard-navigable listbox', async () => {
     const user = userEvent.setup()
     render(<ScopeHarness />)
