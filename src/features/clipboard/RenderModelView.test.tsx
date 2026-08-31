@@ -4,6 +4,7 @@ import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
 import { renderModelText } from './presentationModel'
 import { invoke } from '@tauri-apps/api/core'
+import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
@@ -274,7 +275,7 @@ describe('RenderModelView', () => {
       />
     )
     const image = screen.getByRole('img', { name: /clipboard image/i })
-    expect(image).toHaveAttribute('src', 'http://clipsx-asset.localhost/image-1')
+    expect(image).toHaveAttribute('src', managedAssetUrl('image-1'))
     fireEvent.error(image)
     expect(screen.getByText('No image source found')).toBeInTheDocument()
   })
@@ -291,7 +292,7 @@ describe('RenderModelView', () => {
     )
     expect(screen.getByRole('img', { name: /clipboard image/i })).toHaveAttribute(
       'src',
-      'http://clipsx-transform.localhost/result-1/0'
+      transformImageUrl('result-1', 0)
     )
   })
 

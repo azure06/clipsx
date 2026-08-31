@@ -1,7 +1,9 @@
 //! Existing coherent capture and platform implementation host.
-use super::capabilities::{
-    self, CapturePolicy, ReaderCodec, UnreadablePolicy, WritePolicy, WriterCodec,
-};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use super::capabilities::WritePolicy;
+use super::capabilities::{self, CapturePolicy, UnreadablePolicy};
+#[cfg(target_os = "windows")]
+use super::capabilities::{ReaderCodec, WriterCodec};
 use crate::history::{
     capture_fingerprint, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
     FormatObservation,
@@ -765,7 +767,7 @@ fn x11_owner_token() -> Result<u64> {
     let mut value = 0u32;
     while std::time::Instant::now() < deadline {
         if let Some(Event::SelectionNotify(event)) = conn.poll_for_event()? {
-            if event.property != AtomEnum::NONE.into() {
+            if event.property != u32::from(AtomEnum::NONE) {
                 let reply = conn
                     .get_property(false, window, property, AtomEnum::INTEGER, 0, 1)?
                     .reply()?;
@@ -813,6 +815,7 @@ fn x11_selection_loop(
             },
             Event,
         },
+        wrapper::ConnectionExt as _,
         COPY_DEPTH_FROM_PARENT, CURRENT_TIME,
     };
     let run = || -> Result<()> {
@@ -891,7 +894,7 @@ fn x11_selection_loop(
             match conn.wait_for_event()? {
                 Event::SelectionClear(event) if event.selection == clipboard => break,
                 Event::SelectionRequest(request) if request.selection == clipboard => {
-                    let property = if request.property == AtomEnum::NONE.into() {
+                    let property = if request.property == u32::from(AtomEnum::NONE) {
                         request.target
                     } else {
                         request.property
@@ -937,7 +940,7 @@ fn x11_selection_loop(
                         property: if accepted {
                             property
                         } else {
-                            AtomEnum::NONE.into()
+                            u32::from(AtomEnum::NONE)
                         },
                     };
                     conn.send_event(false, request.requestor, EventMask::NO_EVENT, response)?
@@ -1121,7 +1124,7 @@ fn x11_read_target(
     let deadline = std::time::Instant::now() + Duration::from_millis(150);
     while std::time::Instant::now() < deadline {
         if let Some(Event::SelectionNotify(event)) = conn.poll_for_event()? {
-            if event.property == AtomEnum::NONE.into() {
+            if event.property == u32::from(AtomEnum::NONE) {
                 bail!("X11 selection target unavailable")
             }
             let reply = conn

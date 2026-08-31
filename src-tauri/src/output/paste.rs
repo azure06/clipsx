@@ -228,14 +228,14 @@ pub fn simulate_paste(target: Option<FocusTarget>) -> Result<()> {
                 type_: active_atom,
                 data: ClientMessageData::from([2u32, 0, 0, 0, 0]),
             };
-            let _ = conn
-                .send_event(
-                    false,
-                    root,
-                    EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                    event,
-                )
-                .and_then(|c| c.check());
+            if let Ok(cookie) = conn.send_event(
+                false,
+                root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            ) {
+                let _ = cookie.check();
+            }
             let _ = conn.flush();
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
