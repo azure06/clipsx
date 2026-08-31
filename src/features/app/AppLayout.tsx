@@ -59,17 +59,29 @@ export const AppLayout = () => {
   const [recallResult, setRecallResult] = useState<RecallResult | null>(null)
   const [recallError, setRecallError] = useState<string | null>(null)
   const [isRecalling, setIsRecalling] = useState(false)
+  const [recallElapsedSeconds, setRecallElapsedSeconds] = useState(0)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const latestSearchQueryRef = useRef(searchQuery)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
   const [historyWidth, setHistoryWidth] = useState(50)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+  latestSearchQueryRef.current = searchQuery
 
   useEffect(() => {
     setRecallResult(null)
     setRecallError(null)
   }, [searchQuery])
+
+  useEffect(() => {
+    if (!isRecalling) return
+    setRecallElapsedSeconds(0)
+    const timer = window.setInterval(() => {
+      setRecallElapsedSeconds(seconds => seconds + 1)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [isRecalling])
 
   const runRecall = async () => {
     const question = searchQuery.trim()
@@ -79,14 +91,15 @@ export const AppLayout = () => {
     setRecallResult(null)
     setRecallError(null)
     try {
-      setRecallResult(
-        await invoke<RecallResult>('recall_search', {
-          question,
-          clipIds,
-        })
-      )
+      const result = await invoke<RecallResult>('recall_search', {
+        question,
+        clipIds,
+      })
+      if (latestSearchQueryRef.current.trim() === question) setRecallResult(result)
     } catch (error) {
-      setRecallError(error instanceof Error ? error.message : String(error))
+      if (latestSearchQueryRef.current.trim() === question) {
+        setRecallError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setIsRecalling(false)
     }
@@ -397,16 +410,22 @@ export const AppLayout = () => {
                     sourceOutcomes={searchSourceOutcomes}
                     canRecall={searchQuery.trim().length > 0 && clips.length > 0}
                     isRecalling={isRecalling}
+                    recallElapsedSeconds={recallElapsedSeconds}
                     onRecall={() => void runRecall()}
                   />
-                  {(recallResult || recallError) && (
+                  {(isRecalling || recallResult || recallError) && (
                     <div className="mt-3 rounded-xl border border-violet-200/70 bg-white/80 p-4 text-sm shadow-sm dark:border-violet-400/20 dark:bg-slate-900/80">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">
                             Recall · local generation
                           </p>
-                          {recallResult ? (
+                          {isRecalling ? (
+                            <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                              Selecting the best passages and generating locally…{' '}
+                              {recallElapsedSeconds}s. A local model can take a minute or two.
+                            </p>
+                          ) : recallResult ? (
                             <>
                               <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap leading-6 text-slate-800 dark:text-slate-100">
                                 {recallResult.answer}
@@ -426,17 +445,19 @@ export const AppLayout = () => {
                             </p>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          aria-label="Close Recall answer"
-                          className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
-                          onClick={() => {
-                            setRecallResult(null)
-                            setRecallError(null)
-                          }}
-                        >
-                          ×
-                        </button>
+                        {!isRecalling && (
+                          <button
+                            type="button"
+                            aria-label="Close Recall answer"
+                            className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                            onClick={() => {
+                              setRecallResult(null)
+                              setRecallError(null)
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}

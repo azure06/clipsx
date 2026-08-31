@@ -3192,6 +3192,7 @@ mod tests {
         let main_permissions = include_str!("../../permissions/main-app-commands.toml");
         assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
         assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
+        assert!(main_permissions.contains("\"allow-recall-search\""));
     }
 
     #[test]

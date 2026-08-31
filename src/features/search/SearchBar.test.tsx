@@ -53,10 +53,11 @@ describe('SearchBar scope slash commands', () => {
         onClear={vi.fn()}
         canRecall
         isRecalling
+        recallElapsedSeconds={12}
         onRecall={onRecall}
       />
     )
-    expect(screen.getByRole('button', { name: 'Reading…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reading… 12s' })).toBeDisabled()
   })
 
   it('exposes slash suggestions as a keyboard-navigable listbox', async () => {

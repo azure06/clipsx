@@ -15,8 +15,11 @@ ranking. Both index types live in one generation-specific SQLite sidecar file.
 
 Recall is separate. After search returns ranked results, the user may explicitly
 ask a configured local text-generation model to answer from at most the first
-10 results. Search retrieves; generation writes a new answer. The answer is not
-treated as canonical clipboard truth.
+10 results. The backend searches only within those IDs again to select the best
+matching paragraph from each long document. If embeddings are unavailable, it
+uses bounded searchable text instead. Each source passage is capped at 2 KiB,
+so the ten passages contribute at most 20 KiB. Search retrieves; generation
+writes a new answer. The answer is not treated as canonical clipboard truth.
 
 ## What “generation” means
 
@@ -103,7 +106,9 @@ sequenceDiagram
     User->>Search: Search question
     Search-->>User: Ranked results from FTS + meaning search
     User->>Recall: Press Recall
-    Recall->>Recall: Keep first 10; exclude secret facets; bound each source
+    Recall->>Recall: Keep first 10; exclude secret facets
+    Recall->>Search: Best passage within each eligible result
+    Search-->>Recall: Meaning passage, or bounded text fallback
     Recall->>LocalLLM: Question + numbered untrusted sources
     LocalLLM-->>Recall: Generated answer with source markers
     Recall-->>User: Answer + included/excluded counts
@@ -112,7 +117,7 @@ sequenceDiagram
 Recall never runs automatically. Secret-tagged clips are excluded even when the
 provider is local; this default prevents an ordinary broad search from silently
 aggregating passwords or tokens into a prompt. The local model receives at most
-10 sources of at most 8 KiB each, the question is at most 2 KiB, and the answer
+10 sources of at most 2 KiB each, the question is at most 2 KiB, and the answer
 is at most 32 KiB. Generated
 text can be wrong, so the UI asks the user to verify important answers against
 the source clips.

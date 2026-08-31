@@ -100,6 +100,7 @@ fn main() {
             "configure_text_generation_provider",
             "disable_text_generation_provider",
             "get_text_generation_status",
+            "recall_search",
             "retry_text_embedding_provider",
             "reindex_text_embeddings",
             "index_missing_text_embeddings",

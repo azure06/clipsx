@@ -37,6 +37,7 @@ permissions = [
   "allow-disable-text-embedding-provider", "allow-get-text-embedding-status",
   "allow-list-failed-text-embedding-jobs", "allow-configure-text-generation-provider",
   "allow-disable-text-generation-provider", "allow-get-text-generation-status",
+  "allow-recall-search",
   "allow-retry-text-embedding-provider", "allow-reindex-text-embeddings",
   "allow-index-missing-text-embeddings", "allow-clear-text-embedding-space",
 ]

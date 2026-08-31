@@ -115,6 +115,7 @@ interface SearchBarProps {
   sourceOutcomes?: SearchSourceOutcome[]
   canRecall?: boolean
   isRecalling?: boolean
+  recallElapsedSeconds?: number
   onRecall?: () => void
 }
 
@@ -139,6 +140,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     sourceOutcomes = [],
     canRecall = false,
     isRecalling = false,
+    recallElapsedSeconds = 0,
     onRecall,
   },
   ref
@@ -355,7 +357,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               title="Ask the configured local model to answer from the first 10 results"
             >
               <Sparkles className={`h-3.5 w-3.5 ${isRecalling ? 'animate-pulse' : ''}`} />
-              {isRecalling ? 'Reading…' : 'Recall'}
+              {isRecalling ? `Reading… ${recallElapsedSeconds}s` : 'Recall'}
             </button>
           )}
           {/* Search sources */}
