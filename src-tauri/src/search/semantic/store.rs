@@ -442,6 +442,28 @@ impl SemanticIndexStore {
         generation_id: &str,
         dimensions: usize,
     ) -> Result<BuildingSidecar> {
+        self.open_writer(relative_path, generation_id, dimensions, 0)
+            .await
+    }
+
+    /// Opens an activated generation for a bounded incremental clip update.
+    pub async fn open_active(
+        &self,
+        relative_path: &str,
+        generation_id: &str,
+        dimensions: usize,
+    ) -> Result<BuildingSidecar> {
+        self.open_writer(relative_path, generation_id, dimensions, 1)
+            .await
+    }
+
+    async fn open_writer(
+        &self,
+        relative_path: &str,
+        generation_id: &str,
+        dimensions: usize,
+        complete: i64,
+    ) -> Result<BuildingSidecar> {
         validate_generation_id(generation_id)?;
         let path = self.resolve(relative_path)?;
         require_regular_file(&path)?;
@@ -450,7 +472,7 @@ impl SemanticIndexStore {
             .journal_mode(SqliteJournalMode::Wal)
             .foreign_keys(true);
         let mut connection = SqliteConnection::connect_with(&options).await?;
-        validate_meta(&mut connection, generation_id, dimensions, 0).await?;
+        validate_meta(&mut connection, generation_id, dimensions, complete).await?;
         quick_check(&mut connection).await?;
         Ok(BuildingSidecar {
             connection,
@@ -485,6 +507,16 @@ impl SemanticIndexStore {
         quick_check(&mut connection).await?;
         connection.close().await?;
         Ok(())
+    }
+
+    pub fn checkpoint_identity(&self, relative_path: &str) -> Result<FinalizedSidecar> {
+        let path = self.resolve(relative_path)?;
+        require_regular_file(&path)?;
+        Ok(FinalizedSidecar {
+            relative_path: relative_path.into(),
+            byte_length: fs::metadata(&path)?.len(),
+            sha256: file_sha256(&path)?,
+        })
     }
 
     /// Runs the selected two-stage retrieval path against one complete generation.

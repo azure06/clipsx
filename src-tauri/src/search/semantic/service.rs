@@ -1,6 +1,7 @@
 use super::chunking::{
     self, deduplicate_inputs, SemanticChunk, SemanticFacet, SemanticInput, PIPELINE_VERSION,
 };
+use super::store::{BuildingSidecar, SemanticIndexStore, SidecarChunk};
 use crate::{
     history::{new_id, now_ms, sha256, ClipSummary, HistoryRepository},
     providers::{
@@ -14,13 +15,9 @@ use crate::{
 
 pub use crate::providers::ollama::{OllamaEndpointStatus, OllamaModelDescriptor};
 use anyhow::{bail, Context, Result};
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::{
-    cmp::{Ordering, Reverse},
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const PROVIDER_CONFIG_KEY: &str = "providers.text_embedding.active";
 const MIN_FALLBACK_BYTES: usize = 128;
@@ -101,6 +98,8 @@ struct Generation {
     id: String,
     space_id: String,
     status: String,
+    dimensions: usize,
+    sidecar_relative_path: String,
 }
 
 pub async fn probe_endpoint(endpoint: String) -> OllamaEndpointStatus {
@@ -327,12 +326,6 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     let generation = target_generation_for_work(repo)
         .await?
         .context("no embedding generation")?;
-    let model: String =
-        sqlx::query_scalar("SELECT model_id FROM search_embedding_spaces WHERE id=?")
-            .bind(&generation.space_id)
-            .fetch_one(&repo.pool)
-            .await?;
-    let provider = providers::text_embedding_provider(&config, Some(&model))?;
     let rows = sqlx::query(
         "SELECT id,clip_id FROM search_index_jobs WHERE generation_id=? AND status='pending'
          ORDER BY requested_at,id LIMIT 16",
@@ -340,6 +333,44 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     .bind(&generation.id)
     .fetch_all(&repo.pool)
     .await?;
+    if rows.is_empty() {
+        settle_generation(repo, &generation).await?;
+        return Ok(0);
+    }
+    let model: String =
+        sqlx::query_scalar("SELECT model_id FROM search_embedding_spaces WHERE id=?")
+            .bind(&generation.space_id)
+            .fetch_one(&repo.pool)
+            .await?;
+    let provider = providers::text_embedding_provider(&config, Some(&model))?;
+    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+    if generation.status == "active" {
+        sqlx::query(
+            "UPDATE search_index_generations
+             SET sidecar_byte_length=NULL,sidecar_sha256=NULL,updated_at=? WHERE id=?",
+        )
+        .bind(now_ms())
+        .bind(&generation.id)
+        .execute(&repo.pool)
+        .await?;
+    }
+    let mut writer = if generation.status == "building" {
+        store
+            .open_building(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await?
+    } else {
+        store
+            .open_active(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await?
+    };
     let mut count = 0;
     let mut first_error = None;
     for row in rows {
@@ -356,7 +387,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
         .bind(&id)
         .execute(&repo.pool)
         .await?;
-        match index_clip(repo, provider.as_ref(), &generation.id, &clip).await {
+        match index_clip(repo, &mut writer, provider.as_ref(), &clip).await {
             Ok(projection) => {
                 sqlx::query(
                     "UPDATE search_index_jobs SET status='completed',projection_sha256=?,
@@ -392,6 +423,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
             }
         }
     }
+    writer.close().await?;
     settle_generation(repo, &generation).await?;
     if let Some(error) = first_error {
         bail!(error);
@@ -416,6 +448,29 @@ async fn settle_generation(repo: &HistoryRepository, generation: &Generation) ->
         .await?;
         return Ok(());
     }
+    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+    let finalized = match store
+        .open_building(
+            &generation.sidecar_relative_path,
+            &generation.id,
+            generation.dimensions,
+        )
+        .await
+    {
+        Ok(writer) => writer.finalize().await?,
+        Err(open_error) => {
+            store
+                .validate(
+                    &generation.sidecar_relative_path,
+                    &generation.id,
+                    generation.dimensions,
+                    None,
+                )
+                .await
+                .with_context(|| format!("cannot recover finalized sidecar: {open_error}"))?;
+            store.checkpoint_identity(&generation.sidecar_relative_path)?
+        }
+    };
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
     sqlx::query(
@@ -427,33 +482,34 @@ async fn settle_generation(repo: &HistoryRepository, generation: &Generation) ->
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "UPDATE search_index_generations SET status='active',activated_at=?,completed_at=?,updated_at=? WHERE id=?",
+        "UPDATE search_index_generations SET status='active',activated_at=?,completed_at=?,updated_at=?,
+         sidecar_byte_length=?,sidecar_sha256=? WHERE id=?",
     )
     .bind(now)
     .bind(now)
     .bind(now)
+    .bind(i64::try_from(finalized.byte_length)?)
+    .bind(finalized.sha256)
     .bind(&generation.id)
     .execute(&mut *tx)
     .await?;
-    for table in ["search_chunks", "search_index_jobs"] {
-        let sql = format!(
-            "DELETE FROM {table} WHERE generation_id IN (
-                SELECT id FROM search_index_generations WHERE source_id=?
-                AND status IN ('superseded','cancelled'))"
-        );
-        sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(SEMANTIC_TEXT_SOURCE_ID)
-            .execute(&mut *tx)
-            .await?;
-    }
+    sqlx::query(
+        "DELETE FROM search_index_jobs WHERE generation_id IN (
+            SELECT id FROM search_index_generations WHERE source_id=?
+            AND status IN ('superseded','cancelled'))",
+    )
+    .bind(SEMANTIC_TEXT_SOURCE_ID)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
+    remove_disposable_generation_sidecars(repo).await?;
     Ok(())
 }
 
 async fn index_clip(
     repo: &HistoryRepository,
+    writer: &mut BuildingSidecar,
     provider: &dyn TextEmbeddingProvider,
-    generation_id: &str,
     clip_id: &str,
 ) -> Result<String> {
     let mut chunks = Vec::<(SemanticInput, SemanticChunk)>::new();
@@ -465,30 +521,13 @@ async fn index_clip(
     let chunks = chunking::bound_clip_chunks(clip_id, chunks);
     let projection = semantic_projection_hash(&chunks)?;
     if chunks.is_empty() {
-        sqlx::query("DELETE FROM search_chunks WHERE generation_id=? AND clip_id=?")
-            .bind(generation_id)
-            .bind(clip_id)
-            .execute(&repo.pool)
-            .await?;
+        writer.replace_clip(clip_id, &[]).await?;
         return Ok(projection);
     }
     let embedded = embed_chunks_adaptively(provider, chunks).await?;
-    let dimensions: i64 = sqlx::query_scalar(
-        "SELECT s.dimensions FROM search_index_generations g
-         JOIN search_embedding_spaces s ON s.id=g.space_id WHERE g.id=?",
-    )
-    .bind(generation_id)
-    .fetch_one(&repo.pool)
-    .await?;
-    let mut tx = repo.pool.begin().await?;
-    sqlx::query("DELETE FROM search_chunks WHERE generation_id=? AND clip_id=?")
-        .bind(generation_id)
-        .bind(clip_id)
-        .execute(&mut *tx)
-        .await?;
-    for (ordinal, (input, chunk, vector)) in embedded.into_iter().enumerate() {
-        validate_vector(&vector, Some(dimensions as usize))?;
-        let chunk_id = new_id();
+    let mut sidecar_chunks = Vec::with_capacity(embedded.len());
+    for (input, chunk, vector) in embedded {
+        validate_vector(&vector, None)?;
         let manifest = chunk_manifest(&input, &chunk)?;
         let chunk_projection = sha256(
             format!(
@@ -497,37 +536,20 @@ async fn index_clip(
             )
             .as_bytes(),
         );
-        sqlx::query(
-            "INSERT INTO search_chunks(
-                id,generation_id,clip_id,representation_id,artifact_id,ordinal,chunk_kind,
-                text_value,text_sha256,source_manifest_json,projection_sha256,chunker_id,
-                chunker_version,created_at
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(&chunk_id)
-        .bind(generation_id)
-        .bind(clip_id)
-        .bind(&input.representation_id)
-        .bind(&input.artifact_id)
-        .bind(ordinal as i64)
-        .bind(&chunk.kind)
-        .bind(&chunk.display_text)
-        .bind(sha256(chunk.display_text.as_bytes()))
-        .bind(&manifest)
-        .bind(&chunk_projection)
-        .bind(&chunk.strategy_id)
-        .bind(&chunk.strategy_version)
-        .bind(now_ms())
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query("INSERT INTO search_embeddings(chunk_id,vector,created_at) VALUES(?,?,?)")
-            .bind(&chunk_id)
-            .bind(vector_blob(&vector))
-            .bind(now_ms())
-            .execute(&mut *tx)
-            .await?;
+        sidecar_chunks.push(SidecarChunk {
+            input_hash: sha256(chunk.embedding_text.as_bytes()),
+            vector,
+            kind: chunk.kind,
+            text: chunk.display_text,
+            representation_id: input.representation_id,
+            artifact_id: input.artifact_id,
+            source_manifest: manifest,
+            projection_hash: chunk_projection,
+            chunker_id: chunk.strategy_id,
+            chunker_version: chunk.strategy_version,
+        });
     }
-    tx.commit().await?;
+    writer.replace_clip(clip_id, &sidecar_chunks).await?;
     Ok(projection)
 }
 
@@ -738,29 +760,69 @@ async fn create_building_generation(
     space_id: &str,
 ) -> Result<Generation> {
     cancel_building(repo).await?;
+    cancel_failed_generations(repo).await?;
     let generation = next_generation(repo).await?;
     let id = new_id();
+    let dimensions: i64 =
+        sqlx::query_scalar("SELECT dimensions FROM search_embedding_spaces WHERE id=?")
+            .bind(space_id)
+            .fetch_one(&repo.pool)
+            .await?;
+    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+    let building = store.create(&id, usize::try_from(dimensions)?).await?;
+    let sidecar_relative_path = format!("generation-{id}.sqlite");
+    building.close().await?;
     let now = now_ms();
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO search_index_generations(
-            id,source_id,space_id,generation,pipeline_version,status,created_at,updated_at
-         ) VALUES(?,?,?,?,?,'building',?,?)",
+            id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
+            created_at,updated_at
+         ) VALUES(?,?,?,?,?,'building',?,?,?)",
     )
     .bind(&id)
     .bind(SEMANTIC_TEXT_SOURCE_ID)
     .bind(space_id)
     .bind(generation)
     .bind(PIPELINE_VERSION)
+    .bind(&sidecar_relative_path)
     .bind(now)
     .bind(now)
     .execute(&repo.pool)
-    .await?;
+    .await;
+    if let Err(error) = inserted {
+        store.remove(&sidecar_relative_path)?;
+        return Err(error.into());
+    }
     enqueue_all(repo, &id).await?;
     Ok(Generation {
         id,
         space_id: space_id.into(),
         status: "building".into(),
+        dimensions: usize::try_from(dimensions)?,
+        sidecar_relative_path,
     })
+}
+
+async fn cancel_failed_generations(repo: &HistoryRepository) -> Result<()> {
+    let now = now_ms();
+    sqlx::query(
+        "UPDATE search_index_generations SET status='cancelled',completed_at=?,updated_at=?
+         WHERE source_id=? AND status='failed'",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(SEMANTIC_TEXT_SOURCE_ID)
+    .execute(&repo.pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM search_index_jobs WHERE generation_id IN (
+            SELECT id FROM search_index_generations WHERE source_id=? AND status='cancelled')",
+    )
+    .bind(SEMANTIC_TEXT_SOURCE_ID)
+    .execute(&repo.pool)
+    .await?;
+    remove_disposable_generation_sidecars(repo).await?;
+    Ok(())
 }
 
 async fn cancel_building(repo: &HistoryRepository) -> Result<()> {
@@ -774,16 +836,29 @@ async fn cancel_building(repo: &HistoryRepository) -> Result<()> {
     .bind(SEMANTIC_TEXT_SOURCE_ID)
     .execute(&repo.pool)
     .await?;
-    for table in ["search_chunks", "search_index_jobs"] {
-        let sql = format!(
-            "DELETE FROM {table} WHERE generation_id IN (
-                SELECT id FROM search_index_generations WHERE source_id=? AND status='cancelled')"
-        );
-        sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(SEMANTIC_TEXT_SOURCE_ID)
-            .execute(&repo.pool)
-            .await?;
-    }
+    sqlx::query(
+        "DELETE FROM search_index_jobs WHERE generation_id IN (
+            SELECT id FROM search_index_generations WHERE source_id=? AND status='cancelled')",
+    )
+    .bind(SEMANTIC_TEXT_SOURCE_ID)
+    .execute(&repo.pool)
+    .await?;
+    remove_disposable_generation_sidecars(repo).await?;
+    Ok(())
+}
+
+async fn remove_disposable_generation_sidecars(repo: &HistoryRepository) -> Result<()> {
+    let retained = sqlx::query_scalar::<_, String>(
+        "SELECT sidecar_relative_path FROM search_index_generations
+         WHERE source_id=? AND status IN ('active','building','failed')
+         AND sidecar_relative_path IS NOT NULL",
+    )
+    .bind(SEMANTIC_TEXT_SOURCE_ID)
+    .fetch_all(&repo.pool)
+    .await?
+    .into_iter()
+    .collect::<HashSet<_>>();
+    SemanticIndexStore::new(&repo.semantic_index_root)?.remove_orphans(&retained)?;
     Ok(())
 }
 
@@ -838,6 +913,7 @@ pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
         .bind(space)
         .execute(&repo.pool)
         .await?;
+    remove_disposable_generation_sidecars(repo).await?;
     Ok(())
 }
 
@@ -848,6 +924,7 @@ pub async fn recover_interrupted(repo: &HistoryRepository) -> Result<()> {
     .bind(now_ms())
     .execute(&repo.pool)
     .await?;
+    remove_disposable_generation_sidecars(repo).await?;
     Ok(())
 }
 
@@ -930,46 +1007,13 @@ pub async fn semantic_matches(
             .fetch_one(&repo.pool)
             .await?;
     let provider = providers::text_embedding_provider(&config, Some(&model))?;
-    semantic_matches_with_provider(
-        repo,
-        &active.id,
-        provider.as_ref(),
-        query,
-        eligible_ids,
-        limit,
-    )
-    .await
-}
-
-#[derive(Debug)]
-struct ScoreEntry {
-    clip_id: String,
-    score: f64,
-    text: String,
-}
-
-impl PartialEq for ScoreEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.score.to_bits() == other.score.to_bits() && self.clip_id == other.clip_id
-    }
-}
-impl Eq for ScoreEntry {}
-impl PartialOrd for ScoreEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for ScoreEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.score
-            .total_cmp(&other.score)
-            .then_with(|| other.clip_id.cmp(&self.clip_id))
-    }
+    semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
+        .await
 }
 
 async fn semantic_matches_with_provider(
     repo: &HistoryRepository,
-    generation_id: &str,
+    generation: &Generation,
     provider: &dyn TextEmbeddingProvider,
     query: &str,
     eligible_ids: &HashSet<String>,
@@ -980,64 +1024,20 @@ async fn semantic_matches_with_provider(
     }
     let mut query_vectors = provider.embed_queries(&[query.into()]).await?;
     let query_vector = query_vectors.pop().context("missing query embedding")?;
-    validate_vector(&query_vector, None)?;
-    let mut rows = sqlx::query(
-        "SELECT sc.clip_id,se.vector,sc.text_value FROM search_chunks sc
-         JOIN search_embeddings se ON se.chunk_id=sc.id
-         JOIN json_each(?) eligible ON eligible.value=sc.clip_id
-         WHERE sc.generation_id=? ORDER BY sc.clip_id,sc.ordinal",
-    )
-    .bind(serde_json::to_string(eligible_ids)?)
-    .bind(generation_id)
-    .fetch(&repo.pool);
-    let mut heap: BinaryHeap<Reverse<ScoreEntry>> = BinaryHeap::with_capacity(limit + 1);
-    let mut current: Option<ScoreEntry> = None;
-    while let Some(row) = rows.try_next().await? {
-        let clip_id: String = row.get(0);
-        let score = dot_blob(&query_vector, &row.get::<Vec<u8>, _>(1))?;
-        let text: String = row.get(2);
-        match current.as_mut() {
-            Some(candidate) if candidate.clip_id == clip_id => {
-                if score > candidate.score {
-                    candidate.score = score;
-                    candidate.text = text;
-                }
-            }
-            Some(_) => {
-                push_bounded(&mut heap, current.take().expect("candidate exists"), limit);
-                current = Some(ScoreEntry {
-                    clip_id,
-                    score,
-                    text,
-                });
-            }
-            None => {
-                current = Some(ScoreEntry {
-                    clip_id,
-                    score,
-                    text,
-                });
-            }
-        }
-    }
-    if let Some(candidate) = current {
-        push_bounded(&mut heap, candidate, limit);
-    }
-    let mut output = heap
+    validate_vector(&query_vector, Some(generation.dimensions))?;
+    Ok(SemanticIndexStore::new(&repo.semantic_index_root)?
+        .search(
+            &generation.sidecar_relative_path,
+            &generation.id,
+            generation.dimensions,
+            &query_vector,
+            eligible_ids,
+            limit,
+        )
+        .await?
         .into_iter()
-        .map(|Reverse(value)| (value.clip_id, value.score, value.text))
-        .collect::<Vec<_>>();
-    output.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    Ok(output)
-}
-
-fn push_bounded(heap: &mut BinaryHeap<Reverse<ScoreEntry>>, candidate: ScoreEntry, limit: usize) {
-    if heap.len() < limit {
-        heap.push(Reverse(candidate));
-    } else if heap.peek().is_some_and(|Reverse(worst)| candidate > *worst) {
-        heap.pop();
-        heap.push(Reverse(candidate));
-    }
+        .map(|hit| (hit.clip_id, hit.score, hit.text))
+        .collect())
 }
 
 async fn generation_by_status(
@@ -1045,8 +1045,10 @@ async fn generation_by_status(
     status: &str,
 ) -> Result<Option<Generation>> {
     Ok(sqlx::query(
-        "SELECT id,space_id,status FROM search_index_generations
-         WHERE source_id=? AND status=? ORDER BY generation DESC LIMIT 1",
+        "SELECT g.id,g.space_id,g.status,s.dimensions,g.sidecar_relative_path
+         FROM search_index_generations g
+         JOIN search_embedding_spaces s ON s.id=g.space_id
+         WHERE g.source_id=? AND g.status=? ORDER BY g.generation DESC LIMIT 1",
     )
     .bind(SEMANTIC_TEXT_SOURCE_ID)
     .bind(status)
@@ -1056,6 +1058,8 @@ async fn generation_by_status(
         id: row.get(0),
         space_id: row.get(1),
         status: row.get(2),
+        dimensions: row.get::<i64, _>(3) as usize,
+        sidecar_relative_path: row.get(4),
     }))
 }
 
@@ -1279,26 +1283,6 @@ fn validate_vector(vector: &[f32], dimensions: Option<usize>) -> Result<()> {
     Ok(())
 }
 
-fn vector_blob(vector: &[f32]) -> Vec<u8> {
-    vector
-        .iter()
-        .flat_map(|value| value.to_le_bytes())
-        .collect()
-}
-
-fn dot_blob(query: &[f32], bytes: &[u8]) -> Result<f64> {
-    if bytes.len() != query.len() * 4 {
-        bail!("stored embedding dimensions do not match query");
-    }
-    Ok(query
-        .iter()
-        .zip(bytes.chunks_exact(4))
-        .map(|(left, right)| {
-            *left as f64 * f32::from_le_bytes(right.try_into().expect("four-byte chunk")) as f64
-        })
-        .sum())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,6 +1292,7 @@ mod tests {
         providers::{contracts::ProviderDescriptor, error::ProviderResult},
     };
     use async_trait::async_trait;
+    use sqlx::{Connection, SqliteConnection};
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct FakeProvider;
@@ -1438,7 +1423,7 @@ mod tests {
         .0
     }
 
-    async fn insert_generation(repo: &HistoryRepository) -> String {
+    async fn insert_generation(repo: &HistoryRepository) -> (Generation, BuildingSidecar) {
         let compatibility = compatibility_sha256(&test_space()).unwrap();
         sqlx::query(
             "INSERT INTO search_embedding_spaces(
@@ -1451,20 +1436,37 @@ mod tests {
         .execute(&repo.pool)
         .await
         .unwrap();
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let finalized = store
+            .create("generation", 2)
+            .await
+            .unwrap()
+            .finalize()
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO search_index_generations(
-              id,source_id,space_id,generation,pipeline_version,status,created_at,updated_at,activated_at)
-             VALUES('generation',?,'space',1,?,'active',?,?,?)",
+              id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
+              sidecar_byte_length,sidecar_sha256,created_at,updated_at,activated_at)
+             VALUES('generation',?,'space',1,?,'active',?,?,?,?,?,?)",
         )
         .bind(SEMANTIC_TEXT_SOURCE_ID)
         .bind(PIPELINE_VERSION)
+        .bind(&finalized.relative_path)
+        .bind(finalized.byte_length as i64)
+        .bind(&finalized.sha256)
         .bind(now_ms())
         .bind(now_ms())
         .bind(now_ms())
         .execute(&repo.pool)
         .await
         .unwrap();
-        "generation".into()
+        let generation = generation_by_status(repo, "active").await.unwrap().unwrap();
+        let writer = store
+            .open_active(&finalized.relative_path, "generation", 2)
+            .await
+            .unwrap();
+        (generation, writer)
     }
 
     #[tokio::test]
@@ -1472,13 +1474,14 @@ mod tests {
         let (_temp, repo) = repository().await;
         let first = insert_text_clip(&repo, "first semantic paragraph").await;
         let second = insert_text_clip(&repo, "second semantic paragraph").await;
-        let generation = insert_generation(&repo).await;
-        index_clip(&repo, &FakeProvider, &generation, &first)
+        let (generation, mut writer) = insert_generation(&repo).await;
+        index_clip(&repo, &mut writer, &FakeProvider, &first)
             .await
             .unwrap();
-        index_clip(&repo, &FakeProvider, &generation, &second)
+        index_clip(&repo, &mut writer, &FakeProvider, &second)
             .await
             .unwrap();
+        writer.close().await.unwrap();
         let matches = semantic_matches_with_provider(
             &repo,
             &generation,
@@ -1491,13 +1494,6 @@ mod tests {
         .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0, second);
-        let stored: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM search_embeddings se JOIN search_chunks sc ON sc.id=se.chunk_id",
-        )
-        .fetch_one(&repo.pool)
-        .await
-        .unwrap();
-        assert!(stored >= 2);
     }
 
     #[tokio::test]
@@ -1542,18 +1538,25 @@ mod tests {
         .execute(&repo.pool)
         .await
         .unwrap();
-        let generation = insert_generation(&repo).await;
+        let (generation, mut writer) = insert_generation(&repo).await;
 
-        index_clip(&repo, &FakeProvider, &generation, &clip_id)
+        index_clip(&repo, &mut writer, &FakeProvider, &clip_id)
             .await
             .unwrap();
+        writer.close().await.unwrap();
 
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(
+                repo.semantic_index_root
+                    .join(&generation.sidecar_relative_path),
+            )
+            .read_only(true);
+        let mut sidecar = SqliteConnection::connect_with(&options).await.unwrap();
         let row = sqlx::query(
-            "SELECT representation_id,artifact_id FROM search_chunks
-             WHERE generation_id=? AND artifact_id='ocr-artifact'",
+            "SELECT representation_id,artifact_id FROM semantic_chunks
+             WHERE artifact_id='ocr-artifact'",
         )
-        .bind(&generation)
-        .fetch_one(&repo.pool)
+        .fetch_one(&mut sidecar)
         .await
         .unwrap();
         assert_eq!(row.get::<Option<String>, _>(0), None);
@@ -1564,13 +1567,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_build_is_finalized_before_atomic_activation() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "activation content").await;
+        let compatibility = compatibility_sha256(&test_space()).unwrap();
+        sqlx::query(
+            "INSERT INTO search_embedding_spaces(
+              id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,
+              modality,dimensions,normalization,distance_metric,created_at)
+             VALUES('activation-space','test.embedding','1','test','sha256:test',?,
+                    'text',2,'l2','cosine',?)",
+        )
+        .bind(compatibility)
+        .bind(now_ms())
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        let generation = create_building_generation(&repo, "activation-space")
+            .await
+            .unwrap();
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let mut writer = store
+            .open_building(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await
+            .unwrap();
+        index_clip(&repo, &mut writer, &FakeProvider, &clip_id)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='completed',completed_at=?,updated_at=?
+             WHERE generation_id=?",
+        )
+        .bind(now_ms())
+        .bind(now_ms())
+        .bind(&generation.id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        settle_generation(&repo, &generation).await.unwrap();
+        let active = generation_by_status(&repo, "active")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.id, generation.id);
+        let checksum: String =
+            sqlx::query_scalar("SELECT sidecar_sha256 FROM search_index_generations WHERE id=?")
+                .bind(&active.id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        store
+            .validate(
+                &active.sidecar_relative_path,
+                &active.id,
+                active.dimensions,
+                Some(&checksum),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn schema_rejects_two_active_generations() {
         let (_temp, repo) = repository().await;
-        insert_generation(&repo).await;
+        let (_, writer) = insert_generation(&repo).await;
+        writer.close().await.unwrap();
         let result = sqlx::query(
             "INSERT INTO search_index_generations(
-             id,source_id,space_id,generation,pipeline_version,status,created_at,updated_at)
-             VALUES('other',?,'space',2,?,'active',?,?)",
+             id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
+             created_at,updated_at)
+             VALUES('other',?,'space',2,?,'active','generation-other.sqlite',?,?)",
         )
         .bind(SEMANTIC_TEXT_SOURCE_ID)
         .bind(PIPELINE_VERSION)
@@ -1579,53 +1651,5 @@ mod tests {
         .execute(&repo.pool)
         .await;
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn dot_product_reads_float_blob_directly() {
-        assert_eq!(
-            dot_blob(&[1.0, 0.0], &vector_blob(&[0.5, 0.5])).unwrap(),
-            0.5
-        );
-        assert!(dot_blob(&[1.0], &vector_blob(&[1.0, 0.0])).is_err());
-    }
-
-    /// Reproducible conservative-capacity scan baseline; run in release mode:
-    /// `cargo test --release exact_vector_scan_benchmark -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn exact_vector_scan_benchmark() {
-        use std::time::Instant;
-
-        const DIMENSIONS: usize = 1_024;
-        const LIMIT: usize = 100;
-        const RUNS: usize = 7;
-        let query = vec![1.0_f32 / (DIMENSIONS as f32).sqrt(); DIMENSIONS];
-        let blob = vector_blob(&query);
-        for chunks in [5_000_usize, 540_000] {
-            let mut elapsed = Vec::with_capacity(RUNS);
-            for _ in 0..RUNS {
-                let started = Instant::now();
-                let mut heap = BinaryHeap::with_capacity(LIMIT + 1);
-                for index in 0..chunks {
-                    push_bounded(
-                        &mut heap,
-                        ScoreEntry {
-                            clip_id: format!("clip-{index:08}"),
-                            score: dot_blob(&query, &blob).unwrap(),
-                            text: String::new(),
-                        },
-                        LIMIT,
-                    );
-                }
-                assert_eq!(heap.len(), chunks.min(LIMIT));
-                elapsed.push(started.elapsed().as_micros());
-            }
-            elapsed.sort_unstable();
-            eprintln!(
-                "exact-vector-scan chunks={chunks} dimensions={DIMENSIONS} limit={LIMIT} runs={RUNS} p50_us={} p95_us={} p99_us={}",
-                elapsed[RUNS / 2], elapsed[RUNS - 1], elapsed[RUNS - 1]
-            );
-        }
     }
 }

@@ -694,6 +694,16 @@ and representative retrieval quality remains acceptable.
 
 ### Phase 4: implement generation building and activation
 
+**Progress:** the generation coordinator now creates and records an owned
+sidecar, writes each completed clip there before completing its main-database
+job, finalizes and checkpoints the file before atomic activation, and routes
+semantic queries through that active sidecar. The former `clips.db`
+`search_chunks` and `search_embeddings` tables and exact-scan implementation
+have been removed rather than retained as a compatibility or dual-write path.
+Active clip updates clear the previous checkpoint before opening the sidecar.
+Cancelled, superseded, and replaced failed-generation files are cleaned through
+the same owned store boundary.
+
 - Bulk-enqueue initial jobs using `INSERT ... SELECT`.
 - Keep one bounded background coordinator.
 - Use sidecar-first, job-second commit ordering.
