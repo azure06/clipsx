@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { ExternalLink, KeyRound, RotateCcw, ShieldCheck, Trash2, Zap } from 'lucide-react'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import { ExternalLink, KeyRound, RotateCcw, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Button } from '../../../shared/components/ui/Button'
 import { Switch } from '../../../shared/components/ui/Switch'
@@ -356,15 +357,47 @@ export const PackageDetailView = ({
                 >
                   Pin
                 </button>
-                <ShortcutRecorder
-                  value={action.shortcut ?? ''}
-                  onChange={shortcut =>
-                    void invoke('set_extension_action_shortcut', {
-                      actionId: action.id,
-                      accelerator: shortcut || null,
-                    }).then(onChanged)
-                  }
-                />
+                <div className="flex items-center gap-1">
+                  <ShortcutRecorder
+                    value={action.shortcut ?? ''}
+                    onChange={shortcut =>
+                      void invoke('set_extension_action_shortcut', {
+                        actionId: action.id,
+                        accelerator: shortcut || null,
+                      }).then(onChanged)
+                    }
+                  />
+                  {action.shortcut && (
+                    <Tooltip.Provider delayDuration={300}>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <button
+                            type="button"
+                            aria-label="Remove shortcut"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-500/10 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                            onClick={() =>
+                              void invoke('set_extension_action_shortcut', {
+                                actionId: action.id,
+                                accelerator: null,
+                              }).then(onChanged)
+                            }
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
+                            sideOffset={5}
+                          >
+                            Remove shortcut
+                            <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
+                    </Tooltip.Provider>
+                  )}
+                </div>
               </div>
             ))
           )}

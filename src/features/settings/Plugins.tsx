@@ -57,15 +57,21 @@ export const Plugins = () => {
       setError(String(value))
     }
   }, [])
-  const selectPackage = useCallback(async (packageId: string) => {
-    setSelectedId(packageId)
-    setDetail(null)
+  const loadPackageDetail = useCallback(async (packageId: string) => {
     try {
       setDetail(await invoke<PackageDetail>('get_extension_package_detail', { packageId }))
     } catch (value) {
       setError(String(value))
     }
   }, [])
+  const selectPackage = useCallback(
+    async (packageId: string) => {
+      setSelectedId(packageId)
+      setDetail(null)
+      await loadPackageDetail(packageId)
+    },
+    [loadPackageDetail]
+  )
   useEffect(() => {
     void load()
   }, [load])
@@ -225,7 +231,7 @@ export const Plugins = () => {
             }}
             onChanged={() => {
               void load()
-              void selectPackage(selectedId)
+              void loadPackageDetail(selectedId)
             }}
           />
         ) : (
