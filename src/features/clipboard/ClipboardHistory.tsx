@@ -249,19 +249,13 @@ export const ClipboardHistory = ({
   const selectBoundaryClip = useCallback(
     async (boundary: 'newest' | 'oldest') => {
       if (boundary === 'oldest') {
-        let state = useClipboardStore.getState()
+        const state = useClipboardStore.getState()
 
-        // History is loaded newest-first in pages. Continue until the repository
-        // reports the end, so End reaches the true oldest result rather than the
-        // oldest item in the currently rendered page.
-        while (state.hasMore && !state.loading) {
-          const previousOffset = state.currentOffset
+        // Advance by one bounded repository window. Repeated End presses can
+        // continue toward older history without one keypress downloading all
+        // 60,000 summaries into frontend memory.
+        if (state.hasMore && !state.loading) {
           await state.loadMoreClips(50)
-          state = useClipboardStore.getState()
-
-          // Stop if a failed or mocked load made no progress; otherwise an error
-          // could leave this keyboard command in an infinite loop.
-          if (state.currentOffset <= previousOffset) break
         }
       }
 

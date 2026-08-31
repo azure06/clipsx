@@ -42,6 +42,7 @@
     "@radix-ui/react-toast": "^1.2.17",
     "@radix-ui/react-tooltip": "^1.2.10",
     "@supabase/supabase-js": "^2.110.7",
+    "@tanstack/react-virtual": "^3.14.10",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",

@@ -302,7 +302,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     input.remove()
   })
 
-  it('loads remaining history and selects the oldest clip with End', async () => {
+  it('loads at most one older window and selects its boundary with End', async () => {
     const onPreviewItem = vi.fn()
     useClipboardStore.setState({
       clips: [makeClip('newest')],
@@ -316,7 +316,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     loadMoreClipsMock.mockImplementation(() => {
       useClipboardStore.setState({
         clips: [makeClip('newest'), makeClip('oldest')],
-        hasMore: false,
+        hasMore: true,
         currentOffset: 2,
       })
     })
