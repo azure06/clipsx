@@ -65,6 +65,9 @@ pub struct ProviderStatus {
     pub pending_jobs: u64,
     pub failed_jobs: u64,
     pub eligible_clips: u64,
+    pub dimensions: Option<u32>,
+    pub index_bytes: u64,
+    pub estimated_rebuild_bytes: u64,
     pub endpoint: Option<String>,
     pub model: Option<String>,
 }
@@ -192,6 +195,9 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
             pending_jobs: 0,
             failed_jobs: 0,
             eligible_clips: eligible as u64,
+            dimensions: None,
+            index_bytes: 0,
+            estimated_rebuild_bytes: 0,
             endpoint: None,
             model: None,
         });
@@ -206,6 +212,28 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         .or(active.as_ref())
         .or(failed_generation.as_ref());
     let (indexed, pending, failed, job_diagnostic) = generation_counts(repo, target).await?;
+    let dimensions = target.map(|generation| generation.dimensions as u32);
+    let index_bytes = active
+        .as_ref()
+        .and_then(|generation| {
+            std::fs::metadata(
+                repo.semantic_index_root
+                    .join(&generation.sidecar_relative_path),
+            )
+            .ok()
+        })
+        .map_or(0, |metadata| metadata.len());
+    // Prefer the user's measured bytes-per-indexed-clip. Before a first index exists,
+    // report the safe 64-chunk upper bound from the chunking contract.
+    let estimated_rebuild_bytes = if index_bytes > 0 && indexed > 0 {
+        index_bytes.saturating_mul(eligible.max(0) as u64) / indexed as u64
+    } else {
+        dimensions.map_or(0, |value| {
+            (value as u64 * std::mem::size_of::<f32>() as u64 + 64)
+                .saturating_mul(64)
+                .saturating_mul(eligible.max(0) as u64)
+        })
+    };
     let diagnostic = provider_diagnostic(repo, &config.provider_id)
         .await?
         .or(job_diagnostic);
@@ -228,6 +256,9 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         pending_jobs: pending as u64,
         failed_jobs: failed as u64,
         eligible_clips: eligible as u64,
+        dimensions,
+        index_bytes,
+        estimated_rebuild_bytes,
         endpoint: Some(config.endpoint),
         model: Some(config.model),
     })
@@ -869,6 +900,20 @@ async fn remove_disposable_generation_sidecars(repo: &HistoryRepository) -> Resu
 
 pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
     enabled_config(repo).await?;
+    let current = status(repo).await?;
+    let available = fs2::available_space(&repo.semantic_index_root)?;
+    const REBUILD_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
+    if available
+        < current
+            .estimated_rebuild_bytes
+            .saturating_add(REBUILD_RESERVE_BYTES)
+    {
+        bail!(
+            "Meaning Search needs about {} additional bytes to rebuild, but only {} bytes are available. Free disk space or clear the current index first",
+            current.estimated_rebuild_bytes,
+            available
+        );
+    }
     let target = generation_by_status(repo, "active")
         .await?
         .or(generation_by_status(repo, "failed").await?)

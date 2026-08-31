@@ -28,6 +28,9 @@ export type TextEmbeddingStatus = {
   pendingJobs: number
   failedJobs: number
   eligibleClips: number
+  dimensions: number | null
+  indexBytes: number
+  estimatedRebuildBytes: number
   endpoint: string | null
   model: string | null
 }

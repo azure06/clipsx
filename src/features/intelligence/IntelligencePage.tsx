@@ -693,6 +693,26 @@ export const IntelligencePage = () => {
                 )}
 
                 <div className="flex flex-wrap gap-2 pt-1">
+                  <div className="mr-auto grid min-w-full grid-cols-2 gap-2 pb-2 sm:min-w-0 sm:grid-cols-3">
+                    <div>
+                      <p className="text-[10px] text-gray-500">Dimensions</p>
+                      <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
+                        {status.dimensions?.toLocaleString() ?? '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500">Disk used</p>
+                      <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
+                        {formatBytes(status.indexBytes)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500">Rebuild space</p>
+                      <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
+                        ~{formatBytes(status.estimatedRebuildBytes)} additional
+                      </p>
+                    </div>
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
@@ -724,6 +744,11 @@ export const IntelligencePage = () => {
                     Clear index
                   </Button>
                 </div>
+                <p className="text-[10px] leading-4 text-gray-500">
+                  Keyword Search always stays on. If Meaning Search is unavailable, searches keep
+                  working with exact words. Rebuilding or clearing this derived index never deletes
+                  clipboard items.
+                </p>
               </div>
             )}
 

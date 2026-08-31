@@ -796,6 +796,17 @@ bounded, and one keyboard command never downloads the complete history.
 
 ### Phase 7: add operations and user feedback
 
+**Progress:** complete in code. The semantic service is the single owner of
+status and operations. It reports coverage, model dimensions, active sidecar
+bytes, and estimated additional rebuild bytes. The estimate uses actual bytes
+per indexed clip when possible and the 64-chunk contract as the conservative
+first-build fallback. Rebuild retains the searchable active generation and is
+rejected before work begins unless the estimate plus a 64 MiB reserve is free.
+The Intelligence page exposes rebuild, index-missing, retry, and clear actions
+and explains that mandatory keyword FTS and canonical clips are unaffected.
+Installed low-disk and corruption exercises remain release certification, not
+a second implementation path.
+
 - Show progress, coverage, model, dimensions and disk usage.
 - Estimate required rebuild space before starting.
 - Expose retry, rebuild and delete-index actions.
