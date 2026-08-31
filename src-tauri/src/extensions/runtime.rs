@@ -674,14 +674,7 @@ fn wasmtime_error(error: wasmtime::Error) -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read, time::Duration};
-
-    use super::{
-        contains_protected_secret, to_wit_representation, ExtensionContent,
-        ExtensionRepresentation, ExtensionRuntime, DETECT_RENDER_FUEL,
-    };
-    use wasmtime::component::Component;
-    use zip::ZipArchive;
+    use super::contains_protected_secret;
 
     #[test]
     fn credential_reflection_check_is_exact_and_ignores_empty_values() {
@@ -691,59 +684,5 @@ mod tests {
             &secrets
         ));
         assert!(!contains_protected_secret(b"safe response", &secrets));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires ../clipsx-extensions/dist/ask-local-ai.clipsx"]
-    async fn downloadable_no_wasi_component_fits_runtime_limits() {
-        let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../clipsx-extensions/dist/ask-local-ai.clipsx");
-        let archive = std::fs::read(package).unwrap();
-        let mut archive = ZipArchive::new(std::io::Cursor::new(archive)).unwrap();
-        let mut entry = archive.by_name("component.wasm").unwrap();
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).unwrap();
-        drop(entry);
-
-        let runtime = ExtensionRuntime::new().unwrap();
-        let component = Component::new(&runtime.engine, bytes).unwrap();
-        runtime
-            .instantiate(
-                component.clone(),
-                DETECT_RENDER_FUEL,
-                Duration::from_millis(250),
-            )
-            .await
-            .unwrap();
-
-        runtime
-            .components
-            .lock()
-            .unwrap()
-            .insert("fixture".into(), component);
-        let (mut store, instance) = runtime
-            .binding_instance(
-                "fixture",
-                DETECT_RENDER_FUEL,
-                Duration::from_millis(250),
-                None,
-            )
-            .await
-            .unwrap();
-        runtime.engine.increment_epoch();
-        let input = to_wit_representation(ExtensionRepresentation {
-            format_key: "mime:text/plain".into(),
-            mime_type: Some("text/plain".into()),
-            storage_kind: "inline_text".into(),
-            content: ExtensionContent::Text("hello".into()),
-        });
-        tokio::time::timeout(
-            Duration::from_millis(250),
-            instance.call_action_state(&mut store, "ask-local-ai", &input, None, "{}"),
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
     }
 }

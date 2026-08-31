@@ -11,7 +11,7 @@ describe('ContributionParametersPanel', () => {
         request={{
           kind: 'action',
           id: 'example/action',
-          label: 'Ask Local AI',
+          label: 'Generate summary',
           schema: {
             type: 'object',
             required: ['instruction'],

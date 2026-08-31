@@ -527,8 +527,8 @@ const DeveloperView = ({
   <section className="w-full">
     <h2 className="text-sm font-semibold">Developer Mode</h2>
     <p className="mt-1 text-xs text-slate-500">
-      Use this only for local package development. Local archives do not receive marketplace
-      metadata or automatic updates.
+      Use this only for local package development. Unsigned local archives are not registry reviewed
+      and never receive automatic updates.
     </p>
     <div className="mt-4 w-full rounded-2xl border border-amber-500/20 bg-amber-500/[.045] p-4">
       <div className="flex items-center gap-3">
@@ -538,7 +538,8 @@ const DeveloperView = ({
         <div className="flex-1">
           <div className="text-sm font-semibold">Allow local packages</div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Inspect permissions before each install. Replacement invalidates previous grants.
+            Review the unsigned package and its permissions before each install. Replacement
+            invalidates previous grants.
           </p>
         </div>
         <Switch checked={enabled} onChange={value => void onToggle(value)} size="sm" />

@@ -84,6 +84,11 @@ owns first-party package source and a pinned WIT copy. Compiled `.clipsx`
 archives are immutable extension-repository release assets, while
 `azure06/clipsx-registry` owns reviewed signed catalog metadata and catalog
 icons. Extension build outputs are never vendored into the host repository.
+Official packages use the permanent `infiniti.<package>` identity namespace and
+the verified registry publisher `{ id: "infiniti", displayName: "Infiniti" }`.
+GitHub repository ownership, publisher identity, package identity, and the
+registry signature are separate trust claims. Contribution IDs are package-local
+and host-qualified with `/`; emitted facet IDs are host-qualified with `.`.
 
 Core owns clipboard fidelity, faithful MIME views, Markdown/JSON/URL/table structure, secret detection, local-path activation, generic fallback, and every privileged host boundary. Byte-producing content converters are optional extension contributions; core supplies their bounded execution, exact-result cache, native MIME-aware preview, and output boundary but does not ship converter implementations. Niche semantic behavior is optional and no package is installed by default. JWT recognition, claim inspection, and payload extraction belong exclusively to JWT Inspector and do not imply signature verification; core has no JWT detector, renderer, or decoder. Base64 recognition, metadata, encoding, and decoding likewise belong exclusively to the Base64 package. Data Tools owns table, structured-data, TypeScript-shape, and URL conversions while reusing core JSON, Markdown, table, code, and text renderers. First-party packages are focused by task, except for cohesive Data Tools. In particular, core Markdown renders Mermaid fences as code; the Mermaid package supplies the offline specific renderer for standalone Mermaid and Mermaid-in-Markdown without placing Mermaid's runtime in the main application bundle.
 

@@ -3678,7 +3678,7 @@ mod tests {
     #[test]
     fn facet_scoped_transformer_requires_the_action_facet() {
         let mut declaration = renderer(vec![ContributionMatcher {
-            facet_ids: vec!["firstparty.jwt-inspector.jwt".into()],
+            facet_ids: vec!["infiniti.jwt-inspector.jwt".into()],
             ..Default::default()
         }]);
         declaration.kind = ContributionKind::Transformer;
@@ -3689,7 +3689,7 @@ mod tests {
         assert!(accepts(
             &declaration,
             &input(),
-            Some("firstparty.jwt-inspector.jwt")
+            Some("infiniti.jwt-inspector.jwt")
         ));
     }
 
@@ -3725,15 +3725,15 @@ mod tests {
     #[test]
     fn actions_can_select_a_detected_facet_that_is_not_the_active_view() {
         let declaration = renderer(vec![ContributionMatcher {
-            facet_ids: vec!["firstparty.base64.base64".into()],
+            facet_ids: vec!["infiniti.base64.base64".into()],
             ..Default::default()
         }]);
         let sources = vec![("plain".into(), 10, 0, input())];
         let facets = vec![crate::contributions::FacetDescriptor {
-            id: "firstparty.base64.base64".into(),
+            id: "infiniti.base64.base64".into(),
             display_name: "base64".into(),
             source_representation_id: "plain".into(),
-            detector_id: "firstparty.base64/detect-base64".into(),
+            detector_id: "infiniti.base64/detect-base64".into(),
             detector_version: "1.6.0".into(),
             payload: json!({ "schemaVersion": 1 }),
         }];
@@ -3742,7 +3742,7 @@ mod tests {
             select_action_source(&declaration, "plain", None, &sources, &facets).unwrap();
 
         assert_eq!(selected.0, "plain");
-        assert_eq!(selected.2.as_deref(), Some("firstparty.base64.base64"));
+        assert_eq!(selected.2.as_deref(), Some("infiniti.base64.base64"));
     }
 
     #[test]

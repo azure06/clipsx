@@ -10,13 +10,19 @@ bounded assets below `icons/` and `ui/`. A release is identified by
 `(packageId, version, archive checksum)`: package ID is stable identity, semantic
 version describes the release, and checksum pins its exact bytes.
 
+Published package IDs follow `<publisher>.<package>` with lowercase ASCII
+kebab-case segments and never change after first publication. Contribution and
+setting IDs are package-local kebab-case. The host qualifies a contribution as
+`<package-id>/<contribution-id>` and an emitted facet as
+`<package-id>.<facet-id>`; these qualified IDs are stable profile-data keys.
+
 ```toml
 schemaVersion = 2
 contractRevision = 2
-packageId = "example.ask-ai"
+packageId = "example.hello-world"
 version = "1.0.0"
 apiVersion = "^2.0"
-displayName = "Ask AI"
+displayName = "Hello World"
 iconAssets = { light = "icons/package-light.svg", dark = "icons/package-dark.svg" }
 
 [[contributions]]
@@ -218,9 +224,6 @@ An enabled compatible renderer that claims an otherwise unknown facet on an
 exact source representation suppresses the host's generic key/value details
 tab. That generic tab returns automatically when the renderer is unavailable;
 known built-in semantic renderers remain additive.
-`extensions/ask-local-ai` demonstrates a capability-backed WASM action,
-host-owned Ollama generation, dynamic action state, generated parameter controls,
-and preview/copy/save output without exposing provider configuration.
 
 The extension repository keeps package source and a pinned copy of the WIT
 contract. Generated `component.wasm`, `.clipsx`, `target/`, and `dist/` outputs

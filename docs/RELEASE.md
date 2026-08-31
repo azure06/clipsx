@@ -29,11 +29,13 @@ adapter's supported-format contract changes.
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 - `VITE_NEXT_PUBLIC_SITE_URL`
 - `TAURI_UPDATER_PUBLIC_KEY`
-- `CLIPSX_REGISTRY_KEY_ID`
-- `CLIPSX_REGISTRY_PUBLIC_KEY_BASE64`
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 - Release-time CSP and updater endpoint values required by Tauri configuration
+
+Registry verification keys are public trust roots compiled into ClipsX, not
+release secrets. Key rotation must ship an overlapping trusted key set before
+the registry starts signing with the replacement key.
 
 Secrets belong in CI or the platform signing environment. Never commit them,
 print them in logs, or store them in application SQLite.
@@ -213,10 +215,6 @@ Wayland is not covered by this matrix.
   covers install/use/disable/failure/quarantine/recovery/uninstall.
 - Cached compact presentation survives restart and history scrolling invokes no
   WASM; malformed output falls back to the core row.
-- With local generation disabled, Ask Local AI is visibly disabled with a
-  provider reason while local contributions continue to work. After configuring
-  Ollama, consent once, run preview/copy/save, then update/disable the package
-  and verify the checksum-bound grant is revoked.
 - Ask AI enforces Unicode-safe URL limits; Mermaid Viewer 1.0.1 detects supported
   declarations (including `pie` and declarations after comments, init directives,
   or front matter), produces one **Mermaid** tab with its package icon, and renders

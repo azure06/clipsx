@@ -24,6 +24,14 @@ const MAX_REGISTRY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTRY_SIGNATURE_BYTES: usize = 64 * 1024;
 const MAX_CATALOG_ICON_BYTES: usize = 256 * 1024;
 
+/// Public registry trust roots are intentionally compiled into the client.
+/// Add a new key before publishing overlapping rotation signatures; remove an
+/// old key only after every supported client release trusts its replacement.
+const TRUSTED_REGISTRY_KEYS: &[(&str, &str)] = &[(
+    "infiniti-registry-2026-01",
+    "zWBq9jTt/X/ps0+qFlu8GekJDI+Ju87GFkyDnP0Fia8=",
+)];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallSource {
@@ -236,17 +244,19 @@ impl RegistryIndex {
 }
 
 pub fn verify_registry_signatures(index: &[u8], signatures: &[u8]) -> Result<()> {
-    let key_id = option_env!("CLIPSX_REGISTRY_KEY_ID")
-        .context("this build does not embed a trusted extension-registry key ID")?;
-    let encoded_key = option_env!("CLIPSX_REGISTRY_PUBLIC_KEY_BASE64")
-        .context("this build does not embed a trusted extension-registry public key")?;
-    let key = BASE64
-        .decode(encoded_key)
-        .context("embedded extension-registry public key is invalid base64")?;
-    let key: [u8; 32] = key
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("embedded extension-registry public key must be 32 bytes"))?;
-    verify_registry_signatures_with_keys(index, signatures, &[(key_id, key)])
+    let trusted_keys = TRUSTED_REGISTRY_KEYS
+        .iter()
+        .map(|(key_id, encoded_key)| {
+            let key = BASE64
+                .decode(encoded_key)
+                .context("embedded extension-registry public key is invalid base64")?;
+            let key = key.try_into().map_err(|_| {
+                anyhow::anyhow!("embedded extension-registry public key must be 32 bytes")
+            })?;
+            Ok((*key_id, key))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    verify_registry_signatures_with_keys(index, signatures, &trusted_keys)
 }
 
 fn verify_registry_signatures_with_keys(

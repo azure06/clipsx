@@ -79,7 +79,7 @@ let latestControls: TransformControls | null = null
 
 const askAction = {
   id: 'ask-ai',
-  packageId: 'example.ask-ai',
+  packageId: 'infiniti.ask-ai',
   sourceId: 'rep-plain',
   facetId: null,
   label: 'Ask AI',

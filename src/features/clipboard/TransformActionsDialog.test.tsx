@@ -6,7 +6,7 @@ import type { ContextAction } from './useTransformState'
 
 const action = (overrides: Partial<ContextAction> = {}): ContextAction => ({
   id: 'decode-base64',
-  packageId: 'firstparty.base64',
+  packageId: 'infiniti.base64',
   label: 'Decode Base64',
   icon: null,
   iconSvg: null,
