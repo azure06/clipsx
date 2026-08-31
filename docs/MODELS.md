@@ -164,7 +164,7 @@ flowchart TB
     G --> X[(generation sidecar)]
     C -. rebuild input .-> X
     X --> H[chunks and ordinal mappings]
-    X --> Q[int8 scan vectors]
+    X --> Q[binary clip routing signatures]
     X --> V[float32 rerank vectors]
 ```
 
@@ -175,11 +175,11 @@ flowchart TB
 | `search_embedding_spaces` | Infrastructure | Identifies an immutable provider/model vector space, including revision, dimensions, normalization, and distance metric. | Provider discovery/probing and semantic-index setup | Long-lived compatibility boundary. Prevents embeddings from incompatible vector spaces being mixed. |
 | `search_index_generations` | Operational | Tracks lifecycle plus backend ID, encoding, candidate count, safe sidecar path, byte size, and checkpoint checksum. | Semantic indexing coordinator | Generation-scoped lifecycle supports validated activation and retention of the previous active sidecar. The checksum is cleared before an active-generation clip update and can be refreshed at a later durable checkpoint. |
 | `search_index_jobs` | Operational | Tracks per-generation, per-clip indexing progress, attempts, and failures. | Semantic indexing coordinator/workers | Retryable recovery state owned by its generation/clip scope; cascades with either side. |
-| Generation sidecar | Derived file | Stores bounded chunks, provenance, stable ordinals, packed per-clip int8 scan projections, normalized float32 rerank vectors, and mappings for exactly one generation. | `SemanticIndexStore` only | Rebuildable and generation-owned. Per-clip packing avoids a SQLite row per scanned chunk and makes a clip update local. It contains no canonical clip data and is addressed only by an owned relative path from `search_index_generations`. |
+| Generation sidecar | Derived file | Stores bounded chunks, provenance, stable ordinals, paged binary clip-routing signatures, normalized float32 chunk vectors, and mappings for exactly one generation. | `SemanticIndexStore` only | Rebuildable and generation-owned. Pages hold at most 256 clips, avoiding per-row scan overhead while keeping updates local. It contains no canonical clip data and is addressed only by an owned relative path from `search_index_generations`. |
 
 Promotion is atomic: a building generation becomes active only after every job succeeds; otherwise the previous active generation remains searchable. Reindexing replaces a clip’s chunks transactionally.
 
-Release search builds a compact eligible-clip ordinal bitset, scans normalized int8 vectors in parallel, retains 100 candidates, then reranks those candidates with float32 cosine similarity. This remains linear but is deterministic, dependency-free, immediately mutable, and has no trained graph. The full float32 scan exists only as a test oracle.
+Release search builds a compact eligible-clip ordinal bitset, scans one binary routing signature per clip in parallel, retains 100 clips, then reranks every chunk of those clips with exact float32 cosine similarity. This remains linear in clip count, but it is deterministic, dependency-free, immediately mutable, and has no trained graph. The full-generation float32 scan exists only as a test oracle.
 
 ## 7. Extensions
 
@@ -205,4 +205,4 @@ Extension tables store package/runtime infrastructure, not arbitrary extension-o
 
 The architecture is appropriate for a local-first pre-1.0 clipboard: canonical truth is normalized, configuration has explicit scope, derived data is rebuildable, operational state is recoverable, ownership is enforceable, and files are deleted durably after database commits. The main cost is more lifecycle tables and joins, accepted in exchange for recovery and provenance.
 
-The deliberate limits are measurable: int8 candidate recall requires labelled certification, JSON preferences depend on typed application validation, and factory reset remains acceptable only before the first stable release. These are explicit boundaries, not hidden data-model debt.
+The deliberate limits are measurable: binary clip-routing recall requires labelled certification, JSON preferences depend on typed application validation, and factory reset remains acceptable only before the first stable release. These are explicit boundaries, not hidden data-model debt.

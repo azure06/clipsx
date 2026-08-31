@@ -1,7 +1,7 @@
 # Semantic Search Qualification
 
-Status: SQLite `vec1` and USearch HNSW rejected; parallel int8 flat retrieval
-selected for implementation. This document records measurements; it does not
+Status: SQLite `vec1` and USearch HNSW rejected; paged binary clip routing with
+exact float32 chunk reranking selected. This document records measurements; it does not
 make a cross-platform release claim.
 
 ## Decision under test
@@ -70,11 +70,12 @@ optional SIMD dependency, but the full target build remained incomplete after
 SIMD package also failed to compile under MSVC. The dependency and experiment
 were removed.
 
-The selected design is instead a parallel signed-int8 flat scan followed by
-exact float32 reranking of 100 candidates. It has no trained model, graph,
-second production implementation, or new native dependency. Inserts and
-deletes are ordinary derived-row changes. A corrupt or missing file can be
-discarded and rebuilt without repairing graph topology.
+The selected design is instead a parallel scan of one binary routing signature
+per clip followed by exact float32 reranking of every chunk from 100 shortlisted
+clips. Signatures are grouped into pages of at most 256 clips. It has no trained
+model, graph, second production implementation, or new native dependency.
+Inserts and deletes rewrite one small derived page. A corrupt or missing file
+can be discarded and rebuilt without repairing graph topology.
 
 ## Evidence table
 
@@ -95,11 +96,16 @@ discarded and rebuilt without repairing graph topology.
 | USearch 540k × 1,024 BF16 HNSW build | Terminated after more than 90 minutes; ~951 MiB resident, eight workers | Failed build-cost gate |
 | Parallel int8 flat scan, 540k × 1,024 | p50 15.086 ms; p95/p99 18.399 ms; 552,960,000 vector bytes | Passed 75 ms gate |
 | Int8 candidate recall against float32 | recall@10 100% on 10k × 256 deterministic dense vectors with 100 candidates | Passed provisional 95% gate |
+| Initial packed SQLite int8 path, 60k clips / 540k chunks × 1,024 | p50 440.140 ms; p95 460.886 ms; 576,106,496-byte fixture | Rejected physical layout |
+| Paged binary clip routing plus exact chunk rerank, same capacity | repeated runs about 75–81 ms p50; 80–87 ms p95; 10,358,784-byte routing fixture | Passed 100 ms p95 physical gate |
 
 The dense corpus is synthetic and not a substitute for a labelled clipboard
 quality set. Its recall alone would require more investigation, but the
 committed close/reopen integrity failure independently rejects the candidate.
-Phase 1 may now define the sidecar around the quantized-flat representation.
-Installed-build certification must still measure labelled clipboard recall,
-exact reranking, filters, peak memory, corruption recovery, and every release
+The committed ignored `packed_sqlite_scale_qualification` test recreates the
+physical sidecar gate. Its compact fixture represents all 60,000 routing
+signatures and enough metadata to exercise shortlist hydration; it deliberately
+does not duplicate 540,000 identical float32 fixture rows. Installed-build
+certification must still measure labelled clipboard routing recall, realistic
+full storage, filters, peak memory, corruption recovery, and every release
 target before making the 60,000-item product claim.

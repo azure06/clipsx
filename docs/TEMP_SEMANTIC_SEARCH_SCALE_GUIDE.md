@@ -28,8 +28,9 @@ The proposed solution is:
 - Keep full-text search (FTS) in `clips.db`.
 - Put large, disposable semantic-search data in one sidecar database file per
   index generation.
-- Use one parallel int8 scan followed by exact float32 reranking; it has passed
-  provisional performance and quality tests without adding a graph engine.
+- Use one parallel binary clip-routing scan followed by exact float32 chunk
+  reranking; its physical SQLite path has passed the local performance gate
+  without adding a graph engine.
 - Keep only one production vector-search implementation.
 - Bound the amount of semantic work one unusually large clip can create.
 - Batch history-row loading and render only visible rows.
@@ -86,8 +87,9 @@ At an average of nine vectors per clip:
 540,000 x 4,096 bytes = 2,211,840,000 bytes, about 2.06 GiB
 ```
 
-That is only the raw float32 vector data. The int8 scan projection adds about
-527 MiB at this capacity; chunk text, database pages, and mappings add more.
+That is only the raw float32 vector data used for exact reranking. One 1,024-bit
+binary routing signature per clip adds about 7.3 MiB before SQLite overhead;
+chunk text, database pages, and mappings add more.
 
 ### 2.2 Why does one clip have multiple vectors?
 
@@ -257,7 +259,7 @@ Proposed ownership:
 | Location | Authority |
 | --- | --- |
 | `clips.db` | Clips, representations, metadata, FTS, provider configuration, embedding spaces, generation lifecycle and jobs |
-| `search-index/generation-{id}.sqlite` | Chunks, unique inputs, int8 scan vectors, float32 rerank vectors, and stable ordinal mappings for one generation |
+| `search-index/generation-{id}.sqlite` | Chunks, unique inputs, paged binary clip-routing signatures, float32 rerank vectors, and stable ordinal mappings for one generation |
 | `SemanticIndexService` | The only component allowed to coordinate semantic index state |
 
 Benefits:
@@ -296,16 +298,16 @@ Exact search is valuable as:
 
 The full float32 scan remains a test oracle, not a second production backend.
 
-### 6.2 Quantized flat candidate search
+### 6.2 Binary clip-routing candidate search
 
-The selected backend converts normalized vectors to signed int8 values and
-scans them in parallel. It still visits every eligible vector, but each value
-uses one byte instead of four and integer dot products are cheap. There is no
-trained model or graph to build, corrupt, tune, or synchronize.
+The selected backend combines each clip's chunk-vector signs into one binary
+routing signature and scans those signatures in parallel. One bit represents
+each dimension. This first stage visits every eligible clip, not every chunk;
+there is no trained model or graph to build, corrupt, tune, or synchronize.
 
 **Recall@10** answers this question:
 
-> Of the true exact top ten results, how many did the int8 candidate pass return?
+> Of the true exact top ten clips, how many did the binary routing pass return?
 
 If the candidate pass finds 19 of the exact top 20 results over many representative queries,
 its recall@20 is 95%.
@@ -315,9 +317,9 @@ approximate modes, regular inserts/deletes, filtered retrieval, and exact
 reranking, but version 0.7 failed the Phase 0 correctness and persisted-index
 integrity gates at the target size. ClipsX therefore does not adopt it. A
 subsequent USearch HNSW experiment failed the build-cost and default Windows
-packaging gates. ClipsX selects a parallel int8 flat scan with exact float32
-reranking: it met the provisional latency and recall gates, has no trained
-graph, and keeps one simple production retrieval path.
+packaging gates. ClipsX selects a paged binary clip-routing scan with exact
+float32 chunk reranking: it meets the local physical latency gate, has no
+trained graph, and keeps one simple production retrieval path.
 
 ### 6.3 Candidate retrieval and reranking
 
@@ -325,9 +327,9 @@ Quantized scores do not directly decide the final user-visible order.
 
 Instead:
 
-1. The int8 scan returns 100 promising vector ordinals.
-2. ClipsX computes exact cosine scores for that small candidate set.
-3. Multiple chunks are reduced to the best chunk per clip.
+1. The binary scan returns 100 promising clip ordinals.
+2. ClipsX loads every stored chunk vector for those clips.
+3. Exact cosine scores select the best chunk per clip.
 4. FTS and semantic candidates are fused.
 
 This keeps retrieval fast while recovering float32 ranking quality. Canonical
@@ -611,15 +613,15 @@ Measure:
 Provisional acceptance gates:
 
 - Recall@10 of at least 95%.
-- Local retrieval and exact reranking p95 at or below 75 ms for 540,000
-  vectors, excluding query-provider latency.
+- Local retrieval and exact reranking at or below 100 ms p95 for 60,000 routed
+  clips / 540,000 rerank chunks, excluding provider latency.
 - No capture or UI blocking during background indexing.
 - A measured and displayed rebuild-space estimate.
 - Missing/corrupt sidecars degrade safely to FTS.
 - The backend passes installed-build tests on every advertised platform.
 
 `vec1` and HNSW failed their qualification gates and are not retained. The
-selected parallel int8 flat scan remains subject to installed-build and
+selected binary clip-routing scan remains subject to installed-build and
 labelled-corpus certification. Do not keep multiple production implementations.
 
 ### Phase 1: approve architecture and reset contract
@@ -721,13 +723,14 @@ or partially active index.
 ### Phase 5: replace semantic retrieval
 
 **Progress:** `SemanticIndexStore` now owns the two-stage retrieval algorithm.
-It scans packed per-clip int8 projections across up to eight runtime tasks,
-retains 100 global chunk candidates, loads float32 data only for that shortlist,
-reranks exactly, then keeps the best chunk per clip. A deterministic test checks
-the final top ten against a full float32 oracle while applying an eligibility
-filter. The packed SQLite physical path still needs the full 540,000-vector
-release benchmark; the earlier 18.4 ms result measured the algorithm's
-contiguous-memory qualification layout, not SQLite row traversal.
+It scans paged binary routing signatures across up to eight runtime tasks,
+retains 100 clips, loads every float32 chunk vector only for those clips, and
+keeps each clip's exact best chunk. Pages contain at most 256 clips, so search
+does not decode one SQLite row per clip and an update remains local. The
+release-mode 60,000-clip / 540,000-chunk physical fixture is 10,358,784 bytes.
+Repeated runs measured about 75–81 ms p50 / 80–87 ms p95 on the qualification
+machine, passing the 100 ms p95 local gate. Labelled real-data recall is still a
+release gate.
 
 Canonical filtering no longer clones every matching string ID into a second
 hash set. The store streams the active generation's clip-ID/ordinal mapping
@@ -738,7 +741,7 @@ all worker tasks share it read-only.
 - Embed the query in the active generation's space.
 - Search the chosen vector backend.
 - Apply canonical filters without materializing every eligible clip ID in Rust.
-- Retrieve 100 int8 candidates using an eligible-clip ordinal bitset.
+- Retrieve 100 binary-routed clip candidates using an eligible-clip ordinal bitset.
 - Rerank candidates exactly.
 - Keep the best chunk per clip.
 - Add the literal lexical tier and retain RRF for other results.
@@ -823,9 +826,9 @@ These should not be decided from intuition alone:
 1. What are the real chunk-count median, p95 and maximum?
 2. How many enriched embedding inputs are duplicates?
 3. Is 64 chunks per clip sufficient for search quality?
-4. Does the fixed int8 candidate count meet labelled recall and latency targets?
+4. Does the fixed binary-routing candidate count meet labelled recall and latency targets?
 5. What are steady and rebuild-peak disk sizes?
-6. Does the dependency-free int8 scanner pass every release target?
+6. Does the dependency-free binary scanner pass every release target?
 7. How much RAM do building and querying use?
 8. Do ordinal eligibility bitsets preserve narrow-filter recall?
 9. Is history-summary batching enough, or is a persisted preview cache needed?
