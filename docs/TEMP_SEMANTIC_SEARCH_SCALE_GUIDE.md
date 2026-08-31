@@ -706,6 +706,14 @@ Active clip updates clear the previous checkpoint before opening the sidecar.
 Cancelled, superseded, and replaced failed-generation files are cleaned through
 the same owned store boundary.
 
+Recovery now covers the three important interruption boundaries. A `running`
+job is returned to `pending` while its valid sidecar write is retained and can
+be replaced idempotently. A complete sidecar left just before activation is
+validated and activated. A missing or corrupt building sidecar causes all of
+that generation's jobs to be reset in `clips.db` before the disposable file is
+recreated, so a second crash cannot activate an empty index using stale job
+completion state.
+
 - Bulk-enqueue initial jobs using `INSERT ... SELECT`.
 - Keep one bounded background coordinator.
 - Use sidecar-first, job-second commit ordering.

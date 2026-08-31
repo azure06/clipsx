@@ -459,7 +459,7 @@ async fn settle_generation(repo: &HistoryRepository, generation: &Generation) ->
     {
         Ok(writer) => writer.finalize().await?,
         Err(open_error) => {
-            store
+            if let Err(validation_error) = store
                 .validate(
                     &generation.sidecar_relative_path,
                     &generation.id,
@@ -467,7 +467,12 @@ async fn settle_generation(repo: &HistoryRepository, generation: &Generation) ->
                     None,
                 )
                 .await
-                .with_context(|| format!("cannot recover finalized sidecar: {open_error}"))?;
+            {
+                rebuild_corrupt_building_sidecar(repo, generation).await?;
+                return Err(validation_error).with_context(|| {
+                    format!("discarded corrupt building sidecar after open failure: {open_error}")
+                });
+            }
             store.checkpoint_identity(&generation.sidecar_relative_path)?
         }
     };
@@ -924,8 +929,69 @@ pub async fn recover_interrupted(repo: &HistoryRepository) -> Result<()> {
     .bind(now_ms())
     .execute(&repo.pool)
     .await?;
+    if let Some(generation) = generation_by_status(repo, "building").await? {
+        let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+        match store
+            .open_building(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await
+        {
+            Ok(writer) => writer.close().await?,
+            Err(_) => {
+                if store
+                    .validate(
+                        &generation.sidecar_relative_path,
+                        &generation.id,
+                        generation.dimensions,
+                        None,
+                    )
+                    .await
+                    .is_err()
+                {
+                    rebuild_corrupt_building_sidecar(repo, &generation).await?;
+                }
+            }
+        }
+    }
     remove_disposable_generation_sidecars(repo).await?;
     Ok(())
+}
+
+/// Resets durable job state before replacing disposable bytes. If interrupted
+/// at any later instruction, no empty replacement can satisfy activation.
+async fn rebuild_corrupt_building_sidecar(
+    repo: &HistoryRepository,
+    generation: &Generation,
+) -> Result<()> {
+    let mut tx = repo.pool.begin().await?;
+    sqlx::query(
+        "UPDATE search_index_jobs SET status='pending',started_at=NULL,completed_at=NULL,
+         projection_sha256=NULL,last_error=NULL,updated_at=? WHERE generation_id=?",
+    )
+    .bind(now_ms())
+    .bind(&generation.id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE search_index_generations SET sidecar_byte_length=NULL,sidecar_sha256=NULL,
+         completed_at=NULL,updated_at=? WHERE id=? AND status='building'",
+    )
+    .bind(now_ms())
+    .bind(&generation.id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+    store.remove(&generation.sidecar_relative_path)?;
+    store
+        .create(&generation.id, generation.dimensions)
+        .await?
+        .close()
+        .await
 }
 
 pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
@@ -1598,7 +1664,7 @@ mod tests {
         index_clip(&repo, &mut writer, &FakeProvider, &clip_id)
             .await
             .unwrap();
-        writer.close().await.unwrap();
+        writer.finalize().await.unwrap();
         sqlx::query(
             "UPDATE search_index_jobs SET status='completed',completed_at=?,updated_at=?
              WHERE generation_id=?",
@@ -1610,6 +1676,9 @@ mod tests {
         .await
         .unwrap();
 
+        // Simulate a process stop after the sidecar was finalized but before
+        // the main-database activation transaction began.
+        recover_interrupted(&repo).await.unwrap();
         settle_generation(&repo, &generation).await.unwrap();
         let active = generation_by_status(&repo, "active")
             .await
@@ -1631,6 +1700,139 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrupt_building_sidecar_resets_all_jobs_before_replacement() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "recoverable content").await;
+        let (generation, mut writer) = insert_generation(&repo).await;
+        index_clip(&repo, &mut writer, &FakeProvider, &clip_id)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        enqueue_job(&repo, &generation.id, &clip_id).await.unwrap();
+        sqlx::query(
+            "UPDATE search_index_generations SET status='building',activated_at=NULL WHERE id=?",
+        )
+        .bind(&generation.id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='completed',projection_sha256='stale',
+             completed_at=?,updated_at=? WHERE generation_id=?",
+        )
+        .bind(now_ms())
+        .bind(now_ms())
+        .bind(&generation.id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        let path = repo
+            .semantic_index_root
+            .join(&generation.sidecar_relative_path);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(16)
+            .unwrap();
+
+        recover_interrupted(&repo).await.unwrap();
+        let job: (String, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT status,projection_sha256,completed_at FROM search_index_jobs
+             WHERE generation_id=?",
+        )
+        .bind(&generation.id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(job, ("pending".into(), None, None));
+
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let replacement = store
+            .open_building(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await
+            .unwrap();
+        replacement.close().await.unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&path)
+            .read_only(true);
+        let mut replacement = SqliteConnection::connect_with(&options).await.unwrap();
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM semantic_chunks")
+            .fetch_one(&mut replacement)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0);
+        replacement.close().await.unwrap();
+        assert!(generation_by_status(&repo, "active")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn interrupted_running_job_keeps_sidecar_work_and_requeues_idempotently() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "written before interruption").await;
+        let (_, active_writer) = insert_generation(&repo).await;
+        active_writer.close().await.unwrap();
+        let generation = create_building_generation(&repo, "space").await.unwrap();
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let mut writer = store
+            .open_building(
+                &generation.sidecar_relative_path,
+                &generation.id,
+                generation.dimensions,
+            )
+            .await
+            .unwrap();
+        index_clip(&repo, &mut writer, &FakeProvider, &clip_id)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='running',started_at=?,updated_at=?
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(now_ms())
+        .bind(now_ms())
+        .bind(&generation.id)
+        .bind(&clip_id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        recover_interrupted(&repo).await.unwrap();
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM search_index_jobs WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&generation.id)
+        .bind(&clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "pending");
+
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(
+                repo.semantic_index_root
+                    .join(&generation.sidecar_relative_path),
+            )
+            .read_only(true);
+        let mut sidecar = SqliteConnection::connect_with(&options).await.unwrap();
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM semantic_chunks")
+            .fetch_one(&mut sidecar)
+            .await
+            .unwrap();
+        assert_eq!(rows, 1);
+        sidecar.close().await.unwrap();
     }
 
     #[tokio::test]
