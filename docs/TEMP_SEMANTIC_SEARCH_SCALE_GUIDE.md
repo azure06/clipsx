@@ -777,8 +777,11 @@ length, and single-clip summary/detail reads reuse the same preview resolver.
 The active list view now renders only measured visible rows plus eight-row
 overscan, and keyboard selection asks the virtualizer to reveal unmounted rows.
 One `End` keypress advances by at most one 50-item cursor window instead of
-loading the entire remaining history. Grid virtualization and large-history
-interaction qualification remain before this phase is complete.
+loading the entire remaining history. The unreachable grid components were
+removed rather than maintaining a duplicate view-mode implementation that no
+product state could select. An automated 60,000-item qualification keeps the
+mounted row count at or below 32. This phase is complete; installed-app scroll
+and memory measurements remain part of release certification.
 
 - Replace per-item summary enrichment with batch hydration.
 - Confirm indexes cover every browse scope and cursor order.
