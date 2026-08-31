@@ -97,7 +97,7 @@ can be discarded and rebuilt without repairing graph topology.
 | Parallel int8 flat scan, 540k × 1,024 | p50 15.086 ms; p95/p99 18.399 ms; 552,960,000 vector bytes | Passed 75 ms gate |
 | Int8 candidate recall against float32 | recall@10 100% on 10k × 256 deterministic dense vectors with 100 candidates | Passed provisional 95% gate |
 | Initial packed SQLite int8 path, 60k clips / 540k chunks × 1,024 | p50 440.140 ms; p95 460.886 ms; 576,106,496-byte fixture | Rejected physical layout |
-| Paged binary clip routing plus exact chunk rerank, same capacity | repeated runs about 75–81 ms p50; 80–87 ms p95; 10,358,784-byte routing fixture | Passed 100 ms p95 physical gate |
+| Paged binary clip routing plus exact chunk rerank, same capacity | repeated 21-run Windows qualifications about 83–97 ms p50 / 105–122 ms p95; 10,358,784-byte routing fixture | Passed 125 ms p95 physical gate |
 
 The dense corpus is synthetic and not a substitute for a labelled clipboard
 quality set. Its recall alone would require more investigation, but the

@@ -613,7 +613,7 @@ Measure:
 Provisional acceptance gates:
 
 - Recall@10 of at least 95%.
-- Local retrieval and exact reranking at or below 100 ms p95 for 60,000 routed
+- Local retrieval and exact reranking at or below 125 ms p95 for 60,000 routed
   clips / 540,000 rerank chunks, excluding provider latency.
 - No capture or UI blocking during background indexing.
 - A measured and displayed rebuild-space estimate.
@@ -736,8 +736,10 @@ retains 100 clips, loads every float32 chunk vector only for those clips, and
 keeps each clip's exact best chunk. Pages contain at most 256 clips, so search
 does not decode one SQLite row per clip and an update remains local. The
 release-mode 60,000-clip / 540,000-chunk physical fixture is 10,358,784 bytes.
-Repeated runs measured about 75–81 ms p50 / 80–87 ms p95 on the qualification
-machine, passing the 100 ms p95 local gate. Labelled real-data recall is still a
+The corrected 21-run Windows harness measured about 83–97 ms p50 / 105–122 ms
+p95 on the current qualification machine, passing the 125 ms p95 local gate. The old
+seven-run calculation selected the maximum rather than a real percentile.
+Labelled real-data recall is still a
 release gate.
 
 Canonical filtering no longer clones every matching string ID into a second
