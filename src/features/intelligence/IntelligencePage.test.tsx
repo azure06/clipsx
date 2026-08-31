@@ -31,6 +31,7 @@ const readyStatus = (overrides: Partial<TextEmbeddingStatus> = {}): TextEmbeddin
   estimatedRebuildBytes: 4096,
   endpoint: 'http://localhost:11434',
   model: 'nomic-embed-text',
+  minimumSimilarityPercent: null,
   ...overrides,
 })
 
@@ -211,6 +212,37 @@ describe('IntelligencePage indexing actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
 
     await waitFor(() => expect(toastTitles()).toContain('Meaning Search disconnected'))
+  })
+
+  it('persists a device-local meaning threshold from Search settings', async () => {
+    invokeMock.mockImplementation((command: string, payload?: unknown) => {
+      if (command === 'get_text_embedding_status') return Promise.resolve(currentStatus)
+      if (command === 'list_search_sources') return Promise.resolve([])
+      if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
+      if (command === 'get_ocr_runtime_status') return Promise.resolve(currentOcrStatus)
+      if (command === 'get_search_settings') {
+        return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
+      }
+      if (command === 'update_text_embedding_threshold') {
+        const minimumSimilarityPercent = (payload as { minimumSimilarityPercent: number | null })
+          .minimumSimilarityPercent
+        currentStatus = readyStatus({ minimumSimilarityPercent })
+        return Promise.resolve(currentStatus)
+      }
+      return Promise.resolve(null)
+    })
+
+    render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Search' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Filter weak meaning matches' }))
+
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('update_text_embedding_threshold', {
+        minimumSimilarityPercent: 70,
+      })
+    )
+    expect(await screen.findByLabelText('Minimum meaning similarity percentage')).toHaveValue(70)
+    expect(toastTitles()).toContain('Meaning threshold set to 70%')
   })
 
   it('deduplicates repeated failures until status recovers', async () => {

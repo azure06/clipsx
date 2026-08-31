@@ -61,7 +61,7 @@ SQLite remains the persistence layer. JSON is the typed value and import/export 
 | Scope | Examples | Storage and sync rule |
 | --- | --- | --- |
 | Profile, syncable | language, theme, search behavior, non-secret package settings, desired packages, enablement, shortcuts | Namespaced typed records in SQLite; eligible for account sync |
-| Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model, local package path | `config_device_values` or a relational device-owned table; never copied automatically to another device |
+| Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and its meaning-similarity floor, local package path | `config_device_values` or a relational device-owned table; never copied automatically to another device |
 | Secret | provider/API credentials | OS credential store only; never exported or synchronized as ordinary settings |
 | Consent | checksum-bound extension grants and invocation tokens | Local security state; never synchronized; package updates require fresh consent |
 | Operational | package quarantine, provider health, pending jobs, sync cursor | Relational local state; rebuilt or reconciled, not treated as preferences |
@@ -104,4 +104,3 @@ The schema already provides clip-owned cascades for the current derived tables. 
 One command registry should describe built-in and extension actions. Each command has a stable ID, context predicate, default shortcut, user override, conflict result, and discoverable label. UI handlers consume the registry rather than defining unrelated hard-coded keys.
 
 Current hard-coded behavior that must enter the audit includes search focus, history navigation, numbered activation, copy, open in editor, favorite, pin, delete, representations, transform actions, and extension actions. Context-only commands such as opening links, composing email, calling a phone number, tags, renderer/view switching, and panel resizing need an explicit decision: configurable shortcut, menu-only, or intentionally unbound.
-

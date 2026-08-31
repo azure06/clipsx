@@ -82,4 +82,6 @@ pub struct TextEmbeddingProviderConfig {
     pub endpoint: String,
     pub model: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub minimum_similarity_percent: Option<u8>,
 }

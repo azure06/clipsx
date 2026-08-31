@@ -257,6 +257,9 @@ export const AppLayout = () => {
     const unlistenCapabilities = listen('embedding-provider-status-changed', () => {
       void loadTextSearchStatus()
     })
+    const unlistenThreshold = listen('meaning-search-threshold-changed', () => {
+      void refreshSearch()
+    })
 
     const unlistenTextSearchStatus = listen('embedding-space-changed', () => {
       void loadTextSearchStatus()
@@ -270,11 +273,12 @@ export const AppLayout = () => {
 
     return () => {
       void unlistenCapabilities.then(fn => fn())
+      void unlistenThreshold.then(fn => fn())
       void unlistenTextSearchStatus.then(fn => fn())
       void unlistenSourceStatus.then(fn => fn())
       void unlistenIndexProgress.then(fn => fn())
     }
-  }, [setSemanticActive])
+  }, [refreshSearch, setSemanticActive])
 
   const handleToggleSource = useCallback(
     async (sourceId: string) => {

@@ -70,6 +70,7 @@ pub struct ProviderStatus {
     pub estimated_rebuild_bytes: u64,
     pub endpoint: Option<String>,
     pub model: Option<String>,
+    pub minimum_similarity_percent: Option<u8>,
 }
 
 /// A compact, read-only view of an existing failed indexing job. The clip
@@ -133,11 +134,12 @@ pub async fn configure(
     endpoint: String,
     model: String,
 ) -> Result<ProviderStatus> {
-    let config = TextEmbeddingProviderConfig {
+    let mut config = TextEmbeddingProviderConfig {
         provider_id: OLLAMA_TEXT_EMBEDDING_ID.into(),
         endpoint,
         model,
         enabled: true,
+        minimum_similarity_percent: None,
     };
     let provider = providers::text_embedding_provider(&config, None)?;
     let descriptor = provider.describe().await?;
@@ -149,6 +151,14 @@ pub async fn configure(
     .fetch_optional(&repo.pool)
     .await?
     .unwrap_or_else(new_id);
+    let existing_threshold = get_device_config(&repo.pool)
+        .await?
+        .and_then(|existing| existing.minimum_similarity_percent);
+    let active_space = generation_by_status(repo, "active")
+        .await?
+        .map(|generation| generation.space_id);
+    config.minimum_similarity_percent =
+        threshold_for_configured_space(existing_threshold, active_space.as_deref(), &space_id);
     sqlx::query(
         "INSERT OR IGNORE INTO search_embedding_spaces(
             id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,
@@ -200,6 +210,7 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
             estimated_rebuild_bytes: 0,
             endpoint: None,
             model: None,
+            minimum_similarity_percent: None,
         });
     };
     let active = generation_by_status(repo, "active").await?;
@@ -261,7 +272,33 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         estimated_rebuild_bytes,
         endpoint: Some(config.endpoint),
         model: Some(config.model),
+        minimum_similarity_percent: config.minimum_similarity_percent,
     })
+}
+
+pub async fn update_minimum_similarity(
+    repo: &HistoryRepository,
+    minimum_similarity_percent: Option<u8>,
+) -> Result<ProviderStatus> {
+    if minimum_similarity_percent.is_some_and(|value| value > 100) {
+        bail!("minimum meaning similarity must be between 0 and 100 percent");
+    }
+    let mut config = get_device_config(&repo.pool)
+        .await?
+        .context("embeddings are not configured")?;
+    config.minimum_similarity_percent = minimum_similarity_percent;
+    put_device_config(&repo.pool, &config).await?;
+    status(repo).await
+}
+
+fn threshold_for_configured_space(
+    existing_threshold: Option<u8>,
+    active_space_id: Option<&str>,
+    configured_space_id: &str,
+) -> Option<u8> {
+    (active_space_id == Some(configured_space_id))
+        .then_some(existing_threshold)
+        .flatten()
 }
 
 /// Count clips that can actually contribute a semantic input. Images without
@@ -1122,6 +1159,17 @@ pub async fn semantic_matches(
         .await
 }
 
+pub(crate) async fn minimum_similarity_percent(repo: &HistoryRepository) -> Result<Option<u8>> {
+    Ok(enabled_config(repo).await?.minimum_similarity_percent)
+}
+
+pub(crate) fn passes_minimum_similarity(
+    score: f64,
+    minimum_similarity_percent: Option<u8>,
+) -> bool {
+    minimum_similarity_percent.is_none_or(|minimum| (score * 100.0).round() >= f64::from(minimum))
+}
+
 async fn semantic_matches_with_provider(
     repo: &HistoryRepository,
     generation: &Generation,
@@ -1605,6 +1653,26 @@ mod tests {
         .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0, second);
+    }
+
+    #[test]
+    fn optional_similarity_threshold_uses_the_displayed_percentage_scale() {
+        assert!(passes_minimum_similarity(0.71, None));
+        assert!(passes_minimum_similarity(0.71, Some(71)));
+        assert!(passes_minimum_similarity(0.709, Some(71)));
+        assert!(!passes_minimum_similarity(0.704, Some(71)));
+    }
+
+    #[test]
+    fn similarity_threshold_survives_same_space_and_resets_for_a_new_model_space() {
+        assert_eq!(
+            threshold_for_configured_space(Some(72), Some("same"), "same"),
+            Some(72)
+        );
+        assert_eq!(
+            threshold_for_configured_space(Some(72), Some("old"), "new"),
+            None
+        );
     }
 
     #[tokio::test]

@@ -2343,6 +2343,19 @@ async fn get_text_embedding_status(
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn update_text_embedding_threshold(
+    app: tauri::AppHandle,
+    minimum_similarity_percent: Option<u8>,
+    state: State<'_, AppState>,
+) -> Result<embeddings::ProviderStatus, String> {
+    let status = embeddings::update_minimum_similarity(&state.history, minimum_similarity_percent)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("embedding-provider-status-changed", ());
+    let _ = app.emit("meaning-search-threshold-changed", ());
+    Ok(status)
+}
+#[tauri::command]
 async fn list_failed_text_embedding_jobs(
     state: State<'_, AppState>,
 ) -> Result<Vec<embeddings::FailedEmbeddingJob>, String> {
@@ -2999,6 +3012,7 @@ pub(crate) fn run() {
             configure_text_embedding_provider,
             disable_text_embedding_provider,
             get_text_embedding_status,
+            update_text_embedding_threshold,
             list_failed_text_embedding_jobs,
             configure_text_generation_provider,
             disable_text_generation_provider,
@@ -3193,6 +3207,7 @@ mod tests {
         assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
         assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
         assert!(main_permissions.contains("\"allow-recall-search\""));
+        assert!(main_permissions.contains("\"allow-update-text-embedding-threshold\""));
     }
 
     #[test]

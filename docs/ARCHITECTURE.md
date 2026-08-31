@@ -123,7 +123,7 @@ flowchart LR
 
 Keyword and filter-only search apply eligibility predicates inside SQLite. Semantic filtering resolves matching clip ordinals into a compact bitset; it does not materialize a hash set of every string clip ID. The quantized scan checks this bitset before scoring.
 
-Optional sources run independently over the same eligible set. The current optional source, `builtin.search.semantic_text`, can contribute semantic-only clips. Source failures retain FTS results with diagnostics. Candidate lists are bounded at 5,000 entries per source; results record source ranks, use equal-weight reciprocal-rank fusion, sort deterministically, then paginate. FTS and semantic source participation are persisted separately, so disabling Meaning Search never stops indexing.
+Optional sources run independently over the same eligible set. The current optional source, `builtin.search.semantic_text`, can contribute semantic-only clips. Its displayed percentage is the embedding model's rounded cosine similarity, not a calibrated probability. A device-local optional minimum percentage filters only semantic candidates before fusion; it defaults off, requires no reindex, and resets when the embedding space changes because score distributions differ by model. Exact FTS candidates are never filtered by this policy. Source failures retain FTS results with diagnostics. Candidate lists are bounded at 5,000 entries per source; results record source ranks, use equal-weight reciprocal-rank fusion, sort deterministically, then paginate. FTS and semantic source participation are persisted separately, so disabling Meaning Search never stops indexing.
 
 ### Structure-aware semantic indexing
 

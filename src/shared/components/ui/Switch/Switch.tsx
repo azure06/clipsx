@@ -9,6 +9,7 @@ export type SwitchProps = {
   readonly disabled?: boolean
   readonly size?: SwitchSize
   readonly className?: string
+  readonly ariaLabel?: string
 }
 
 const sizeClasses: Record<SwitchSize, { root: string; thumb: string }> = {
@@ -29,6 +30,7 @@ export const Switch = ({
   disabled = false,
   size = 'md',
   className = '',
+  ariaLabel,
 }: SwitchProps) => {
   const { root, thumb } = sizeClasses[size]
 
@@ -38,6 +40,7 @@ export const Switch = ({
         checked={checked}
         onCheckedChange={onChange}
         disabled={disabled}
+        aria-label={ariaLabel ?? label}
         className={`${root} relative inline-flex items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 data-[state=checked]:bg-linear-to-r data-[state=checked]:from-blue-500 data-[state=checked]:to-violet-500 data-[state=unchecked]:bg-slate-300 dark:data-[state=unchecked]:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer hover:data-[state=unchecked]:bg-slate-400 dark:hover:data-[state=unchecked]:bg-slate-600`}
       >
         <SwitchPrimitive.Thumb

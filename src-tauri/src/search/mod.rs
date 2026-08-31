@@ -443,6 +443,7 @@ impl SearchSource for SemanticTextSearchSource {
         let eligible = context
             .semantic_eligible
             .context("semantic eligibility was not resolved")?;
+        let minimum_similarity_percent = semantic::minimum_similarity_percent(context.repo).await?;
         let rows = semantic::semantic_matches(
             context.repo,
             context.query,
@@ -450,6 +451,12 @@ impl SearchSource for SemanticTextSearchSource {
             SOURCE_CANDIDATE_LIMIT + 1,
         )
         .await?;
+        let rows = rows
+            .into_iter()
+            .filter(|(_, score, _)| {
+                semantic::passes_minimum_similarity(*score, minimum_similarity_percent)
+            })
+            .collect::<Vec<_>>();
         let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
         Ok(SourceCandidates {
             items: rows

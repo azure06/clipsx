@@ -35,6 +35,7 @@ permissions = [
   "allow-update-search-settings", "allow-list-search-sources", "allow-probe-ollama-endpoint",
   "allow-list-ollama-models", "allow-probe-ollama-model", "allow-configure-text-embedding-provider",
   "allow-disable-text-embedding-provider", "allow-get-text-embedding-status",
+  "allow-update-text-embedding-threshold",
   "allow-list-failed-text-embedding-jobs", "allow-configure-text-generation-provider",
   "allow-disable-text-generation-provider", "allow-get-text-generation-status",
   "allow-recall-search",

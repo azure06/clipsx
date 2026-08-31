@@ -96,6 +96,7 @@ fn main() {
             "configure_text_embedding_provider",
             "disable_text_embedding_provider",
             "get_text_embedding_status",
+            "update_text_embedding_threshold",
             "list_failed_text_embedding_jobs",
             "configure_text_generation_provider",
             "disable_text_generation_provider",

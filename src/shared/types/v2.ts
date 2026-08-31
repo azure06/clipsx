@@ -33,6 +33,7 @@ export type TextEmbeddingStatus = {
   estimatedRebuildBytes: number
   endpoint: string | null
   model: string | null
+  minimumSimilarityPercent: number | null
 }
 
 export type FailedTextEmbeddingJob = {

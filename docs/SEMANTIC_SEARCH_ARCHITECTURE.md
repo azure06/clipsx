@@ -13,6 +13,13 @@ search uses a two-stage index: a small approximate routing signature quickly
 finds 100 likely clips, then the original float32 vectors choose the accurate
 ranking. Both index types live in one generation-specific SQLite sidecar file.
 
+Meaning-only results keep showing the model's rounded cosine percentage so the
+user can inspect what ranking did, but that number is not a confidence
+probability. Because models use different score ranges, an optional device-local
+minimum can hide weak semantic candidates before they enter the combined
+ranking. It defaults off, never filters exact keyword matches, needs no reindex,
+and resets when the embedding model/space changes.
+
 Recall is separate. After search returns ranked results, the user may explicitly
 ask a configured local text-generation model to answer from at most the first
 10 results. The backend searches only within those IDs again to select the best
@@ -129,6 +136,7 @@ the source clips.
 | One SQLite sidecar per generation | Atomic replacement, simple cleanup, no server | Rebuild temporarily needs extra disk; preflight it |
 | Binary routing then exact rerank | Small, dependency-free, fast at 60k clips | Approximate candidate stage; validate recall and tune candidate count |
 | Mandatory FTS plus optional meaning source | Exact text always works and failures degrade safely | Two rankings need deterministic fusion |
+| Optional model-local similarity floor | Users can remove visibly weak meaning-only noise without affecting exact matches | Raising it can hide useful distant concepts; model changes reset it |
 | Maximum 64 chunks per clip | One pasted book cannot monopolize disk or provider work | Sampling may omit detail; routing chunk preserves document-wide signals |
 | Explicit active generation | Queries use one known model/version | Rebuild lifecycle needs validation and recovery |
 | Separate explicit Recall | Search stays deterministic; LLM cost and risk are visible | User must press an action and verify generated output |

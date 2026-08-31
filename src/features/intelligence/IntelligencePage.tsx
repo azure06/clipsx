@@ -120,6 +120,8 @@ export const IntelligencePage = () => {
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
   const [settingsSaving, setSettingsSaving] = useState(false)
+  const [thresholdDraft, setThresholdDraft] = useState('70')
+  const [thresholdSaving, setThresholdSaving] = useState(false)
   const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
   const [generationModel, setGenerationModel] = useState('')
   const [generationSaving, setGenerationSaving] = useState(false)
@@ -133,6 +135,10 @@ export const IntelligencePage = () => {
   const isConfigured = Boolean(
     status?.endpoint && status?.model && status.phase !== 'not_configured'
   )
+
+  useEffect(() => {
+    setThresholdDraft(String(status?.minimumSimilarityPercent ?? 70))
+  }, [status?.minimumSimilarityPercent])
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
@@ -424,6 +430,35 @@ export const IntelligencePage = () => {
       : [...searchSettings.enabledSourceIds, sourceId]
     await updateSearchSettings({ ...searchSettings, enabledSourceIds })
   }
+
+  const updateMeaningThreshold = async (minimumSimilarityPercent: number | null) => {
+    setThresholdSaving(true)
+    try {
+      const next = await invoke<TextEmbeddingStatus>('update_text_embedding_threshold', {
+        minimumSimilarityPercent,
+      })
+      setStatus(next)
+      toast({
+        title:
+          minimumSimilarityPercent === null
+            ? 'Meaning threshold disabled'
+            : `Meaning threshold set to ${minimumSimilarityPercent}%`,
+        type: 'success',
+      })
+    } catch (e) {
+      toast({
+        title: 'Could not update meaning threshold',
+        description: toErrorMessage(e),
+        type: 'error',
+      })
+    } finally {
+      setThresholdSaving(false)
+    }
+  }
+
+  const parsedThreshold = Number(thresholdDraft)
+  const thresholdDraftIsValid =
+    Number.isInteger(parsedThreshold) && parsedThreshold >= 1 && parsedThreshold <= 100
 
   const canConnect = Boolean(selectedModel && endpoint.trim())
   const showModelSelector = probeResult?.reachable || Boolean(status?.model)
@@ -933,6 +968,69 @@ export const IntelligencePage = () => {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              <div className="h-px bg-slate-200/60 dark:bg-white/10" />
+
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      Minimum meaning similarity
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-gray-500">
+                      Hide meaning-only results below this model&apos;s displayed percentage. Exact
+                      keyword matches are never filtered. Scores differ between models.
+                    </p>
+                  </div>
+                  <Switch
+                    size="sm"
+                    className="mt-0.5 shrink-0"
+                    ariaLabel="Filter weak meaning matches"
+                    checked={status?.minimumSimilarityPercent != null}
+                    disabled={!isConfigured || thresholdSaving}
+                    onChange={checked =>
+                      void updateMeaningThreshold(checked ? parsedThreshold || 70 : null)
+                    }
+                  />
+                </div>
+                {status?.minimumSimilarityPercent != null && (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="space-y-1 text-[10px] font-medium text-gray-500">
+                      Similarity percentage
+                      <div className="flex items-center rounded-lg border border-slate-300/70 bg-white/70 px-2 dark:border-white/10 dark:bg-black/10">
+                        <input
+                          aria-label="Minimum meaning similarity percentage"
+                          type="number"
+                          min={1}
+                          max={100}
+                          step={1}
+                          value={thresholdDraft}
+                          onChange={event => setThresholdDraft(event.target.value)}
+                          className="w-16 bg-transparent py-1.5 text-right text-xs text-slate-800 outline-none dark:text-slate-100"
+                        />
+                        <span className="text-xs text-gray-400">%</span>
+                      </div>
+                    </label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      isLoading={thresholdSaving}
+                      disabled={
+                        thresholdSaving ||
+                        !thresholdDraftIsValid ||
+                        parsedThreshold === status.minimumSimilarityPercent
+                      }
+                      onClick={() => void updateMeaningThreshold(parsedThreshold)}
+                    >
+                      Apply
+                    </Button>
+                    <p className="basis-full text-[10px] leading-4 text-gray-500">
+                      Raise this to remove weak matches; lower it if useful synonyms disappear. No
+                      reindex is required.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="h-px bg-slate-200/60 dark:bg-white/10" />
