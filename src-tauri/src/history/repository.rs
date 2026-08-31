@@ -4,8 +4,11 @@ use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{
+    sqlite::SqlitePoolOptions, AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool, Transaction,
+};
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
@@ -290,9 +293,26 @@ impl HistoryRepository {
         }
         let rows = q.bind(limit + 1).fetch_all(&self.pool).await?;
         let has_more = rows.len() as i64 > limit;
-        let mut items = Vec::new();
-        for row in rows.into_iter().take(limit as usize) {
-            items.push(self.summary_from_row(row).await?);
+        let rows = rows.into_iter().take(limit as usize).collect::<Vec<_>>();
+        let ids = rows
+            .iter()
+            .map(|row| row.get::<String, _>(0))
+            .collect::<Vec<_>>();
+        let (mut tags, mut presentations) = tokio::try_join!(
+            self.tags_for_many(&ids),
+            self.compact_presentations_for_many(&ids)
+        )?;
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.get(0);
+            items.push(
+                self.summary_from_row_with(
+                    row,
+                    tags.remove(&id).unwrap_or_default(),
+                    presentations.remove(&id),
+                )
+                .await?,
+            );
         }
         let next_cursor = if has_more {
             items.last().map(|x| format!("{}|{}", x.captured_at, x.id))
@@ -305,6 +325,17 @@ impl HistoryRepository {
         let id: String = row.get(0);
         let tags = self.tags_for(&id).await?;
         let compact_presentation = self.compact_presentation(&id).await?;
+        self.summary_from_row_with(row, tags, compact_presentation)
+            .await
+    }
+
+    async fn summary_from_row_with(
+        &self,
+        row: sqlx::sqlite::SqliteRow,
+        tags: Vec<Tag>,
+        compact_presentation: Option<(String, crate::contracts::CompactPresentation)>,
+    ) -> Result<ClipSummary> {
+        let id: String = row.get(0);
         let history_renderer_id = compact_presentation
             .as_ref()
             .map(|(renderer_id, _)| renderer_id.clone());
@@ -450,6 +481,35 @@ impl HistoryRepository {
         })
         .transpose()
     }
+    async fn compact_presentations_for_many(
+        &self,
+        clip_ids: &[String],
+    ) -> Result<HashMap<String, (String, crate::contracts::CompactPresentation)>> {
+        if clip_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT clip_id,renderer_id,model_json FROM content_compact_presentations WHERE clip_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in clip_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(") ORDER BY clip_id,updated_at DESC,renderer_id");
+        let mut presentations = HashMap::new();
+        for row in query.build().fetch_all(&self.pool).await? {
+            let clip_id: String = row.get(0);
+            if presentations.contains_key(&clip_id) {
+                continue;
+            }
+            let renderer_id: String = row.get(1);
+            let model_json: String = row.get(2);
+            let presentation = serde_json::from_str(&model_json)
+                .context("stored compact presentation is invalid")?;
+            presentations.insert(clip_id, (renderer_id, presentation));
+        }
+        Ok(presentations)
+    }
     async fn tags_for(&self, clip_id: &str) -> Result<Vec<Tag>> {
         let rows=sqlx::query("SELECT t.id,t.name,t.color FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name").bind(clip_id).fetch_all(&self.pool).await?;
         Ok(rows
@@ -460,6 +520,29 @@ impl HistoryRepository {
                 color: r.get(2),
             })
             .collect())
+    }
+    async fn tags_for_many(&self, clip_ids: &[String]) -> Result<HashMap<String, Vec<Tag>>> {
+        if clip_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT ct.clip_id,t.id,t.name,t.color FROM catalog_tags t
+             JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in clip_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(") ORDER BY ct.clip_id,t.name");
+        let mut tags = HashMap::<String, Vec<Tag>>::new();
+        for row in query.build().fetch_all(&self.pool).await? {
+            tags.entry(row.get(0)).or_default().push(Tag {
+                id: row.get(1),
+                name: row.get(2),
+                color: row.get(3),
+            });
+        }
+        Ok(tags)
     }
     pub async fn detail(&self, id: &str) -> Result<ClipDetail> {
         let row=sqlx::query("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id WHERE c.id=? AND c.lifecycle_state='ready'").bind(id).fetch_optional(&self.pool).await?.context("clip not found")?;
@@ -1395,6 +1478,28 @@ mod tests {
         let (renderer_id, hydrated) = repo.compact_presentation(&clip_id).await.unwrap().unwrap();
         assert_eq!(renderer_id, contribution_id);
         assert_eq!(hydrated, stored);
+        let tag = repo
+            .create_tag("batched".into(), Some("#123456".into()))
+            .await
+            .unwrap();
+        repo.tag_clip(&clip_id, &tag.id, true).await.unwrap();
+        let page = repo
+            .list(ListRequest {
+                cursor: None,
+                limit: Some(50),
+                scope: None,
+                tag_id: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(
+            page.items[0].history_renderer_id.as_deref(),
+            Some(contribution_id)
+        );
+        assert_eq!(page.items[0].tags.len(), 1);
+        assert_eq!(page.items[0].tags[0].id, tag.id);
+        assert_eq!(page.items[0].tags[0].name, "batched");
     }
 
     #[tokio::test]
