@@ -442,11 +442,10 @@ impl SearchSource for SemanticTextSearchSource {
         let eligible = context
             .semantic_eligible
             .context("semantic eligibility was not resolved")?;
-        let eligible_ids: HashSet<_> = eligible.keys().cloned().collect();
         let rows = semantic::semantic_matches(
             context.repo,
             context.query,
-            &eligible_ids,
+            eligible,
             SOURCE_CANDIDATE_LIMIT + 1,
         )
         .await?;

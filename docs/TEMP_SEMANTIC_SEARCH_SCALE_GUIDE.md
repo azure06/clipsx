@@ -729,6 +729,12 @@ filter. The packed SQLite physical path still needs the full 540,000-vector
 release benchmark; the earlier 18.4 ms result measured the algorithm's
 contiguous-memory qualification layout, not SQLite row traversal.
 
+Canonical filtering no longer clones every matching string ID into a second
+hash set. The store streams the active generation's clip-ID/ordinal mapping
+once, tests each ID against the canonical result map, and sets one bit per
+eligible ordinal. At 60,000 clips that scan-time filter occupies 7,504 bytes;
+all worker tasks share it read-only.
+
 - Embed the query in the active generation's space.
 - Search the chosen vector backend.
 - Apply canonical filters without materializing every eligible clip ID in Rust.

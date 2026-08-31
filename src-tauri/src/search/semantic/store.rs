@@ -2,8 +2,7 @@
 
 use std::{
     cmp::{Ordering, Reverse},
-    collections::HashMap,
-    collections::{BinaryHeap, HashSet},
+    collections::{BinaryHeap, HashMap, HashSet},
     fs::{self, File},
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
@@ -130,6 +129,40 @@ impl Ord for ApproximateHit {
 impl PartialOrd for ApproximateHit {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OrdinalBitSet {
+    words: Vec<u64>,
+}
+
+impl OrdinalBitSet {
+    fn with_max_ordinal(max_ordinal: i64) -> Result<Self> {
+        let bits = usize::try_from(max_ordinal)?
+            .checked_add(1)
+            .context("semantic clip ordinal overflow")?;
+        Ok(Self {
+            words: vec![0; bits.div_ceil(64)],
+        })
+    }
+
+    fn insert(&mut self, ordinal: i64) -> Result<()> {
+        let ordinal = usize::try_from(ordinal)?;
+        let word = self
+            .words
+            .get_mut(ordinal / 64)
+            .context("semantic clip ordinal exceeds generation mapping")?;
+        *word |= 1_u64 << (ordinal % 64);
+        Ok(())
+    }
+
+    fn contains(&self, ordinal: i64) -> bool {
+        usize::try_from(ordinal).ok().is_some_and(|ordinal| {
+            self.words
+                .get(ordinal / 64)
+                .is_some_and(|word| word & (1_u64 << (ordinal % 64)) != 0)
+        })
     }
 }
 
@@ -520,16 +553,19 @@ impl SemanticIndexStore {
     }
 
     /// Runs the selected two-stage retrieval path against one complete generation.
-    pub async fn search(
+    pub async fn search<F>(
         &self,
         relative_path: &str,
         generation_id: &str,
         dimensions: usize,
         query_vector: &[f32],
-        eligible_clip_ids: &HashSet<String>,
+        is_eligible: F,
         limit: usize,
-    ) -> Result<Vec<SemanticHit>> {
-        if limit == 0 || eligible_clip_ids.is_empty() {
+    ) -> Result<Vec<SemanticHit>>
+    where
+        F: Fn(&str) -> bool,
+    {
+        if limit == 0 {
             return Ok(Vec::new());
         }
         validate_query_vector(query_vector, dimensions)?;
@@ -561,8 +597,24 @@ impl SemanticIndexStore {
             return Ok(Vec::new());
         };
 
+        let mut eligible_ordinals = OrdinalBitSet::with_max_ordinal(max_ordinal)?;
+        let mut mappings =
+            sqlx::query("SELECT clip_ordinal,clip_id FROM semantic_clips").fetch(&pool);
+        let mut eligible_count = 0_usize;
+        while let Some(row) = mappings.try_next().await? {
+            let clip_id: String = row.get(1);
+            if is_eligible(&clip_id) {
+                eligible_ordinals.insert(row.get(0))?;
+                eligible_count += 1;
+            }
+        }
+        if eligible_count == 0 {
+            pool.close().await;
+            return Ok(Vec::new());
+        }
+
         let query_i8 = std::sync::Arc::new(quantize_vector(query_vector));
-        let eligible = std::sync::Arc::new(eligible_clip_ids.clone());
+        let eligible = std::sync::Arc::new(eligible_ordinals);
         let range_size = (max_ordinal + 1 + workers as i64 - 1) / workers as i64;
         let tasks = (0..workers).map(|worker| {
             let pool = pool.clone();
@@ -686,7 +738,7 @@ async fn scan_partition(
     start: i64,
     end: i64,
     query: &[u8],
-    eligible: &HashSet<String>,
+    eligible: &OrdinalBitSet,
 ) -> Result<Vec<ApproximateHit>> {
     if start >= end {
         return Ok(Vec::new());
@@ -705,7 +757,7 @@ async fn scan_partition(
     while let Some(row) = rows.try_next().await? {
         let clip_ordinal: i64 = row.get(0);
         let clip_id: String = row.get(1);
-        if !eligible.contains(&clip_id) {
+        if !eligible.contains(clip_ordinal) {
             continue;
         }
         let chunk_count: i64 = row.get(2);
@@ -880,6 +932,19 @@ mod tests {
             chunker_id: "builtin.chunker.plain".into(),
             chunker_version: "1".into(),
         }
+    }
+
+    #[test]
+    fn eligibility_bitset_is_compact_and_handles_sparse_ordinals() {
+        let mut eligible = OrdinalBitSet::with_max_ordinal(59_999).unwrap();
+        eligible.insert(0).unwrap();
+        eligible.insert(31_337).unwrap();
+        eligible.insert(59_999).unwrap();
+        assert!(eligible.contains(0));
+        assert!(eligible.contains(31_337));
+        assert!(eligible.contains(59_999));
+        assert!(!eligible.contains(31_338));
+        assert_eq!(eligible.words.len() * size_of::<u64>(), 7_504);
     }
 
     #[tokio::test]
@@ -1116,7 +1181,7 @@ mod tests {
                 "retrieval",
                 2,
                 &[1.0, 0.0],
-                &eligible,
+                |clip_id| eligible.contains(clip_id),
                 10,
             )
             .await

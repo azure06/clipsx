@@ -994,7 +994,7 @@ pub async fn validate_configured_provider(repo: &HistoryRepository) -> Result<()
 pub async fn semantic_matches(
     repo: &HistoryRepository,
     query: &str,
-    eligible_ids: &HashSet<String>,
+    eligible_ids: &HashMap<String, i64>,
     limit: usize,
 ) -> Result<Vec<(String, f64, String)>> {
     let config = enabled_config(repo).await?;
@@ -1016,7 +1016,7 @@ async fn semantic_matches_with_provider(
     generation: &Generation,
     provider: &dyn TextEmbeddingProvider,
     query: &str,
-    eligible_ids: &HashSet<String>,
+    eligible_ids: &HashMap<String, i64>,
     limit: usize,
 ) -> Result<Vec<(String, f64, String)>> {
     if limit == 0 || eligible_ids.is_empty() {
@@ -1031,7 +1031,7 @@ async fn semantic_matches_with_provider(
             &generation.id,
             generation.dimensions,
             &query_vector,
-            eligible_ids,
+            |clip_id| eligible_ids.contains_key(clip_id),
             limit,
         )
         .await?
@@ -1487,7 +1487,7 @@ mod tests {
             &generation,
             &FakeProvider,
             "query",
-            &HashSet::from([second.clone()]),
+            &HashMap::from([(second.clone(), 1)]),
             10,
         )
         .await
