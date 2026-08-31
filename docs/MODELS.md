@@ -181,23 +181,56 @@ Promotion is atomic: a building generation becomes active only after every job s
 
 Release search builds a compact eligible-clip ordinal bitset, scans one binary routing signature per clip in parallel, retains 100 clips, then reranks every chunk of those clips with exact float32 cosine similarity. This remains linear in clip count, but it is deterministic, dependency-free, immediately mutable, and has no trained graph. The full-generation float32 scan exists only as a test oracle.
 
-## 7. Extensions
+## 7. Configuration sync
+
+```mermaid
+flowchart LR
+    D[sync_device_identity] --> O[sync_outbox]
+    O --> R[Authenticated remote profile]
+    R --> S[sync_remote_state]
+    R -. invalid record .-> Q[sync_remote_quarantine]
+```
+
+| Table | Class | Purpose | Write authority | Lifecycle / ownership |
+| --- | --- | --- | --- | --- |
+| `sync_device_identity` | Infrastructure | Stores the device ID, display name, and hybrid-logical-clock state used to order local mutations. | Configuration-sync service | Device-scoped singleton retained until reset or device-forget operations replace it. |
+| `sync_outbox` | Operational | Stores the latest pending revision for each supported configuration record, including tombstones and retry state. | The owning settings mutation and sync service in the same local transaction | One row per record kind/key remains until an accepted server response supersedes or acknowledges it. Clipboard content cannot enter this table. |
+| `sync_remote_state` | Operational | Stores opt-in state, active account, monotonic server cursor, and latest synchronization status. | Configuration-sync service | Device-scoped singleton. Signing out disables sync without deleting local settings. |
+| `sync_remote_quarantine` | Operational security state | Retains bounded diagnostics for invalid or unsupported remote records instead of applying them. | Configuration-sync response validator | Local diagnostic evidence retained until explicit recovery/reset policy clears it. |
+
+The schema can represent future configuration record kinds, but the current
+runtime allowlist synchronizes only theme, language, OCR enablement, and OCR
+language. Expanding that allowlist requires a versioned server contract and
+owner-specific validation; it is not implied by the table shape.
+
+## 8. Extensions
 
 ```mermaid
 flowchart TB
     I[extension_installs] --> R[extension_runtime_state]
     I --> C[extension_contribution_runtime_state]
-    C --> S[extension_action_shortcuts]
+    I --> S[extension_action_shortcuts]
+    I --> P[extension_action_pins]
+    I --> G[extension_permission_grants]
+    M[package_id] --> V[extension_package_settings_v2]
+    M --> U[extension_update_preferences]
+    M --> N[extension_registry_snapshots]
     C -. detected output .-> F[Content facets / presentations]
     C -. derived output .-> A[Artifacts]
 ```
 
 | Table | Class | Purpose | Write authority | Lifecycle / ownership |
 | --- | --- | --- | --- | --- |
-| `extension_installs` | Infrastructure | Records installed package identity, version, manifest, integrity, and managed location. | Extension installation/update services acting on a user request | Authoritative local installation state. Uninstall cascades runtime and contribution state. |
-| `extension_runtime_state` | Operational | Tracks install-level enablement, quarantine, and failure counters. | Extension runtime host and enable/disable actions | Owned by the install. Operational state is recreated when an install is replaced. |
-| `extension_contribution_runtime_state` | Operational | Tracks per-contribution enablement, ordering, and diagnostics. | Manifest refresh plus extension runtime host | Owned by the install and refreshable from its manifest; the host remains authoritative over execution. |
+| `extension_installs` | Infrastructure | Records installed package identity, version, integrity, managed location, source, and enablement. | Extension installation/update services acting on a user request | Authoritative local installation state. Uninstall cascades install-owned runtime, grants, pins, and shortcuts. |
+| `extension_runtime_state` | Operational | Tracks whether an installation is ready, quarantined, or incompatible. | Extension runtime host and lifecycle actions | Owned by the install. Operational state is recreated when an install is replaced. |
+| `extension_contribution_runtime_state` | Operational | Tracks per-contribution failure streaks and the latest diagnostic. | Manifest refresh plus extension runtime host | Owned by the install and refreshable from its manifest; the host remains authoritative over execution. |
 | `extension_action_shortcuts` | Configuration | Maps keyboard shortcuts to enabled action contributions. | User shortcut configuration services | User configuration scoped to a contribution; cascades when that contribution disappears. |
+| `extension_action_pins` | Configuration | Records which action or transformer-preset contributions the user pinned. | Extension action-placement services | Profile preference scoped to the installed contribution; cascades with its installation. |
+| `extension_permission_grants` | Operational security state | Records consent for one exact package checksum and declared navigation, HTTPS, or provider permission. | Extension broker after a host-owned consent flow | Install-owned and checksum-bound. Update, disablement, replacement, or removal revokes it. Never synchronized. |
+| `extension_registry_snapshots` | Infrastructure | Preserves the reviewed registry identity displayed for an installed registry release. | Registry-backed install/update service | Keyed by stable package ID and replaceable from newly verified signed registry metadata. It is not trusted package-authored metadata. |
+| `extension_update_preferences` | Configuration | Stores the package-specific automatic-update override. | Extension update settings | Stable package preference retained independently from installed bytes. |
+| `extension_package_settings_v2` | Configuration | Stores manifest-declared non-secret settings by stable package and setting IDs. | Extension settings service after manifest/type validation | Retained across uninstall/reinstall; package bytes do not own it. |
+| `extension_package_settings` | Migration-only | Earlier install-ID-scoped settings table whose rows are copied into `extension_package_settings_v2`. | No runtime writer | Retired staging table in the current migration sequence; runtime code reads and writes only the stable package-ID table. |
 
 Extension tables store package/runtime infrastructure, not arbitrary extension-owned database schemas. Sandboxed contributions emit host-validated facets, presentations, artifacts, or transformed outputs into the owning host domains.
 

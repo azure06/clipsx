@@ -18,14 +18,19 @@ adapter's supported-format contract changes.
 - Advertise only capabilities demonstrated in installed builds.
 - Treat Windows OCR as release-blocking until its real installed lifecycle is validated; the WinRT provider implementation and generated-image recognition test are automated prerequisites, not substitutes for installed evidence.
 - Do not imply Wayland, hosted providers, visual search, additional generation
-  providers, Vault, or remote sync support unless a later roadmap milestone
-  explicitly delivers it. Local Ollama text generation is implemented, but may
-  be advertised only after this checklist validates it in installed builds.
+  providers, Vault, or clipboard-content sync support unless a later roadmap
+  milestone explicitly delivers it. The narrow configuration-sync contract and
+  local Ollama text generation are implemented, but may be advertised only
+  after this checklist validates them in installed builds.
 
 ## Required configuration and secrets
 
 - `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_NEXT_PUBLIC_SITE_URL`
 - `TAURI_UPDATER_PUBLIC_KEY`
+- `CLIPSX_REGISTRY_KEY_ID`
+- `CLIPSX_REGISTRY_PUBLIC_KEY_BASE64`
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 - Release-time CSP and updater endpoint values required by Tauri configuration
@@ -129,7 +134,8 @@ Installed-build checks:
 - tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
   updater, deep links, OAuth callback, and file dialogs;
 - minimize, maximize, close, and snap behavior for the frameless window;
-- explicit unsupported OCR state unless Windows OCR has been delivered.
+- WinRT OCR availability, installed-language discovery, automatic and explicit
+  language selection, recognition, retry, cancellation, and restart recovery.
 
 ## macOS matrix
 

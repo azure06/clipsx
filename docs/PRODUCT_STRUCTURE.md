@@ -60,7 +60,8 @@ SQLite remains the persistence layer. JSON is the typed value and import/export 
 
 | Scope | Examples | Storage and sync rule |
 | --- | --- | --- |
-| Profile, syncable | language, theme, search behavior, non-secret package settings, desired packages, enablement, shortcuts | Namespaced typed records in SQLite; eligible for account sync |
+| Profile, currently syncable | language, theme, OCR enablement, OCR language | Namespaced typed records in SQLite; only the explicit server-contract allowlist is synchronized |
+| Profile, local for now | search behavior, non-secret package settings, desired packages, enablement, shortcuts | Stored locally in typed SQLite records; requires a separately versioned and validated sync contract before becoming syncable |
 | Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and its meaning-similarity floor, local package path | `config_device_values` or a relational device-owned table; never copied automatically to another device |
 | Secret | provider/API credentials | OS credential store only; never exported or synchronized as ordinary settings |
 | Consent | checksum-bound extension grants and invocation tokens | Local security state; never synchronized; package updates require fresh consent |
@@ -83,7 +84,10 @@ Local typed setting
   -> apply locally
 ```
 
-Sync includes profile settings, extension installation intent, compatible requested version, extension enablement, non-secret extension settings, and app/extension shortcuts. A receiving device downloads and validates package bytes through the registry; package archives are not synchronized directly.
+The current server contract includes exactly `ui.theme`, `ui.language`,
+`artifacts.ocr.enabled`, and `artifacts.ocr.language`. Each value is validated by
+key before it is applied. Broader profile and extension synchronization remains
+roadmap work; package archives are never synchronized directly.
 
 Sync excludes clips, managed files, local endpoints/models, machine integration, credentials, permission grants, invocation tokens, caches, indexes, jobs, and diagnostics. Conflict resolution is record-level, deterministic, and visible in Sync diagnostics; whole-file or whole-profile last-write-wins is not acceptable.
 
@@ -91,13 +95,16 @@ Sync excludes clips, managed files, local endpoints/models, machine integration,
 
 | Mutation | Required result |
 | --- | --- |
-| Delete clip / clear / retention | Cascade representations, facets, compact views, OCR artifacts/jobs, search documents/chunks/embeddings/jobs, tag links; enqueue final managed-file deletion |
+| Delete clip / clear / retention | Cascade representations, facets, compact views, OCR artifacts/jobs, search documents/jobs and tag links; remove the clip from semantic sidecars; enqueue final managed-file deletion |
 | Edit note | Rebuild lexical projection and enqueue the active semantic generation |
 | Add/remove/delete tag | Refresh every affected clip's lexical and semantic projection |
 | OCR/extraction completes or changes | Refresh search projection and invalidate/requeue affected semantic chunks |
 | Extension update/removal | Invalidate its derived facets/views and grants without mutating canonical clip content |
 
-The schema already provides clip-owned cascades for the current derived tables. Release work must add mutation-level tests that prove the full invariant and detect future tables that omit ownership cleanup.
+The schema provides clip-owned cascades for database-resident derived tables;
+the semantic service owns corresponding sidecar cleanup and reconciliation.
+Mutation-level tests must continue to detect future storage that omits ownership
+cleanup.
 
 ## Shortcut model
 

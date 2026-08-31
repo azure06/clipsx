@@ -6,7 +6,7 @@ ClipsX is a local-first programmable clipboard:
 Capture -> Understand -> Render / Transform -> Copy or Paste
 ```
 
-This is the stable reference for the system that exists today. [MODELS.md](MODELS.md) explains the complete SQLite model and its trade-offs, [ROADMAP.md](ROADMAP.md) contains only unfinished work, and [RELEASE.md](RELEASE.md) contains the installed-build certification matrix.
+This is the stable reference for the system that exists today. [MODELS.md](MODELS.md) explains the complete SQLite model and its trade-offs, [ROADMAP.md](ROADMAP.md) tracks release work and evidence, and [RELEASE.md](RELEASE.md) contains the installed-build certification matrix.
 
 ## System at a glance
 
@@ -127,29 +127,22 @@ Optional sources run independently over the same eligible set. The current optio
 
 ### Structure-aware semantic indexing
 
-The storage, retrieval, rebuild, and Recall flows are illustrated with beginner-oriented rationale in [Meaning Search and Recall architecture](SEMANTIC_SEARCH_ARCHITECTURE.md).
+Semantic inputs come from notes, tags, ready text representations, and completed
+OCR. Format-aware chunking preserves useful structure, deduplicates equivalent
+visible inputs, bounds each embedding input, and limits one clip to 64 chunks.
 
-Semantic inputs are independently built from notes, tags, every ready text representation, and completed OCR artifacts. Equivalent normalized visible text is embedded once, preferring the richest successfully parsed source; genuinely distinct representations remain searchable.
+Generation-owned chunks and vectors live in disposable SQLite sidecars. The one
+production retrieval path scans paged binary clip signatures, shortlists 100
+clips, and reranks all of their chunks with exact float32 vectors. `clips.db`
+owns model compatibility, job state, and the explicit active-generation pointer.
+A replacement becomes active only after its sidecar is durable and validated;
+the previous generation remains searchable during the rebuild. Missing or
+corrupt semantic data disables only the optional source, while FTS continues.
 
-| Input              | Semantic atoms and embedding context                                                      |
-| ------------------ | ----------------------------------------------------------------------------------------- |
-| HTML and Markdown  | headings, paragraphs, lists, quotes, code, table rows; heading ancestry and table headers |
-| JSON               | object subtrees and array ranges; JSON Pointer paths                                      |
-| CSV/TSV            | complete rows packed under repeated headers                                               |
-| RTF                | extracted paragraphs and text blocks                                                      |
-| Code               | declaration/blank-line-aware blocks with inferred language                                |
-| OCR and plain text | paragraphs, lines, and sentence-like boundaries                                           |
-| Notes and tags     | separate labelled metadata chunks                                                         |
-
-Blocks sharing structural context pack toward 1,536 UTF-8 bytes. A contextual Ollama input never exceeds 2,048 bytes; structural prefixes are bounded to 384 bytes and stored only in the embedding input. Normal structural chunks do not overlap. An oversized atom is split Unicode-safely with at most 256 bytes of overlap, and a reported provider overflow recursively subdivides only the failing chunk.
-
-Large semantic data lives in one disposable `search-index/generation-{id}.sqlite` sidecar per generation. A sidecar stores clean snippets, strategy/source provenance, stable clip/chunk ordinals, one binary routing signature per clip, and normalized float32 chunk vectors for exact reranking. Routing signatures are grouped into pages of at most 256 clips: search reads a few hundred SQLite rows instead of tens of thousands, while an ordinary update rewrites only one small derived page. `clips.db` stores embedding-space identity, generation/job lifecycle, the safe relative sidecar path, size, checkpoint checksum, backend ID, encoding, and candidate policy. Pipeline or model changes create a replacement generation. Ordinary clip changes replace only that clip's rows transactionally in the active generation; the coordinator clears the checkpoint checksum before mutation and may refresh it after a bounded durable checkpoint. SQLite WAL recovery, schema identity, and integrity checks protect the live sidecar between checksums, avoiding a full-generation copy for every clipboard capture.
-
-The only production retrieval path is a dependency-free parallel binary scan of clip routing signatures, followed by exact float32 reranking of every chunk belonging to the 100 shortlisted clips and best-chunk-per-clip reduction. The routing signature is the bitwise majority of that clip's normalized chunk-vector signs; it is only a candidate selector and never supplies the final score. The active generation remains searchable while a replacement builds. Activation occurs only after the sidecar is durable and validated; the old generation is superseded only after the active pointer commits. Missing or corrupt sidecars make the optional semantic source unavailable while FTS continues normally.
-
-Startup recovery requeues interrupted `running` jobs without deleting valid sidecar writes because per-clip replacement is idempotent. A sidecar finalized before an interrupted activation is validated and activated without rebuilding. If an incomplete building sidecar is missing or corrupt, recovery first resets every generation job to `pending` in `clips.db`, then removes and recreates only that disposable sidecar. This database-first ordering ensures a second interruption can never activate an empty replacement using stale completed-job state.
-
-The Intelligence surface reads lifecycle, coverage, dimensions, active-sidecar bytes, and an estimated replacement size from the semantic service rather than reconstructing index state in React. A rebuild keeps the active generation and therefore requires additional space; the service rejects it unless the estimate plus a 64 MiB safety reserve is available. The estimate uses measured bytes per indexed clip when an active sidecar exists and otherwise uses the documented 64-chunk upper bound. Retry, rebuild, and delete-index operations all remain service-owned. Keyword FTS is mandatory and independent, so disabling, deleting, or failing Meaning Search never removes clips or stops exact-word search.
+The semantic service owns recovery, disk preflight, retry, rebuild, and clear
+operations. The full mental model, limits, lifecycle, rationale, trade-offs,
+scale math, and qualification evidence are in
+[Meaning Search and Recall](SEMANTIC_SEARCH_ARCHITECTURE.md).
 
 ### Providers
 
@@ -177,7 +170,11 @@ Hosted providers and visual embedding runtimes are not implemented. They require
 
 SQLite keeps canonical clip tables separate from derived `artifact_*`, `search_*`, and extension runtime/cache tables. Artifacts have an explicit owning clip; input edges are same-clip provenance. Saved transformed clips survive source deletion because live links are nullable and bounded provenance snapshots remain. Managed files are removed only after their final canonical or derived reference disappears. Do not persist renderer trees, JSON ASTs, decoded tokens, parsed URLs, generic metadata blobs, or unsaved transform output as canonical clip metadata.
 
-Semantic sidecars are derived data, not canonical databases. Factory reset removes `search-index/`; “Delete Meaning Search index” removes sidecars and generation/job state without touching clips or FTS. Release-mode physical SQLite qualification at 60,000 clips, 540,000 exact-rerank chunks, and 1,024 dimensions produces a 10,358,784-byte routing fixture. Repeated 21-run Windows qualifications measured about 83–97 ms p50 / 105–122 ms p95; the enforced local physical gate is 125 ms p95, excluding embedding-provider latency. The earlier seven-run harness incorrectly treated the maximum as p95 and was replaced rather than hiding scheduler variance with a stateful cache or duplicate mapping. Labelled-corpus routing recall, filters, recovery, peak memory, full realistic vector storage, and every installed release target remain certification gates.
+Semantic sidecars are derived data, not canonical databases. Factory reset
+removes `search-index/`; “Delete Meaning Search index” removes sidecars and
+generation/job state without touching clips or FTS. Capacity measurements and
+the remaining installed-build gates are recorded in
+[Meaning Search and Recall](SEMANTIC_SEARCH_ARCHITECTURE.md).
 
 ## Legacy reference policy
 

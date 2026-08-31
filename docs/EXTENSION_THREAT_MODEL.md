@@ -72,8 +72,10 @@ Custom UI depends on platform webview behavior. Windows, macOS, and Linux/X11
 installed builds must verify IPC denial, CSP, navigation, popup/download denial,
 focus, sizing, accessibility, teardown, and crash recovery. The dialog HTTPS
 bridge is exposed only behind checksum grants, host-created dialog authorization,
-child-label/session binding, bounded responses, and credential isolation. Release
-certification must additionally exercise cancellation and malicious bridge messages
-in installed builds.
-`generation.text` remains unavailable until a host-owned provider adapter meets
-the same invocation and data-egress rules.
+child-label/session binding, bounded responses, and credential isolation.
+`generation.text` is available only through the host-owned local generation
+adapter after explicit configuration and checksum-bound consent. Extensions
+receive bounded generated output, never the provider endpoint, model
+configuration, credentials, or direct localhost access. Installed-build
+certification must verify cancellation, malicious bridge messages, prompt-data
+isolation, and grant revocation.
