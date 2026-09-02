@@ -131,3 +131,100 @@ describe('extension action shortcuts', () => {
     )
   })
 })
+
+describe('extension installation feedback', () => {
+  const availableCatalog: ExtensionCatalog = {
+    ...catalog,
+    packages: [{ ...catalog.packages[0]!, installed: null }],
+  }
+  const availableDetail: PackageDetail = {
+    ...packageDetail(null),
+    installed: null,
+    actions: [],
+  }
+
+  beforeEach(() => {
+    mockInvoke.mockReset()
+    mockInvoke.mockImplementation((command: string) => {
+      switch (command) {
+        case 'get_extension_catalog':
+        case 'check_extension_updates':
+          return Promise.resolve(availableCatalog)
+        case 'list_core_utilities':
+          return Promise.resolve([])
+        case 'get_extension_developer_mode':
+        case 'get_extension_auto_updates_enabled':
+          return Promise.resolve(false)
+        case 'get_extension_package_detail':
+          return Promise.resolve(availableDetail)
+        default:
+          return Promise.resolve()
+      }
+    })
+  })
+
+  it('keeps the package open and shows an install failure', async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'install_registry_extension') {
+        return Promise.reject(new Error('Package download failed'))
+      }
+      if (command === 'get_extension_catalog' || command === 'check_extension_updates') {
+        return Promise.resolve(availableCatalog)
+      }
+      if (command === 'get_extension_package_detail') return Promise.resolve(availableDetail)
+      if (command === 'list_core_utilities') return Promise.resolve([])
+      if (
+        command === 'get_extension_developer_mode' ||
+        command === 'get_extension_auto_updates_enabled'
+      ) {
+        return Promise.resolve(false)
+      }
+      return Promise.resolve()
+    })
+
+    render(<Plugins />)
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Example tools/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Package download failed')
+    expect(screen.getByRole('heading', { name: 'Example tools' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Install' })).toBeEnabled()
+  })
+
+  it('prevents duplicate installs while the first request is pending', async () => {
+    let resolveInstall: (() => void) | undefined
+    const pendingInstall = new Promise<void>(resolve => {
+      resolveInstall = resolve
+    })
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'install_registry_extension') return pendingInstall
+      if (command === 'get_extension_catalog' || command === 'check_extension_updates') {
+        return Promise.resolve(availableCatalog)
+      }
+      if (command === 'get_extension_package_detail') return Promise.resolve(availableDetail)
+      if (command === 'list_core_utilities') return Promise.resolve([])
+      if (
+        command === 'get_extension_developer_mode' ||
+        command === 'get_extension_auto_updates_enabled'
+      ) {
+        return Promise.resolve(false)
+      }
+      return Promise.resolve()
+    })
+
+    render(<Plugins />)
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Example tools/i }))
+    const install = await screen.findByRole('button', { name: 'Install' })
+    fireEvent.click(install)
+    fireEvent.click(install)
+
+    await waitFor(() => expect(install).toBeDisabled())
+    expect(
+      mockInvoke.mock.calls.filter(([command]) => command === 'install_registry_extension')
+    ).toHaveLength(1)
+    resolveInstall?.()
+    await waitFor(() => expect(install).toBeEnabled())
+  })
+})

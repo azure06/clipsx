@@ -229,9 +229,8 @@ export const Plugins = () => {
               setSelectedId(null)
               setDetail(null)
             }}
-            onChanged={() => {
-              void load()
-              void loadPackageDetail(selectedId)
+            onChanged={async () => {
+              await Promise.all([load(), loadPackageDetail(selectedId)])
             }}
           />
         ) : (

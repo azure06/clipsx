@@ -15,14 +15,14 @@ use zip::{CompressionMethod, ZipArchive};
 
 use super::ExtensionManifest;
 
-const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES: usize = 256;
-const MAX_REGISTRY_BYTES: usize = 2 * 1024 * 1024;
-const MAX_REGISTRY_SIGNATURE_BYTES: usize = 64 * 1024;
-const MAX_CATALOG_ICON_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_REGISTRY_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_REGISTRY_SIGNATURE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CATALOG_ICON_BYTES: usize = 256 * 1024;
 
 /// Public registry trust roots are intentionally compiled into the client.
 /// Add a new key before publishing overlapping rotation signatures; remove an

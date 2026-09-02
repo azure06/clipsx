@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ExternalLink, KeyRound, RotateCcw, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../../../shared/components/ui/Button'
 import { Switch } from '../../../shared/components/ui/Switch'
 import { ShortcutRecorder } from '../Settings'
@@ -36,11 +36,14 @@ export const PackageDetailView = ({
   detail: PackageDetail
   busy: boolean
   onClose: () => void
-  onChanged: () => void
+  onChanged: () => Promise<void>
 }) => {
   const [tab, setTab] = useState<DetailTab>('overview')
   const [values, setValues] = useState(detail.settings)
   const [mode, setMode] = useState<UpdateMode>(detail.autoUpdateMode)
+  const [operationBusy, setOperationBusy] = useState(false)
+  const [operationError, setOperationError] = useState<string | null>(null)
+  const operationInFlight = useRef(false)
   const registryPackage = detail.package
   const installed = detail.installed
 
@@ -48,25 +51,55 @@ export const PackageDetailView = ({
     setValues(detail.settings)
     setMode(detail.autoUpdateMode)
   }, [detail])
+  useEffect(() => {
+    setOperationError(null)
+  }, [packageId])
 
   if (!registryPackage) return null
+  const runOperation = async (operation: () => Promise<unknown>) => {
+    if (operationInFlight.current) return false
+    operationInFlight.current = true
+    setOperationBusy(true)
+    setOperationError(null)
+    try {
+      await operation()
+      await onChanged()
+      return true
+    } catch (value) {
+      setOperationError(String(value))
+      return false
+    } finally {
+      operationInFlight.current = false
+      setOperationBusy(false)
+    }
+  }
   const changeSetting = async (settingId: string, value: unknown) => {
+    const previous = values[settingId]
     setValues(current => ({ ...current, [settingId]: value }))
-    await invoke('set_extension_package_setting', { packageId, settingId, value })
-    onChanged()
+    if (
+      !(await runOperation(() =>
+        invoke('set_extension_package_setting', { packageId, settingId, value })
+      ))
+    ) {
+      setValues(current => ({ ...current, [settingId]: previous }))
+    }
   }
   const setEnabled = async (enabled: boolean) => {
-    await invoke('set_extension_enabled', { packageId, enabled })
-    onChanged()
+    await runOperation(() => invoke('set_extension_enabled', { packageId, enabled }))
   }
   const setUpdateMode = async (next: UpdateMode) => {
+    const previous = mode
     setMode(next)
-    await invoke('set_extension_update_preference', { packageId, mode: next })
-    onChanged()
+    if (
+      !(await runOperation(() =>
+        invoke('set_extension_update_preference', { packageId, mode: next })
+      ))
+    ) {
+      setMode(previous)
+    }
   }
   const install = async (version: string) => {
-    await invoke('install_registry_extension', { packageId, version })
-    onChanged()
+    await runOperation(() => invoke('install_registry_extension', { packageId, version }))
   }
   const metadata = [
     ['Identifier', registryPackage.packageId],
@@ -145,6 +178,7 @@ export const PackageDetailView = ({
             checked={installed.enabled}
             onChange={enabled => void setEnabled(enabled)}
             size="sm"
+            disabled={busy || operationBusy}
           />
         ) : null}
         {installed ? (
@@ -159,7 +193,7 @@ export const PackageDetailView = ({
         {detail.update ? (
           <Button
             size="sm"
-            isLoading={busy}
+            isLoading={busy || operationBusy}
             leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
             onClick={() => void install(detail.update!.version)}
           >
@@ -168,7 +202,7 @@ export const PackageDetailView = ({
         ) : !installed ? (
           <Button
             size="sm"
-            isLoading={busy}
+            isLoading={busy || operationBusy}
             disabled={detail.revoked}
             onClick={() => void install(registryPackage.version)}
           >
@@ -176,6 +210,15 @@ export const PackageDetailView = ({
           </Button>
         ) : null}
       </div>
+
+      {operationError && (
+        <div
+          role="alert"
+          className="mb-5 rounded-xl border border-red-500/20 bg-red-500/[.07] px-3 py-2 text-xs leading-5 text-red-700 dark:text-red-300"
+        >
+          {operationError}
+        </div>
+      )}
 
       <div
         className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200/70 dark:border-white/10"
@@ -234,7 +277,9 @@ export const PackageDetailView = ({
                 ? [
                     <button
                       key={label}
-                      onClick={() => void invoke('open_external_url', { url: value })}
+                      onClick={() =>
+                        void runOperation(() => invoke('open_external_url', { url: value }))
+                      }
                       className="inline-flex items-center gap-1 text-violet-700 hover:text-violet-900 dark:text-violet-300"
                     >
                       <ExternalLink className="h-3 w-3" />
@@ -348,11 +393,14 @@ export const PackageDetailView = ({
                 </div>
                 <button
                   className={`rounded-md px-2 py-1 text-[10px] font-semibold ${action.pinned ? 'bg-violet-500/12 text-violet-700 dark:text-violet-300' : 'bg-slate-500/8 text-slate-500'}`}
+                  disabled={operationBusy}
                   onClick={() =>
-                    void invoke('set_extension_action_pinned', {
-                      actionId: action.id,
-                      pinned: !action.pinned,
-                    }).then(onChanged)
+                    void runOperation(() =>
+                      invoke('set_extension_action_pinned', {
+                        actionId: action.id,
+                        pinned: !action.pinned,
+                      })
+                    )
                   }
                 >
                   Pin
@@ -361,10 +409,12 @@ export const PackageDetailView = ({
                   <ShortcutRecorder
                     value={action.shortcut ?? ''}
                     onChange={shortcut =>
-                      void invoke('set_extension_action_shortcut', {
-                        actionId: action.id,
-                        accelerator: shortcut || null,
-                      }).then(onChanged)
+                      void runOperation(() =>
+                        invoke('set_extension_action_shortcut', {
+                          actionId: action.id,
+                          accelerator: shortcut || null,
+                        })
+                      )
                     }
                   />
                   {action.shortcut && (
@@ -375,11 +425,14 @@ export const PackageDetailView = ({
                             type="button"
                             aria-label="Remove shortcut"
                             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-500/10 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-slate-200"
+                            disabled={operationBusy}
                             onClick={() =>
-                              void invoke('set_extension_action_shortcut', {
-                                actionId: action.id,
-                                accelerator: null,
-                              }).then(onChanged)
+                              void runOperation(() =>
+                                invoke('set_extension_action_shortcut', {
+                                  actionId: action.id,
+                                  accelerator: null,
+                                })
+                              )
                             }
                           >
                             <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -424,8 +477,9 @@ export const PackageDetailView = ({
           {installed?.status === 'quarantined' && (
             <Button
               size="sm"
+              isLoading={operationBusy}
               leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
-              onClick={() => void invoke('recover_extension', { packageId }).then(onChanged)}
+              onClick={() => void runOperation(() => invoke('recover_extension', { packageId }))}
             >
               Recover package
             </Button>
@@ -434,10 +488,15 @@ export const PackageDetailView = ({
             <Button
               variant="ghost"
               size="sm"
+              isLoading={operationBusy}
               leftIcon={<Trash2 className="h-3.5 w-3.5 text-red-500" />}
               onClick={() => {
                 if (window.confirm(`Remove ${registryPackage.displayName}?`))
-                  void invoke('uninstall_extension', { packageId }).then(onClose).then(onChanged)
+                  void runOperation(() => invoke('uninstall_extension', { packageId })).then(
+                    removed => {
+                      if (removed) onClose()
+                    }
+                  )
               }}
             >
               Remove package
@@ -450,7 +509,7 @@ export const PackageDetailView = ({
               <select
                 value={mode}
                 className="ml-auto rounded-lg border border-slate-200 bg-white/70 px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900/60"
-                disabled={installed?.source === 'developer'}
+                disabled={installed?.source === 'developer' || operationBusy}
                 onChange={event => void setUpdateMode(event.target.value as UpdateMode)}
               >
                 <option value="inherit">Use global preference</option>

@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use reqwest::{redirect::Policy, Client};
+use reqwest::{redirect::Policy, Client, Response, Url};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,6 +20,9 @@ use crate::{
     history::{new_id, now_ms, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 
+use super::packages::{
+    MAX_ARCHIVE_BYTES, MAX_CATALOG_ICON_BYTES, MAX_REGISTRY_BYTES, MAX_REGISTRY_SIGNATURE_BYTES,
+};
 use super::{
     permission_fingerprint, ActionDisposition, ActionEffect, ActionHandler, ContributionKind,
     ContributionMatcher, ExecutionClass, ExtensionActionResult, ExtensionActionState,
@@ -29,6 +32,14 @@ use super::{
     RegistryPackage, RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
     OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
+
+const RELEASE_REDIRECT_LIMIT: usize = 5;
+const RELEASE_DOWNLOAD_HOSTS: &[&str] = &[
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -234,16 +245,19 @@ impl ExtensionService {
             .get(OFFICIAL_REGISTRY_URL)
             .send()
             .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+            .error_for_status()?;
+        let index = read_bounded_response(index, MAX_REGISTRY_BYTES, "extension registry").await?;
         let signatures = client
             .get(OFFICIAL_REGISTRY_SIGNATURES_URL)
             .send()
             .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+            .error_for_status()?;
+        let signatures = read_bounded_response(
+            signatures,
+            MAX_REGISTRY_SIGNATURE_BYTES,
+            "extension registry signatures",
+        )
+        .await?;
         super::verify_registry_signatures(&index, &signatures)?;
         let parsed = RegistryIndex::parse(&index)?;
         for package in &parsed.packages {
@@ -255,9 +269,9 @@ impl ExtensionService {
                     .get(&descriptor.url)
                     .send()
                     .await?
-                    .error_for_status()?
-                    .bytes()
-                    .await?;
+                    .error_for_status()?;
+                let bytes =
+                    read_bounded_response(bytes, MAX_CATALOG_ICON_BYTES, "catalog icon").await?;
                 self.store.cache_catalog_icon(descriptor, &bytes)?;
             }
         }
@@ -3592,16 +3606,13 @@ async fn download_release(entry: &RegistryPackage) -> Result<Vec<u8>> {
     super::packages::validate_release_url(&entry.release_url)?;
     let client = Client::builder()
         .redirect(Policy::custom(|attempt| {
-            if attempt.previous().len() >= 5 {
+            if attempt.previous().len() >= RELEASE_REDIRECT_LIMIT {
                 return attempt.error("too many package redirects");
             }
-            match attempt.url().host_str() {
-                Some(
-                    "github.com"
-                    | "objects.githubusercontent.com"
-                    | "github-releases.githubusercontent.com",
-                ) if attempt.url().scheme() == "https" => attempt.follow(),
-                _ => attempt.error("package redirect leaves GitHub HTTPS hosts"),
+            if can_follow_release_redirect(attempt.url(), attempt.previous().len()) {
+                attempt.follow()
+            } else {
+                attempt.error("package redirect leaves GitHub HTTPS hosts")
             }
         }))
         .build()?;
@@ -3610,16 +3621,104 @@ async fn download_release(entry: &RegistryPackage) -> Result<Vec<u8>> {
         .send()
         .await?
         .error_for_status()?;
-    let bytes = response.bytes().await?;
-    if bytes.len() > 16 * 1024 * 1024 {
-        bail!("extension package download exceeds 16 MiB");
+    let bytes = read_bounded_response(response, MAX_ARCHIVE_BYTES, "extension package").await?;
+    if entry
+        .archive_size_bytes
+        .is_some_and(|expected| expected != bytes.len() as u64)
+    {
+        bail!("extension package download size does not match the reviewed registry");
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
+}
+
+fn is_allowed_release_download_url(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| RELEASE_DOWNLOAD_HOSTS.contains(&host))
+}
+
+fn can_follow_release_redirect(url: &Url, previous_redirects: usize) -> bool {
+    previous_redirects < RELEASE_REDIRECT_LIMIT && is_allowed_release_download_url(url)
+}
+
+async fn read_bounded_response(
+    mut response: Response,
+    maximum_bytes: usize,
+    description: &str,
+) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum_bytes as u64)
+    {
+        bail!("{description} download exceeds its size limit");
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or_default()
+            .min(maximum_bytes as u64) as usize,
+    );
+    while let Some(chunk) = response.chunk().await? {
+        append_bounded_chunk(&mut bytes, &chunk, maximum_bytes, description)?;
+    }
+    Ok(bytes)
+}
+
+fn append_bounded_chunk(
+    bytes: &mut Vec<u8>,
+    chunk: &[u8],
+    maximum_bytes: usize,
+    description: &str,
+) -> Result<()> {
+    if chunk.len() > maximum_bytes.saturating_sub(bytes.len()) {
+        bail!("{description} download exceeds its size limit");
+    }
+    bytes.extend_from_slice(chunk);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_download_policy_accepts_only_known_github_https_hosts() {
+        for value in [
+            "https://github.com/azure06/clipsx-extensions/releases/download/v1/package.clipsx",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/package",
+            "https://objects.githubusercontent.com/package",
+            "https://github-releases.githubusercontent.com/package",
+        ] {
+            assert!(is_allowed_release_download_url(&Url::parse(value).unwrap()));
+        }
+        for value in [
+            "http://release-assets.githubusercontent.com/package",
+            "https://release-assets.githubusercontent.com.example.test/package",
+            "https://example.test/package",
+        ] {
+            assert!(!is_allowed_release_download_url(
+                &Url::parse(value).unwrap()
+            ));
+        }
+        let github = Url::parse("https://github.com/package").unwrap();
+        assert!(can_follow_release_redirect(
+            &github,
+            RELEASE_REDIRECT_LIMIT - 1
+        ));
+        assert!(!can_follow_release_redirect(
+            &github,
+            RELEASE_REDIRECT_LIMIT
+        ));
+    }
+
+    #[test]
+    fn bounded_download_rejects_the_chunk_that_crosses_the_limit() {
+        let mut bytes = Vec::new();
+        append_bounded_chunk(&mut bytes, b"1234", 5, "fixture").unwrap();
+        assert!(append_bounded_chunk(&mut bytes, b"56", 5, "fixture").is_err());
+        assert_eq!(bytes, b"1234");
+    }
 
     fn input() -> CapturedRepresentation {
         CapturedRepresentation {
