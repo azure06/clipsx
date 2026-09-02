@@ -372,8 +372,26 @@ async fn platform_recognize(input: &VisualInput, language: &str) -> ProviderResu
                 diagnostic.trim()
             )));
         }
-        String::from_utf8(output.stdout)
-            .map_err(|_| ProviderError::InvalidOutput("Tesseract returned non-UTF-8 text".into()))
+        let mut text = String::from_utf8(output.stdout).map_err(|_| {
+            ProviderError::InvalidOutput("Tesseract returned non-UTF-8 text".into())
+        })?;
+        if text.trim().is_empty() {
+            let retry = std::process::Command::new("tesseract")
+                .arg(&input)
+                .arg("stdout")
+                .arg("-l")
+                .arg(&language)
+                .arg("--psm")
+                .arg("6")
+                .output()
+                .map_err(|error| unavailable(format!("unable to retry Tesseract: {error}")))?;
+            if retry.status.success() {
+                text = String::from_utf8(retry.stdout).map_err(|_| {
+                    ProviderError::InvalidOutput("Tesseract returned non-UTF-8 text".into())
+                })?;
+            }
+        }
+        Ok(text)
     })
     .await
     .map_err(|_| unavailable("Tesseract recognition task stopped"))?
