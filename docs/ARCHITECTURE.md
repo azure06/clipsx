@@ -213,6 +213,21 @@ tag, and OCR changes refresh lexical and semantic projections; extension update
 or removal invalidates its facets, views, sessions, and grants without changing
 canonical clip content. Mutation-level tests enforce these boundaries.
 
+### Native activation and global shortcuts
+
+The Rust host exclusively owns operating-system window activation and global
+shortcut registration. Tray clicks, second-instance launches, deep links, and
+explicit open requests all use one activation path that cancels pending
+blur-hiding, restores a minimized window, shows it, and requests foreground
+focus. The global shortcut uses the same path unless the main window is already
+visible and focused, in which case it hides the window.
+
+Shortcut changes are native settings transactions. The host registers a
+replacement before removing the current shortcut and persists it only after
+registration succeeds. A conflict therefore leaves both the saved setting and
+the working registration unchanged and returns a visible error. Frontend
+components edit the setting; they do not register OS shortcuts themselves.
+
 ## Code and data ownership
 
 | Area              | Main location                | Responsibility                                                              |
