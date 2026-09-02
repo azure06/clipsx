@@ -1,7 +1,7 @@
 //! Existing coherent capture and platform implementation host.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use super::capabilities::WritePolicy;
-use super::capabilities::{self, CapturePolicy, UnreadablePolicy};
+use super::capabilities::{CapturePolicy, WritePolicy};
+use super::capabilities::{self, UnreadablePolicy};
 #[cfg(target_os = "windows")]
 use super::capabilities::{ReaderCodec, WriterCodec};
 use crate::history::{
@@ -826,8 +826,8 @@ fn x11_selection_loop(
         let targets = atom(b"TARGETS")?;
         let timestamp = atom(b"TIMESTAMP")?;
         let utf8 = atom(b"UTF8_STRING")?;
-        let atom_atom = AtomEnum::ATOM.into();
-        let integer = AtomEnum::INTEGER.into();
+        let atom_atom = u32::from(AtomEnum::ATOM);
+        let integer = u32::from(AtomEnum::INTEGER);
         let window = conn.generate_id()?;
         let root = conn.setup().roots[screen_index].root;
         conn.create_window(
