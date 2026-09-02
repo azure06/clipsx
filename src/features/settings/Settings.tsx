@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { enable, disable } from '@tauri-apps/plugin-autostart'
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
@@ -189,6 +188,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
   const [syncBusy, setSyncBusy] = useState(false)
+  const [shortcutError, setShortcutError] = useState<string | null>(null)
 
   useEffect(() => {
     setActiveTab(initialTab)
@@ -232,16 +232,6 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       setThemeMode(settings.theme)
     }
   }, [settings?.theme, setThemeMode])
-
-  useEffect(() => {
-    if (settings?.global_shortcut) {
-      invoke('register_global_shortcut', {
-        shortcut: settings.global_shortcut,
-      }).catch(err => {
-        console.error('Failed to register global shortcut:', err)
-      })
-    }
-  }, [settings?.global_shortcut])
 
   const handleClearAllData = async () => {
     if (confirm(t('settings.deleteAllConfirm'))) {
@@ -526,9 +516,19 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                 >
                   <ShortcutRecorder
                     value={settings.global_shortcut}
-                    onChange={shortcut => void updateSettings({ global_shortcut: shortcut })}
+                    onChange={shortcut => {
+                      setShortcutError(null)
+                      void updateSettings({ global_shortcut: shortcut }).catch(error => {
+                        setShortcutError(String(error))
+                      })
+                    }}
                   />
                 </SettingRow>
+                {shortcutError && (
+                  <p role="alert" className="px-4 pb-3 text-xs text-red-600 dark:text-red-400">
+                    {shortcutError}
+                  </p>
+                )}
               </SettingsSection>
 
               <SettingsSection
