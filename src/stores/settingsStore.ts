@@ -119,7 +119,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       })
       window.dispatchEvent(new Event(PROFILE_MUTATED_EVENT))
     } catch (error) {
-      set({ settings: current, error: String(error) })
+      set({ settings: current })
       throw error
     }
   },

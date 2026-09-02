@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use tauri_plugin_shell::ShellExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -2014,19 +2014,35 @@ async fn update_app_settings(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<history::AppSettings, String> {
-    state
+    settings.validate().map_err(|error| error.to_string())?;
+    let previous = state
         .history
-        .update_app_settings(&settings)
+        .app_settings()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
+    let shortcut_changed = previous.global_shortcut != settings.global_shortcut;
+    let host_state = app
+        .try_state::<HostState>()
+        .ok_or_else(|| "Native application state is unavailable".to_string())?;
+    if shortcut_changed {
+        host_state
+            .global_shortcut
+            .replace(&app, &settings.global_shortcut)?;
+    }
+    if let Err(error) = state.history.update_app_settings(&settings).await {
+        if shortcut_changed {
+            let _ = host_state
+                .global_shortcut
+                .replace(&app, &previous.global_shortcut);
+        }
+        return Err(error.to_string());
+    }
     let effective = state
         .history
         .app_settings()
         .await
         .map_err(|e| e.to_string())?;
-    if let (Some(window), Some(host_state)) =
-        (app.get_webview_window("main"), app.try_state::<HostState>())
-    {
+    if let Some(window) = app.get_webview_window("main") {
         host_state
             .window_behavior
             .apply_settings(&window, &effective);
@@ -2035,19 +2051,6 @@ async fn update_app_settings(
     Ok(effective)
 }
 
-#[tauri::command]
-fn register_global_shortcut(shortcut: String, app: tauri::AppHandle) -> Result<(), String> {
-    let shortcut = shortcut
-        .parse::<Shortcut>()
-        .map_err(|error| error.to_string())?;
-    let manager = app.global_shortcut();
-    manager
-        .unregister_all()
-        .map_err(|error| error.to_string())?;
-    manager
-        .register(shortcut)
-        .map_err(|error| error.to_string())
-}
 #[tauri::command]
 async fn update_capture_settings(
     settings: CaptureSettings,
@@ -2691,6 +2694,7 @@ pub(crate) fn run() {
                 tray_quit_item: quit_item,
                 paste_target: std::sync::Mutex::new(None),
                 window_behavior: std::sync::Arc::new(Default::default()),
+                global_shortcut: Default::default(),
             });
 
             #[cfg(any(target_os = "linux", all(debug_assertions, target_os = "windows")))]
@@ -2717,8 +2721,14 @@ pub(crate) fn run() {
                 ))
                 .expect("Failed to open ClipsX history");
                 if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
-                    if let Ok(shortcut) = settings.global_shortcut.parse::<Shortcut>() {
-                        let _ = app.global_shortcut().register(shortcut);
+                    if let Some(host_state) = app.try_state::<HostState>() {
+                        if let Err(error) = host_state
+                            .global_shortcut
+                            .replace(app.handle(), &settings.global_shortcut)
+                        {
+                            eprintln!("[SHORTCUT] Failed to register startup shortcut: {error}");
+                            let _ = app.emit("global-shortcut-registration-failed", error);
+                        }
                     }
                     if let (Some(window), Some(host_state)) =
                         (app.get_webview_window("main"), app.try_state::<HostState>())
@@ -2989,7 +2999,6 @@ pub(crate) fn run() {
             prepare_sync_batch,
             apply_sync_response,
             record_sync_error,
-            register_global_shortcut,
             update_capture_settings,
             get_clip_views,
             render_clip_view,

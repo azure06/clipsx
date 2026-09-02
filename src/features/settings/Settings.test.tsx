@@ -81,7 +81,7 @@ describe('useSettingsStore', () => {
     )
 
     expect(useSettingsStore.getState().settings?.auto_start).toBe(false)
-    expect(useSettingsStore.getState().error).toContain('save failed')
+    expect(useSettingsStore.getState().error).toBeNull()
   })
 
   it('resets settings through backend defaults', async () => {
