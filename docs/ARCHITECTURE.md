@@ -76,14 +76,16 @@ Transforms are explicit byte-producing operations. The host validates parameters
 
 ## Extensions
 
-Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract is [Extension API v2](EXTENSION_API_V2.md), with its privilege boundary defined by the [extension threat model](EXTENSION_THREAT_MODEL.md); V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal. Package manifests may declare a complete light/dark identity-icon pair independently from contribution icons.
+Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract and its [security model](EXTENSION_API_V2.md#security-and-threat-model) are defined together in Extension API v2; V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal. Package manifests may declare a complete light/dark identity-icon pair independently from contribution icons.
 
 Repository ownership follows the same boundary. `azure06/clipsx` owns the host,
 WIT contract, package CLI, and conformance tests. `azure06/clipsx-extensions`
 owns first-party package source and a pinned WIT copy. Compiled `.clipsx`
-archives are immutable extension-repository release assets, while
+archives are checksum-pinned extension-repository release assets, while
 `azure06/clipsx-registry` owns reviewed signed catalog metadata and catalog
-icons. Extension build outputs are never vendored into the host repository.
+icons. GitHub release immutability is required after the initial five
+checksum-pinned catalog entries. Extension build outputs are never vendored
+into the host repository.
 Official packages use the permanent `infiniti.<package>` identity namespace and
 the verified registry publisher `{ id: "infiniti", displayName: "Infiniti" }`.
 GitHub repository ownership, publisher identity, package identity, and the
@@ -163,6 +165,53 @@ Recall is an explicit bounded search action, not an automatic search source. It 
 Configuration sync is record-based and opt-in. SQLite owns a device identity, hybrid-logical clock, monotonic server cursor, transactional outbox, and invalid-remote quarantine. A supported profile mutation and its outbox record commit together. The client synchronizes at startup, after mutations, periodically, on reconnect, and manually; deterministic `(physical time, logical counter, source device)` ordering resolves conflicts and tombstones. The remote contract derives ownership from `auth.uid()` behind RLS and a security-invoker batch RPC. Only explicitly whitelisted profile records cross this boundary. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables local sync but preserves local data.
 
 Hosted providers and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data.
+
+## Product surfaces and settings ownership
+
+Navigation follows the question a person is trying to answer. Clips owns
+history and preview. Intelligence owns provider health, search behavior, models,
+indexing, and OCR. Extensions owns Installed, Discover, Built-ins, Developer,
+and each package's Overview, Settings, Permissions, Actions, and Diagnostics.
+Settings owns General, Clipboard, Keyboard, Storage, Privacy, Sync, Account, and
+Advanced configuration.
+
+Main list pages show identity, health, and the next action. Configuration and
+diagnostics belong on detail pages. Package configuration never moves into
+global Settings; provider and indexing health never moves into Extensions.
+Unavailable future capabilities appear only where they affect a current
+decision rather than occupying permanent empty sections.
+
+SQLite is the live settings store. JSON is only the validated value and
+import/export format.
+
+| Setting class | Examples | Storage and synchronization |
+| --- | --- | --- |
+| Profile, currently syncable | theme, language, OCR enablement and language | Namespaced typed SQLite records; only the explicit server allowlist synchronizes |
+| Profile, local for now | search behavior, desired packages, non-secret package settings, enablement, shortcuts | Typed SQLite records; synchronization requires an explicit versioned contract |
+| Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and similarity floor, local package path | Device-owned SQLite records; never copied automatically |
+| Secret | Provider and API credentials | OS credential store only; never ordinary export or sync data |
+| Consent | Checksum-bound grants and invocation tokens | Local security state; never synchronized and renewed after package updates |
+| Operational | Quarantine, health, pending jobs, sync cursor | Local relational state; reconciled rather than treated as preferences |
+| Derived | OCR, FTS, chunks, embeddings, previews | Rebuildable local data; neither settings nor sync payload |
+
+Extension settings use stable package and setting IDs, are host-validated, and
+survive package removal unless the user explicitly deletes them. Credentials
+and grants are removed by default. The current remote contract synchronizes only
+`ui.theme`, `ui.language`, `artifacts.ocr.enabled`, and
+`artifacts.ocr.language`; clips, managed files, local endpoints/models,
+credentials, grants, caches, indexes, jobs, and diagnostics remain local.
+
+One command registry describes built-in and extension actions. Every command
+has a stable ID, context predicate, default shortcut, user override, conflict
+result, and discoverable label. UI handlers consume that registry instead of
+owning unrelated hard-coded keys. Context-only commands must be classified
+explicitly as configurable, menu-only, or intentionally unbound.
+
+Canonical and derived ownership determines invalidation: clip deletion cascades
+clip-owned database records and removes the clip from semantic sidecars; note,
+tag, and OCR changes refresh lexical and semantic projections; extension update
+or removal invalidates its facets, views, sessions, and grants without changing
+canonical clip content. Mutation-level tests enforce these boundaries.
 
 ## Code and data ownership
 

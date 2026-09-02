@@ -203,8 +203,64 @@ transformers. Output is cached through the normal
 transform boundary before preview, copy, paste, or save-as-new-clip. The
 `generation.text` contract reports an unavailable reason until a local provider
 is configured. Parameter schemas generate host controls for bounded primitive
-fields and are validated again before guest execution. See the
-[threat model](EXTENSION_THREAT_MODEL.md).
+fields and are validated again before guest execution.
+
+## Security and threat model
+
+Registry review decides what may appear in Discover; it does not make extension
+code trusted. Archives, WASM, package assets, custom UI, remote responses, and
+extension outputs remain untrusted after publication. The protected assets are
+canonical clips, managed files, the database, credentials, provider
+configuration, network identity, privileged host IPC, package identity, and
+catalog integrity.
+
+```text
+extension source -> GitHub release -> reviewed metadata -> signed catalog
+                                    signed hash  -> host package validator
+validated package -> bounded WASM / isolated UI -> scoped host broker -> output
+```
+
+The production registry endpoints and trusted Ed25519 public keys are compiled
+into ClipsX; environment variables cannot replace them. The host downloads the
+index and detached signatures without redirects, bounds both bodies, verifies a
+signature over the exact index bytes, and rechecks the same signature when
+loading the offline cache. Catalog icons are origin-restricted, bounded,
+format-sniffed, hash-pinned, and cached by checksum.
+
+Release URLs come from the signed catalog. Downloads remain HTTPS-only across a
+small GitHub host allowlist, permit at most five redirects, and are streamed
+under the 16 MiB archive ceiling. Installation then checks the signed size and
+SHA-256, archive paths/counts/expanded size, manifest identity, permission
+fingerprint, declared assets, and Component Model validity before activating a
+package. Signed revocations bind the exact package, version, and checksum.
+
+| Attacker story | Existing boundary | Residual risk or response |
+| --- | --- | --- |
+| A malicious author publishes hostile WASM or UI | No ambient WASI, bounded runtime, isolated child webview, scoped tokens and broker, host-owned output | Platform webview isolation and denial-of-service behavior require installed-build certification |
+| The extension repository is compromised | An accepted archive must still match signed registry metadata | Existing assets can be deleted; new trusted bytes still require the registry signer |
+| The registry repository is compromised without its private key | Clients reject unsigned or altered index bytes and retain the last verified cache | Catalog refresh can be denied, but attacker-selected code is not trusted |
+| A release redirect targets another service | HTTPS GitHub allowlist, redirect ceiling, streamed size limit, final signed checksum | Keep allowed hosts centralized and covered by regression tests |
+| Local cache files are modified | Signatures and icon hashes are verified again when read | The cache fails closed and must be refreshed |
+| The registry signing key is compromised | Private key exists only in the protected signing environment and encrypted offline backup | Stop publication, ship a client trusting a replacement key, publish overlapping signatures, then retire the old key; the sole key cannot revoke itself |
+
+The first five Infiniti releases predate GitHub's immutable-release setting.
+Their signed hashes prevent substituted bytes from executing, while deletion or
+replacement can still deny installation. They are explicit legacy exceptions;
+every later release must be GitHub-immutable. A bad release is revoked and
+replaced by a higher SemVer, never overwritten.
+
+The current publication environments use explicit approval by the sole
+maintainer. This prevents accidental workflow publication but is not independent
+separation of duties. Repository branch protection, required CI, pinned actions,
+the protected signing environment, and application signing are therefore part
+of the release boundary.
+
+Severity follows capability gain: signing-key or released-host compromise is
+critical; sandbox escape, privileged IPC, credential disclosure, or
+unauthorized clip exfiltration is high; reachable transport/parser/resource
+boundary failures are medium; fail-closed local corruption or bounded self-only
+disruption is low. An authorized extension performing its consented operation
+is not a security failure.
 
 ## First-party packages and acceptance examples
 
@@ -227,5 +283,6 @@ known built-in semantic renderers remain additive.
 
 The extension repository keeps package source and a pinned copy of the WIT
 contract. Generated `component.wasm`, `.clipsx`, `target/`, and `dist/` outputs
-are ignored. Versioned archives are immutable GitHub Release assets; the
-separate registry contains their signed metadata and checksums.
+are ignored. Versioned archives are checksum-pinned GitHub Release assets;
+future releases are also GitHub-immutable. The separate registry contains their
+signed metadata and checksums.

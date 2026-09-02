@@ -1,12 +1,12 @@
 # ClipsX production release re-alignment
 
-This roadmap is the checkbox-driven program for the first production release. Completed stable behavior belongs in [ARCHITECTURE.md](ARCHITECTURE.md), product navigation and settings ownership belong in [PRODUCT_STRUCTURE.md](PRODUCT_STRUCTURE.md), and installed-build evidence belongs in [RELEASE.md](RELEASE.md).
+This roadmap is the checkbox-driven program for the first production release. Completed stable behavior, including product navigation and settings ownership, belongs in [ARCHITECTURE.md](ARCHITECTURE.md), and installed-build evidence belongs in [RELEASE.md](RELEASE.md).
 
 Every item starts unchecked. Mark an item `[x]` only after its acceptance criteria pass and the automated or installed-build evidence is linked from the relevant document or pull request.
 
 ## 1. Product correctness and security
 
-- [ ] Finish Settings/Intelligence ownership, command registry, keyboard configuration, resizable layout, localization, and accessibility work already defined in [PRODUCT_STRUCTURE.md](PRODUCT_STRUCTURE.md).
+- [ ] Finish Settings/Intelligence ownership, command registry, keyboard configuration, resizable layout, localization, and accessibility work already defined in [ARCHITECTURE.md](ARCHITECTURE.md#product-surfaces-and-settings-ownership).
 - [ ] Verify every setting's persistence, validation, restart behavior, reset, import/export, and failure handling.
 - [x] Implement periodic auto-clear, resolve the 10/50 MiB capture-default conflict, and finish extension uninstall settings retention. Evidence: [host privacy worker](../src-tauri/src/ipc/mod.rs), [secret-expiry test and 50 MiB default](../src-tauri/src/history/repository.rs), and identity-keyed settings in [migration 012](../src-tauri/migrations/012_extension_marketplace.sql).
 - [ ] Complete cascade/invalidation coverage for clips, tags, notes, OCR, search, artifacts, extensions, and managed files.
@@ -69,7 +69,7 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 
 - Sync IPC: status, synchronize now, devices, forget device, reset remote profile, and delete account.
 - OCR API: provider availability/version/languages/diagnostic plus enabled language preference.
-- Update [ARCHITECTURE.md](ARCHITECTURE.md), [EXTENSION_API_V2.md](EXTENSION_API_V2.md), [EXTENSION_THREAT_MODEL.md](EXTENSION_THREAT_MODEL.md), [PRODUCT_STRUCTURE.md](PRODUCT_STRUCTURE.md), and [RELEASE.md](RELEASE.md) alongside implementation wherever stable contracts change.
+- Update [ARCHITECTURE.md](ARCHITECTURE.md), [EXTENSION_API_V2.md](EXTENSION_API_V2.md), and [RELEASE.md](RELEASE.md) alongside implementation wherever stable contracts change.
 
 ## Tracking rules and defaults
 
