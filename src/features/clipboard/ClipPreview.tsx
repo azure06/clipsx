@@ -46,7 +46,15 @@ const ClipOperationsCard = ({ controls }: { controls: TransformControls | null }
   return (
     <aside
       aria-label="Clip actions"
-      className={`flex h-full shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/25 backdrop-blur-xl transition-[width] duration-200 ease-out motion-reduce:transition-none dark:border-white/5 dark:bg-slate-100/5 ${expanded ? 'w-60' : 'w-12'}`}
+      aria-hidden={!controls}
+      data-state={!controls ? 'hidden' : expanded ? 'expanded' : 'collapsed'}
+      className={`flex h-full shrink-0 origin-right flex-col overflow-hidden rounded-2xl border bg-slate-100/25 backdrop-blur-xl transition-[width,opacity,transform,border-color] duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none dark:bg-slate-100/5 ${
+        !controls
+          ? 'pointer-events-none w-0 translate-x-2 scale-[.98] border-transparent opacity-0'
+          : expanded
+            ? 'w-60 translate-x-0 scale-100 border-slate-200/70 opacity-100 dark:border-white/5'
+            : 'w-12 translate-x-0 scale-100 border-slate-200/70 opacity-100 dark:border-white/5'
+      }`}
     >
       {controls?.parameterRequest ? (
         <ContributionParametersPanel
@@ -70,21 +78,18 @@ const ClipOperationsCard = ({ controls }: { controls: TransformControls | null }
           pinAction={(id, pinned) => void controls.pinAction(id, pinned)}
           onClose={controls.closePicker}
         />
-      ) : (
+      ) : controls ? (
         <>
           <button
             type="button"
-            aria-label={controls ? 'Expand clip actions' : 'No clip actions available'}
-            title={controls ? 'Expand clip actions' : 'No clip actions available'}
-            disabled={!controls}
-            className="flex h-11 shrink-0 items-center justify-center border-b border-slate-200/60 text-slate-400 transition-colors duration-150 hover:bg-violet-500/8 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/40 disabled:opacity-35 dark:border-white/7 dark:hover:text-violet-300"
-            onClick={controls?.openPicker}
+            aria-label="Expand clip actions"
+            title="Expand clip actions"
+            className="flex h-11 shrink-0 items-center justify-center border-b border-slate-200/60 text-slate-400 transition-colors duration-150 hover:bg-violet-500/8 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500/40 dark:border-white/7 dark:hover:text-violet-300"
+            onClick={controls.openPicker}
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
-          <div
-            className={`min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 py-2 transition-opacity duration-150 ${controls ? 'opacity-100' : 'opacity-0'}`}
-          >
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5 py-2">
             {controls?.items.map(item => (
               <button
                 key={item.id}
@@ -130,7 +135,7 @@ const ClipOperationsCard = ({ controls }: { controls: TransformControls | null }
             ))}
           </div>
         </>
-      )}
+      ) : null}
     </aside>
   )
 }
@@ -197,7 +202,9 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const visibleTabs = tabControls && tabControls.views.length > 1 ? tabControls : null
 
   return (
-    <div className="my-0.5 mr-2 flex h-full min-w-0 gap-3 overflow-hidden">
+    <div
+      className={`my-0.5 mr-2 flex h-full min-w-0 overflow-hidden transition-[gap] duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${transformControls ? 'gap-3' : 'gap-0'}`}
+    >
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/25 backdrop-blur-xl dark:border-white/5 dark:bg-slate-100/5">
         {/* Header: row 1 — type badge + actions */}
         <div className="flex shrink-0 flex-col border-b border-slate-100/10 bg-slate-100/40 dark:border-slate-100/5 dark:bg-slate-100/5">
