@@ -1,7 +1,7 @@
 //! Existing coherent capture and platform implementation host.
+use super::capabilities::{self, UnreadablePolicy};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::capabilities::{CapturePolicy, WritePolicy};
-use super::capabilities::{self, UnreadablePolicy};
 #[cfg(target_os = "windows")]
 use super::capabilities::{ReaderCodec, WriterCodec};
 use crate::history::{
