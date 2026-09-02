@@ -33,61 +33,7 @@ inputs, cancellation/stale-result rejection, FTS refresh, and CI language-packag
 setup are implemented. Their boxes remain unchecked until the three-platform CI
 run and installed-candidate evidence required above are recorded.
 
-## 3. Lean core and first-party extensions
-
-Core retains clipboard capture/reconstruction; faithful text, HTML/RTF, files, image, PDF, Office alternates, and Original views; cheap, bounded recognition of Markdown, JSON, URL, dates, tables, and colors; built-in Markdown, JSON, date, table, and basic color-swatch views; secret detection and local-path handling; generic fallback rendering; and all host validation/broker primitives. Recognition is additive derived data used for badges, filtering, search routing, and extension matching. It must not decode Base64, inspect JWT claims, activate links, or otherwise expose or act on latent clipboard content.
-
-Use this boundary for the first production release:
-
-| Layer            | Core                                                                      | First-party extensions                                                    |
-| ---------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Recognition      | Markdown, JSON, URL, table, and color facets                              | Base64, JWT, and other package-specific semantics                         |
-| Render/view      | Faithful formats, Markdown, JSON, table, and a basic color swatch         | Mermaid and explicit JWT inspection                                       |
-| Transform/action | Clipboard reconstruction, local-path opening, and host validation/brokers | Base64 encode/decode and focused data conversions |
-
-Core recognition does not imply a core action or rich renderer. In particular, table recognition and viewing stay useful without Data Tools; table export/conversion belongs to Data Tools. Base64 recognition, metadata, encoding, and decoding belong exclusively to the optional Base64 package. The host only provides generic bounded transform execution and expiring result presentation.
-
-No extension is installed by default. Users choose the following focused first-party packages from Discover. Small single-purpose packages avoid making users install unrelated tools; Data Tools remains a coherent bundle.
-
-- [x] **Mermaid:** standalone Mermaid and Mermaid fences inside a ClipsX-native enhanced Markdown renderer. Evidence: the offline React/GFM UI in [mermaid-viewer](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), three detector tests, light/dark rendered review, CLI pack/validate/inspect/test, and the host package-store install/load acceptance test pass (2026-08-25).
-- [x] **JWT Inspector:** decoded token anatomy without claiming signature verification. The package exclusively owns detection, its structured detail view, payload extraction/copy, and JWT-specific catalog/contribution identity; history rows may reuse its icon but never decode claims into preview text, logs, or search. Evidence: [JWT Inspector](https://github.com/azure06/clipsx-extensions/tree/main/extensions/jwt-inspector), removal of the host detector/renderer/decoder in [contributions](../src-tauri/src/contributions/host.rs), package pack/validate/test, payload-copy regression test, and the full Rust suite pass (2026-08-26).
-- [x] **Base64:** package-owned recognition, metadata, and explicit encode/decode transforms with bounded previews and no automatic content reveal. Evidence: [Base64](https://github.com/azure06/clipsx-extensions/tree/main/extensions/base64) detects standard, URL-safe, unpadded, and MIME-bearing data-URL inputs; encodes captured text or bounded binary representations; round-trips explicit media types without reading file-list paths; and previews decoded raster output through the host's generic expiring transform boundary (2026-08-27).
-- [x] **Data Tools:** optional offline conversion among JSON arrays, CSV, TSV, and strict Markdown tables; JSON/YAML/TOML interchange; JSON-to-TypeScript shapes; and URL encoding, decoding, normalization, and query extraction. Contextual actions carry contribution icons while typed outputs reuse the host's native previews. Core retains recognition and the generic transform/output boundary but contains no converter implementation. Evidence: [Data Tools](https://github.com/azure06/clipsx-extensions/tree/main/extensions/data-tools), package unit tests, and extension CLI pack/validate/inspect/test (2026-08-28).
-- [x] Remove Mermaid rendering and the `mermaid` dependency from the main app. Core Markdown shows Mermaid fences as code; installing Mermaid adds an offline enhanced renderer that receives the original Markdown representation and becomes the specific structured view. Evidence: [core renderer](../src/features/clipboard/RenderModelView.tsx), [offline package](https://github.com/azure06/clipsx-extensions/tree/main/extensions/mermaid-viewer), `npm run build` (2026-08-24: main chunk 1.07 MB; no Mermaid/Cytoscape/KaTeX chunks), and package detector tests.
-- [x] Keep local-path opening in core and do not expose generic filesystem activation to extensions. Evidence: [core-only path IPC](../src-tauri/src/ipc/mod.rs) and the extension isolation boundary in [ARCHITECTURE.md](ARCHITECTURE.md).
-- [x] Retain and test the cheap core color detector and its basic core swatch. Base64 stays package-owned; removing that package removes its facet, renderer, and actions without affecting canonical clips. Evidence: [core detector and swatch tests](../src-tauri/src/contributions/host.rs) and [history-row swatch test](../src/features/clipboard/components/ClipboardListItem.test.tsx).
-- [x] Reconcile retired built-in facets/jobs/definitions and stale renderer preferences as rebuildable data. Saved transform outputs remain valid. Evidence: [retired-contribution cleanup](../src-tauri/src/contributions/host.rs) and the rebuildable-data contract in [ARCHITECTURE.md](ARCHITECTURE.md).
-- [x] Remove retired core content-transform implementations after package parity tests pass; keep only the generic extension transform cache, preview, and output boundary.
-- [x] **Extension quality gate:** every custom view uses host theme/locale/settings, remains keyboard and reduced-motion accessible, loads offline without remote fonts/scripts, signals readiness only after useful content is rendered, and passes its package performance budget. Evidence: the custom-UI requirements and conformance coverage in [EXTENSION_API_V2.md](EXTENSION_API_V2.md), plus Mermaid Viewer package tests and rendered review.
-- [x] **Exit gate:** disabling or uninstalling every package restores useful core views, never changes canonical clips, and the main application bundle no longer contains Mermaid's runtime. Evidence: package lifecycle acceptance tests, package parity tests, and the verified Mermaid-free application build recorded above.
-
-## 3.1 Post-release extension presentation primitives
-
-- [ ] Add bounded, host-rendered tabs, code blocks, tables, key/value lists, and comparison layouts to the extension render-model contract. Packages provide structured data and selected approved primitives; the host owns interaction, accessibility, theme, and styling. Keep isolated custom UI for genuinely bespoke interactions until then.
-
-## 4. Signed GitHub registry, catalog icons, and publication
-
-Use two public repositories:
-
-- `azure06/clipsx-extensions` for first-party package sources, tests, and immutable GitHub Release `.clipsx` assets.
-- `azure06/clipsx-registry` for reviewed metadata, catalog icons, revocations, submission templates, and the signed public index.
-
-The currently configured registry URL returns 404 and must exist before release. Follow the VS Code trust pattern: marketplace releases are signed and clients verify them before installation. See the [VS Code Marketplace documentation](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace).
-
-- [x] Extend package manifests with package-level light/dark icons, separate from contribution icons. Evidence: [manifest validation](../src-tauri/src/extensions/manifest.rs).
-- [x] Extend registry metadata with catalog light/dark icon URLs and SHA-256 hashes. Use bounded raster catalog assets for pre-install display; installed contribution UI may continue using sanitized package SVGs. Evidence: schema v3 descriptors in [packages.rs](../src-tauri/src/extensions/packages.rs).
-- [x] Add icon fields to Rust/TypeScript catalog contracts, cache verified icons by hash, render them in Discover/Installed/detail views, and retain the initial-letter fallback. Evidence: hash-pinned cache tests in [packages.rs](../src-tauri/src/extensions/packages.rs) and themed rendering in [Plugins.tsx](../src/features/settings/Plugins.tsx).
-- [ ] Publish exact `index.json` bytes with detached Ed25519 signatures and key IDs. Embed trusted registry public keys in ClipsX and support overlapping signatures for key rotation.
-- [x] Verify the registry signature before parsing or caching; then verify package checksum, identity, version, permissions, icon hashes, and archive limits before installation. Evidence: exact-byte/key-overlap and corrupt-icon tests in [packages.rs](../src-tauri/src/extensions/packages.rs); production key publication remains separately unchecked.
-- [ ] Treat unsigned local `.clipsx` archives as Developer Mode only, with explicit warnings and no automatic updates.
-- [x] Add registry revocations keyed by package ID, version, and checksum; block new installs/updates and quarantine a matching installed release after a verified refresh. Evidence: tuple tests in [packages.rs](../src-tauri/src/extensions/packages.rs) and enforcement in [service.rs](../src-tauri/src/extensions/service.rs).
-- [x] Expand the extension CLI from only `pack`/`validate` to `scaffold`, `inspect`, `test`, and `registry-entry`, including compatibility and permission reports. Evidence: [extension tool](../src-tauri/src/bin/clipsx-extension-tool.rs); its end-to-end fixture passes every command.
-- [ ] Add first-party release CI that builds WASM, packages, validates, tests, creates draft GitHub Release assets, and emits deterministic registry-submission metadata.
-- [ ] Add registry PR CI that downloads the immutable release, independently validates it, verifies metadata/icons/checksums/permission fingerprints, rejects duplicate or downgraded releases, and signs only reviewed merged indexes.
-- [ ] Test first install, offline cached catalog, update, permission change, revocation, corrupt index/signature/icon/archive, Developer Mode replacement, and recovery.
-- [ ] **Exit gate:** all published packages are visible with icons, downloadable, verifiable, installable, updateable, disableable, and removable through Discover.
-
-## 5. Configuration sync and account completion
+## 3. Configuration sync and account completion
 
 Restore and audit the existing inactive `clipsx` Supabase project, then perform development on a branch before promoting migrations.
 
@@ -106,7 +52,7 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - [ ] Run Supabase security/performance advisors and automated cross-user RLS tests before promotion. Supabase requires grants and owner-scoped RLS together on exposed tables. See the [Supabase RLS guidance](https://supabase.com/docs/guides/database/postgres/row-level-security).
 - [ ] **Exit gate:** a second device restores supported configuration and extension intent without receiving clipboard content, secrets, device configuration, or old consent.
 
-## 6. Native packaging and production certification
+## 4. Native packaging and production certification
 
 - [x] Change release automation from every `main` push to a reviewed tag/manual candidate workflow that runs the full preflight on the exact release revision. Evidence: [release candidate workflow](../.github/workflows/release.yml); tag publication requires an exact version match and manual runs remain build-only.
 - [ ] Build Windows x64, Linux x64 `.deb`/AppImage, and macOS arm64/x64. Intel support is limited to Apple-supported macOS releases; macOS 26 is Apple's final Intel release. See the [Apple release notes](https://developer.apple.com/documentation/macos-release-notes/macos-26_4-release-notes).
@@ -121,9 +67,6 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 
 ## Interface and documentation changes
 
-- Extension manifest: package-level themed icons.
-- Registry schema: signed index plus detached signatures, catalog icon URLs/hashes, revocations, and key IDs.
-- Catalog API: themed verified icon descriptors and revocation status.
 - Sync IPC: status, synchronize now, devices, forget device, reset remote profile, and delete account.
 - OCR API: provider availability/version/languages/diagnostic plus enabled language preference.
 - Update [ARCHITECTURE.md](ARCHITECTURE.md), [EXTENSION_API_V2.md](EXTENSION_API_V2.md), [EXTENSION_THREAT_MODEL.md](EXTENSION_THREAT_MODEL.md), [PRODUCT_STRUCTURE.md](PRODUCT_STRUCTURE.md), and [RELEASE.md](RELEASE.md) alongside implementation wherever stable contracts change.
@@ -150,6 +93,10 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - [x] Add Meaning Search progress, disk estimate, rebuild, retry, delete-index, and FTS-fallback operations. Evidence: the semantic status contract reports lifecycle, coverage, dimensions, active bytes, and estimated rebuild bytes; the Intelligence UI exposes the operations and explains mandatory FTS continuity; the semantic service rejects rebuilds that cannot retain the live index plus the estimated replacement and safety reserve.
 - [x] Add Recall as a separate bounded generation action after search scale is complete; secrets remain excluded by default and automatic Recall never includes them. Evidence: [Recall service](../src-tauri/src/search/recall.rs) accepts at most ten ranked IDs, bounds the question and source text, excludes secret-faceted clips, and calls only the configured local generator after an explicit UI action; the complete flow and rationale are documented in [Meaning Search and Recall architecture](SEMANTIC_SEARCH_ARCHITECTURE.md).
 - [ ] Certify labelled recall, latency, memory, disk, recovery, and installed packages on Windows x64, Linux x64, macOS x64, and macOS arm64.
+
+## Post-release candidates
+
+- [ ] Add bounded, host-rendered tabs, code blocks, tables, key/value lists, and comparison layouts to the extension render-model contract. Packages provide structured data and selected approved primitives; the host owns interaction, accessibility, theme, and styling. Keep isolated custom UI for genuinely bespoke interactions until then.
 
 ## Delivery principles
 

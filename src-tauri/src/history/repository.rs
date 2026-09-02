@@ -1598,7 +1598,7 @@ mod tests {
                 .fetch_one(&repo.pool)
                 .await
                 .unwrap();
-        let contribution_id = "firstparty.test/render";
+        let contribution_id = "example.test/render";
         let stored = crate::contracts::CompactPresentation {
             leading: crate::contracts::LeadingVisual::None,
             title: None,

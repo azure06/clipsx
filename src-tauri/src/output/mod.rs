@@ -282,7 +282,7 @@ mod tests {
         let preview = transforms
             .cache_external(
                 clip_id.clone(),
-                "firstparty.test/transform".into(),
+                "example.test/transform".into(),
                 "1.0.0".into(),
                 source_id,
                 json!({}),
@@ -372,7 +372,7 @@ mod tests {
         let transformed = transforms
             .cache_external(
                 clip_id.clone(),
-                "firstparty.test/transform".into(),
+                "example.test/transform".into(),
                 "1.0.0".into(),
                 source_id,
                 json!({}),

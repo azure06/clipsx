@@ -215,7 +215,7 @@ Wayland is not covered by this matrix.
   covers install/use/disable/failure/quarantine/recovery/uninstall.
 - Cached compact presentation survives restart and history scrolling invokes no
   WASM; malformed output falls back to the core row.
-- Ask AI enforces Unicode-safe URL limits; Mermaid Viewer 1.0.1 detects supported
+- Ask AI enforces Unicode-safe URL limits; Mermaid detects supported
   declarations (including `pie` and declarations after comments, init directives,
   or front matter), produces one **Mermaid** tab with its package icon, and renders
   hostile input offline in themed isolated detail/dialog views with source fallback;

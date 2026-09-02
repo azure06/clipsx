@@ -925,19 +925,19 @@ mod tests {
     #[test]
     fn registry_revocations_bind_package_version_and_checksum() {
         let index = RegistryIndex::parse(
-            br#"{"schemaVersion":3,"packages":[],"revocations":[{"packageId":"firstparty.tools","version":"1.2.3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"compromised release"}]}"#,
+            br#"{"schemaVersion":3,"packages":[],"revocations":[{"packageId":"example.tools","version":"1.2.3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"compromised release"}]}"#,
         )
         .unwrap();
         assert!(index
             .revocation(
-                "firstparty.tools",
+                "example.tools",
                 "1.2.3",
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             )
             .is_some());
         assert!(index
             .revocation(
-                "firstparty.tools",
+                "example.tools",
                 "1.2.4",
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             )
