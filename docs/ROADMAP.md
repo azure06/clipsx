@@ -109,7 +109,3 @@ Restore and audit the existing inactive `clipsx` Supabase project, then perform 
 - Store settings as validated JSON values in SQLite; do not introduce a parallel live JSON file.
 - Keep sync scope explicit and narrower than the local data model.
 - Keep release claims narrower than unverified installed behavior.
-
-## Legacy V1 reference
-
-The read-only reference is `archive/v1-pre-m0`, commit `d9f1392`, and tag `v1-pre-m0-reference`. Use it only for visual behavior, keyboard interaction, accessibility, tests, and platform format discovery. Do not restore V1 schemas, IPC payloads, sparse metadata, semantic-model services, Vault/entitlement coupling, or compatibility behavior.

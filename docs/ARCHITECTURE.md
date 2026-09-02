@@ -185,7 +185,3 @@ removes `search-index/`; “Delete Meaning Search index” removes sidecars and
 generation/job state without touching clips or FTS. Capacity measurements and
 the remaining installed-build gates are recorded in
 [Meaning Search and Recall](SEMANTIC_SEARCH_ARCHITECTURE.md).
-
-## Legacy reference policy
-
-The read-only `archive/v1-pre-m0` branch/tag may inform visual behavior, keyboard interaction, accessibility, tests, and platform format discovery. It must not be used to restore V1 schemas, IPC payloads, sparse metadata, semantic-model services, entitlement coupling, or compatibility behavior. See [ROADMAP.md](ROADMAP.md#legacy-v1-reference) for the retained reference procedure.

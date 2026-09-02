@@ -27,14 +27,6 @@ from the in-progress source tree.
 * Use the fresh domain-prefixed schema and documented reset flow. Do not add
   v1 migrations, compatibility reads/writes, or dual schemas.
 
-## Legacy v1
-
-The [roadmap's legacy reference policy](docs/ROADMAP.md#legacy-v1-reference)
-identifies the read-only `archive/v1-pre-m0` branch and tag. It may inform
-visual behavior, keyboard interaction, accessibility, tests, and platform
-format discovery; do not restore V1 schema, IPC payloads, semantic-model
-services, sparse metadata, or compatibility behavior.
-
 ## Clipboard Fidelity
 
 * Do not guess UTI, OLE, or other native clipboard types.
