@@ -38,10 +38,25 @@ fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<()
         eprintln!("[WINDOW] The operating system did not grant foreground activation");
     }
     if focus_search {
-        app.emit(MAIN_WINDOW_ACTIVATED_EVENT, ())
-            .map_err(|error| error.to_string())?;
+        emit_search_focus_when_active(app.clone(), window);
     }
     Ok(())
+}
+
+fn emit_search_focus_when_active(app: tauri::AppHandle, window: tauri::WebviewWindow) {
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..10 {
+            if window.is_focused().unwrap_or(false) {
+                if let Err(error) = app.emit(MAIN_WINDOW_ACTIVATED_EVENT, ()) {
+                    eprintln!("[WINDOW] Could not request search focus: {error}");
+                }
+                return;
+            }
+            let _ = activate_native_window(&window);
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        eprintln!("[WINDOW] Main window did not become focused after activation");
+    });
 }
 
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
@@ -55,21 +70,29 @@ pub fn show_main_window_and_focus_search(app: &tauri::AppHandle) -> Result<(), S
 #[cfg(target_os = "windows")]
 fn activate_native_window(window: &tauri::WebviewWindow) -> bool {
     use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
     use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, GetForegroundWindow, SetForegroundWindow, SetWindowPos, HWND_TOP,
-        SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+        SetWindowPos, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     };
 
     if let Ok(hwnd) = window.hwnd() {
         let hwnd = HWND(hwnd.0);
-        // A tray click, registered hotkey, or second-instance launch gives the
-        // process foreground activation rights. Use them after Tauri restores
-        // and shows the window; failures remain harmless because `set_focus`
-        // above is the portable fallback.
         unsafe {
             if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
                 return true;
             }
+
+            // Windows may keep the previous application's input queue active
+            // while a tray or global-hotkey callback is running. Temporarily
+            // join that queue so focus is assigned to this window, then detach.
+            let foreground = GetForegroundWindow();
+            let foreground_thread = GetWindowThreadProcessId(foreground, None);
+            let current_thread = GetCurrentThreadId();
+            let attached = foreground_thread != 0
+                && foreground_thread != current_thread
+                && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
             let _ = SetWindowPos(
                 hwnd,
                 Some(HWND_TOP),
@@ -80,7 +103,12 @@ fn activate_native_window(window: &tauri::WebviewWindow) -> bool {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
             );
             let _ = BringWindowToTop(hwnd);
-            return SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd;
+            let activated = SetForegroundWindow(hwnd).as_bool();
+            let _ = SetFocus(Some(hwnd));
+            if attached {
+                let _ = AttachThreadInput(current_thread, foreground_thread, false);
+            }
+            return activated && GetForegroundWindow() == hwnd;
         }
     }
     false
