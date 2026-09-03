@@ -116,10 +116,12 @@ export const AppLayout = () => {
   const focusSearchBar = () => {
     if (activeView !== 'clips') return
 
-    requestAnimationFrame(() => {
+    // Native activation and WebView focus settle asynchronously on Windows.
+    // Focus once that hand-off has completed instead of racing it.
+    window.setTimeout(() => {
       if (activeView !== 'clips') return
       searchBarRef.current?.focus()
-    })
+    }, 50)
   }
 
   useEffect(() => {

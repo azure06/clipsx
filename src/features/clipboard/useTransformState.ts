@@ -200,6 +200,10 @@ export const useTransformState = ({
         action.sourceId === undefined
           ? (basePresentation?.activeView.facetId ?? null)
           : (action.facetId ?? null)
+      if (action.transformPreset) {
+        setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
+        setPreview(null)
+      }
       setBusy(action.id)
       setError(null)
       try {
@@ -282,6 +286,10 @@ export const useTransformState = ({
           })
         }
       } catch (value) {
+        if (action.transformPreset) {
+          setError(String(value))
+          return
+        }
         window.dispatchEvent(
           new CustomEvent('clipsx-extension-action-notification', {
             detail: { level: 'error', message: String(value) },
