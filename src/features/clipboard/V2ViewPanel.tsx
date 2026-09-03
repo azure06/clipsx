@@ -523,6 +523,26 @@ export const V2ViewPanel = ({
   const [retryingOcr, setRetryingOcr] = useState(false)
 
   useEffect(() => {
+    let disposed = false
+    let stop: (() => void) | undefined
+    void listen<{ clipId: string | null }>('clip-facets-updated', event => {
+      if (event.payload.clipId !== null && event.payload.clipId !== clipId) return
+      setDetail(null)
+      setViewSet(null)
+      setActive(null)
+      setModel(null)
+      setRetry(value => value + 1)
+    }).then(unlisten => {
+      if (disposed) unlisten()
+      else stop = unlisten
+    })
+    return () => {
+      disposed = true
+      stop?.()
+    }
+  }, [clipId])
+
+  useEffect(() => {
     let alive = true
     void Promise.all([
       invoke<ClipDetail>('get_clip_detail', { clipId }),

@@ -149,6 +149,7 @@ const refreshVisibleClip = async (id: string) => {
   const detail = await invoke<V2Detail>('get_clip_detail', { clipId: id })
   state.mergeClipUpdate(detail.clip)
 }
+type ClipFacetsUpdated = { clipId: string | null }
 const ensureEvents = () => {
   if (eventListenerReady || typeof window === 'undefined') return
   eventListenerReady = true
@@ -162,8 +163,13 @@ const ensureEvents = () => {
     listen<string>('clip-updated', event => {
       void refreshVisibleClip(event.payload).catch(() => undefined)
     }),
-    listen<string>('clip-facets-updated', event => {
-      if (event.payload) void refreshVisibleClip(event.payload).catch(() => undefined)
+    listen<ClipFacetsUpdated>('clip-facets-updated', event => {
+      if (event.payload.clipId) {
+        void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
+        return
+      }
+      const ids = useClipboardStore.getState().clips.map(clip => clip.id)
+      void Promise.all(ids.map(id => refreshVisibleClip(id))).catch(() => undefined)
     }),
     listen<ArtifactUpdate>('clip-artifacts-updated', event => {
       void refreshVisibleClip(event.payload.clipId).catch(() => undefined)

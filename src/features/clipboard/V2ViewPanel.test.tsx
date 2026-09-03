@@ -37,13 +37,16 @@ const summary = {
 }
 
 let artifactListener: ((event: { payload: { clipId: string; sourceId: string } }) => void) | null
+let facetListener: ((event: { payload: { clipId: string | null } }) => void) | null
 
 describe('V2ViewPanel resolver boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     artifactListener = null
-    listenMock.mockImplementation((_event: string, callback: typeof artifactListener) => {
-      artifactListener = callback
+    facetListener = null
+    listenMock.mockImplementation((event: string, callback: never) => {
+      if (event === 'clip-artifacts-updated') artifactListener = callback
+      if (event === 'clip-facets-updated') facetListener = callback
       return Promise.resolve(unlistenMock)
     })
     invokeMock.mockImplementation((command: string, args?: { rendererId?: string }) => {
@@ -158,6 +161,24 @@ describe('V2ViewPanel resolver boundary', () => {
     expect(invokeMock.mock.calls.filter(([command]) => command === 'get_clip_detail')).toHaveLength(
       detailCalls
     )
+  })
+
+  it('reloads detail and views when facets change for this clip or globally', async () => {
+    render(<V2ViewPanel clipId="clip-1" />)
+    expect(await screen.findByText('canonical text')).toBeInTheDocument()
+    const detailCalls = () =>
+      invokeMock.mock.calls.filter(([command]) => command === 'get_clip_detail').length
+    const initialCalls = detailCalls()
+
+    act(() => facetListener?.({ payload: { clipId: 'another-clip' } }))
+    expect(detailCalls()).toBe(initialCalls)
+
+    act(() => facetListener?.({ payload: { clipId: 'clip-1' } }))
+    await waitFor(() => expect(detailCalls()).toBeGreaterThan(initialCalls))
+    const matchingCalls = detailCalls()
+
+    act(() => facetListener?.({ payload: { clipId: null } }))
+    await waitFor(() => expect(detailCalls()).toBeGreaterThan(matchingCalls))
   })
 
   it('ignores a stale render response after the selected clip changes', async () => {
