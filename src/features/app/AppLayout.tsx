@@ -7,7 +7,6 @@ import {
 } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 
 import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
@@ -114,21 +113,11 @@ export const AppLayout = () => {
     [resetSearch, setActiveView]
   )
 
-  const shouldPreserveFocusedEditor = () => {
-    const active = document.activeElement
-    if (!active || active === document.body) return false
-    if (active instanceof HTMLTextAreaElement) return true
-    if (active instanceof HTMLInputElement) return active.type !== 'search'
-    return (active as HTMLElement).isContentEditable
-  }
-
   const focusSearchBar = () => {
     if (activeView !== 'clips') return
-    if (shouldPreserveFocusedEditor()) return
 
     requestAnimationFrame(() => {
       if (activeView !== 'clips') return
-      if (shouldPreserveFocusedEditor()) return
       searchBarRef.current?.focus()
     })
   }
@@ -325,25 +314,11 @@ export const AppLayout = () => {
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-
-    const setupFocusListener = async () => {
-      const win = getCurrentWindow()
-      const unlisten = await win.onFocusChanged(({ payload: focused }) => {
-        if (focused && !cancelled) {
-          focusSearchBar()
-        }
-      })
-
-      return unlisten
-    }
-
-    const unlistenPromise = setupFocusListener()
-
+    const unlisten = listen('main-window-activated', focusSearchBar)
     return () => {
-      cancelled = true
-      void unlistenPromise.then(unlisten => unlisten())
+      void unlisten.then(dispose => dispose())
     }
+    // Re-register so the handler observes the current page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView])
 

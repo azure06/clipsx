@@ -1,7 +1,9 @@
 //! Operating-system window behavior shared by shortcuts, tray, and deep links.
 
 use super::state::HostState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+const MAIN_WINDOW_ACTIVATED_EVENT: &str = "main-window-activated";
 
 #[derive(Debug, PartialEq, Eq)]
 enum MainWindowAction {
@@ -17,7 +19,7 @@ fn shortcut_window_action(visible: bool, focused: bool, minimized: bool) -> Main
     }
 }
 
-pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
@@ -32,14 +34,31 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     }
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;
-    activate_native_window(&window);
+    if !activate_native_window(&window) {
+        eprintln!("[WINDOW] The operating system did not grant foreground activation");
+    }
+    if focus_search {
+        app.emit(MAIN_WINDOW_ACTIVATED_EVENT, ())
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
+pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+    activate_main_window(app, false)
+}
+
+pub fn show_main_window_and_focus_search(app: &tauri::AppHandle) -> Result<(), String> {
+    activate_main_window(app, true)
+}
+
 #[cfg(target_os = "windows")]
-fn activate_native_window(window: &tauri::WebviewWindow) {
+fn activate_native_window(window: &tauri::WebviewWindow) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{BringWindowToTop, SetForegroundWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, SetForegroundWindow, SetWindowPos, HWND_TOP,
+        SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
 
     if let Ok(hwnd) = window.hwnd() {
         let hwnd = HWND(hwnd.0);
@@ -48,14 +67,29 @@ fn activate_native_window(window: &tauri::WebviewWindow) {
         // and shows the window; failures remain harmless because `set_focus`
         // above is the portable fallback.
         unsafe {
+            if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+                return true;
+            }
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOP),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
             let _ = BringWindowToTop(hwnd);
-            let _ = SetForegroundWindow(hwnd);
+            return SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd;
         }
     }
+    false
 }
 
 #[cfg(not(target_os = "windows"))]
-fn activate_native_window(_window: &tauri::WebviewWindow) {}
+fn activate_native_window(_window: &tauri::WebviewWindow) -> bool {
+    true
+}
 
 pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
@@ -66,7 +100,7 @@ pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     let minimized = window.is_minimized().unwrap_or(false);
     match shortcut_window_action(visible, focused, minimized) {
         MainWindowAction::Hide => window.hide().map_err(|error| error.to_string()),
-        MainWindowAction::Show => show_main_window(app),
+        MainWindowAction::Show => show_main_window_and_focus_search(app),
     }
 }
 

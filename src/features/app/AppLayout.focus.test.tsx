@@ -3,29 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
 import { useAuthStore, useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
 
-const {
-  listenMock,
-  invokeMock,
-  getCurrentMock,
-  onOpenUrlMock,
-  focusChangeHandlers,
-  eventHandlers,
-  testRefs,
-} = vi.hoisted(() => ({
-  listenMock: vi.fn(),
-  invokeMock: vi.fn(),
-  getCurrentMock: vi.fn(),
-  onOpenUrlMock: vi.fn(),
-  focusChangeHandlers: [] as Array<(event: { payload: boolean }) => void>,
-  eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
-  testRefs: {
-    sidebarProps: null as {
-      onAccountClick: () => void
-      onSettingsClick: () => void
-    } | null,
-    settingsProps: null as { initialTab?: string } | null,
-  },
-}))
+const { listenMock, invokeMock, getCurrentMock, onOpenUrlMock, eventHandlers, testRefs } =
+  vi.hoisted(() => ({
+    listenMock: vi.fn(),
+    invokeMock: vi.fn(),
+    getCurrentMock: vi.fn(),
+    onOpenUrlMock: vi.fn(),
+    eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
+    testRefs: {
+      sidebarProps: null as {
+        onAccountClick: () => void
+        onSettingsClick: () => void
+      } | null,
+      settingsProps: null as { initialTab?: string } | null,
+    },
+  }))
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock,
@@ -33,15 +25,6 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
-}))
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({
-    onFocusChanged: vi.fn((handler: (event: { payload: boolean }) => void) => {
-      focusChangeHandlers.push(handler)
-      return Promise.resolve(vi.fn())
-    }),
-  }),
 }))
 
 vi.mock('@tauri-apps/plugin-deep-link', () => ({
@@ -96,7 +79,6 @@ vi.mock('./UpdateBanner', () => ({
 describe('AppLayout search focus ownership', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    focusChangeHandlers.length = 0
     eventHandlers.clear()
     testRefs.sidebarProps = null
     testRefs.settingsProps = null
@@ -273,7 +255,7 @@ describe('AppLayout search focus ownership', () => {
     })
   })
 
-  it('refocuses search input when window regains focus in clips view', async () => {
+  it('refocuses search input after an explicit host activation in clips view', async () => {
     render(<AppLayout />)
     const input = screen.getByPlaceholderText('Type to search or paste...')
 
@@ -282,28 +264,29 @@ describe('AppLayout search focus ownership', () => {
     input.blur()
     expect(input).not.toHaveFocus()
 
-    focusChangeHandlers.forEach(handler => handler({ payload: true }))
+    eventHandlers.get('main-window-activated')?.[0]?.({ payload: null })
 
     await waitFor(() => expect(input).toHaveFocus())
   })
 
-  it('does not steal focus from active text editors', async () => {
+  it('does not steal focus on another page after explicit host activation', async () => {
     render(<AppLayout />)
     const input = screen.getByPlaceholderText('Type to search or paste...')
 
     await waitFor(() => expect(input).toHaveFocus())
 
-    const noteField = document.createElement('textarea')
-    document.body.appendChild(noteField)
-    noteField.focus()
-    expect(noteField).toHaveFocus()
+    act(() => useUIStore.getState().setActiveView('settings'))
+    await waitFor(() => expect(screen.getByTestId('settings-view')).toBeInTheDocument())
+    const settingsField = document.createElement('textarea')
+    document.body.appendChild(settingsField)
+    settingsField.focus()
 
-    focusChangeHandlers.forEach(handler => handler({ payload: true }))
+    eventHandlers.get('main-window-activated')?.[0]?.({ payload: null })
 
-    await waitFor(() => expect(noteField).toHaveFocus())
+    await waitFor(() => expect(settingsField).toHaveFocus())
     expect(input).not.toHaveFocus()
 
-    noteField.remove()
+    settingsField.remove()
   })
 
   it('does not install a duplicate clip invalidation controller in the layout', () => {
