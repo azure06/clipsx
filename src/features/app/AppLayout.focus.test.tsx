@@ -269,6 +269,25 @@ describe('AppLayout search focus ownership', () => {
     await waitFor(() => expect(input).toHaveFocus())
   })
 
+  it('retries explicit search focus until the webview accepts it', async () => {
+    render(<AppLayout />)
+    const input = screen.getByPlaceholderText('Type to search or paste...')
+    await waitFor(() => expect(input).toHaveFocus())
+
+    input.blur()
+    const nativeFocus = input.focus.bind(input)
+    const focus = vi
+      .spyOn(input, 'focus')
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => nativeFocus())
+
+    eventHandlers.get('main-window-activated')?.[0]?.({ payload: null })
+
+    await waitFor(() => expect(input).toHaveFocus())
+    expect(focus).toHaveBeenCalledTimes(3)
+  })
+
   it('does not steal focus on another page after explicit host activation', async () => {
     render(<AppLayout />)
     const input = screen.getByPlaceholderText('Type to search or paste...')
