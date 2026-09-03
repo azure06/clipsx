@@ -78,8 +78,18 @@ operations that do not invoke a transformer preset.
 Every contribution defaults to a 1 MiB representation-transfer ceiling.
 `inputLimitBytes` may opt one contribution into a larger local transfer, up to
 the host maximum of 10 MiB; the host enforces it before copying bytes into
-WASM. Larger limits do not raise transform output, memory, fuel, or timeout
-budgets. Prefer the smallest limit that covers the contribution's task.
+WASM. Output and memory limits remain independent. Offline local work uses
+epoch interruption and an input-aware, capped outer timeout so a permitted
+payload cannot exhaust a small fixed instruction allowance; capability-backed
+work retains deterministic fuel and its broker-aware timeout. Prefer the
+smallest transfer limit that covers the contribution's task.
+
+`action-state` is a bounded discovery probe. If it traps, times out, exhausts a
+resource, or returns invalid output, the host records the specific diagnostic
+category and disables that action for the request; this alone never quarantines
+the package or removes its facets. Integrity/revocation failures and repeated
+detector, renderer, transform, or action execution failures retain their normal
+package quarantine behavior.
 
 Contextual actions match the complete clip rather than only the currently
 visible renderer. The host prefers the active view's representation when it

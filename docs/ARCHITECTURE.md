@@ -107,7 +107,7 @@ The official registry is a signed-byte trust root. ClipsX verifies a detached Ed
 
 The main webview has no generic filesystem asset protocol and does not permit inline scripts. Managed binaries are served by opaque database IDs through app-owned protocols. A local file-list image preview crosses a separate core-only IPC boundary: Rust verifies that the exact path belongs to the requested clip, bounds the read to 4 MiB, sniffs an allowed raster format, and returns a data URL. Extensions receive neither this command nor generic file activation.
 
-The v2 runtime has no WASI or ambient host imports. A guest receives only one host-approved representation and optional facet. Contextual actions are discovered across every ready representation in the selected clip: the active view source wins when compatible, otherwise the host binds the action to the highest-priority matching source and preserves that exact scope through state evaluation, consent, invocation, and execution. Renderer choice therefore does not hide an action that can operate on another canonical representation. Fresh Wasmtime stores enforce memory, stack, transfer, fuel, timeout, output-size, and failure limits. Repeated failures quarantine the package; canonical clip data is unaffected.
+The v2 runtime has no WASI or ambient host imports. A guest receives only one host-approved representation and optional facet. Contextual actions are discovered across every ready representation in the selected clip: the active view source wins when compatible, otherwise the host binds the action to the highest-priority matching source and preserves that exact scope through state evaluation, consent, invocation, and execution. Renderer choice therefore does not hide an action that can operate on another canonical representation. Fresh Wasmtime stores enforce memory, stack, transfer, wall-clock, output-size, and failure limits. Offline local work uses epoch interruption plus a bounded, input-aware outer timeout; capability-backed work retains deterministic fuel because it may legitimately wait on a broker. A failed action-state discovery probe records a typed diagnostic and disables only that action for the request. Repeated detector, renderer, transform, or action execution failures may quarantine the package; canonical clip data is unaffected.
 
 Local-path opening remains core-only. Extensions receive no generic filesystem activation or native URI-handler capability.
 
@@ -211,16 +211,27 @@ Canonical and derived ownership determines invalidation: clip deletion cascades
 clip-owned database records and removes the clip from semantic sidecars; note,
 tag, and OCR changes refresh lexical and semantic projections; extension update
 or removal invalidates its facets, views, sessions, and grants without changing
-canonical clip content. Mutation-level tests enforce these boundaries.
+canonical clip content. The host emits `clip-facets-updated` with
+`{ clipId: string | null }`: a matching open preview reloads its views and
+renderer immediately, while `null` invalidates all loaded summaries and the
+open preview after package lifecycle or bulk-redetection work. Mutation-level
+tests enforce these boundaries.
 
 ### Native activation and global shortcuts
 
 The Rust host exclusively owns operating-system window activation and global
-shortcut registration. Tray clicks, second-instance launches, deep links, and
-explicit open requests all use one activation path that cancels pending
-blur-hiding, restores a minimized window, shows it, and requests foreground
-focus. The global shortcut uses the same path unless the main window is already
-visible and focused, in which case it hides the window.
+shortcut registration. The global shortcut and tray-icon left click toggle:
+they hide only an already visible, focused, non-minimized window; otherwise they
+cancel pending blur hiding, restore, show, and request foreground activation.
+The tray menu **Open**, second-instance launches, and deep links use the same
+open path but never hide the window. Windows verifies that foreground activation
+succeeded and retries after raising the restored window in normal Z-order;
+refusal by the operating system is reported rather than silently ignored.
+
+Successful explicit activation emits a host event. The Clipboard History page
+responds by focusing Search, while Settings and Extensions preserve their
+current control. Ordinary Alt+Tab and taskbar focus do not emit this event and
+therefore preserve the previously focused editor.
 
 Shortcut changes are native settings transactions. The host registers a
 replacement before removing the current shortcut and persists it only after

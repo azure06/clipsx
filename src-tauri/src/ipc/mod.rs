@@ -33,6 +33,21 @@ use tokio::{
     net::TcpListener,
 };
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipFacetsUpdated {
+    clip_id: Option<String>,
+}
+
+fn emit_clip_facets_updated(app: &tauri::AppHandle, clip_id: Option<&str>) {
+    let _ = app.emit(
+        "clip-facets-updated",
+        ClipFacetsUpdated {
+            clip_id: clip_id.map(str::to_string),
+        },
+    );
+}
+
 fn is_extension_webview_label(label: &str) -> bool {
     label.starts_with("extension-")
 }
@@ -767,6 +782,7 @@ async fn install_registry_extension(
         .redetect_history(&state.history)
         .await
         .map_err(|error| error.to_string())?;
+    emit_clip_facets_updated(&app, None);
     let _ = app.emit("extension-catalog-updated", ());
     Ok(installed)
 }
@@ -788,6 +804,7 @@ async fn install_local_extension(
         .redetect_history(&state.history)
         .await
         .map_err(|error| error.to_string())?;
+    emit_clip_facets_updated(&app, None);
     let _ = app.emit("extension-catalog-updated", ());
     Ok(installed)
 }
@@ -832,6 +849,7 @@ async fn set_extension_enabled(
     if !enabled {
         close_extension_webviews(&app);
     }
+    emit_clip_facets_updated(&app, None);
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
 }
@@ -852,6 +870,7 @@ async fn recover_extension(
         .redetect_history(&state.history)
         .await
         .map_err(|error| error.to_string())?;
+    emit_clip_facets_updated(&app, None);
     let _ = app.emit("extension-runtime-state-updated", ());
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
@@ -874,6 +893,7 @@ async fn uninstall_extension(
         .refresh_compact_history(&state.history)
         .await
         .map_err(|error| error.to_string())?;
+    emit_clip_facets_updated(&app, None);
     let _ = app.emit("extension-catalog-updated", ());
     Ok(())
 }
@@ -971,7 +991,7 @@ async fn capture_clipboard(
             tauri::async_runtime::spawn(async move {
                 match detect_with_extensions(&history, &extensions, &detect_id).await {
                     Ok(_) => {
-                        let _ = event_app.emit("clip-facets-updated", detect_id);
+                        emit_clip_facets_updated(&event_app, Some(&detect_id));
                     }
                     Err(error) => {
                         let _ = event_app.emit("detection-job-failed", error.to_string());
@@ -1762,7 +1782,7 @@ async fn save_transform_result_impl(
             .await
             .is_ok()
         {
-            let _ = detect_app.emit("clip-facets-updated", detect_id.clone());
+            emit_clip_facets_updated(&detect_app, Some(&detect_id));
         }
         let _ = search::upsert_projection(&history, &detect_id).await;
     });
@@ -2216,7 +2236,7 @@ async fn redetect_clip(
     refresh_search_for_clip(&app, &state.history, &clip_id)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("clip-facets-updated", clip_id);
+    emit_clip_facets_updated(&app, Some(&clip_id));
     Ok(())
 }
 #[tauri::command]
@@ -2251,7 +2271,7 @@ async fn redetect_history(
             break;
         }
     }
-    let _ = app.emit("clip-facets-updated", ());
+    emit_clip_facets_updated(&app, None);
     Ok(count)
 }
 
@@ -2664,7 +2684,7 @@ pub(crate) fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => {
-                        let _ = host::show_main_window(app);
+                        let _ = host::show_main_window_and_focus_search(app);
                     }
                     "settings" => {
                         if host::show_main_window(app).is_ok() {
@@ -2680,7 +2700,7 @@ pub(crate) fn run() {
                         ..
                     } = event
                     {
-                        let _ = host::show_main_window(tray.app_handle());
+                        let _ = host::toggle_main_window(tray.app_handle());
                     }
                 });
             if let Some(icon) = app.default_window_icon() {
@@ -2770,7 +2790,7 @@ pub(crate) fn run() {
                 tauri::async_runtime::spawn(async move {
                     match contributions::redetect_outdated(&redetect_history).await {
                         Ok(count) if count > 0 => {
-                            let _ = redetect_app.emit("clip-facets-updated", ());
+                            emit_clip_facets_updated(&redetect_app, None);
                         }
                         Err(error) => {
                             let _ = redetect_app.emit("detection-job-failed", error.to_string());
@@ -2883,8 +2903,10 @@ pub(crate) fn run() {
                                     .await
                                     {
                                         Ok(_) => {
-                                            let _ = detection_app
-                                                .emit("clip-facets-updated", id.clone());
+                                            emit_clip_facets_updated(
+                                                &detection_app,
+                                                Some(&id),
+                                            );
                                         }
                                         Err(error) => {
                                             let _ = detection_app

@@ -905,6 +905,7 @@ impl ExtensionService {
                                 repo,
                                 contribution,
                                 &anyhow::anyhow!("extension detector emitted too many facets"),
+                                true,
                             )
                             .await?;
                             continue;
@@ -915,7 +916,7 @@ impl ExtensionService {
                         count += 1;
                     }
                     Err(error) => {
-                        self.failure(repo, contribution, &error).await?;
+                        self.failure(repo, contribution, &error, true).await?;
                     }
                 }
             }
@@ -1050,7 +1051,7 @@ impl ExtensionService {
             match model {
                 Ok(model) => validate_compact(model, &input)?,
                 Err(error) => {
-                    self.failure(repo, &contribution, &error).await?;
+                    self.failure(repo, &contribution, &error, true).await?;
                     return Ok(false);
                 }
             }
@@ -1443,7 +1444,7 @@ impl ExtensionService {
                 match result {
                     Ok(result) => action_outcome(&contribution, result)?,
                     Err(error) => {
-                        self.failure(repo, &contribution, &error).await?;
+                        self.failure(repo, &contribution, &error, true).await?;
                         return Err(error);
                     }
                 }
@@ -2460,9 +2461,8 @@ impl ExtensionService {
         facet: Option<crate::contributions::FacetDescriptor>,
     ) -> Result<ExtensionActionState> {
         if payload_bytes(source) > contribution.declaration.input_limit_bytes {
-            return Ok(ExtensionActionState::Disabled(format!(
-                "Input exceeds this action's {} MiB limit",
-                contribution.declaration.input_limit_bytes / (1024 * 1024)
+            return Ok(ExtensionActionState::Disabled(format_input_limit(
+                contribution.declaration.input_limit_bytes,
             )));
         }
         if contribution
@@ -2491,7 +2491,10 @@ impl ExtensionService {
         match state {
             Ok(state) => Ok(state),
             Err(error) => {
-                self.failure(repo, contribution, &error).await?;
+                // Action-state is a discovery probe. A bounded failure may make
+                // this action unavailable, but it must not disable unrelated
+                // detectors, renderers, or actions from the same package.
+                self.failure(repo, contribution, &error, false).await?;
                 Ok(ExtensionActionState::Disabled(
                     "Extension action state could not be evaluated".into(),
                 ))
@@ -2645,7 +2648,7 @@ impl ExtensionService {
                 Ok(Some(render_model(model)?))
             }
             Err(error) => {
-                self.failure(repo, &contribution, &error).await?;
+                self.failure(repo, &contribution, &error, true).await?;
                 Err(error)
             }
         }
@@ -2735,7 +2738,7 @@ impl ExtensionService {
                 Ok(Some((contribution.version, outputs)))
             }
             Err(error) => {
-                self.failure(repo, &contribution, &error).await?;
+                self.failure(repo, &contribution, &error, true).await?;
                 Err(error)
             }
         }
@@ -2896,14 +2899,16 @@ impl ExtensionService {
         repo: &HistoryRepository,
         contribution: &ActiveContribution,
         error: &anyhow::Error,
+        quarantine_after_repeated_failures: bool,
     ) -> Result<()> {
-        let message = error.to_string().chars().take(512).collect::<String>();
+        let message = format!("{error:#}").chars().take(512).collect::<String>();
+        let code = super::runtime::runtime_error_code(error);
         let now = now_ms();
-        sqlx::query("INSERT INTO extension_contribution_runtime_state(extension_id,contribution_id,consecutive_failures,last_error_code,last_error_message,last_failed_at,updated_at) VALUES(?,?,1,'failed',?,?,?) ON CONFLICT(extension_id,contribution_id) DO UPDATE SET consecutive_failures=consecutive_failures+1,last_error_code='failed',last_error_message=excluded.last_error_message,last_failed_at=excluded.last_failed_at,updated_at=excluded.updated_at")
-            .bind(&contribution.extension_id).bind(&contribution.id).bind(&message).bind(now).bind(now).execute(&repo.pool).await?;
+        sqlx::query("INSERT INTO extension_contribution_runtime_state(extension_id,contribution_id,consecutive_failures,last_error_code,last_error_message,last_failed_at,updated_at) VALUES(?,?,1,?,?,?,?) ON CONFLICT(extension_id,contribution_id) DO UPDATE SET consecutive_failures=consecutive_failures+1,last_error_code=excluded.last_error_code,last_error_message=excluded.last_error_message,last_failed_at=excluded.last_failed_at,updated_at=excluded.updated_at")
+            .bind(&contribution.extension_id).bind(&contribution.id).bind(code).bind(&message).bind(now).bind(now).execute(&repo.pool).await?;
         let failures: i64 = sqlx::query_scalar("SELECT consecutive_failures FROM extension_contribution_runtime_state WHERE extension_id=? AND contribution_id=?")
             .bind(&contribution.extension_id).bind(&contribution.id).fetch_one(&repo.pool).await?;
-        if failures >= 3 {
+        if should_quarantine(quarantine_after_repeated_failures, failures) {
             let mut transaction = repo.pool.begin().await?;
             sqlx::query("UPDATE extension_runtime_state SET status='quarantined',updated_at=? WHERE extension_id=?").bind(now).bind(&contribution.extension_id).execute(&mut *transaction).await?;
             sqlx::query("DELETE FROM content_clip_facets WHERE detector_id LIKE ?")
@@ -3570,6 +3575,23 @@ fn payload_bytes(value: &CapturedRepresentation) -> usize {
     }
 }
 
+fn should_quarantine(quarantine_after_repeated_failures: bool, failures: i64) -> bool {
+    quarantine_after_repeated_failures && failures >= 3
+}
+
+fn format_input_limit(limit: usize) -> String {
+    if limit < 1024 {
+        format!("Input exceeds this action's {limit} byte limit")
+    } else if limit < 1024 * 1024 {
+        format!("Input exceeds this action's {} KiB limit", limit / 1024)
+    } else {
+        format!(
+            "Input exceeds this action's {} MiB limit",
+            limit / (1024 * 1024)
+        )
+    }
+}
+
 fn setting_value_is_valid(setting: &super::ExtensionSetting, value: &serde_json::Value) -> bool {
     match setting.kind.as_str() {
         "boolean" => value.is_boolean(),
@@ -3718,6 +3740,22 @@ mod tests {
         append_bounded_chunk(&mut bytes, b"1234", 5, "fixture").unwrap();
         assert!(append_bounded_chunk(&mut bytes, b"56", 5, "fixture").is_err());
         assert_eq!(bytes, b"1234");
+    }
+
+    #[test]
+    fn action_state_probe_failures_never_quarantine_the_package() {
+        assert!(!should_quarantine(false, 3));
+        assert!(!should_quarantine(false, 300));
+        assert!(!should_quarantine(true, 2));
+        assert!(should_quarantine(true, 3));
+    }
+
+    #[test]
+    fn small_action_limits_are_reported_without_rounding_to_zero() {
+        assert_eq!(
+            format_input_limit(2048),
+            "Input exceeds this action's 2 KiB limit"
+        );
     }
 
     fn input() -> CapturedRepresentation {
