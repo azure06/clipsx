@@ -225,8 +225,10 @@ they hide only an already visible, focused, non-minimized window; otherwise they
 cancel pending blur hiding, restore, show, and request foreground activation.
 The tray menu **Open**, second-instance launches, and deep links use the same
 open path but never hide the window. Windows verifies that foreground activation
-succeeded and retries after raising the restored window in normal Z-order;
-refusal by the operating system is reported rather than silently ignored.
+succeeded after raising the restored window in normal Z-order; refusal by the
+operating system is reported rather than silently ignored. The host then gives
+keyboard focus to the embedded webview explicitly; foregrounding only the native
+window is not sufficient for WebView keyboard input.
 
 Successful explicit activation emits a host event. The Clipboard History page
 responds by focusing Search, while Settings and Extensions preserve their

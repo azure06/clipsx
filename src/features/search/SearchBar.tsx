@@ -120,7 +120,7 @@ interface SearchBarProps {
 }
 
 export interface SearchBarHandle {
-  focus: () => boolean
+  focus: () => void
 }
 
 export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar(
@@ -176,10 +176,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => {
-        inputRef.current?.focus()
-        return document.activeElement === inputRef.current
-      },
+      focus: () => inputRef.current?.focus(),
     }),
     []
   )
