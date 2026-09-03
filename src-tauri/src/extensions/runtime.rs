@@ -32,6 +32,8 @@ const CORE_TABLE_LIMIT: usize = 2;
 const CORE_MEMORY_LIMIT: usize = 1;
 const DETECT_RENDER_FUEL: u64 = 10_000_000;
 const TRANSFORM_FUEL: u64 = 50_000_000;
+const LOCAL_FUEL: u64 = u64::MAX;
+const MIB: usize = 1024 * 1024;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -292,11 +294,12 @@ impl ExtensionRuntime {
         contribution_id: &str,
         input: ExtensionRepresentation,
     ) -> Result<Vec<ExtensionFacet>> {
+        let deadline = local_deadline(&input, 100, 750);
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
+            .binding_instance(sha256, LOCAL_FUEL, deadline, None)
             .await?;
         let result = timeout(
-            Duration::from_millis(100),
+            deadline,
             instance.call_detect(&mut store, contribution_id, &to_wit_representation(input)),
         )
         .await
@@ -322,11 +325,12 @@ impl ExtensionRuntime {
         input: ExtensionRepresentation,
         facet: Option<ExtensionFacet>,
     ) -> Result<ExtensionRenderModel> {
+        let deadline = local_deadline(&input, 250, 1_000);
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(250), None)
+            .binding_instance(sha256, LOCAL_FUEL, deadline, None)
             .await?;
         let result = timeout(
-            Duration::from_millis(250),
+            deadline,
             instance.call_render_detail(
                 &mut store,
                 contribution_id,
@@ -347,11 +351,12 @@ impl ExtensionRuntime {
         input: ExtensionRepresentation,
         facet: Option<ExtensionFacet>,
     ) -> Result<ExtensionCompactModel> {
+        let deadline = local_deadline(&input, 100, 750);
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
+            .binding_instance(sha256, LOCAL_FUEL, deadline, None)
             .await?;
         let result = timeout(
-            Duration::from_millis(100),
+            deadline,
             instance.call_render_compact(
                 &mut store,
                 contribution_id,
@@ -373,13 +378,19 @@ impl ExtensionRuntime {
         parameters_json: String,
         broker: Option<RuntimeBrokerContext>,
     ) -> Result<Vec<ExtensionOutputRepresentation>> {
-        let deadline = if broker.is_some() {
+        let capability_backed = broker.is_some();
+        let deadline = if capability_backed {
             Duration::from_secs(125)
         } else {
-            Duration::from_millis(500)
+            local_deadline(&input, 500, 2_000)
+        };
+        let fuel = if capability_backed {
+            TRANSFORM_FUEL
+        } else {
+            LOCAL_FUEL
         };
         let (mut store, instance) = self
-            .binding_instance(sha256, TRANSFORM_FUEL, deadline, broker)
+            .binding_instance(sha256, fuel, deadline, broker)
             .await?;
         let result = timeout(
             deadline,
@@ -407,13 +418,19 @@ impl ExtensionRuntime {
         parameters_json: String,
         broker: Option<RuntimeBrokerContext>,
     ) -> Result<ExtensionActionResult> {
-        let deadline = if broker.is_some() {
+        let capability_backed = broker.is_some();
+        let deadline = if capability_backed {
             Duration::from_secs(125)
         } else {
-            Duration::from_millis(500)
+            local_deadline(&input, 500, 2_000)
+        };
+        let fuel = if capability_backed {
+            TRANSFORM_FUEL
+        } else {
+            LOCAL_FUEL
         };
         let (mut store, instance) = self
-            .binding_instance(sha256, TRANSFORM_FUEL, deadline, broker)
+            .binding_instance(sha256, fuel, deadline, broker)
             .await?;
         let result = timeout(
             deadline,
@@ -439,11 +456,12 @@ impl ExtensionRuntime {
         facet: Option<ExtensionFacet>,
         settings_json: String,
     ) -> Result<ExtensionActionState> {
+        let deadline = local_deadline(&input, 100, 750);
         let (mut store, instance) = self
-            .binding_instance(sha256, DETECT_RENDER_FUEL, Duration::from_millis(100), None)
+            .binding_instance(sha256, LOCAL_FUEL, deadline, None)
             .await?;
         let result = timeout(
-            Duration::from_millis(100),
+            deadline,
             instance.call_action_state(
                 &mut store,
                 contribution_id,
@@ -532,6 +550,18 @@ fn new_store(
     // waiting and then kill the guest as soon as that host call returns.
     store.epoch_deadline_async_yield_and_update(1);
     Ok(store)
+}
+
+fn local_deadline(input: &ExtensionRepresentation, baseline_ms: u64, maximum_ms: u64) -> Duration {
+    let bytes = match &input.content {
+        ExtensionContent::Text(value) => value.len(),
+        ExtensionContent::Binary(value) => value.len(),
+        ExtensionContent::Files(values) => values.iter().map(String::len).sum(),
+    };
+    let size_allowance = u64::try_from(bytes.div_ceil(MIB))
+        .unwrap_or(u64::MAX)
+        .saturating_mul(50);
+    Duration::from_millis(baseline_ms.saturating_add(size_allowance).min(maximum_ms))
 }
 
 fn guest_error(error: bindings::clipsx::extension::types::GuestError) -> anyhow::Error {
@@ -669,12 +699,32 @@ fn from_wit_action_state(
 }
 
 fn wasmtime_error(error: wasmtime::Error) -> anyhow::Error {
-    anyhow!(error.to_string())
+    anyhow!(format!("{error:?}"))
+}
+
+pub(super) fn runtime_error_code(error: &anyhow::Error) -> &'static str {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    if message.contains("fuel") {
+        "fuel"
+    } else if message.contains("timed out") || message.contains("interrupt") {
+        "timeout"
+    } else if message.contains("memory") || message.contains("allocation") {
+        "memory"
+    } else if message.contains("extension returned") {
+        "guest_error"
+    } else if message.contains("invalid")
+        || message.contains("undeclared")
+        || message.contains("emitted too many")
+    {
+        "invalid_output"
+    } else {
+        "trap"
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::contains_protected_secret;
+    use super::*;
 
     #[test]
     fn credential_reflection_check_is_exact_and_ignores_empty_values() {
@@ -684,5 +734,40 @@ mod tests {
             &secrets
         ));
         assert!(!contains_protected_secret(b"safe response", &secrets));
+    }
+
+    #[test]
+    fn local_deadlines_scale_with_input_and_remain_capped() {
+        let input = |bytes: usize| ExtensionRepresentation {
+            format_key: "mime:text/plain".into(),
+            mime_type: Some("text/plain".into()),
+            storage_kind: "text".into(),
+            content: ExtensionContent::Text("x".repeat(bytes)),
+        };
+        assert_eq!(
+            local_deadline(&input(1), 100, 750),
+            Duration::from_millis(150)
+        );
+        assert_eq!(
+            local_deadline(&input(300 * 1024), 100, 750),
+            Duration::from_millis(150)
+        );
+        assert_eq!(
+            local_deadline(&input(10 * MIB), 100, 750),
+            Duration::from_millis(600)
+        );
+    }
+
+    #[test]
+    fn runtime_errors_keep_actionable_categories() {
+        assert_eq!(runtime_error_code(&anyhow!("all fuel consumed")), "fuel");
+        assert_eq!(
+            runtime_error_code(&anyhow!("extension action-state timed out")),
+            "timeout"
+        );
+        assert_eq!(
+            runtime_error_code(&anyhow!("extension returned Failed: nope")),
+            "guest_error"
+        );
     }
 }
