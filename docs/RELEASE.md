@@ -79,6 +79,8 @@ restart → reconstruction harness. It currently proves:
 - CF_HTML fragment offsets, UTF-16 text, registered-text termination, and
   ordered Unicode `CF_HDROP` encoding are correct;
 - Original and Plain Text output do not change when renderer preferences do;
+- Copy plain text appears only for a captured `text/plain` representation and
+  preserves its exact Unicode and whitespace;
 - reconstructed self-writes are suppressed only when token and fingerprint
   both match; and
 - normalized Windows images retain an observed PNG/`CF_DIBV5`/`CF_DIB`
@@ -138,6 +140,8 @@ Installed-build checks:
 - minimize, maximize, close, and snap behavior for the frameless window;
 - WinRT OCR availability, installed-language discovery, automatic and explicit
   language selection, recognition, retry, cancellation, and restart recovery.
+- Windows Share Sheet receives URLs as links, exact plain text as text, and
+  existing/exported files as storage items without closing the preview.
 
 ## macOS matrix
 
@@ -158,6 +162,8 @@ Installed-build checks:
 - frontmost-application restoration and Accessibility permission
   diagnosis/recovery;
 - native OCR lifecycle and retry;
+- the native sharing picker receives URLs, exact text, single files, and ordered
+  multiple files without closing the preview;
 - tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
   updater, installed deep links, OAuth callback, and file dialogs.
 
@@ -186,6 +192,8 @@ Installed-build checks:
   installation, refresh/restart and retry without reinstalling ClipsX;
 - tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
   updater, deep links, and file dialogs in published `.deb` and AppImage builds.
+- the desktop portal asks which application should open each explicitly shared
+  exported item; cancellation leaves ClipsX and the clip unchanged.
 
 Wayland is not covered by this matrix.
 
@@ -200,6 +208,11 @@ Wayland is not covered by this matrix.
   path-bounded and expires.
 - Capture exclusions, deduplication, retention, and self-write suppression.
 - Original and Plain Text Copy/Paste with alternate renderers selected.
+- Share Unicode text, URLs, existing and missing file references, images, PDFs,
+  typed documents, and unsupported native data. Verify duplicate clicks are
+  blocked, corrupt managed assets are rejected, cancellation is harmless, and
+  share staging never includes notes, tags, source metadata, OCR, or rendered
+  extension output.
 - Search configuration and degraded-state recovery.
 - OCR disabled, queued, running, empty-success, success, unsupported, failure,
   and retry states.

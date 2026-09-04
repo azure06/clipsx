@@ -25,6 +25,14 @@ historical checklist.
   release-artifact inspection to CI.
 - [ ] Complete the production security review with no unresolved high-severity
   findings.
+- [ ] Certify native clip sharing for text, URLs, files, images, documents,
+  cancellation, missing sources, and corrupt managed assets on every advertised
+  platform.
+- [ ] Run an LLM-assisted release review of feature completeness, architecture,
+  concurrency/persistence boundaries, and the threat model; validate every
+  actionable finding against source code or tests before accepting it.
+- [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
+  is approved and enabled.
 
 ## 2. Cross-platform OCR certification
 

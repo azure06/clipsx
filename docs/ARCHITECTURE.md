@@ -52,6 +52,22 @@ On a clipboard change, the adapter reads a stable snapshot with bounded retries.
 
 Text normalization preserves semantic content, while adapter-supported binary formats preserve their bytes. Original output reconstructs every explicitly supported captured format; Plain Text chooses only a supported text representation. Self-writes are suppressed using the platform change token with a representation-fingerprint fallback.
 
+Preview output actions remain representation-aware. **Copy** reconstructs the
+supported original formats, while **Copy plain text** appears only when the
+capture contains a ready `text/plain` representation and copies those exact
+stored characters. It never substitutes OCR, rendered content, or an extension
+result.
+
+Sharing is a separate, explicit host-owned disclosure boundary. The webview
+sends only a clip ID; the host resolves a supported URL, exact plain text, live
+file references, or a checksum-verified representation exported beneath the
+app-owned `share-staging` directory. Notes, tags, source metadata, extension
+renderings, and derived OCR are never included. Windows uses its per-window
+Share Sheet, macOS uses `NSSharingServicePicker`, and Linux/X11 exports an item
+and requests an application through the desktop portal. ClipsX never uploads
+shared content. Random export names prevent replacement, and startup removes
+files older than 24 hours without descending into directories.
+
 ## Understanding and derived work
 
 After canonical capture, bounded background work may add facets from built-in or extension detectors, artifacts such as thumbnails and local OCR text, FTS/search projections, semantic chunks and embeddings, and compact presentation caches. Every item records bounded producer/input/version provenance where it matters. Startup resumes only missing, failed, or version-stale extension detection in keyset batches; complete detector results are not rerun and compact presentations are not globally rewritten on an ordinary launch. Explicit extension lifecycle and renderer-preference changes may request a full derived refresh, also in bounded batches.
