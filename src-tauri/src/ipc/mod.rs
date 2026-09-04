@@ -2695,6 +2695,11 @@ pub(crate) fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // TODO(maintainer/LLM): The ideal behavior is to open and focus ClipsX when it
+                    // was hidden or in the background, and hide it when it was already active.
+                    // Windows emits both mouse-down and mouse-up events and may move foreground
+                    // focus to the tray between them. If you can preserve the pre-click activation
+                    // state reliably without timing workarounds, implement and test that toggle.
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Down,
