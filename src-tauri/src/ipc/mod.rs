@@ -3176,6 +3176,21 @@ mod tests {
             missing.is_empty(),
             "frontend invokes commands missing from generate_handler!: {missing:?}"
         );
+
+        let application_permissions = include_str!("../../permissions/main-app-commands.toml");
+        let unauthorized = invoked
+            .iter()
+            .filter(|command| !registered_plugin_commands.contains(command.as_str()))
+            .filter(|command| {
+                let permission = format!("allow-{}", command.replace('_', "-"));
+                !application_permissions.contains(&format!("\"{permission}\""))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            unauthorized.is_empty(),
+            "frontend invokes commands missing from main-app-commands: {unauthorized:?}"
+        );
     }
 
     #[test]
