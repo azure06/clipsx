@@ -115,14 +115,7 @@ export const AppLayout = () => {
 
   const focusSearchBar = () => {
     if (activeView !== 'clips') return
-
-    let attempts = 0
-    const focusWhenReady = () => {
-      if (activeView !== 'clips' || searchBarRef.current?.focus()) return
-      attempts += 1
-      if (attempts < 12) requestAnimationFrame(focusWhenReady)
-    }
-    requestAnimationFrame(focusWhenReady)
+    requestAnimationFrame(() => searchBarRef.current?.focus())
   }
 
   useEffect(() => {

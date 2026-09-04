@@ -2669,7 +2669,7 @@ pub(crate) fn run() {
         })
         .setup(|app| {
             use tauri::menu::{Menu, MenuItem};
-            use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
             if let Some(window) = app.get_webview_window("main") {
                 window_chrome::configure(&window)?;
@@ -2697,10 +2697,11 @@ pub(crate) fn run() {
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
+                        button_state: MouseButtonState::Down,
                         ..
                     } = event
                     {
-                        let _ = host::toggle_main_window(tray.app_handle());
+                        let _ = host::show_main_window_and_focus_search(tray.app_handle());
                     }
                 });
             if let Some(icon) = app.default_window_icon() {

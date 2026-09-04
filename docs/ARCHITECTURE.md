@@ -220,13 +220,18 @@ tests enforce these boundaries.
 ### Native activation and global shortcuts
 
 The Rust host exclusively owns operating-system window activation and global
-shortcut registration. The global shortcut and tray-icon left click toggle:
-they hide only an already visible, focused, non-minimized window; otherwise they
-cancel pending blur hiding, restore, show, and request foreground activation.
-The tray menu **Open**, second-instance launches, and deep links use the same
-open path but never hide the window. Windows verifies that foreground activation
-succeeded and retries after raising the restored window in normal Z-order;
-refusal by the operating system is reported rather than silently ignored.
+shortcut registration. The global shortcut toggles: it hides only an already
+visible, focused, non-minimized window; otherwise it cancels pending blur hiding,
+restores, shows, and requests foreground activation. Tray-icon left click always
+opens and focuses the Clipboard History page; it does not toggle or hide the app.
+On Windows, active means that ClipsX is the operating system foreground window;
+moving keyboard focus into the WebView must not make the next toggle reopen it.
+The tray menu **Open**, second-instance launches, and deep links use the same open
+path and never hide the window. Windows verifies that foreground activation
+succeeded after raising the restored window in normal Z-order; refusal by the
+operating system is reported rather than silently ignored. The host then gives
+keyboard focus to the embedded webview explicitly; foregrounding only the native
+window is not sufficient for WebView keyboard input.
 
 Successful explicit activation emits a host event. The Clipboard History page
 responds by focusing Search, while Settings and Extensions preserve their
