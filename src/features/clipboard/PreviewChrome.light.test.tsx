@@ -179,6 +179,35 @@ describe('preview chrome light theme styling', () => {
     expect(invokeMock).toHaveBeenCalledWith('share_clip', { clipId: 'clip-1' })
   })
 
+  it('groups output, content, organization, and destructive actions in order', () => {
+    const { container } = render(
+      <ClipActionsToolbar
+        presentation={textPresentation}
+        context={{ ...actionContext, onShowInspector: vi.fn() }}
+      />
+    )
+
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('[data-action-id]')].map(
+        button => button.dataset['actionId']
+      )
+    ).toEqual([
+      'copy',
+      'copy-plain-text',
+      'share',
+      'open-editor',
+      'inspector',
+      'favorite',
+      'pin',
+      'delete',
+    ])
+    expect(
+      [...container.querySelectorAll<HTMLElement>('[data-separator-before]')].map(
+        separator => separator.dataset['separatorBefore']
+      )
+    ).toEqual(['open-editor', 'favorite', 'delete'])
+  })
+
   it('hides plain-text copy and sharing when representation metadata disallows them', () => {
     render(
       <ClipActionsToolbar

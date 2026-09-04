@@ -161,16 +161,36 @@ async fn emit_clip_artifact_updates(
 }
 
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
+const AUTH_STORAGE_KEY: &str = "sb-clipsx-auth-token";
 const LOCAL_AUTH_CALLBACK_EVENT: &str = "auth-callback-url";
 const LOCAL_AUTH_CALLBACK_PATH: &str = "/auth/desktop/callback";
 
-fn auth_storage_entry(key: &str) -> Result<keyring::Entry, String> {
-    match key {
-        "sb-clipsx-auth-token" | "sb-clipsx-auth-token-code-verifier" => {
-            keyring::Entry::new(AUTH_SERVICE, key).map_err(|error| error.to_string())
-        }
-        _ => Err("unsupported credential key".to_string()),
+fn is_supported_auth_storage_key(key: &str) -> bool {
+    if matches!(
+        key,
+        AUTH_STORAGE_KEY
+            | "sb-clipsx-auth-token-code-verifier"
+            | "sb-clipsx-auth-token-flows-code-verifier"
+    ) {
+        return true;
     }
+
+    key.strip_prefix("sb-clipsx-auth-token-flow-")
+        .and_then(|suffix| suffix.strip_suffix("-code-verifier"))
+        .is_some_and(|flow_id| {
+            flow_id.len() == 32
+                && flow_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+}
+
+fn auth_storage_entry(key: &str) -> Result<keyring::Entry, String> {
+    if !is_supported_auth_storage_key(key) {
+        return Err("unsupported credential key".to_string());
+    }
+
+    keyring::Entry::new(AUTH_SERVICE, key).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -3355,5 +3375,34 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn auth_storage_accepts_only_supabase_session_and_pkce_keys() {
+        for key in [
+            AUTH_STORAGE_KEY,
+            "sb-clipsx-auth-token-code-verifier",
+            "sb-clipsx-auth-token-flows-code-verifier",
+            "sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-code-verifier",
+        ] {
+            assert!(
+                is_supported_auth_storage_key(key),
+                "expected {key} to be accepted"
+            );
+        }
+
+        for key in [
+            "other",
+            "sb-clipsx-auth-token-user",
+            "sb-clipsx-auth-token-flow--code-verifier",
+            "sb-clipsx-auth-token-flow-0123456789ABCDEF0123456789ABCDEF-code-verifier",
+            "sb-clipsx-auth-token-flow-../../credential-code-verifier",
+            "sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-extra-code-verifier",
+        ] {
+            assert!(
+                !is_supported_auth_storage_key(key),
+                "expected {key} to be rejected"
+            );
+        }
     }
 }

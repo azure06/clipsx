@@ -27,7 +27,7 @@ import {
   Trash2,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ClipPresentation } from '../../shared/types/v2'
 import { useClipboardStore } from '../../stores/clipboardStore'
@@ -228,9 +228,10 @@ export const ClipActionsToolbar = ({
         },
       })
     }
+    const contentActions: ToolbarAction[] = []
     const extension = editorExtension(presentation)
     if (extension) {
-      values.push({
+      contentActions.push({
         id: 'open-editor',
         label: 'Open in Editor',
         icon: PenLine,
@@ -244,7 +245,7 @@ export const ClipActionsToolbar = ({
       const kind = presentation.activeView.presentationKind
       if (kind === 'url') {
         const url = scalar(payload['href']) ?? semantic.text
-        values.push({
+        contentActions.push({
           id: 'open-url',
           label: 'Open Link',
           icon: ExternalLink,
@@ -252,14 +253,14 @@ export const ClipActionsToolbar = ({
         })
       } else if (kind === 'email') {
         const address = scalar(payload['address']) ?? semantic.text
-        values.push({
+        contentActions.push({
           id: 'compose-email',
           label: 'Compose Email',
           icon: Mail,
           run: () => invoke('compose_email', { address }),
         })
       } else if (kind === 'phone') {
-        values.push({
+        contentActions.push({
           id: 'call-phone',
           label: 'Call',
           icon: Phone,
@@ -268,13 +269,17 @@ export const ClipActionsToolbar = ({
       }
     }
     if (context.onShowInspector) {
-      values.push({
+      contentActions.push({
         id: 'inspector',
         label: 'Representations',
         icon: Database,
         shortcut: representationsShortcut,
         run: () => context.onShowInspector?.(),
       })
+    }
+    if (contentActions.length > 0) {
+      contentActions[0]!.separator = true
+      values.push(...contentActions)
     }
     values.push(
       {
@@ -301,6 +306,7 @@ export const ClipActionsToolbar = ({
         label: 'Delete',
         icon: Trash2,
         shortcut: getDeleteShortcut(platform),
+        separator: true,
         run: () => context.onDelete(presentation.id),
       }
     )
@@ -310,15 +316,16 @@ export const ClipActionsToolbar = ({
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
         {actions.map(action => (
-          <>
+          <Fragment key={action.id}>
             {action.separator && (
               <div
-                key={`sep-${action.id}`}
+                aria-hidden="true"
+                data-separator-before={action.id}
                 className="mx-0.5 h-3.5 w-px bg-slate-300/60 dark:bg-white/10"
               />
             )}
-            <ActionButton action={action} key={action.id} />
-          </>
+            <ActionButton action={action} />
+          </Fragment>
         ))}
       </div>
     </Tooltip.Provider>
@@ -336,6 +343,7 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
       <Tooltip.Trigger asChild>
         <button
           aria-label={action.label}
+          data-action-id={action.id}
           disabled={action.disabled}
           className={`rounded-md p-1.5 transition-all duration-150 disabled:cursor-wait disabled:opacity-50 ${activeClass} ${action.active ? 'scale-110' : ''}`}
           onClick={() => void action.run()}
