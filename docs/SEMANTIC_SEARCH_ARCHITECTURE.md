@@ -146,9 +146,11 @@ possible.
 
 ## Retrieval and ranking
 
-Canonical SQL first resolves the eligible clips for the current scope, tags,
-representation families, and facets. The sidecar maps those IDs to stable
-ordinals in a compact eligibility bitset.
+Canonical SQL first resolves the eligible clip IDs and update times for the
+current scope, tags, representation families, and facets. This transient map
+bridges the canonical database and the independently rebuildable sidecar. The
+sidecar maps those IDs to stable ordinals, then the scan uses only a compact
+eligibility bitset.
 
 Meaning Search then:
 
@@ -234,6 +236,8 @@ cargo test --release --manifest-path src-tauri/Cargo.toml \
   semantic_scale_qualification -- --ignored --nocapture
 cargo test --release --manifest-path src-tauri/Cargo.toml \
   packed_sqlite_scale_qualification -- --ignored --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml \
+  history_search_scale_qualification -- --ignored --nocapture
 ```
 
 | Evidence | Result | Interpretation |
@@ -245,6 +249,7 @@ cargo test --release --manifest-path src-tauri/Cargo.toml \
 | Parallel int8 flat scan | 540,000 × 1,024 vectors; p95 18.399 ms; 552,960,000 vector bytes | Fast, but the first SQLite physical layout was too slow and too large |
 | Initial packed SQLite route | 60,000 clips / 540,000 chunks; p95 460.886 ms; 576,106,496-byte fixture | Rejected physical layout |
 | Selected paged binary routing | Same capacity; 10,358,784-byte routing fixture; repeated 21-run Windows results about 83–97 ms p50 and 105–122 ms p95 | Passed the enforced local 125 ms p95 physical gate |
+| History and FTS pipeline | 60,000 clips; first/deep 50-item pages plus selective/common FTS and batch summary hydration | Enforced at 100 ms history p95 and 250 ms keyword-search p95 on the qualification host |
 
 The selected design has one production retrieval implementation. Rejected
 backends, the exact full-scan oracle, and synthetic fixtures do not become
