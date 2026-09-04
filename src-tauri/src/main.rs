@@ -2,6 +2,7 @@
 
 mod app;
 mod artifacts;
+mod auth_storage;
 mod clipboard;
 mod contracts;
 mod contributions;

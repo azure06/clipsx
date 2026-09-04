@@ -5,6 +5,7 @@ use crate::app::{
     state::{AppState, HostState, StartupState},
     window_chrome,
 };
+use crate::auth_storage::AuthStorage;
 use crate::clipboard::contract::ClipboardAdapter;
 use crate::clipboard::{
     capture_coherent, consume_self_write_token, is_self_write_snapshot, SystemClipboardAdapter,
@@ -160,61 +161,34 @@ async fn emit_clip_artifact_updates(
     }
 }
 
-const AUTH_SERVICE: &str = "com.infiniti.clipsx";
-const AUTH_STORAGE_KEY: &str = "sb-clipsx-auth-token";
 const LOCAL_AUTH_CALLBACK_EVENT: &str = "auth-callback-url";
 const LOCAL_AUTH_CALLBACK_PATH: &str = "/auth/desktop/callback";
 
-fn is_supported_auth_storage_key(key: &str) -> bool {
-    if matches!(
-        key,
-        AUTH_STORAGE_KEY
-            | "sb-clipsx-auth-token-code-verifier"
-            | "sb-clipsx-auth-token-flows-code-verifier"
-    ) {
-        return true;
-    }
-
-    key.strip_prefix("sb-clipsx-auth-token-flow-")
-        .and_then(|suffix| suffix.strip_suffix("-code-verifier"))
-        .is_some_and(|flow_id| {
-            flow_id.len() == 32
-                && flow_id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-}
-
-fn auth_storage_entry(key: &str) -> Result<keyring::Entry, String> {
-    if !is_supported_auth_storage_key(key) {
-        return Err("unsupported credential key".to_string());
-    }
-
-    keyring::Entry::new(AUTH_SERVICE, key).map_err(|error| error.to_string())
+#[tauri::command]
+async fn auth_storage_get(
+    state: State<'_, AuthStorage>,
+    key: String,
+) -> Result<Option<String>, String> {
+    state.get(key).await
 }
 
 #[tauri::command]
-fn auth_storage_get(key: String) -> Result<Option<String>, String> {
-    match auth_storage_entry(&key)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
+async fn auth_storage_set(
+    state: State<'_, AuthStorage>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    state.set(key, value).await
 }
 
 #[tauri::command]
-fn auth_storage_set(key: String, value: String) -> Result<(), String> {
-    auth_storage_entry(&key)?
-        .set_password(&value)
-        .map_err(|error| error.to_string())
+async fn auth_storage_remove(state: State<'_, AuthStorage>, key: String) -> Result<(), String> {
+    state.remove(key).await
 }
 
 #[tauri::command]
-fn auth_storage_remove(key: String) -> Result<(), String> {
-    match auth_storage_entry(&key)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
+async fn auth_storage_reset(state: State<'_, AuthStorage>) -> Result<(), String> {
+    state.reset().await
 }
 
 async fn detect_with_extensions(
@@ -2761,6 +2735,7 @@ pub(crate) fn run() {
 
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
+            app.manage(AuthStorage::new(roots.data.clone()));
             if crate::share::cleanup_stale(&roots).is_err() {
                 eprintln!("[SHARE] Failed to clean stale share exports");
             }
@@ -2997,6 +2972,7 @@ pub(crate) fn run() {
             auth_storage_get,
             auth_storage_set,
             auth_storage_remove,
+            auth_storage_reset,
             list_extensions,
             get_extension_registry,
             get_extension_catalog,
@@ -3375,34 +3351,5 @@ mod tests {
                 .unwrap(),
             None
         );
-    }
-
-    #[test]
-    fn auth_storage_accepts_only_supabase_session_and_pkce_keys() {
-        for key in [
-            AUTH_STORAGE_KEY,
-            "sb-clipsx-auth-token-code-verifier",
-            "sb-clipsx-auth-token-flows-code-verifier",
-            "sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-code-verifier",
-        ] {
-            assert!(
-                is_supported_auth_storage_key(key),
-                "expected {key} to be accepted"
-            );
-        }
-
-        for key in [
-            "other",
-            "sb-clipsx-auth-token-user",
-            "sb-clipsx-auth-token-flow--code-verifier",
-            "sb-clipsx-auth-token-flow-0123456789ABCDEF0123456789ABCDEF-code-verifier",
-            "sb-clipsx-auth-token-flow-../../credential-code-verifier",
-            "sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-extra-code-verifier",
-        ] {
-            assert!(
-                !is_supported_auth_storage_key(key),
-                "expected {key} to be rejected"
-            );
-        }
     }
 }

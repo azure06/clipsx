@@ -209,7 +209,7 @@ import/export format.
 | Profile, currently syncable | theme, language, OCR enablement and language | Namespaced typed SQLite records; only the explicit server allowlist synchronizes |
 | Profile, local for now | search behavior, desired packages, non-secret package settings, enablement, shortcuts | Typed SQLite records; synchronization requires an explicit versioned contract |
 | Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and similarity floor, local package path | Device-owned SQLite records; never copied automatically |
-| Secret | Provider and API credentials | OS credential store only; never ordinary export or sync data |
+| Secret | Provider/API credentials and account sessions | OS-protected storage only; never ordinary export or sync data |
 | Consent | Checksum-bound grants and invocation tokens | Local security state; never synchronized and renewed after package updates |
 | Operational | Quarantine, health, pending jobs, sync cursor | Local relational state; reconciled rather than treated as preferences |
 | Derived | OCR, FTS, chunks, embeddings, previews | Rebuildable local data; neither settings nor sync payload |
@@ -220,6 +220,16 @@ and grants are removed by default. The current remote contract synchronizes only
 `ui.theme`, `ui.language`, `artifacts.ocr.enabled`, and
 `artifacts.ocr.language`; clips, managed files, local endpoints/models,
 credentials, grants, caches, indexes, jobs, and diagnostics remain local.
+
+Account authentication remains owned by the Supabase client, including PKCE,
+session serialization, refresh, and local sign-out. The host exposes only an
+allowlisted opaque key/value storage adapter. On Windows, values are stored in
+one versioned map encrypted and integrity-protected with current-user DPAPI
+under the private application-data directory; macOS and Linux use their native
+credential stores. Authentication data is excluded from settings export and
+sync. This protects persisted sessions from other ordinary OS users, but it
+does not protect them from malicious code already running as the signed-in user
+or from a compromised ClipsX process.
 
 One command registry describes built-in and extension actions. Every command
 has a stable ID, context predicate, default shortcut, user override, conflict
