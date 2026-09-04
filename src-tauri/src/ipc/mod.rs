@@ -23,7 +23,7 @@ use crate::{
 use anyhow::Context;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
@@ -2729,8 +2729,16 @@ pub(crate) fn run() {
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
             crate::clipboard::capabilities::validate_embedded()
                 .context("embedded clipboard capability policy is invalid")?;
+            let foundation_started = Instant::now();
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
                 .expect("Failed to prepare the ClipsX v2 foundation");
+            let foundation_elapsed = foundation_started.elapsed();
+            if cfg!(debug_assertions) || foundation_elapsed.as_millis() >= 250 {
+                eprintln!(
+                    "[PERF] foundation-prepare count=0 duration_ms={}",
+                    foundation_elapsed.as_millis()
+                );
+            }
             app.manage(StartupState {
                 roots: roots.clone(),
                 schema_state,
@@ -2801,7 +2809,7 @@ pub(crate) fn run() {
                 let extension_history = history.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = redetect_extensions
-                        .redetect_history(&extension_history)
+                        .redetect_outdated(&extension_history)
                         .await;
                 });
                 let auto_clear_history = history.clone();

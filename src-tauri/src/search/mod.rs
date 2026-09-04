@@ -8,7 +8,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 const PROJECTION_VERSION: i64 = 3;
 pub const FTS_SOURCE_ID: &str = "builtin.search.fts";
@@ -359,6 +362,7 @@ impl SearchSource for FtsSearchSource {
         }
     }
     async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let started = Instant::now();
         let (filters, bindings) = eligibility_filter(context.request)?;
         let Some(query) = context.fts_query else {
             let sql = format!(
@@ -374,24 +378,22 @@ impl SearchSource for FtsSearchSource {
                 .fetch_all(&context.repo.pool)
                 .await?;
             let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
-            return Ok(SourceCandidates {
-                items: rows
-                    .into_iter()
-                    .take(SOURCE_CANDIDATE_LIMIT)
-                    .map(|row| RankedCandidate {
-                        clip_id: row.get(0),
-                        snippet: None,
-                        source_score: None,
-                        updated_at: row.get(1),
-                    })
-                    .collect(),
-                truncated,
-            });
+            let items = rows
+                .into_iter()
+                .take(SOURCE_CANDIDATE_LIMIT)
+                .map(|row| RankedCandidate {
+                    clip_id: row.get(0),
+                    snippet: None,
+                    source_score: None,
+                    updated_at: row.get(1),
+                })
+                .collect::<Vec<_>>();
+            log_search_timing("fts-candidates", started, items.len(), 150);
+            return Ok(SourceCandidates { items, truncated });
         };
         let sql = format!(
-            "SELECT fts.clip_id,sd.search_text,c.updated_at \
+            "SELECT fts.clip_id,c.updated_at \
              FROM search_documents_fts fts \
-             JOIN search_documents sd ON sd.clip_id=fts.clip_id \
              JOIN clip_items c ON c.id=fts.clip_id \
              {filters} AND search_documents_fts MATCH ? \
              ORDER BY fts.rank,fts.clip_id LIMIT ?"
@@ -407,22 +409,18 @@ impl SearchSource for FtsSearchSource {
             .await
             .context("invalid advanced FTS5 query")?;
         let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
-        Ok(SourceCandidates {
-            items: rows
-                .into_iter()
-                .take(SOURCE_CANDIDATE_LIMIT)
-                .map(|row| {
-                    let text: String = row.get(1);
-                    RankedCandidate {
-                        clip_id: row.get(0),
-                        snippet: build_snippet(query, Some(&text)),
-                        source_score: None,
-                        updated_at: row.get(2),
-                    }
-                })
-                .collect(),
-            truncated,
-        })
+        let items = rows
+            .into_iter()
+            .take(SOURCE_CANDIDATE_LIMIT)
+            .map(|row| RankedCandidate {
+                clip_id: row.get(0),
+                snippet: None,
+                source_score: None,
+                updated_at: row.get(1),
+            })
+            .collect::<Vec<_>>();
+        log_search_timing("fts-candidates", started, items.len(), 150);
+        Ok(SourceCandidates { items, truncated })
     }
 }
 
@@ -440,6 +438,7 @@ impl SearchSource for SemanticTextSearchSource {
         }
     }
     async fn candidates(&self, context: &SourceContext<'_>) -> Result<SourceCandidates> {
+        let started = Instant::now();
         let eligible = context
             .semantic_eligible
             .context("semantic eligibility was not resolved")?;
@@ -458,7 +457,7 @@ impl SearchSource for SemanticTextSearchSource {
             })
             .collect::<Vec<_>>();
         let truncated = rows.len() > SOURCE_CANDIDATE_LIMIT;
-        Ok(SourceCandidates {
+        let result = SourceCandidates {
             items: rows
                 .into_iter()
                 .take(SOURCE_CANDIDATE_LIMIT)
@@ -473,7 +472,9 @@ impl SearchSource for SemanticTextSearchSource {
                 })
                 .collect(),
             truncated,
-        })
+        };
+        log_search_timing("semantic-candidates", started, result.items.len(), 250);
+        Ok(result)
     }
 }
 
@@ -534,6 +535,7 @@ pub async fn search(
     request: &SearchRequest,
     settings: &SearchSettings,
 ) -> Result<SearchPage> {
+    let search_started = Instant::now();
     let raw = request.query.trim();
     if raw.is_empty()
         && request.representation_families.is_empty()
@@ -567,6 +569,7 @@ pub async fn search(
         .into_iter()
         .filter(|source| source.mandatory() || (!raw.is_empty() && selected.contains(source.id())))
         .collect();
+    let eligibility_started = Instant::now();
     let semantic_eligible = if sources
         .iter()
         .any(|source| source.id() == SEMANTIC_TEXT_SOURCE_ID)
@@ -575,6 +578,14 @@ pub async fn search(
     } else {
         None
     };
+    if semantic_eligible.is_some() {
+        log_search_timing(
+            "semantic-eligibility",
+            eligibility_started,
+            semantic_eligible.as_ref().map_or(0, HashMap::len),
+            100,
+        );
+    }
     let context = SourceContext {
         repo,
         request,
@@ -657,15 +668,33 @@ pub async fn search(
             .expect("cursor serialization cannot fail"),
         )
     });
+    let hydration_started = Instant::now();
+    let page_ids = ranked[start..end]
+        .iter()
+        .map(|candidate| candidate.clip_id.clone())
+        .collect::<Vec<_>>();
+    let mut fts_snippets = if let Some(query) = fts_query.as_deref() {
+        fts_snippets(repo, &page_ids, query).await?
+    } else {
+        HashMap::new()
+    };
+    let mut summaries = repo.summaries(&page_ids).await?;
     let mut items = Vec::with_capacity(end.saturating_sub(start));
     for candidate in &ranked[start..end] {
         items.push(SearchResult {
-            clip: repo.summary(&candidate.clip_id).await?,
-            snippet: candidate.snippet.clone(),
+            clip: summaries.remove(&candidate.clip_id).with_context(|| {
+                format!("search result {} is no longer available", candidate.clip_id)
+            })?,
+            snippet: candidate
+                .snippet
+                .clone()
+                .or_else(|| fts_snippets.remove(&candidate.clip_id)),
             rank: candidate.score,
             matches: candidate.matches.clone(),
         });
     }
+    log_search_timing("summary-hydration", hydration_started, items.len(), 100);
+    log_search_timing("search-total", search_started, ranked.len(), 250);
     Ok(SearchPage {
         items,
         total: ranked.len().min(u32::MAX as usize) as u32,
@@ -673,6 +702,49 @@ pub async fn search(
         source_outcomes: outcomes,
         is_exhaustive: exhaustive,
     })
+}
+
+async fn fts_snippets(
+    repo: &HistoryRepository,
+    clip_ids: &[String],
+    query: &str,
+) -> Result<HashMap<String, String>> {
+    if clip_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut statement = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT fts.clip_id,snippet(search_documents_fts,1,'','', ' … ',24) \
+         FROM search_documents_fts fts WHERE search_documents_fts MATCH ",
+    );
+    statement.push_bind(query);
+    statement.push(" AND fts.clip_id IN (");
+    let mut separated = statement.separated(",");
+    for clip_id in clip_ids {
+        separated.push_bind(clip_id);
+    }
+    separated.push_unseparated(")");
+    Ok(statement
+        .build()
+        .fetch_all(&repo.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            (
+                row.get(0),
+                row.get::<String, _>(1).chars().take(240).collect(),
+            )
+        })
+        .collect())
+}
+
+fn log_search_timing(operation: &str, started: Instant, count: usize, slow_ms: u128) {
+    let elapsed = started.elapsed();
+    if cfg!(debug_assertions) || elapsed.as_millis() >= slow_ms {
+        eprintln!(
+            "[PERF] {operation} count={count} duration_ms={}",
+            elapsed.as_millis()
+        );
+    }
 }
 
 async fn eligible_clips(
@@ -831,31 +903,15 @@ fn to_simple_query(raw: &str) -> String {
         .join(" ")
 }
 
-fn build_snippet(query: &str, text: Option<&str>) -> Option<String> {
-    let text = text?;
-    let first_token = query
-        .split_whitespace()
-        .next()
-        .map(|token| token.trim_end_matches('*').trim_matches('"'))
-        .unwrap_or("");
-    if first_token.is_empty() {
-        return Some(text.chars().take(160).collect());
-    }
-    let lower = text.to_lowercase();
-    let lower_tok = first_token.to_lowercase();
-    let pos = lower.find(&lower_tok).unwrap_or(0);
-    let start = pos.saturating_sub(40);
-    let snippet: String = text.chars().skip(start).take(160).collect();
-    Some(snippet)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         contributions,
         foundation::AppRoots,
-        history::{CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot},
+        history::{
+            CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot, ListRequest,
+        },
     };
 
     fn request(query: &str) -> SearchRequest {
@@ -1220,5 +1276,80 @@ mod tests {
             .items
             .iter()
             .any(|item| item.clip.id == text_id));
+    }
+
+    #[tokio::test]
+    #[ignore = "release qualification: cargo test --release history_search_scale_qualification -- --ignored --nocapture"]
+    async fn history_search_scale_qualification() {
+        const RUNS: usize = 21;
+        const HISTORY_P95_LIMIT_MS: u128 = 100;
+        const SEARCH_P95_LIMIT_MS: u128 = 250;
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<59999)
+             INSERT INTO clip_items(id,captured_at,updated_at,lifecycle_state,total_payload_bytes)
+             SELECT printf('clip-%05d',x),x,x,'ready',64 FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<59999)
+             INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,capability_id,format_family,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at)
+             SELECT printf('rep-%05d',x),printf('clip-%05d',x),'text:plain','text/plain','text.plain','text','windows','text',0,0,'ready',x,x FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<59999)
+             INSERT INTO clip_text_values(representation_id,text_value,utf8_byte_length,sha256)
+             SELECT printf('rep-%05d',x),printf('qualification common document %d unique%d',x,x),64,'0000000000000000000000000000000000000000000000000000000000000000' FROM n;
+             WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<59999)
+             INSERT INTO search_documents(clip_id,search_text,projection_version,source_manifest_json,created_at,updated_at)
+             SELECT printf('clip-%05d',x),printf('qualification common document %d unique%d',x,x),3,'{}',x,x FROM n;",
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        let mut history_times = Vec::with_capacity(RUNS * 2);
+        for cursor in [None, Some("10000|clip-10000".to_string())] {
+            for _ in 0..RUNS {
+                let started = Instant::now();
+                let page = repo
+                    .list(ListRequest {
+                        cursor: cursor.clone(),
+                        limit: Some(50),
+                        scope: Some("all".into()),
+                        tag_id: None,
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(page.items.len(), 50);
+                history_times.push(started.elapsed().as_millis());
+            }
+        }
+        history_times.sort_unstable();
+        let history_p95 = history_times[(history_times.len() - 1) * 95 / 100];
+
+        let settings = SearchSettings {
+            syntax_mode: SyntaxMode::Simple,
+            enabled_source_ids: vec![FTS_SOURCE_ID.into()],
+        };
+        let mut search_times = Vec::with_capacity(RUNS * 2);
+        for query in ["common", "unique59999"] {
+            for _ in 0..RUNS {
+                let started = Instant::now();
+                let page = search(&repo, &request(query), &settings).await.unwrap();
+                assert!(!page.items.is_empty());
+                search_times.push(started.elapsed().as_millis());
+            }
+        }
+        search_times.sort_unstable();
+        let search_p95 = search_times[(search_times.len() - 1) * 95 / 100];
+        println!(
+            "history-search-scale clips=60000 history_p95_ms={history_p95} search_p95_ms={search_p95}"
+        );
+        assert!(history_p95 <= HISTORY_P95_LIMIT_MS);
+        assert!(search_p95 <= SEARCH_P95_LIMIT_MS);
     }
 }

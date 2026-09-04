@@ -6,6 +6,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, Read},
     path::{Component, Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::{bail, Context, Result};
@@ -565,6 +566,7 @@ impl SemanticIndexStore {
     where
         F: Fn(&str) -> bool,
     {
+        let started = Instant::now();
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -688,6 +690,14 @@ impl SemanticIndexStore {
                 .then_with(|| left.clip_id.cmp(&right.clip_id))
         });
         hits.truncate(limit);
+        let elapsed = started.elapsed();
+        if cfg!(debug_assertions) || elapsed.as_millis() >= 125 {
+            eprintln!(
+                "[PERF] semantic-scan count={} duration_ms={}",
+                hits.len(),
+                elapsed.as_millis()
+            );
+        }
         Ok(hits)
     }
 

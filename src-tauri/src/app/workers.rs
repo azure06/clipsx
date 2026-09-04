@@ -105,6 +105,7 @@ impl SingleWorker {
         tauri::async_runtime::spawn(async move {
             let delays = [1_u64, 5, 30, 60];
             let mut retry = 0_usize;
+            let _ = history.reconcile_managed_files().await;
             loop {
                 let _ = history.drain_managed_file_deletions().await;
                 let pending: i64 =

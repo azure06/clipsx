@@ -4,6 +4,7 @@ use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use anyhow::{bail, Context, Result};
@@ -827,18 +828,44 @@ impl ExtensionService {
         repo: &HistoryRepository,
         kind: ContributionKind,
     ) -> Result<Vec<ActiveContribution>> {
+        self.contributions(repo, kind, true).await
+    }
+
+    async fn contribution_metadata(
+        &self,
+        repo: &HistoryRepository,
+        kind: ContributionKind,
+    ) -> Result<Vec<ActiveContribution>> {
+        self.contributions(repo, kind, false).await
+    }
+
+    async fn contributions(
+        &self,
+        repo: &HistoryRepository,
+        kind: ContributionKind,
+        prepare_runtime: bool,
+    ) -> Result<Vec<ActiveContribution>> {
         let rows = sqlx::query("SELECT i.id,i.package_id,i.sha256,i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id WHERE i.enabled=1 AND s.status='ready' ORDER BY i.package_id")
             .fetch_all(&repo.pool).await?;
         let mut values = Vec::new();
         for row in rows {
             let package = self.store.load(Path::new(&row.get::<String, _>(3)))?;
-            if let (None, Some(component_path)) = (
-                self.runtime.component(&package.sha256),
-                package.component_path.as_ref(),
-            ) {
-                self.runtime
-                    .validate_component(&package.sha256, component_path)
-                    .await?;
+            let has_kind =
+                package.manifest.contributions.iter().any(|item| {
+                    std::mem::discriminant(&item.kind) == std::mem::discriminant(&kind)
+                });
+            if !has_kind {
+                continue;
+            }
+            if prepare_runtime {
+                if let (None, Some(component_path)) = (
+                    self.runtime.component(&package.sha256),
+                    package.component_path.as_ref(),
+                ) {
+                    self.runtime
+                        .validate_component(&package.sha256, component_path)
+                        .await?;
+                }
             }
             for declaration in
                 package.manifest.contributions.iter().filter(|item| {
@@ -925,30 +952,130 @@ impl ExtensionService {
     }
 
     pub async fn redetect_history(&self, repo: &HistoryRepository) -> Result<u64> {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM clip_items WHERE lifecycle_state='ready' ORDER BY captured_at",
-        )
-        .fetch_all(&repo.pool)
-        .await?;
         let mut count = 0;
-        for id in ids {
-            count += self.detect_clip(repo, &id).await? as u64;
-            self.refresh_compact_presentations(repo, &id).await?;
+        let mut cursor: Option<(i64, String)> = None;
+        loop {
+            let rows = self.history_batch(repo, cursor.as_ref()).await?;
+            if rows.is_empty() {
+                break;
+            }
+            for (_, id) in &rows {
+                count += self.detect_clip(repo, id).await? as u64;
+                self.refresh_compact_presentations(repo, id).await?;
+            }
+            cursor = rows.last().cloned();
+            tokio::task::yield_now().await;
         }
         Ok(count)
     }
 
+    pub async fn redetect_outdated(&self, repo: &HistoryRepository) -> Result<u64> {
+        const BATCH_SIZE: i64 = 100;
+        let started = Instant::now();
+        let detectors = self
+            .contribution_metadata(repo, ContributionKind::Detector)
+            .await?;
+        let mut completed = 0_u64;
+        for detector in detectors {
+            let mut cursor: Option<(i64, String)> = None;
+            loop {
+                let rows = Self::outdated_clip_batch(
+                    repo,
+                    &detector.id,
+                    &detector.version,
+                    cursor.as_ref(),
+                    BATCH_SIZE,
+                )
+                .await?;
+                if rows.is_empty() {
+                    break;
+                }
+                for row in &rows {
+                    let clip_id: String = row.get(1);
+                    self.detect_clip(repo, &clip_id).await?;
+                    self.refresh_compact_presentations(repo, &clip_id).await?;
+                    completed += 1;
+                }
+                let last = rows.last().context("extension detection batch is empty")?;
+                cursor = Some((last.get(0), last.get(1)));
+                tokio::task::yield_now().await;
+            }
+        }
+        let elapsed = started.elapsed();
+        if cfg!(debug_assertions) || elapsed.as_millis() >= 250 {
+            eprintln!(
+                "[PERF] extension-stale-detection count={completed} duration_ms={}",
+                elapsed.as_millis()
+            );
+        }
+        Ok(completed)
+    }
+
+    async fn outdated_clip_batch(
+        repo: &HistoryRepository,
+        detector_id: &str,
+        detector_version: &str,
+        cursor: Option<&(i64, String)>,
+        limit: i64,
+    ) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+        let mut query = String::from(
+            "SELECT DISTINCT c.captured_at,c.id FROM clip_items c \
+             JOIN clip_representations r ON r.clip_id=c.id \
+             JOIN clip_text_values t ON t.representation_id=r.id \
+             WHERE c.lifecycle_state='ready' AND r.lifecycle_state='ready' \
+             AND NOT EXISTS(SELECT 1 FROM content_detection_jobs j \
+             WHERE j.representation_id=r.id AND j.detector_id=? AND j.detector_version=? \
+             AND j.status IN ('completed','unsupported'))",
+        );
+        if cursor.is_some() {
+            query.push_str(" AND (c.captured_at>? OR (c.captured_at=? AND c.id>?))");
+        }
+        query.push_str(" ORDER BY c.captured_at,c.id LIMIT ?");
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(detector_id)
+            .bind(detector_version);
+        if let Some((captured_at, id)) = cursor {
+            query = query.bind(captured_at).bind(captured_at).bind(id);
+        }
+        Ok(query
+            .bind(limit.clamp(1, 100))
+            .fetch_all(&repo.pool)
+            .await?)
+    }
+
     pub async fn refresh_compact_history(&self, repo: &HistoryRepository) -> Result<u64> {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM clip_items WHERE lifecycle_state='ready' ORDER BY captured_at",
-        )
-        .fetch_all(&repo.pool)
-        .await?;
         let mut count = 0;
-        for id in ids {
-            count += self.refresh_compact_presentations(repo, &id).await? as u64;
+        let mut cursor: Option<(i64, String)> = None;
+        loop {
+            let rows = self.history_batch(repo, cursor.as_ref()).await?;
+            if rows.is_empty() {
+                break;
+            }
+            for (_, id) in &rows {
+                count += self.refresh_compact_presentations(repo, id).await? as u64;
+            }
+            cursor = rows.last().cloned();
+            tokio::task::yield_now().await;
         }
         Ok(count)
+    }
+
+    async fn history_batch(
+        &self,
+        repo: &HistoryRepository,
+        cursor: Option<&(i64, String)>,
+    ) -> Result<Vec<(i64, String)>> {
+        let mut query =
+            String::from("SELECT captured_at,id FROM clip_items WHERE lifecycle_state='ready'");
+        if cursor.is_some() {
+            query.push_str(" AND (captured_at>? OR (captured_at=? AND id>?))");
+        }
+        query.push_str(" ORDER BY captured_at,id LIMIT 100");
+        let mut query = sqlx::query_as::<_, (i64, String)>(sqlx::AssertSqlSafe(query));
+        if let Some((captured_at, id)) = cursor {
+            query = query.bind(captured_at).bind(captured_at).bind(id);
+        }
+        Ok(query.fetch_all(&repo.pool).await?)
     }
 
     pub async fn refresh_compact_presentations(
@@ -2262,7 +2389,7 @@ impl ExtensionService {
         }
         let mut icons = HashMap::new();
         let Ok(contributions) = self
-            .active_contributions(repo, ContributionKind::Renderer)
+            .contribution_metadata(repo, ContributionKind::Renderer)
             .await
         else {
             return;
@@ -3755,6 +3882,89 @@ mod tests {
         assert_eq!(
             format_input_limit(2048),
             "Input exceeds this action's 2 KiB limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_detection_selects_only_missing_or_outdated_jobs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                crate::history::CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![CapturedRepresentation {
+                        format_key: "text/plain".into(),
+                        canonical_mime_type: Some("text/plain".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Text("fixture".into()),
+                    }],
+                },
+                &crate::history::CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let representation_id: String =
+            sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+
+        let missing = ExtensionService::outdated_clip_batch(
+            &repo,
+            "infiniti.fixture/detect",
+            "1.0.0",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(missing.len(), 1);
+
+        sqlx::query("INSERT INTO content_detection_jobs(id,representation_id,detector_id,detector_version,status,requested_at) VALUES(?,?,?,?, 'completed',?)")
+            .bind(new_id())
+            .bind(representation_id)
+            .bind("infiniti.fixture/detect")
+            .bind("1.0.0")
+            .bind(now_ms())
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        assert!(ExtensionService::outdated_clip_batch(
+            &repo,
+            "infiniti.fixture/detect",
+            "1.0.0",
+            None,
+            100,
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            ExtensionService::outdated_clip_batch(
+                &repo,
+                "infiniti.fixture/detect",
+                "2.0.0",
+                None,
+                100,
+            )
+            .await
+            .unwrap()
+            .len(),
+            1
         );
     }
 

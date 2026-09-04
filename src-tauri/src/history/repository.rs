@@ -12,11 +12,13 @@ use std::{
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
+
+const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
 
 #[derive(Clone)]
 pub struct HistoryRepository {
@@ -91,6 +93,7 @@ pub fn capture_fingerprint(representations: &[CapturedRepresentation]) -> String
 
 impl HistoryRepository {
     pub async fn connect(database: &Path, managed_root: PathBuf) -> Result<Self> {
+        let started = Instant::now();
         fs::create_dir_all(&managed_root)?;
         let semantic_index_root = database
             .parent()
@@ -107,6 +110,7 @@ impl HistoryRepository {
             semantic_index_root,
         };
         repository.recover_managed_files().await?;
+        log_history_timing("repository-open", started, 0, 250);
         Ok(repository)
     }
     pub async fn capture(
@@ -272,9 +276,10 @@ impl HistoryRepository {
         Ok(())
     }
     pub async fn list(&self, request: ListRequest) -> Result<ClipPage> {
+        let started = Instant::now();
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
-        let mut query = String::from("SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id WHERE c.lifecycle_state='ready'");
+        let mut query = format!("{SUMMARY_SELECT} WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
         }
@@ -301,6 +306,20 @@ impl HistoryRepository {
         let rows = q.bind(limit + 1).fetch_all(&self.pool).await?;
         let has_more = rows.len() as i64 > limit;
         let rows = rows.into_iter().take(limit as usize).collect::<Vec<_>>();
+        let items = self.hydrate_summary_rows(rows).await?;
+        let next_cursor = if has_more {
+            items.last().map(|x| format!("{}|{}", x.captured_at, x.id))
+        } else {
+            None
+        };
+        log_history_timing("history-list", started, items.len(), 100);
+        Ok(ClipPage { items, next_cursor })
+    }
+
+    async fn hydrate_summary_rows(
+        &self,
+        rows: Vec<sqlx::sqlite::SqliteRow>,
+    ) -> Result<Vec<ClipSummary>> {
         let ids = rows
             .iter()
             .map(|row| row.get::<String, _>(0))
@@ -357,12 +376,26 @@ impl HistoryRepository {
                 .await?,
             );
         }
-        let next_cursor = if has_more {
-            items.last().map(|x| format!("{}|{}", x.captured_at, x.id))
-        } else {
-            None
-        };
-        Ok(ClipPage { items, next_cursor })
+        Ok(items)
+    }
+
+    pub async fn summaries(&self, ids: &[String]) -> Result<HashMap<String, ClipSummary>> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(SUMMARY_SELECT);
+        query.push(" WHERE c.lifecycle_state='ready' AND c.id IN (");
+        let mut separated = query.separated(",");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+        Ok(self
+            .hydrate_summary_rows(query.build().fetch_all(&self.pool).await?)
+            .await?
+            .into_iter()
+            .map(|summary| (summary.id.clone(), summary))
+            .collect())
     }
     async fn summary_from_row(&self, row: sqlx::sqlite::SqliteRow) -> Result<ClipSummary> {
         let id: String = row.get(0);
@@ -1337,7 +1370,11 @@ impl HistoryRepository {
                 let _ = fs::remove_file(path);
             }
         }
-        let rows = sqlx::query("SELECT id,sha256,relative_path FROM clip_binary_files WHERE lifecycle_state IN ('pending','ready')").fetch_all(&self.pool).await?;
+        let rows = sqlx::query(
+            "SELECT id,sha256,relative_path FROM clip_binary_files WHERE lifecycle_state='pending'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         for row in rows {
             let id: String = row.get(0);
             let expected: String = row.get(1);
@@ -1359,7 +1396,7 @@ impl HistoryRepository {
                 .execute(&self.pool)
                 .await?;
         }
-        let artifact_rows = sqlx::query("SELECT id,sha256,relative_path FROM artifact_binary_files WHERE lifecycle_state IN ('pending','ready')").fetch_all(&self.pool).await?;
+        let artifact_rows = sqlx::query("SELECT id,sha256,relative_path FROM artifact_binary_files WHERE lifecycle_state='pending'").fetch_all(&self.pool).await?;
         for row in artifact_rows {
             let id: String = row.get(0);
             let expected: String = row.get(1);
@@ -1382,6 +1419,10 @@ impl HistoryRepository {
             .execute(&self.pool)
             .await?;
         }
+        Ok(())
+    }
+
+    pub async fn reconcile_managed_files(&self) -> Result<()> {
         self.cleanup_orphans().await?;
         self.drain_managed_file_deletions().await?;
         let known: std::collections::HashSet<String> =
@@ -1502,6 +1543,16 @@ fn managed_files(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
+fn log_history_timing(operation: &str, started: Instant, count: usize, slow_ms: u128) {
+    let elapsed = started.elapsed();
+    if cfg!(debug_assertions) || elapsed.as_millis() >= slow_ms {
+        eprintln!(
+            "[PERF] {operation} count={count} duration_ms={}",
+            elapsed.as_millis()
+        );
+    }
+}
+
 fn remove_empty_directories(root: &Path) -> Result<bool> {
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
@@ -1559,6 +1610,104 @@ mod tests {
         #[cfg(target_os = "windows")]
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
+    }
+
+    #[tokio::test]
+    async fn startup_defers_ready_binary_verification_until_access() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: Vec::new(),
+                    representations: vec![CapturedRepresentation {
+                        format_key: "image/png".into(),
+                        canonical_mime_type: Some("image/png".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Binary(vec![1, 2, 3, 4]),
+                    }],
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        let (binary_id, relative_path): (String, String) = sqlx::query_as(
+            "SELECT b.id,b.relative_path FROM clip_binary_files b JOIN clip_representations r ON r.binary_file_id=b.id WHERE r.clip_id=?",
+        )
+        .bind(clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        fs::write(repo.managed_root.join(&relative_path), b"corrupt").unwrap();
+        repo.pool.close().await;
+
+        let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let state: String =
+            sqlx::query_scalar("SELECT lifecycle_state FROM clip_binary_files WHERE id=?")
+                .bind(&binary_id)
+                .fetch_one(&reopened.pool)
+                .await
+                .unwrap();
+        assert_eq!(state, "ready");
+        assert!(reopened
+            .asset(&binary_id)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("hash mismatch"));
+    }
+
+    #[tokio::test]
+    #[ignore = "release qualification: cargo test --release managed_startup_scale_qualification -- --ignored --nocapture"]
+    async fn managed_startup_scale_qualification() {
+        const RUNS: usize = 21;
+        const P95_LIMIT_MS: u128 = 250;
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        sqlx::query(
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<60000)
+             INSERT INTO clip_binary_files(id,sha256,byte_length,relative_path,lifecycle_state,created_at,updated_at)
+             SELECT printf('binary-%05d',x),printf('%064x',x),1048576,printf('managed/binary/%02x/%064x',x%256,x),'ready',x,x FROM n",
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        repo.pool.close().await;
+
+        let mut timings = Vec::with_capacity(RUNS);
+        for _ in 0..RUNS {
+            let started = Instant::now();
+            let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+                .await
+                .unwrap();
+            timings.push(started.elapsed().as_millis());
+            reopened.pool.close().await;
+        }
+        timings.sort_unstable();
+        let p95 = timings[(RUNS - 1) * 95 / 100];
+        println!("managed-startup ready_files=60000 p95_ms={p95}");
+        assert!(p95 <= P95_LIMIT_MS);
     }
 
     #[tokio::test]
