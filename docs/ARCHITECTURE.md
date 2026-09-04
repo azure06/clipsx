@@ -223,6 +223,8 @@ The Rust host exclusively owns operating-system window activation and global
 shortcut registration. The global shortcut and tray-icon left click toggle:
 they hide only an already visible, focused, non-minimized window; otherwise they
 cancel pending blur hiding, restore, show, and request foreground activation.
+On Windows, active means that ClipsX is the operating system foreground window;
+moving keyboard focus into the WebView must not make the next toggle reopen it.
 The tray menu **Open**, second-instance launches, and deep links use the same
 open path but never hide the window. Windows verifies that foreground activation
 succeeded after raising the restored window in normal Z-order; refusal by the

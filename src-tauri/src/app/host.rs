@@ -79,12 +79,27 @@ fn activate_native_window(_window: &tauri::WebviewWindow) -> bool {
     true
 }
 
+#[cfg(target_os = "windows")]
+fn main_window_is_active(window: &tauri::WebviewWindow) -> bool {
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GetForegroundWindow};
+
+    window
+        .hwnd()
+        .map(|hwnd| unsafe { GetForegroundWindow() == HWND(hwnd.0) })
+        .unwrap_or_else(|_| window.is_focused().unwrap_or(false))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn main_window_is_active(window: &tauri::WebviewWindow) -> bool {
+    window.is_focused().unwrap_or(false)
+}
+
 pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
     let visible = window.is_visible().unwrap_or(false);
-    let focused = window.is_focused().unwrap_or(false);
+    let focused = main_window_is_active(&window);
     let minimized = window.is_minimized().unwrap_or(false);
     match shortcut_window_action(visible, focused, minimized) {
         MainWindowAction::Hide => window.hide().map_err(|error| error.to_string()),
