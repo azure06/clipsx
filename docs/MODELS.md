@@ -44,9 +44,21 @@ flowchart TB
 | `system_schema_meta` | Infrastructure | Identifies the fresh schema baseline expected by this application build. | ClipsX foundation startup (`foundation`) | Database-scoped infrastructure retained for the lifetime of the database. |
 | `_sqlx_migrations` | Infrastructure | Records which migration files have been applied. | SQLx migration runner | Framework-owned bookkeeping. Application features must not write it directly. |
 | `config_profile_values` | Configuration | Stores profile-wide settings as namespaced JSON values, including UI behavior, enabled search sources, contribution preferences, and FTS mode. | Seeded by the ClipsX config migration; subsequently written by the settings IPC/history repository and the subsystem that owns each key | Profile-scoped. Values persist until changed or reset; each owning subsystem defines the key's type, validation, and default. |
-| `config_device_values` | Configuration | Stores machine-local settings such as capture limits and the active provider endpoint/model. | Seeded by the ClipsX config migration; subsequently written by the settings IPC/history repository and device-specific services such as semantic search | Device-scoped. Kept separate because endpoints and hardware capabilities may differ between machines. |
-| `provider_runtime_diagnostics` | Operational | Records the latest provider health and diagnostic observations. | Semantic-search provider probing/service code | Replaceable operational state. Safe to overwrite or clear; not user configuration. |
+| `config_device_values` | Configuration | Stores machine-local settings such as capture limits, the shared Ollama connection, and independent model-capability assignments. | Seeded by the ClipsX config migration; subsequently written by the settings IPC/history repository and the owning device-specific services | Device-scoped. Kept separate because endpoints, installed models, and hardware capabilities may differ between machines. |
+| `provider_runtime_diagnostics` | Operational | Records the latest model-provider connection and capability health observations. | Provider catalog, embedding, and generation services | Replaceable operational state. Safe to overwrite or clear; not user configuration. |
 | `system_managed_file_deletions` | Operational | Durably records managed files that should be deleted after database changes commit. | Database deletion triggers; consumed by the managed-file GC worker | Queue entries remain until cleanup succeeds. The worker rechecks references and retries failures to avoid orphaned files after crashes. |
+
+Model configuration uses three device-local keys with distinct ownership:
+
+| Key | Owner | Stored value |
+| --- | --- | --- |
+| `providers.ollama.connection` | Model-provider connection | The validated loopback endpoint. |
+| `providers.text_embedding.active` | Semantic Search | Provider ID, model ID, enablement, and similarity threshold; never an endpoint. |
+| `providers.generation.text.active` | Local Text Generation | Provider ID, model ID, and enablement; never an endpoint. |
+
+Installed-model inventory, model digests, capability inspection results, and connection health are derived observations rather than settings. The application refreshes them from Ollama and may discard them at any time. Changing the endpoint retains capability assignments so a missing model is visible and recoverable instead of being silently replaced.
+
+This remains a pre-release fresh schema. The keys above are defined directly in `002_config.sql`; there is no compatibility migration from the former duplicated endpoint values. A database created from an older migration checksum must use the documented reset flow.
 
 ### Why settings are stored as JSON values in SQLite
 
