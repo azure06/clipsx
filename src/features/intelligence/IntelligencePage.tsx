@@ -31,14 +31,29 @@ import type {
 import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
 
-type OllamaModelDescriptor = { name: string; digest: string | null; size: number | null }
-type OllamaEndpointStatus = { reachable: boolean; endpoint: string; diagnostic: string | null }
+type ModelCapability = 'text_embedding' | 'text_generation'
+type ModelDescriptor = {
+  id: string
+  digest: string | null
+  size: number | null
+  capabilities: ModelCapability[]
+  inspectionDiagnostic: string | null
+}
+type ModelProviderConnectionStatus = {
+  providerId: string
+  displayName: string
+  configured: boolean
+  endpoint: string | null
+  state: 'not_configured' | 'ready' | 'degraded'
+  diagnostic: string | null
+  models: ModelDescriptor[]
+}
 type SearchSettings = { syntaxMode: 'simple' | 'advanced'; enabledSourceIds: string[] }
 type GenerationProviderStatus = {
   enabled: boolean
   available: boolean
   diagnostic: string | null
-  endpoint: string | null
+  providerId: string | null
   model: string | null
 }
 type OcrLanguage = { id: string; label: string }
@@ -75,6 +90,8 @@ const explainOllamaDiagnostic = (diagnostic: string): string => {
 }
 
 const toErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const OLLAMA_PROVIDER_ID = 'builtin.model_provider.ollama'
+const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434'
 
 type IndexAction = 'reindex' | 'index_missing' | 'retry'
 type ActiveIndexAction = {
@@ -101,11 +118,12 @@ const indexActionLabel: Record<IndexAction, string> = {
 }
 
 export const IntelligencePage = () => {
-  const [endpoint, setEndpoint] = useState('http://localhost:11434')
-  const [probing, setProbing] = useState(false)
-  const [probeResult, setProbeResult] = useState<OllamaEndpointStatus | null>(null)
-  const [models, setModels] = useState<OllamaModelDescriptor[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
+  const [connection, setConnection] = useState<ModelProviderConnectionStatus | null>(null)
+  const [endpointDraft, setEndpointDraft] = useState(DEFAULT_OLLAMA_ENDPOINT)
+  const [loadingConnection, setLoadingConnection] = useState(false)
+  const [savingConnection, setSavingConnection] = useState(false)
+  const [editingConnection, setEditingConnection] = useState(false)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
   const [selectedModel, setSelectedModel] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
@@ -116,7 +134,6 @@ export const IntelligencePage = () => {
   const [activeIndexAction, setActiveIndexAction] = useState<ActiveIndexAction | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
   const [clearingIndex, setClearingIndex] = useState(false)
-  const [configExpanded, setConfigExpanded] = useState(false)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -132,9 +149,7 @@ export const IntelligencePage = () => {
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
 
-  const isConfigured = Boolean(
-    status?.endpoint && status?.model && status.phase !== 'not_configured'
-  )
+  const isConfigured = Boolean(status?.model && status.phase !== 'not_configured')
 
   useEffect(() => {
     setThresholdDraft(String(status?.minimumSimilarityPercent ?? 70))
@@ -158,13 +173,9 @@ export const IntelligencePage = () => {
       if (generation) {
         setGenerationStatus(generation)
         if (generation.model) setGenerationModel(generation.model)
-        if (generation.endpoint && !s.endpoint) setEndpoint(generation.endpoint)
       }
-      if (s.endpoint) setEndpoint(s.endpoint)
       if (s.model) setSelectedModel(s.model)
       if (s.phase === 'ready') lastFailureToastRef.current = null
-      // Auto-expand config form when not yet configured
-      if (!s.endpoint) setConfigExpanded(true)
       return s
     } catch (e) {
       toast({
@@ -181,6 +192,25 @@ export const IntelligencePage = () => {
   useEffect(() => {
     void loadStatus()
   }, [loadStatus])
+
+  const loadConnection = useCallback(async () => {
+    setLoadingConnection(true)
+    setConnectionError(null)
+    try {
+      const next = await invoke<ModelProviderConnectionStatus>('get_model_provider_connection')
+      setConnection(next)
+      if (next.endpoint) setEndpointDraft(next.endpoint)
+      await loadStatus()
+    } catch (error) {
+      setConnectionError(toErrorMessage(error))
+    } finally {
+      setLoadingConnection(false)
+    }
+  }, [loadStatus])
+
+  useEffect(() => {
+    if (activeSection === 'models') void loadConnection()
+  }, [activeSection, loadConnection])
 
   useEffect(() => {
     const u1 = listen('embedding-provider-status-changed', () => void loadStatus())
@@ -240,35 +270,24 @@ export const IntelligencePage = () => {
     setActiveIndexAction(null)
   }, [status, activeIndexAction, toast])
 
-  const handleProbe = async () => {
-    setProbing(true)
-    setProbeResult(null)
-    setModels([])
-    setConfigError(null)
+  const handleSaveConnection = async () => {
+    if (!endpointDraft.trim() || savingConnection) return
+    setSavingConnection(true)
+    setConnectionError(null)
     try {
-      const result = await invoke<OllamaEndpointStatus>('probe_ollama_endpoint', { endpoint })
-      setProbeResult(result)
-      if (result.reachable) {
-        setLoadingModels(true)
-        try {
-          const ms = await invoke<OllamaModelDescriptor[]>('list_ollama_models', { endpoint })
-          setModels(ms)
-          if (ms.length > 0) {
-            setSelectedModel(prev => {
-              const stillValid = ms.some(m => m.name === prev)
-              return stillValid ? prev : (ms[0]?.name ?? '')
-            })
-          }
-        } catch {
-          /* keep models empty */
-        } finally {
-          setLoadingModels(false)
-        }
-      }
-    } catch {
-      /* probe error */
+      const next = await invoke<ModelProviderConnectionStatus>('save_model_provider_connection', {
+        providerId: OLLAMA_PROVIDER_ID,
+        endpoint: endpointDraft.trim(),
+      })
+      setConnection(next)
+      setEndpointDraft(next.endpoint ?? endpointDraft)
+      setEditingConnection(false)
+      await loadStatus()
+      toast({ title: 'Ollama connected', type: 'success' })
+    } catch (error) {
+      setConnectionError(toErrorMessage(error))
     } finally {
-      setProbing(false)
+      setSavingConnection(false)
     }
   }
 
@@ -278,11 +297,9 @@ export const IntelligencePage = () => {
     setConfigError(null)
     try {
       const next = await invoke<TextEmbeddingStatus>('configure_text_embedding_provider', {
-        endpoint,
         model: selectedModel,
       })
       setStatus(next)
-      setConfigExpanded(false)
     } catch (e) {
       setConfigError(toErrorMessage(e))
     } finally {
@@ -294,8 +311,8 @@ export const IntelligencePage = () => {
     setDisconnecting(true)
     try {
       await invoke('disable_text_embedding_provider')
-      setConfigExpanded(true)
-      toast({ title: 'Meaning Search disconnected', type: 'success' })
+      await loadStatus()
+      toast({ title: 'Meaning Search disabled', type: 'success' })
     } catch (e) {
       toast({ title: 'Disconnect failed', description: toErrorMessage(e), type: 'error' })
     } finally {
@@ -304,11 +321,10 @@ export const IntelligencePage = () => {
   }
 
   const handleGenerationConnect = async () => {
-    if (!generationModel || !endpoint.trim()) return
+    if (!generationModel) return
     setGenerationSaving(true)
     try {
       const next = await invoke<GenerationProviderStatus>('configure_text_generation_provider', {
-        endpoint,
         model: generationModel,
       })
       setGenerationStatus(next)
@@ -460,8 +476,23 @@ export const IntelligencePage = () => {
   const thresholdDraftIsValid =
     Number.isInteger(parsedThreshold) && parsedThreshold >= 1 && parsedThreshold <= 100
 
-  const canConnect = Boolean(selectedModel && endpoint.trim())
-  const showModelSelector = probeResult?.reachable || Boolean(status?.model)
+  const connectionReady = connection?.state === 'ready'
+  const embeddingModels = (connection?.models ?? []).filter(model =>
+    model.capabilities.includes('text_embedding')
+  )
+  const generationModels = (connection?.models ?? []).filter(model =>
+    model.capabilities.includes('text_generation')
+  )
+  const modelOptions = (models: ModelDescriptor[], selected: string) => {
+    const options = models.map(model => ({
+      value: model.id,
+      label: `${model.id}${model.size ? ` (${formatBytes(model.size)})` : ''}`,
+    }))
+    if (selected && !models.some(model => model.id === selected)) {
+      options.unshift({ value: selected, label: `${selected} (not available)` })
+    }
+    return options
+  }
 
   // Progress bar math
   const indexing = status?.phase === 'indexing'
@@ -589,7 +620,7 @@ export const IntelligencePage = () => {
         )}
 
         {/* Semantic Search */}
-        {(activeSection === 'models' || activeSection === 'indexing') && (
+        {activeSection === 'indexing' && (
           <div
             role="tabpanel"
             className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5"
@@ -784,140 +815,6 @@ export const IntelligencePage = () => {
                   working with exact words. Rebuilding or clearing this derived index never deletes
                   clipboard items.
                 </p>
-              </div>
-            )}
-
-            {/* Config toggle — show summary when configured, expand on demand */}
-            {isConfigured && (
-              <button
-                className="flex w-full items-center gap-1.5 text-[11px] text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300"
-                onClick={() => setConfigExpanded(v => !v)}
-              >
-                {configExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-                {configExpanded
-                  ? 'Hide configuration'
-                  : `Configuration — ${status?.model ?? ''} @ ${status?.endpoint ?? ''}`}
-              </button>
-            )}
-
-            {/* Ollama config form — always shown when not connected, toggled when connected */}
-            {(!isConfigured || configExpanded) && (
-              <div className="space-y-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                  Ollama Endpoint
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
-                    <Server className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                    <input
-                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
-                      placeholder="http://localhost:11434"
-                      value={endpoint}
-                      onChange={e => setEndpoint(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') void handleProbe()
-                      }}
-                    />
-                  </div>
-                  <button
-                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                    disabled={probing || !endpoint.trim()}
-                    onClick={() => void handleProbe()}
-                  >
-                    {probing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    {probing ? 'Testing…' : 'Test'}
-                  </button>
-                </div>
-
-                {probeResult && (
-                  <div
-                    className={`flex items-center gap-1.5 text-xs ${probeResult.reachable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
-                  >
-                    {probeResult.reachable ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    ) : (
-                      <Circle className="h-3.5 w-3.5 shrink-0" />
-                    )}
-                    {probeResult.reachable
-                      ? 'Reachable'
-                      : (probeResult.diagnostic ?? 'Unreachable')}
-                  </div>
-                )}
-
-                {showModelSelector && (
-                  <div className="space-y-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                      Embedding Model
-                    </div>
-                    {loadingModels ? (
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Loading models…
-                      </div>
-                    ) : models.length > 0 ? (
-                      <Select
-                        className="w-full py-2"
-                        value={selectedModel}
-                        onChange={setSelectedModel}
-                        options={models.map(model => ({
-                          value: model.name,
-                          label: `${model.name}${model.size ? ` (${formatBytes(model.size)})` : ''}`,
-                        }))}
-                      />
-                    ) : (
-                      <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
-                        <input
-                          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
-                          placeholder="e.g. nomic-embed-text"
-                          value={selectedModel}
-                          onChange={e => setSelectedModel(e.target.value)}
-                        />
-                      </div>
-                    )}
-
-                    {configError && (
-                      <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-400">
-                        {configError}
-                      </p>
-                    )}
-
-                    <div className="flex gap-2">
-                      <button
-                        className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-600 disabled:opacity-50"
-                        disabled={!canConnect || connecting}
-                        onClick={() => void handleConnect()}
-                      >
-                        {connecting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <PlugZap className="h-3.5 w-3.5" />
-                        )}
-                        {connecting
-                          ? 'Validating model…'
-                          : status?.phase === 'disabled'
-                            ? 'Enable'
-                            : isConfigured
-                              ? 'Update'
-                              : 'Connect'}
-                      </button>
-                      {isConfigured && status?.phase !== 'disabled' && (
-                        <Button
-                          variant="outline"
-                          leftIcon={<Unplug className="h-3.5 w-3.5" />}
-                          isLoading={disconnecting}
-                          disabled={disconnecting}
-                          onClick={() => void handleDisconnect()}
-                        >
-                          Disconnect
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -1186,66 +1083,270 @@ export const IntelligencePage = () => {
         )}
 
         {activeSection === 'models' && (
-          <div
-            role="tabpanel"
-            className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5"
-          >
-            <div className="flex items-center gap-2">
-              <Wand2 className="h-4 w-4 text-pink-400" strokeWidth={1.5} />
-              <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                Local Text Generation
-              </span>
-              <span
-                className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${generationStatus?.available ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
-              >
-                {generationStatus?.available ? 'available' : 'not configured'}
-              </span>
+          <div role="tabpanel" className="space-y-4">
+            <section className="space-y-4 rounded-2xl border border-violet-200/70 bg-linear-to-br from-violet-500/[0.08] via-slate-100/30 to-transparent p-5 dark:border-violet-400/15 dark:from-violet-500/[0.12] dark:via-white/[0.025]">
+              <div className="flex items-center gap-2">
+                <Server className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    Ollama Connection
+                  </h2>
+                  <p className="mt-0.5 text-[11px] text-gray-500">
+                    One local model library for every ClipsX intelligence capability.
+                  </p>
+                </div>
+                <span
+                  className={`ml-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${connectionReady ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : connection?.configured ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
+                >
+                  {loadingConnection ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : connectionReady ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Circle className="h-3 w-3" />
+                  )}
+                  {loadingConnection
+                    ? 'checking'
+                    : connectionReady
+                      ? 'connected'
+                      : connection?.configured
+                        ? 'unavailable'
+                        : 'not connected'}
+                </span>
+              </div>
+
+              {connection?.configured && !editingConnection ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/60 bg-white/45 px-3 py-2.5 dark:border-white/5 dark:bg-black/10">
+                  <Server className="h-3.5 w-3.5 text-gray-400" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-700 dark:text-slate-200">
+                    {connection.endpoint}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
+                    isLoading={loadingConnection}
+                    disabled={loadingConnection}
+                    onClick={() => void loadConnection()}
+                  >
+                    Refresh
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditingConnection(true)}>
+                    Change
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <div className="flex min-w-60 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
+                    <Server className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                    <input
+                      aria-label="Ollama endpoint"
+                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
+                      placeholder={DEFAULT_OLLAMA_ENDPOINT}
+                      value={endpointDraft}
+                      onChange={event => setEndpointDraft(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') void handleSaveConnection()
+                      }}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    leftIcon={<PlugZap className="h-3.5 w-3.5" />}
+                    isLoading={savingConnection}
+                    disabled={savingConnection || !endpointDraft.trim()}
+                    onClick={() => void handleSaveConnection()}
+                  >
+                    {connection?.configured ? 'Use endpoint' : 'Connect'}
+                  </Button>
+                  {connection?.configured && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEndpointDraft(connection.endpoint ?? DEFAULT_OLLAMA_ENDPOINT)
+                        setConnectionError(null)
+                        setEditingConnection(false)
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {(connectionError || connection?.diagnostic) && (
+                <p className="rounded-lg border border-amber-300/35 bg-amber-50/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/15 dark:bg-amber-500/[0.08] dark:text-amber-300">
+                  {connectionError ?? connection?.diagnostic}
+                </p>
+              )}
+              {connectionReady && (
+                <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
+                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
+                    {connection.models.length} installed
+                  </span>
+                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
+                    {embeddingModels.length} embedding
+                  </span>
+                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
+                    {generationModels.length} generative
+                  </span>
+                </div>
+              )}
+            </section>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <section className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+                <div className="flex items-center gap-2">
+                  <BrainCircuit className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
+                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    Semantic Search
+                  </span>
+                  <span className="ml-auto rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
+                    {status?.phase?.replaceAll('_', ' ') ?? 'not configured'}
+                  </span>
+                </div>
+                <p className="text-xs leading-5 text-gray-500">
+                  Understand meaning with an embedding model. Changing vector spaces rebuilds only
+                  the derived index.
+                </p>
+                <Select
+                  className="w-full py-2"
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  options={modelOptions(embeddingModels, selectedModel)}
+                  placeholder={
+                    connectionReady ? 'Choose an embedding model' : 'Connect Ollama first'
+                  }
+                  disabled={!connectionReady || embeddingModels.length === 0}
+                />
+                {connectionReady && embeddingModels.length === 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    No installed model reports embedding support.
+                  </p>
+                )}
+                {selectedModel && !embeddingModels.some(model => model.id === selectedModel) && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {selectedModel} is not available as an embedding model on this connection.
+                  </p>
+                )}
+                {configError && (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-400">
+                    {configError}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    isLoading={connecting}
+                    disabled={
+                      connecting ||
+                      !connectionReady ||
+                      !embeddingModels.some(model => model.id === selectedModel)
+                    }
+                    onClick={() => void handleConnect()}
+                  >
+                    {status?.enabled ? 'Update' : 'Enable'}
+                  </Button>
+                  {status?.enabled && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      leftIcon={<Unplug className="h-3.5 w-3.5" />}
+                      isLoading={disconnecting}
+                      disabled={disconnecting}
+                      onClick={() => void handleDisconnect()}
+                    >
+                      Disable
+                    </Button>
+                  )}
+                  {isConfigured && status && (
+                    <button
+                      type="button"
+                      className="ml-auto text-[11px] font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400"
+                      onClick={() => setActiveSection('indexing')}
+                    >
+                      {status.indexedClips.toLocaleString()} /{' '}
+                      {status.eligibleClips.toLocaleString()} indexed →
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-pink-400" strokeWidth={1.5} />
+                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                    Local Text Generation
+                  </span>
+                  <span
+                    className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${generationStatus?.available ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
+                  >
+                    {generationStatus?.available
+                      ? 'available'
+                      : generationStatus?.enabled
+                        ? 'needs attention'
+                        : 'not configured'}
+                  </span>
+                </div>
+                <p className="text-xs leading-5 text-gray-500">
+                  Extensions can request generation without learning your endpoint or model
+                  configuration.
+                </p>
+                <Select
+                  className="w-full py-2"
+                  value={generationModel}
+                  onChange={setGenerationModel}
+                  options={modelOptions(generationModels, generationModel)}
+                  placeholder={
+                    connectionReady ? 'Choose a generative model' : 'Connect Ollama first'
+                  }
+                  disabled={!connectionReady || generationModels.length === 0}
+                />
+                {connectionReady && generationModels.length === 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    No installed model reports completion support.
+                  </p>
+                )}
+                {generationModel &&
+                  !generationModels.some(model => model.id === generationModel) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {generationModel} is not available for text generation on this connection.
+                    </p>
+                  )}
+                {generationStatus?.enabled && generationStatus.diagnostic && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {generationStatus.diagnostic}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    isLoading={generationSaving}
+                    disabled={
+                      generationSaving ||
+                      !connectionReady ||
+                      !generationModels.some(model => model.id === generationModel)
+                    }
+                    onClick={() => void handleGenerationConnect()}
+                  >
+                    {generationStatus?.enabled ? 'Update' : 'Enable'}
+                  </Button>
+                  {generationStatus?.enabled && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      leftIcon={<Unplug className="h-3.5 w-3.5" />}
+                      isLoading={generationSaving}
+                      disabled={generationSaving}
+                      onClick={() => void handleGenerationDisconnect()}
+                    >
+                      Disable
+                    </Button>
+                  )}
+                </div>
+              </section>
             </div>
-            <p className="text-xs text-gray-500">
-              Extensions can request generation through ClipsX without learning your Ollama endpoint
-              or model configuration.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-              <input
-                aria-label="Generation endpoint"
-                className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-100/5"
-                placeholder="http://localhost:11434"
-                value={endpoint}
-                onChange={event => setEndpoint(event.target.value)}
-              />
-              <input
-                aria-label="Generation model"
-                className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none dark:border-white/10 dark:bg-slate-100/5"
-                placeholder="llama3.2"
-                value={generationModel}
-                onChange={event => setGenerationModel(event.target.value)}
-              />
-              <Button
-                size="sm"
-                isLoading={generationSaving}
-                disabled={generationSaving || !endpoint.trim() || !generationModel.trim()}
-                onClick={() => void handleGenerationConnect()}
-              >
-                {generationStatus?.enabled ? 'Update' : 'Enable'}
-              </Button>
-            </div>
-            {generationStatus?.diagnostic && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                {generationStatus.diagnostic}
-              </p>
-            )}
-            {generationStatus?.enabled && (
-              <Button
-                variant="outline"
-                size="sm"
-                leftIcon={<Unplug className="h-3.5 w-3.5" />}
-                isLoading={generationSaving}
-                disabled={generationSaving}
-                onClick={() => void handleGenerationDisconnect()}
-              >
-                Disable generation
-              </Button>
-            )}
           </div>
         )}
       </div>

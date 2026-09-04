@@ -31,7 +31,6 @@ export type TextEmbeddingStatus = {
   dimensions: number | null
   indexBytes: number
   estimatedRebuildBytes: number
-  endpoint: string | null
   model: string | null
   minimumSimilarityPercent: number | null
 }

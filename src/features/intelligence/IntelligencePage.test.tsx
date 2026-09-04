@@ -29,7 +29,6 @@ const readyStatus = (overrides: Partial<TextEmbeddingStatus> = {}): TextEmbeddin
   dimensions: 768,
   indexBytes: 2048,
   estimatedRebuildBytes: 4096,
-  endpoint: 'http://localhost:11434',
   model: 'nomic-embed-text',
   minimumSimilarityPercent: null,
   ...overrides,
@@ -41,6 +40,30 @@ const toastTitles = (): string[] =>
 describe('IntelligencePage indexing actions', () => {
   let currentStatus: TextEmbeddingStatus
   let failNextStatusRefresh: boolean
+  const connection = {
+    providerId: 'builtin.model_provider.ollama',
+    displayName: 'Ollama',
+    configured: true,
+    endpoint: 'http://localhost:11434',
+    state: 'ready',
+    diagnostic: null,
+    models: [
+      {
+        id: 'nomic-embed-text',
+        digest: 'embed-digest',
+        size: 274_000_000,
+        capabilities: ['text_embedding'],
+        inspectionDiagnostic: null,
+      },
+      {
+        id: 'llama3.2',
+        digest: 'generation-digest',
+        size: 2_000_000_000,
+        capabilities: ['text_generation'],
+        inspectionDiagnostic: null,
+      },
+    ],
+  } as const
   let currentOcrStatus: {
     settings: { enabled: boolean; language: string }
     provider: {
@@ -100,6 +123,16 @@ describe('IntelligencePage indexing actions', () => {
       if (command === 'list_failed_text_embedding_jobs') return Promise.resolve([])
       if (command === 'get_ocr_runtime_status') return Promise.resolve(currentOcrStatus)
       if (command === 'update_ocr_settings') return Promise.resolve(currentOcrStatus)
+      if (command === 'get_model_provider_connection') return Promise.resolve(connection)
+      if (command === 'get_text_generation_status') {
+        return Promise.resolve({
+          enabled: false,
+          available: false,
+          diagnostic: 'Text generation is not configured',
+          providerId: null,
+          model: null,
+        })
+      }
       if (command === 'get_search_settings') {
         return Promise.resolve({ syntaxMode: 'simple', enabledSourceIds: [] })
       }
@@ -157,6 +190,7 @@ describe('IntelligencePage indexing actions', () => {
     })
 
     render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const button = await screen.findByRole('button', { name: 'Reindex all' })
     fireEvent.click(button)
 
@@ -181,6 +215,7 @@ describe('IntelligencePage indexing actions', () => {
 
   it('settles a no-work Index Missing action from its fresh terminal status', async () => {
     render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const button = await screen.findByRole('button', { name: 'Index missing' })
     fireEvent.click(button)
 
@@ -190,6 +225,7 @@ describe('IntelligencePage indexing actions', () => {
 
   it('clears loading and reports command and status-refresh failures', async () => {
     render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const reindexButton = await screen.findByRole('button', { name: 'Reindex all' })
     invokeMock.mockRejectedValueOnce(new Error('command rejected'))
     fireEvent.click(reindexButton)
@@ -208,10 +244,23 @@ describe('IntelligencePage indexing actions', () => {
 
   it('confirms a successful disconnect', async () => {
     render(<IntelligencePage />)
-    fireEvent.click(await screen.findByRole('button', { name: /Configuration/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
 
-    await waitFor(() => expect(toastTitles()).toContain('Meaning Search disconnected'))
+    await waitFor(() => expect(toastTitles()).toContain('Meaning Search disabled'))
+  })
+
+  it('uses one connection and separates model assignment from indexing', async () => {
+    render(<IntelligencePage />)
+
+    expect(await screen.findByText('Ollama Connection')).toBeInTheDocument()
+    expect(screen.getByText('1 embedding')).toBeInTheDocument()
+    expect(screen.getByText('1 generative')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Generation endpoint')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reindex all' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Indexing' }))
+    expect(await screen.findByRole('button', { name: 'Reindex all' })).toBeInTheDocument()
+    expect(screen.queryByText('Ollama Connection')).not.toBeInTheDocument()
   })
 
   it('persists a device-local meaning threshold from Search settings', async () => {
@@ -252,6 +301,7 @@ describe('IntelligencePage indexing actions', () => {
       failedJobs: 1,
     })
     render(<IntelligencePage />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     await screen.findByText(/Ollama was unavailable during the last attempt/)
 
     act(() => {
