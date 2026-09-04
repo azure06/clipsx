@@ -127,6 +127,8 @@ describe('useClipboardStore.mergeClipUpdate', () => {
           representationCount: 1,
           primaryPresentationKind: 'text',
           thumbnailAssetId: null,
+          hasPlainText: true,
+          shareable: true,
         },
       ],
     })
@@ -153,6 +155,8 @@ describe('useClipboardStore.mergeClipUpdate', () => {
       representationCount: 1,
       primaryPresentationKind: 'text',
       thumbnailAssetId: null,
+      hasPlainText: true,
+      shareable: true,
     })
 
     expect(useClipboardStore.getState().clips[0]).toMatchObject({
@@ -183,6 +187,8 @@ const makeClip = (overrides: Partial<ClipSummary> = {}): ClipSummary => ({
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   ...overrides,
 })
 

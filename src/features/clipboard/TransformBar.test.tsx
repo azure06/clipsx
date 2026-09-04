@@ -30,6 +30,8 @@ const presentation: ClipPresentation = {
   representationCount: 1,
   primaryPresentationKind: 'url',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   activeView: {
     id: 'view-1',
     rendererId: 'builtin.url',

@@ -11,7 +11,7 @@ import {
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { ViewTabIcon } from './ClipPreview'
 import { TagChips } from './components/TagChips'
-const { toastMock } = vi.hoisted(() => ({ toastMock: vi.fn() }))
+const { invokeMock, toastMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), toastMock: vi.fn() }))
 const clipboardStoreState = {
   clips: [],
   availableTags: [{ id: 'tag-urgent', name: 'urgent', color: '#ef4444' }],
@@ -30,6 +30,8 @@ vi.mock('../../stores/clipboardStore', () => ({
 vi.mock('../../shared/contexts/ToastContext', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 const textPresentation: ClipPresentation = {
   id: 'clip-1',
@@ -51,6 +53,8 @@ const textPresentation: ClipPresentation = {
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   activeView: {
     id: 'view',
     rendererId: 'builtin.text',
@@ -81,6 +85,7 @@ describe('preview chrome light theme styling', () => {
   beforeEach(() => {
     document.documentElement.className = 'light'
     vi.clearAllMocks()
+    invokeMock.mockResolvedValue(undefined)
   })
 
   it('renders renderer-provided light and dark tab icons at the declared scale', () => {
@@ -120,6 +125,8 @@ describe('preview chrome light theme styling', () => {
           representationCount: 2,
           primaryPresentationKind: 'table',
           thumbnailAssetId: null,
+          hasPlainText: true,
+          shareable: true,
           activeView: {
             id: 'alternate-table',
             rendererId: 'builtin.table',
@@ -156,6 +163,54 @@ describe('preview chrome light theme styling', () => {
     expect(clipboardStoreState.performCopy).toHaveBeenCalledWith('', 'clip-1')
   })
 
+  it('offers exact plain-text copy and host-owned sharing when supported', async () => {
+    const user = userEvent.setup()
+    render(<ClipActionsToolbar presentation={textPresentation} context={actionContext} />)
+
+    await user.click(screen.getByRole('button', { name: 'Copy plain text' }))
+    expect(invokeMock).toHaveBeenCalledWith('execute_clipboard_output', {
+      request: {
+        disposition: 'copy',
+        source: { kind: 'plain_text', clipId: 'clip-1' },
+      },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Share' }))
+    expect(invokeMock).toHaveBeenCalledWith('share_clip', { clipId: 'clip-1' })
+  })
+
+  it('hides plain-text copy and sharing when representation metadata disallows them', () => {
+    render(
+      <ClipActionsToolbar
+        presentation={{ ...textPresentation, hasPlainText: false, shareable: false }}
+        context={actionContext}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Copy plain text' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument()
+  })
+
+  it('prevents duplicate share requests while the native picker is opening', async () => {
+    let finishShare: (() => void) | undefined
+    invokeMock.mockImplementation((command: string) =>
+      command === 'share_clip'
+        ? new Promise<void>(resolve => {
+            finishShare = resolve
+          })
+        : Promise.resolve()
+    )
+    const user = userEvent.setup()
+    render(<ClipActionsToolbar presentation={textPresentation} context={actionContext} />)
+
+    const share = screen.getByRole('button', { name: 'Share' })
+    await user.click(share)
+    expect(screen.getByRole('button', { name: 'Opening share…' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Opening share…' }))
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'share_clip')).toHaveLength(1)
+    finishShare?.()
+  })
+
   it('surfaces a rejected copy instead of showing false success', async () => {
     const user = userEvent.setup()
     clipboardStoreState.performCopy.mockRejectedValueOnce(new Error('clipboard unavailable'))
@@ -182,6 +237,8 @@ describe('preview chrome light theme styling', () => {
           representationCount: 1,
           primaryPresentationKind: 'text',
           thumbnailAssetId: null,
+          hasPlainText: true,
+          shareable: true,
           activeView: {
             id: 'view',
             rendererId: 'builtin.text',
@@ -240,6 +297,8 @@ describe('preview chrome light theme styling', () => {
           representationCount: 1,
           primaryPresentationKind: 'text',
           thumbnailAssetId: null,
+          hasPlainText: true,
+          shareable: true,
           activeView: {
             id: 'view',
             rendererId: 'builtin.text',

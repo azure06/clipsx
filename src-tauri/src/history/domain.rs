@@ -201,6 +201,8 @@ pub struct ClipSummary {
     pub representation_count: i64,
     pub primary_presentation_kind: String,
     pub thumbnail_asset_id: Option<String>,
+    pub has_plain_text: bool,
+    pub shareable: bool,
     pub has_embedding: bool,
     pub ocr_status: Option<String>,
     #[serde(skip)]

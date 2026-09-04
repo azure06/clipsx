@@ -12,6 +12,7 @@ mod ipc;
 mod output;
 mod providers;
 mod search;
+mod share;
 mod shared;
 mod sync;
 mod text;

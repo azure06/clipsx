@@ -54,6 +54,9 @@ impl AppRoots {
     pub fn search_index(&self) -> PathBuf {
         self.data.join("search-index")
     }
+    pub fn share_staging(&self) -> PathBuf {
+        self.data.join("share-staging")
+    }
 }
 
 #[allow(dead_code)]

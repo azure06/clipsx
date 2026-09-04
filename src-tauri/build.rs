@@ -58,6 +58,7 @@ fn main() {
             "set_extension_action_pinned",
             "set_extension_action_shortcut",
             "execute_clipboard_output",
+            "share_clip",
             "save_transform_result",
             "get_transform_preferences",
             "update_transform_preferences",

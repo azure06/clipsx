@@ -34,6 +34,8 @@ const summary = {
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
 }
 
 let artifactListener: ((event: { payload: { clipId: string; sourceId: string } }) => void) | null

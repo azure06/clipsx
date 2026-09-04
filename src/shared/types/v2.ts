@@ -75,6 +75,8 @@ export type ClipSummary = {
   representationCount: number
   primaryPresentationKind: string
   thumbnailAssetId: string | null
+  hasPlainText: boolean
+  shareable: boolean
   hasEmbedding?: boolean
   ocrStatus?: string | null
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */

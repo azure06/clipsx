@@ -1726,6 +1726,20 @@ async fn execute_clipboard_output_impl(
 }
 
 #[tauri::command]
+async fn share_clip(
+    clip_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let payload = crate::share::prepare(&state.history, &state.roots, &clip_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::share::show(&window, payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn save_transform_result(
     app: tauri::AppHandle,
     result_id: String,
@@ -2727,6 +2741,9 @@ pub(crate) fn run() {
 
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
+            if crate::share::cleanup_stale(&roots).is_err() {
+                eprintln!("[SHARE] Failed to clean stale share exports");
+            }
             crate::clipboard::capabilities::validate_embedded()
                 .context("embedded clipboard capability policy is invalid")?;
             let foundation_started = Instant::now();
@@ -3008,6 +3025,7 @@ pub(crate) fn run() {
             set_extension_action_pinned,
             set_extension_action_shortcut,
             execute_clipboard_output,
+            share_clip,
             save_transform_result,
             get_transform_preferences,
             update_transform_preferences,

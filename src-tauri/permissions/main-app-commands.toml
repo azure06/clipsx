@@ -22,7 +22,7 @@ permissions = [
   "allow-get-extension-credential-status", "allow-set-extension-credential",
   "allow-open-extension-custom-view", "allow-close-extension-custom-view",
   "allow-sync-extension-custom-view", "allow-set-extension-action-pinned",
-  "allow-set-extension-action-shortcut", "allow-execute-clipboard-output", "allow-save-transform-result",
+  "allow-set-extension-action-shortcut", "allow-execute-clipboard-output", "allow-share-clip", "allow-save-transform-result",
   "allow-get-transform-preferences", "allow-update-transform-preferences", "allow-delete-clip",
   "allow-clear-history", "allow-set-clip-pinned", "allow-set-clip-favorite", "allow-update-clip-note",
   "allow-list-tags", "allow-create-tag", "allow-delete-tag", "allow-add-clip-tag", "allow-remove-clip-tag",

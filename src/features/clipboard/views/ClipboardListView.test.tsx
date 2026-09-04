@@ -23,6 +23,8 @@ const clip = (index: number): ClipSummary => ({
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   tags: [],
   historyPreview: {
     leading: { kind: 'host_icon', name: 'text' },

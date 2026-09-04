@@ -42,6 +42,8 @@ const makeClip = (): ClipSummary => ({
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
 })
 
 describe('ClipboardHistory activation modes', () => {

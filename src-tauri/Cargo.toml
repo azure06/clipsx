@@ -83,18 +83,23 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_Shell",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
+  "ApplicationModel_DataTransfer",
+  "Foundation_Collections",
+  "Storage",
   "Media_Ocr",
   "Globalization",
   "System_Profile",
   "Storage_Streams",
   "Graphics_Imaging"
 ] }
+windows-collections = "0.3.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2.7"
 core-graphics = "0.25"
 foreign-types = "0.5"
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = "0.13.13"
 x11rb = { version = "0.13", features = ["xtest"] }
 [features]
 default = ["custom-protocol"]

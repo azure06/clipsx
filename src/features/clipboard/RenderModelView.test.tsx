@@ -31,6 +31,8 @@ const presentation = (
   representationCount: 1,
   primaryPresentationKind: presentationKind,
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   activeView: {
     id: 'view-1',
     rendererId: `builtin.${model.kind}`,

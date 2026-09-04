@@ -72,6 +72,8 @@ const createTextClip = (overrides?: Partial<ClipSummary>): ClipSummary => ({
   representationCount: 1,
   primaryPresentationKind: 'text',
   thumbnailAssetId: null,
+  hasPlainText: true,
+  shareable: true,
   ...overrides,
 })
 

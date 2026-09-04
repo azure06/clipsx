@@ -6,6 +6,7 @@ import {
   Check,
   Code2,
   Copy,
+  ClipboardType,
   Database,
   ExternalLink,
   File,
@@ -19,6 +20,7 @@ import {
   Pin,
   PenLine,
   Star,
+  Share2,
   Table2,
   Terminal,
   Text,
@@ -36,6 +38,7 @@ import {
   type ShortcutDef,
 } from '../../shared/keyboard/shortcuts'
 import { useToast } from '../../shared/contexts/ToastContext'
+import { copyClipboardOutput } from '../../shared/clipboardOutput'
 
 const platform = getPlatform()
 const representationsShortcut: ShortcutDef = { modifiers: ['primary'], key: 'I' }
@@ -52,6 +55,7 @@ type ToolbarAction = {
   label: string
   icon: LucideIcon
   active?: boolean
+  disabled?: boolean
   activeColor?: string
   shortcut?: ShortcutDef
   separator?: boolean
@@ -134,6 +138,8 @@ export const ClipActionsToolbar = ({
   context: PresentationActionContext
 }) => {
   const [copied, setCopied] = useState(false)
+  const [plainCopied, setPlainCopied] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const { toast } = useToast()
   const { t } = useTranslation()
   const performCopy = useClipboardStore(state => state.performCopy)
@@ -176,6 +182,52 @@ export const ClipActionsToolbar = ({
         },
       },
     ]
+    if (presentation.hasPlainText) {
+      values.push({
+        id: 'copy-plain-text',
+        label: plainCopied ? 'Plain text copied!' : 'Copy plain text',
+        icon: plainCopied ? Check : ClipboardType,
+        active: plainCopied,
+        activeColor:
+          'bg-emerald-500/20 text-emerald-600 ring-1 ring-emerald-500/40 dark:text-emerald-400 dark:bg-emerald-500/15',
+        run: async () => {
+          try {
+            await copyClipboardOutput({ kind: 'plain_text', clipId: presentation.id })
+            setPlainCopied(true)
+            window.setTimeout(() => setPlainCopied(false), 2000)
+          } catch (error) {
+            toast({
+              title: t('common.error'),
+              description: String(error),
+              type: 'error',
+            })
+          }
+        },
+      })
+    }
+    if (presentation.shareable) {
+      values.push({
+        id: 'share',
+        label: sharing ? 'Opening share…' : 'Share',
+        icon: Share2,
+        disabled: sharing,
+        run: async () => {
+          if (sharing) return
+          setSharing(true)
+          try {
+            await invoke('share_clip', { clipId: presentation.id })
+          } catch (error) {
+            toast({
+              title: 'Could not share clip',
+              description: String(error),
+              type: 'error',
+            })
+          } finally {
+            setSharing(false)
+          }
+        },
+      })
+    }
     const extension = editorExtension(presentation)
     if (extension) {
       values.push({
@@ -253,7 +305,7 @@ export const ClipActionsToolbar = ({
       }
     )
     return values
-  }, [context, copied, performCopy, presentation, t, toast])
+  }, [context, copied, performCopy, plainCopied, presentation, sharing, t, toast])
   return (
     <Tooltip.Provider delayDuration={300}>
       <div className="flex items-center gap-1">
@@ -284,7 +336,8 @@ const ActionButton = ({ action }: { action: ToolbarAction }) => {
       <Tooltip.Trigger asChild>
         <button
           aria-label={action.label}
-          className={`rounded-md p-1.5 transition-all duration-150 ${activeClass} ${action.active ? 'scale-110' : ''}`}
+          disabled={action.disabled}
+          className={`rounded-md p-1.5 transition-all duration-150 disabled:cursor-wait disabled:opacity-50 ${activeClass} ${action.active ? 'scale-110' : ''}`}
           onClick={() => void action.run()}
         >
           <Icon
