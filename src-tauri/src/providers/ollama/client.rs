@@ -30,7 +30,12 @@ impl OllamaClient {
             .map_err(|error| ProviderError::InvalidConfiguration(error.to_string()))
     }
 
-    pub async fn get(&self, path: &str, timeout: Duration) -> ProviderResult<serde_json::Value> {
+    pub async fn get_bounded(
+        &self,
+        path: &str,
+        timeout: Duration,
+        max_response_bytes: usize,
+    ) -> ProviderResult<serde_json::Value> {
         let response = self
             .client
             .get(self.api(path)?)
@@ -38,7 +43,7 @@ impl OllamaClient {
             .send()
             .await
             .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
-        response_json(response, path).await
+        response_json_bounded(response, path, max_response_bytes).await
     }
 
     pub async fn post(

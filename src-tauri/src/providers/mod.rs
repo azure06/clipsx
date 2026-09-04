@@ -5,11 +5,11 @@ pub mod contracts;
 pub mod disabled;
 pub mod error;
 pub mod generation;
+pub mod model_catalog;
 pub mod native_ocr;
 pub mod ollama;
 pub mod registry;
 
 pub use registry::{
-    provider_capabilities, text_embedding_provider, TextEmbeddingProviderConfig,
-    OLLAMA_TEXT_EMBEDDING_ID,
+    text_embedding_provider, TextEmbeddingProviderConfig, OLLAMA_TEXT_EMBEDDING_ID,
 };

@@ -30,7 +30,9 @@ INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUE
     ('capture.max_snapshot_bytes', '104857600', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
 
 INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUES
-    ('providers.text_embedding.active', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ('providers.ollama.connection', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    ('providers.text_embedding.active', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    ('providers.generation.text.active', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000);
 
 INSERT INTO config_profile_values (key, value_json, created_at, updated_at) VALUES
     ('renderer.preferences', '{}', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),

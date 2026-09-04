@@ -6,5 +6,5 @@ pub mod models;
 pub mod text_embedding;
 
 pub use generation::OllamaGenerationProvider;
-pub use models::{OllamaEndpointStatus, OllamaModelDescriptor};
-pub use text_embedding::{list_models, probe_endpoint, probe_model, OllamaTextEmbeddingProvider};
+pub use models::{discover_models, inspect_model};
+pub use text_embedding::OllamaTextEmbeddingProvider;

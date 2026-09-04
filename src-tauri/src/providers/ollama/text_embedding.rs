@@ -1,4 +1,4 @@
-use super::{client::OllamaClient, models::OllamaModelDescriptor, OllamaEndpointStatus};
+use super::client::OllamaClient;
 use crate::providers::{
     contracts::{
         text_embedding::{TextEmbeddingProvider, TextEmbeddingSpace},
@@ -53,16 +53,14 @@ impl OllamaTextEmbeddingProvider {
 #[async_trait]
 impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
     async fn describe(&self) -> ProviderResult<TextEmbeddingSpace> {
-        let models = discover_models(&self.client).await?;
-        let selected = models
-            .iter()
-            .find(|candidate| candidate.name == self.model)
-            .ok_or_else(|| {
-                ProviderError::InvalidConfiguration(format!(
-                    "{} is not installed in Ollama",
-                    self.model
-                ))
-            })?;
+        let selected =
+            super::models::inspect_model(self.client.endpoint().as_str(), &self.model).await?;
+        if !selected.supports(crate::providers::model_catalog::ModelCapability::TextEmbedding) {
+            return Err(ProviderError::InvalidConfiguration(format!(
+                "{} does not support text embeddings",
+                self.model
+            )));
+        }
         let vectors = self
             .embed_queries(&["clipsx embedding capability probe".into()])
             .await?;
@@ -93,55 +91,6 @@ impl TextEmbeddingProvider for OllamaTextEmbeddingProvider {
     async fn embed_queries(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
         self.embeddings(inputs).await
     }
-}
-
-pub async fn probe_endpoint(endpoint: String) -> OllamaEndpointStatus {
-    match OllamaClient::new(&endpoint) {
-        Ok(client) => match discover_models(&client).await {
-            Ok(_) => OllamaEndpointStatus {
-                reachable: true,
-                endpoint,
-                diagnostic: None,
-            },
-            Err(error) => OllamaEndpointStatus {
-                reachable: false,
-                endpoint,
-                diagnostic: Some(error.to_string()),
-            },
-        },
-        Err(error) => OllamaEndpointStatus {
-            reachable: false,
-            endpoint,
-            diagnostic: Some(error.to_string()),
-        },
-    }
-}
-
-pub async fn list_models(endpoint: String) -> ProviderResult<Vec<OllamaModelDescriptor>> {
-    discover_models(&OllamaClient::new(&endpoint)?).await
-}
-
-pub async fn probe_model(endpoint: String, model: String) -> ProviderResult<TextEmbeddingSpace> {
-    OllamaTextEmbeddingProvider::new(&endpoint, model)?
-        .describe()
-        .await
-}
-
-async fn discover_models(client: &OllamaClient) -> ProviderResult<Vec<OllamaModelDescriptor>> {
-    let response = client.get("api/tags", Duration::from_secs(10)).await?;
-    Ok(response["models"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|model| {
-            Some(OllamaModelDescriptor {
-                name: model["name"].as_str()?.to_string(),
-                digest: model["digest"].as_str().map(str::to_string),
-                size: model["size"].as_u64(),
-            })
-        })
-        .collect())
 }
 
 fn parse_vectors(value: &serde_json::Value, expected: usize) -> ProviderResult<Vec<Vec<f32>>> {

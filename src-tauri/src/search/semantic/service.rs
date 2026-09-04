@@ -8,12 +8,12 @@ use crate::{
         self,
         contracts::text_embedding::{TextEmbeddingProvider, TextEmbeddingSpace},
         error::ProviderError,
-        ollama, TextEmbeddingProviderConfig, OLLAMA_TEXT_EMBEDDING_ID,
+        model_catalog::{self, ModelCapability},
+        TextEmbeddingProviderConfig, OLLAMA_TEXT_EMBEDDING_ID,
     },
     search::SEMANTIC_TEXT_SOURCE_ID,
 };
 
-pub use crate::providers::ollama::{OllamaEndpointStatus, OllamaModelDescriptor};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -41,20 +41,6 @@ const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmbeddingProviderDescriptor {
-    pub provider_kind: String,
-    pub provider_version: String,
-    pub endpoint: String,
-    pub model: String,
-    pub model_digest: String,
-    pub dimensions: u32,
-    pub normalization: String,
-    pub modality: String,
-    pub distance_metric: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProviderStatus {
     pub enabled: bool,
     pub phase: ProviderPhase,
@@ -68,7 +54,6 @@ pub struct ProviderStatus {
     pub dimensions: Option<u32>,
     pub index_bytes: u64,
     pub estimated_rebuild_bytes: u64,
-    pub endpoint: Option<String>,
     pub model: Option<String>,
     pub minimum_similarity_percent: Option<u8>,
 }
@@ -106,42 +91,16 @@ struct Generation {
     sidecar_relative_path: String,
 }
 
-pub async fn probe_endpoint(endpoint: String) -> OllamaEndpointStatus {
-    ollama::probe_endpoint(endpoint).await
-}
-
-pub async fn list_models(endpoint: String) -> Result<Vec<OllamaModelDescriptor>> {
-    Ok(ollama::list_models(endpoint).await?)
-}
-
-pub async fn probe_model(endpoint: String, model: String) -> Result<EmbeddingProviderDescriptor> {
-    let space = ollama::probe_model(endpoint.clone(), model.clone()).await?;
-    Ok(EmbeddingProviderDescriptor {
-        provider_kind: space.provider.provider_id.clone(),
-        provider_version: space.provider.provider_version.clone(),
-        endpoint,
-        model,
-        model_digest: space.provider.model_revision.clone(),
-        dimensions: space.dimensions as u32,
-        normalization: space.normalization.clone(),
-        modality: "text".into(),
-        distance_metric: space.distance_metric.clone(),
-    })
-}
-
-pub async fn configure(
-    repo: &HistoryRepository,
-    endpoint: String,
-    model: String,
-) -> Result<ProviderStatus> {
+pub async fn configure(repo: &HistoryRepository, model: String) -> Result<ProviderStatus> {
+    model_catalog::require_model(repo, &model, ModelCapability::TextEmbedding).await?;
+    let endpoint = model_catalog::endpoint(repo).await?;
     let mut config = TextEmbeddingProviderConfig {
         provider_id: OLLAMA_TEXT_EMBEDDING_ID.into(),
-        endpoint,
         model,
         enabled: true,
         minimum_similarity_percent: None,
     };
-    let provider = providers::text_embedding_provider(&config, None)?;
+    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
     let descriptor = provider.describe().await?;
     let compatibility = compatibility_sha256(&descriptor)?;
     let space_id = sqlx::query_scalar::<_, String>(
@@ -154,11 +113,15 @@ pub async fn configure(
     let existing_threshold = get_device_config(&repo.pool)
         .await?
         .and_then(|existing| existing.minimum_similarity_percent);
-    let active_space = generation_by_status(repo, "active")
-        .await?
-        .map(|generation| generation.space_id);
-    config.minimum_similarity_percent =
-        threshold_for_configured_space(existing_threshold, active_space.as_deref(), &space_id);
+    let active_space = generation_by_status(repo, "active").await?;
+    let building_space = generation_by_status(repo, "building").await?;
+    config.minimum_similarity_percent = threshold_for_configured_space(
+        existing_threshold,
+        active_space
+            .as_ref()
+            .map(|generation| generation.space_id.as_str()),
+        &space_id,
+    );
     sqlx::query(
         "INSERT OR IGNORE INTO search_embedding_spaces(
             id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,
@@ -179,7 +142,11 @@ pub async fn configure(
     .await?;
     put_device_config(&repo.pool, &config).await?;
     record_provider_success(repo, &config.provider_id).await?;
-    create_building_generation(repo, &space_id).await?;
+    if active_space.as_ref().map(|value| value.space_id.as_str()) != Some(space_id.as_str())
+        && building_space.as_ref().map(|value| value.space_id.as_str()) != Some(space_id.as_str())
+    {
+        create_building_generation(repo, &space_id).await?;
+    }
     status(repo).await
 }
 
@@ -208,7 +175,6 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
             dimensions: None,
             index_bytes: 0,
             estimated_rebuild_bytes: 0,
-            endpoint: None,
             model: None,
             minimum_similarity_percent: None,
         });
@@ -270,7 +236,6 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
         dimensions,
         index_bytes,
         estimated_rebuild_bytes,
-        endpoint: Some(config.endpoint),
         model: Some(config.model),
         minimum_similarity_percent: config.minimum_similarity_percent,
     })
@@ -410,7 +375,8 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
             .bind(&generation.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let provider = providers::text_embedding_provider(&config, Some(&model))?;
+    let endpoint = model_catalog::endpoint(repo).await?;
+    let provider = providers::text_embedding_provider(&config, &endpoint, Some(&model))?;
     let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
     if generation.status == "active" {
         sqlx::query(
@@ -1126,7 +1092,8 @@ pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn validate_configured_provider(repo: &HistoryRepository) -> Result<()> {
     let config = enabled_config(repo).await?;
-    let provider = providers::text_embedding_provider(&config, None)?;
+    let endpoint = model_catalog::endpoint(repo).await?;
+    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
     match provider.describe().await {
         Ok(_) => {
             record_provider_success(repo, &config.provider_id).await?;
@@ -1154,7 +1121,8 @@ pub async fn semantic_matches(
             .bind(&active.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let provider = providers::text_embedding_provider(&config, Some(&model))?;
+    let endpoint = model_catalog::endpoint(repo).await?;
+    let provider = providers::text_embedding_provider(&config, &endpoint, Some(&model))?;
     semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
         .await
 }

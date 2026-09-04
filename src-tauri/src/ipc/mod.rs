@@ -2297,34 +2297,30 @@ async fn search_clips(
 }
 
 #[tauri::command]
-async fn probe_ollama_endpoint(endpoint: String) -> embeddings::OllamaEndpointStatus {
-    embeddings::probe_endpoint(endpoint).await
+async fn get_model_provider_connection(
+    state: State<'_, AppState>,
+) -> Result<crate::providers::model_catalog::ModelProviderConnectionStatus, String> {
+    crate::providers::model_catalog::state(&state.history)
+        .await
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
-async fn list_ollama_models(
+async fn save_model_provider_connection(
+    provider_id: String,
     endpoint: String,
-) -> Result<Vec<embeddings::OllamaModelDescriptor>, String> {
-    embeddings::list_models(endpoint)
+    state: State<'_, AppState>,
+) -> Result<crate::providers::model_catalog::ModelProviderConnectionStatus, String> {
+    crate::providers::model_catalog::save(&state.history, provider_id, endpoint)
         .await
-        .map_err(|e| e.to_string())
-}
-#[tauri::command]
-async fn probe_ollama_model(
-    endpoint: String,
-    model: String,
-) -> Result<embeddings::EmbeddingProviderDescriptor, String> {
-    embeddings::probe_model(endpoint, model)
-        .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 async fn configure_text_embedding_provider(
     app: tauri::AppHandle,
-    endpoint: String,
     model: String,
     state: State<'_, AppState>,
 ) -> Result<embeddings::ProviderStatus, String> {
-    let status = embeddings::configure(&state.history, endpoint, model)
+    let status = embeddings::configure(&state.history, model)
         .await
         .map_err(|e| e.to_string())?;
     let mut search_settings = search::get_settings(&state.history.pool)
@@ -2393,11 +2389,10 @@ async fn list_failed_text_embedding_jobs(
 }
 #[tauri::command]
 async fn configure_text_generation_provider(
-    endpoint: String,
     model: String,
     state: State<'_, AppState>,
 ) -> Result<crate::providers::generation::GenerationProviderStatus, String> {
-    crate::providers::generation::configure(&state.history, endpoint, model)
+    crate::providers::generation::configure(&state.history, model)
         .await
         .map_err(|error| error.to_string())
 }
@@ -2777,7 +2772,6 @@ pub(crate) fn run() {
                 });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
-                let _ = tauri::async_runtime::block_on(crate::providers::provider_capabilities());
                 // Rebuild any stale FTS projections from previous sessions.
                 let fts_history = history.clone();
                 let fts_app = app.handle().clone();
@@ -3043,9 +3037,8 @@ pub(crate) fn run() {
             get_search_settings,
             update_search_settings,
             list_search_sources,
-            probe_ollama_endpoint,
-            list_ollama_models,
-            probe_ollama_model,
+            get_model_provider_connection,
+            save_model_provider_connection,
             configure_text_embedding_provider,
             disable_text_embedding_provider,
             get_text_embedding_status,
