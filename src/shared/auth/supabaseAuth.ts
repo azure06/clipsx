@@ -16,6 +16,7 @@ const configuredProvider = (import.meta.env.VITE_SUPABASE_AUTH_PROVIDER?.trim() 
   DEFAULT_SUPABASE_AUTH_PROVIDER) as Provider
 
 let client: ReturnType<typeof createClient> | undefined
+let rejectPendingCallback = false
 
 const credentialVaultStorage: SupportedStorage = {
   getItem: async key => {
@@ -173,10 +174,14 @@ export const startOAuthLogin = async (
 }
 
 export const startSupabaseLogin = async () => {
+  rejectPendingCallback = false
   await startOAuthLogin(getClient(), configuredProvider)
 }
 
 export const completeSupabaseCallback = async (rawUrl: string) => {
+  if (rejectPendingCallback) {
+    throw new Error('This sign-in attempt was reset. Please start again.')
+  }
   const { code } = parseAuthCallbackUrl(rawUrl)
   const { data, error } = await getClient().auth.exchangeCodeForSession(code)
 
@@ -217,6 +222,19 @@ export const signOutSupabase = async () => {
     credentialVaultStorage.removeItem(AUTH_STORAGE_KEY),
     credentialVaultStorage.removeItem(`${AUTH_STORAGE_KEY}-code-verifier`),
   ])
+}
+
+export const resetSupabaseLocalSignIn = async () => {
+  rejectPendingCallback = true
+  const currentClient = client
+  await currentClient?.auth.stopAutoRefresh()
+  try {
+    await invoke('auth_storage_reset')
+    client = undefined
+  } catch (error) {
+    await currentClient?.auth.startAutoRefresh()
+    throw error
+  }
 }
 
 export const applySupabaseSyncBatch = async (batch: {

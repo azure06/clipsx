@@ -1,9 +1,12 @@
 //! Device-local persistence for Supabase session and PKCE values.
 
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-#[cfg(any(not(target_os = "windows"), not(test)))]
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
 pub const AUTH_STORAGE_KEY: &str = "sb-clipsx-auth-token";
 const MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
@@ -95,6 +98,13 @@ struct Envelope {
 mod backend {
     use super::*;
     use std::{fs, io::Write, slice};
+    #[cfg(not(test))]
+    use windows::Win32::{
+        Foundation::ERROR_NOT_FOUND,
+        Security::Credentials::{
+            CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW, CRED_TYPE_GENERIC,
+        },
+    };
     use windows::Win32::{
         Foundation::{LocalFree, HLOCAL},
         Security::Cryptography::{
@@ -104,11 +114,11 @@ mod backend {
 
     const FILE_NAME: &str = "session.dpapi";
 
-    pub fn get(root: &PathBuf, key: &str) -> Result<Option<String>, String> {
+    pub fn get(root: &Path, key: &str) -> Result<Option<String>, String> {
         Ok(read(root)?.values.get(key).cloned())
     }
 
-    pub fn set(root: &PathBuf, key: &str, value: String) -> Result<(), String> {
+    pub fn set(root: &Path, key: &str, value: String) -> Result<(), String> {
         if !path(root).exists() {
             cleanup_legacy()?;
         }
@@ -117,7 +127,7 @@ mod backend {
         write(root, &envelope)
     }
 
-    pub fn remove(root: &PathBuf, key: &str) -> Result<(), String> {
+    pub fn remove(root: &Path, key: &str) -> Result<(), String> {
         let mut envelope = read(root)?;
         envelope.values.remove(key);
         if envelope.values.is_empty() {
@@ -127,16 +137,16 @@ mod backend {
         }
     }
 
-    pub fn reset(root: &PathBuf) -> Result<(), String> {
+    pub fn reset(root: &Path) -> Result<(), String> {
         remove_file(root)?;
         cleanup_legacy()
     }
 
-    fn path(root: &PathBuf) -> PathBuf {
+    fn path(root: &Path) -> PathBuf {
         root.join(FILE_NAME)
     }
 
-    fn read(root: &PathBuf) -> Result<Envelope, String> {
+    fn read(root: &Path) -> Result<Envelope, String> {
         let path = path(root);
         let metadata = match fs::metadata(&path) {
             Ok(value) => value,
@@ -168,7 +178,7 @@ mod backend {
         Ok(envelope)
     }
 
-    fn write(root: &PathBuf, envelope: &Envelope) -> Result<(), String> {
+    fn write(root: &Path, envelope: &Envelope) -> Result<(), String> {
         let plaintext = serde_json::to_vec(envelope)
             .map_err(|_| "Unable to serialize protected sign-in data".to_string())?;
         if plaintext.len() > MAX_PLAINTEXT_BYTES {
@@ -196,7 +206,7 @@ mod backend {
         Ok(())
     }
 
-    fn remove_file(root: &PathBuf) -> Result<(), String> {
+    fn remove_file(root: &Path) -> Result<(), String> {
         match fs::remove_file(path(root)) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -204,7 +214,7 @@ mod backend {
         }
     }
 
-    fn cleanup_temporary_files(root: &PathBuf) {
+    fn cleanup_temporary_files(root: &Path) {
         let Ok(entries) = fs::read_dir(root) else {
             return;
         };
@@ -225,8 +235,14 @@ mod backend {
         crypt(value, false)
     }
 
+    fn legacy_auth_key_from_target(target: &str) -> Option<&str> {
+        let suffix = target.strip_suffix(AUTH_SERVICE)?;
+        let key = suffix.strip_suffix('.')?;
+        is_supported_key(key).then_some(key)
+    }
+
     fn crypt(value: &[u8], protect_value: bool) -> Result<Vec<u8>, String> {
-        let mut input = CRYPT_INTEGER_BLOB {
+        let input = CRYPT_INTEGER_BLOB {
             cbData: u32::try_from(value.len()).map_err(|_| "Sign-in data is too large")?,
             pbData: value.as_ptr().cast_mut(),
         };
@@ -234,7 +250,7 @@ mod backend {
         let result = unsafe {
             if protect_value {
                 CryptProtectData(
-                    &mut input,
+                    &input,
                     windows::core::PCWSTR::null(),
                     None,
                     None,
@@ -244,7 +260,7 @@ mod backend {
                 )
             } else {
                 CryptUnprotectData(
-                    &mut input,
+                    &input,
                     None,
                     None,
                     None,
@@ -265,37 +281,38 @@ mod backend {
 
     #[cfg(not(test))]
     fn cleanup_legacy() -> Result<(), String> {
-        let index_key = format!("{AUTH_STORAGE_KEY}-flows-code-verifier");
-        let mut keys = vec![
-            AUTH_STORAGE_KEY.to_string(),
-            format!("{AUTH_STORAGE_KEY}-user"),
-            format!("{AUTH_STORAGE_KEY}-code-verifier"),
-            index_key.clone(),
-        ];
-        if let Ok(index) =
-            keyring::Entry::new(AUTH_SERVICE, &index_key).and_then(|entry| entry.get_password())
-        {
-            if let Ok(ids) = serde_json::from_str::<Vec<String>>(&index) {
-                keys.extend(
-                    ids.into_iter()
-                        .filter(|id| {
-                            id.len() == 32
-                                && id.bytes().all(|byte| {
-                                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-                                })
-                        })
-                        .map(|id| format!("{AUTH_STORAGE_KEY}-flow-{id}-code-verifier")),
-                );
+        let mut count = 0_u32;
+        let mut credentials: *mut *mut CREDENTIALW = std::ptr::null_mut();
+        if let Err(error) = unsafe {
+            CredEnumerateW(
+                windows::core::PCWSTR::null(),
+                None,
+                &mut count,
+                &mut credentials,
+            )
+        } {
+            if error.code() == windows::core::HRESULT::from_win32(ERROR_NOT_FOUND.0) {
+                return Ok(());
             }
+            return Err("Unable to inspect legacy sign-in storage".into());
         }
-        for key in keys {
-            let entry = keyring::Entry::new(AUTH_SERVICE, &key)
-                .map_err(|_| "Unable to access legacy sign-in storage".to_string())?;
-            match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => {}
-                Err(_) => return Err("Unable to clear legacy sign-in storage".into()),
+
+        let entries = unsafe { slice::from_raw_parts(credentials, count as usize) };
+        let result = entries.iter().try_for_each(|credential| {
+            let credential = unsafe { &**credential };
+            if credential.Type != CRED_TYPE_GENERIC {
+                return Ok(());
             }
-        }
+            let target = unsafe { credential.TargetName.to_string() }
+                .map_err(|_| "Unable to inspect a legacy sign-in entry".to_string())?;
+            if legacy_auth_key_from_target(&target).is_none() {
+                return Ok(());
+            }
+            unsafe { CredDeleteW(credential.TargetName, CRED_TYPE_GENERIC, None) }
+                .map_err(|_| "Unable to clear legacy sign-in storage".to_string())
+        });
+        unsafe { CredFree(credentials.cast()) };
+        result?;
         Ok(())
     }
 
@@ -329,10 +346,15 @@ mod backend {
             let root = tempfile::tempdir().unwrap();
             let root = root.path().to_path_buf();
             set(&root, AUTH_STORAGE_KEY, "working".into()).unwrap();
+            set(&root, AUTH_STORAGE_KEY, "updated".into()).unwrap();
+            assert_eq!(
+                get(&root, AUTH_STORAGE_KEY).unwrap().as_deref(),
+                Some("updated")
+            );
             assert!(set(&root, AUTH_STORAGE_KEY, "x".repeat(MAX_PLAINTEXT_BYTES)).is_err());
             assert_eq!(
                 get(&root, AUTH_STORAGE_KEY).unwrap().as_deref(),
-                Some("working")
+                Some("updated")
             );
             let mut encrypted = fs::read(path(&root)).unwrap();
             let middle = encrypted.len() / 2;
@@ -350,6 +372,23 @@ mod backend {
             assert!(!path(&root).exists());
             remove(&root, AUTH_STORAGE_KEY).unwrap();
         }
+
+        #[test]
+        fn legacy_cleanup_matches_only_the_exact_service_and_allowed_key() {
+            assert_eq!(
+                legacy_auth_key_from_target(
+                    "sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-code-verifier.com.infiniti.clipsx"
+                ),
+                Some("sb-clipsx-auth-token-flow-0123456789abcdef0123456789abcdef-code-verifier")
+            );
+            for target in [
+                "other.com.infiniti.clipsx",
+                "sb-clipsx-auth-token.com.example.app",
+                "prefix.sb-clipsx-auth-token.com.infiniti.clipsx",
+            ] {
+                assert_eq!(legacy_auth_key_from_target(target), None, "{target}");
+            }
+        }
     }
 }
 
@@ -361,25 +400,25 @@ mod backend {
         keyring::Entry::new(AUTH_SERVICE, key)
             .map_err(|_| "Unable to access sign-in storage".into())
     }
-    pub fn get(_: &PathBuf, key: &str) -> Result<Option<String>, String> {
+    pub fn get(_: &Path, key: &str) -> Result<Option<String>, String> {
         match entry(key)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err("Unable to read sign-in storage".into()),
         }
     }
-    pub fn set(_: &PathBuf, key: &str, value: String) -> Result<(), String> {
+    pub fn set(_: &Path, key: &str, value: String) -> Result<(), String> {
         entry(key)?
             .set_password(&value)
             .map_err(|_| "Unable to write sign-in storage".into())
     }
-    pub fn remove(_: &PathBuf, key: &str) -> Result<(), String> {
+    pub fn remove(_: &Path, key: &str) -> Result<(), String> {
         match entry(key)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(_) => Err("Unable to clear sign-in storage".into()),
         }
     }
-    pub fn reset(_: &PathBuf) -> Result<(), String> {
+    pub fn reset(_: &Path) -> Result<(), String> {
         for key in [
             AUTH_STORAGE_KEY,
             "sb-clipsx-auth-token-user",

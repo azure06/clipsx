@@ -25,8 +25,11 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
 
 import {
   DEFAULT_SUPABASE_AUTH_PROVIDER,
+  completeSupabaseCallback,
   getDesktopOAuthRedirectUrl,
   parseAuthCallbackUrl,
+  resetSupabaseLocalSignIn,
+  restoreSupabaseSession,
   startOAuthLogin,
 } from './supabaseAuth'
 
@@ -179,5 +182,41 @@ describe('getDesktopOAuthRedirectUrl', () => {
     'https://user:password@clipsx.app',
   ])('rejects an unsafe website origin: %s', origin => {
     expect(() => getDesktopOAuthRedirectUrl(origin)).toThrow()
+  })
+})
+
+describe('secure session recovery', () => {
+  it('accepts the SDK user key and resets the active client before rejecting its old callback', async () => {
+    const stopAutoRefresh = vi.fn()
+    const startAutoRefresh = vi.fn()
+    const exchangeCodeForSession = vi.fn()
+    createClientMock.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        stopAutoRefresh,
+        startAutoRefresh,
+        exchangeCodeForSession,
+      },
+    })
+    invokeMock.mockResolvedValue(undefined)
+
+    await restoreSupabaseSession()
+    const options = createClientMock.mock.calls.at(-1)?.[2] as {
+      auth: { storage: { setItem: (key: string, value: string) => Promise<void> } }
+    }
+    await options.auth.storage.setItem('sb-clipsx-auth-token-user', '{"user":{}}')
+    expect(invokeMock).toHaveBeenCalledWith('auth_storage_set', {
+      key: 'sb-clipsx-auth-token-user',
+      value: '{"user":{}}',
+    })
+
+    await resetSupabaseLocalSignIn()
+    expect(stopAutoRefresh).toHaveBeenCalledOnce()
+    expect(invokeMock).toHaveBeenCalledWith('auth_storage_reset')
+    await expect(completeSupabaseCallback('clipsx://auth/callback?code=abandoned')).rejects.toThrow(
+      'reset'
+    )
+    expect(exchangeCodeForSession).not.toHaveBeenCalled()
+    expect(startAutoRefresh).not.toHaveBeenCalled()
   })
 })

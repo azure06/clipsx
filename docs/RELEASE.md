@@ -96,6 +96,15 @@ real target focus/paste behavior, permissions, packaging, or signing.
 
 ## Shared native clipboard sequence
 
+Before platform clipboard certification, verify account storage in an installed
+Windows build: complete browser sign-in with a session larger than the Windows
+Credential Manager limit, restart and restore it, refresh the token and restart
+again, then sign out and confirm it remains signed out. Corrupt the DPAPI file
+in an isolated test profile and verify **Reset local sign-in** recovers the
+account UI without removing clipboard history, settings, or unrelated
+credentials. Repeat with an unwritable authentication directory and record the
+recoverable error.
+
 Run this sequence for every supported format on every advertised platform:
 
 1. Place a fixture on the native clipboard with all expected alternates.

@@ -185,6 +185,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const authError = useAuthStore(state => state.error)
   const signIn = useAuthStore(state => state.signIn)
   const signOut = useAuthStore(state => state.signOut)
+  const resetLocalSignIn = useAuthStore(state => state.resetLocalSignIn)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
   const [syncBusy, setSyncBusy] = useState(false)
@@ -926,6 +927,26 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                         </p>
                       )}
                       <Button onClick={() => void signIn()}>{t('settings.signIn')}</Button>
+                      {authStatus === 'error' && (
+                        <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+                          <p className="text-xs text-gray-600 dark:text-gray-300">
+                            {t('settings.resetLocalSignInDescription')}
+                          </p>
+                          <Button
+                            className="mt-2"
+                            variant="outline"
+                            size="sm"
+                            leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
+                            onClick={() => {
+                              if (confirm(t('settings.resetLocalSignInConfirm'))) {
+                                void resetLocalSignIn()
+                              }
+                            }}
+                          >
+                            {t('settings.resetLocalSignIn')}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
 

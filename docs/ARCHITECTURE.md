@@ -225,7 +225,7 @@ Account authentication remains owned by the Supabase client, including PKCE,
 session serialization, refresh, and local sign-out. The host exposes only an
 allowlisted opaque key/value storage adapter. On Windows, values are stored in
 one versioned map encrypted and integrity-protected with current-user DPAPI
-under the private application-data directory; macOS and Linux use their native
+under the private local application-data directory; macOS and Linux use their native
 credential stores. Authentication data is excluded from settings export and
 sync. This protects persisted sessions from other ordinary OS users, but it
 does not protect them from malicious code already running as the signed-in user

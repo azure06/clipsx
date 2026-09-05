@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   completeSupabaseCallback,
   isSupabaseConfigured,
+  resetSupabaseLocalSignIn,
   restoreSupabaseSession,
   signOutSupabase,
   startSupabaseLogin,
@@ -26,6 +27,7 @@ type AuthState = {
   signIn: () => Promise<void>
   completeCallback: (url: string) => Promise<boolean>
   signOut: () => Promise<void>
+  resetLocalSignIn: () => Promise<void>
 }
 
 const signedOutState = { status: 'signed_out' as const, email: null, userId: null, error: null }
@@ -113,6 +115,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set(signedOutState)
     } catch (error) {
       set({ status: 'error', error: authErrorMessage(error) })
+    }
+  },
+
+  resetLocalSignIn: async () => {
+    set({ status: 'loading', error: null })
+    try {
+      const userId = get().userId
+      if (userId) {
+        await invoke('set_sync_enabled', { userId, enabled: false }).catch(() => undefined)
+      }
+      await resetSupabaseLocalSignIn()
+      set(signedOutState)
+    } catch (error) {
+      set({ ...signedOutState, status: 'error', error: authErrorMessage(error) })
     }
   },
 }))

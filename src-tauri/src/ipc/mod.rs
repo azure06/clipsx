@@ -2735,7 +2735,11 @@ pub(crate) fn run() {
 
             let roots =
                 AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
-            app.manage(AuthStorage::new(roots.data.clone()));
+            let auth_data = app
+                .path()
+                .app_local_data_dir()
+                .expect("Failed to resolve local authentication storage");
+            app.manage(AuthStorage::new(auth_data));
             if crate::share::cleanup_stale(&roots).is_err() {
                 eprintln!("[SHARE] Failed to clean stale share exports");
             }
