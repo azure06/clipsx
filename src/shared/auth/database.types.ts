@@ -1,10 +1,4 @@
-﻿export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Json | undefined }
-  | Json[]
+﻿export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
   graphql_public: {
@@ -43,7 +37,7 @@ export type Database = {
           paid_through: string | null
           plan_id: string
           source_subscription_id: string | null
-          status: Database["private"]["Enums"]["account_entitlement_status"]
+          status: Database['private']['Enums']['account_entitlement_status']
           updated_at: string
         }
         Insert: {
@@ -54,7 +48,7 @@ export type Database = {
           paid_through?: string | null
           plan_id: string
           source_subscription_id?: string | null
-          status?: Database["private"]["Enums"]["account_entitlement_status"]
+          status?: Database['private']['Enums']['account_entitlement_status']
           updated_at?: string
         }
         Update: {
@@ -65,30 +59,30 @@ export type Database = {
           paid_through?: string | null
           plan_id?: string
           source_subscription_id?: string | null
-          status?: Database["private"]["Enums"]["account_entitlement_status"]
+          status?: Database['private']['Enums']['account_entitlement_status']
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "account_entitlements_billing_account_id_fkey"
-            columns: ["billing_account_id"]
+            foreignKeyName: 'account_entitlements_billing_account_id_fkey'
+            columns: ['billing_account_id']
             isOneToOne: true
-            referencedRelation: "billing_accounts"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_accounts'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "account_entitlements_plan_id_fkey"
-            columns: ["plan_id"]
+            foreignKeyName: 'account_entitlements_plan_id_fkey'
+            columns: ['plan_id']
             isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["id"]
+            referencedRelation: 'plans'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "account_entitlements_source_subscription_id_fkey"
-            columns: ["source_subscription_id"]
+            foreignKeyName: 'account_entitlements_source_subscription_id_fkey'
+            columns: ['source_subscription_id']
             isOneToOne: false
-            referencedRelation: "billing_subscriptions"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_subscriptions'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -137,25 +131,25 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "ai_allowance_periods_billing_account_id_fkey"
-            columns: ["billing_account_id"]
+            foreignKeyName: 'ai_allowance_periods_billing_account_id_fkey'
+            columns: ['billing_account_id']
             isOneToOne: false
-            referencedRelation: "billing_accounts"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_accounts'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "ai_allowance_periods_plan_id_fkey"
-            columns: ["plan_id"]
+            foreignKeyName: 'ai_allowance_periods_plan_id_fkey'
+            columns: ['plan_id']
             isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["id"]
+            referencedRelation: 'plans'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "ai_allowance_periods_source_subscription_item_id_fkey"
-            columns: ["source_subscription_item_id"]
+            foreignKeyName: 'ai_allowance_periods_source_subscription_item_id_fkey'
+            columns: ['source_subscription_item_id']
             isOneToOne: false
-            referencedRelation: "billing_subscription_items"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_subscription_items'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -168,7 +162,7 @@ export type Database = {
           delta_units: number
           id: string
           idempotency_key: string
-          kind: Database["private"]["Enums"]["ai_usage_event_kind"]
+          kind: Database['private']['Enums']['ai_usage_event_kind']
           occurred_at: string
           updated_at: string
         }
@@ -180,7 +174,7 @@ export type Database = {
           delta_units: number
           id?: string
           idempotency_key: string
-          kind: Database["private"]["Enums"]["ai_usage_event_kind"]
+          kind: Database['private']['Enums']['ai_usage_event_kind']
           occurred_at?: string
           updated_at?: string
         }
@@ -192,17 +186,17 @@ export type Database = {
           delta_units?: number
           id?: string
           idempotency_key?: string
-          kind?: Database["private"]["Enums"]["ai_usage_event_kind"]
+          kind?: Database['private']['Enums']['ai_usage_event_kind']
           occurred_at?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "ai_usage_events_allowance_period_id_billing_account_id_fkey"
-            columns: ["allowance_period_id", "billing_account_id"]
+            foreignKeyName: 'ai_usage_events_allowance_period_id_billing_account_id_fkey'
+            columns: ['allowance_period_id', 'billing_account_id']
             isOneToOne: false
-            referencedRelation: "ai_allowance_periods"
-            referencedColumns: ["id", "billing_account_id"]
+            referencedRelation: 'ai_allowance_periods'
+            referencedColumns: ['id', 'billing_account_id']
           },
         ]
       }
@@ -210,37 +204,37 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          kind: Database["private"]["Enums"]["billing_account_kind"]
+          kind: Database['private']['Enums']['billing_account_kind']
           organization_id: string | null
           owner_user_id: string
-          status: Database["private"]["Enums"]["billing_account_status"]
+          status: Database['private']['Enums']['billing_account_status']
           updated_at: string
         }
         Insert: {
           created_at?: string
           id?: string
-          kind?: Database["private"]["Enums"]["billing_account_kind"]
+          kind?: Database['private']['Enums']['billing_account_kind']
           organization_id?: string | null
           owner_user_id: string
-          status?: Database["private"]["Enums"]["billing_account_status"]
+          status?: Database['private']['Enums']['billing_account_status']
           updated_at?: string
         }
         Update: {
           created_at?: string
           id?: string
-          kind?: Database["private"]["Enums"]["billing_account_kind"]
+          kind?: Database['private']['Enums']['billing_account_kind']
           organization_id?: string | null
           owner_user_id?: string
-          status?: Database["private"]["Enums"]["billing_account_status"]
+          status?: Database['private']['Enums']['billing_account_status']
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "billing_accounts_organization_id_fkey"
-            columns: ["organization_id"]
+            foreignKeyName: 'billing_accounts_organization_id_fkey'
+            columns: ['organization_id']
             isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -280,11 +274,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_customers_billing_account_id_fkey"
-            columns: ["billing_account_id"]
+            foreignKeyName: 'billing_customers_billing_account_id_fkey'
+            columns: ['billing_account_id']
             isOneToOne: false
-            referencedRelation: "billing_accounts"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_accounts'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -342,18 +336,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_invoices_billing_account_id_fkey"
-            columns: ["billing_account_id"]
+            foreignKeyName: 'billing_invoices_billing_account_id_fkey'
+            columns: ['billing_account_id']
             isOneToOne: false
-            referencedRelation: "billing_accounts"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_accounts'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "billing_invoices_subscription_id_billing_account_id_livemo_fkey"
-            columns: ["subscription_id", "billing_account_id", "livemode"]
+            foreignKeyName: 'billing_invoices_subscription_id_billing_account_id_livemo_fkey'
+            columns: ['subscription_id', 'billing_account_id', 'livemode']
             isOneToOne: false
-            referencedRelation: "billing_subscriptions"
-            referencedColumns: ["id", "billing_account_id", "livemode"]
+            referencedRelation: 'billing_subscriptions'
+            referencedColumns: ['id', 'billing_account_id', 'livemode']
           },
         ]
       }
@@ -417,11 +411,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_prices_product_id_livemode_fkey"
-            columns: ["product_id", "livemode"]
+            foreignKeyName: 'billing_prices_product_id_livemode_fkey'
+            columns: ['product_id', 'livemode']
             isOneToOne: false
-            referencedRelation: "billing_products"
-            referencedColumns: ["id", "livemode"]
+            referencedRelation: 'billing_products'
+            referencedColumns: ['id', 'livemode']
           },
         ]
       }
@@ -470,11 +464,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_products_plan_id_fkey"
-            columns: ["plan_id"]
+            foreignKeyName: 'billing_products_plan_id_fkey'
+            columns: ['plan_id']
             isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["id"]
+            referencedRelation: 'plans'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -523,18 +517,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_subscription_items_price_id_livemode_fkey"
-            columns: ["price_id", "livemode"]
+            foreignKeyName: 'billing_subscription_items_price_id_livemode_fkey'
+            columns: ['price_id', 'livemode']
             isOneToOne: false
-            referencedRelation: "billing_prices"
-            referencedColumns: ["id", "livemode"]
+            referencedRelation: 'billing_prices'
+            referencedColumns: ['id', 'livemode']
           },
           {
-            foreignKeyName: "billing_subscription_items_subscription_id_livemode_fkey"
-            columns: ["subscription_id", "livemode"]
+            foreignKeyName: 'billing_subscription_items_subscription_id_livemode_fkey'
+            columns: ['subscription_id', 'livemode']
             isOneToOne: false
-            referencedRelation: "billing_subscriptions"
-            referencedColumns: ["id", "livemode"]
+            referencedRelation: 'billing_subscriptions'
+            referencedColumns: ['id', 'livemode']
           },
         ]
       }
@@ -610,18 +604,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "billing_subscriptions_billing_account_id_fkey"
-            columns: ["billing_account_id"]
+            foreignKeyName: 'billing_subscriptions_billing_account_id_fkey'
+            columns: ['billing_account_id']
             isOneToOne: false
-            referencedRelation: "billing_accounts"
-            referencedColumns: ["id"]
+            referencedRelation: 'billing_accounts'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "billing_subscriptions_customer_id_billing_account_id_livem_fkey"
-            columns: ["customer_id", "billing_account_id", "livemode"]
+            foreignKeyName: 'billing_subscriptions_customer_id_billing_account_id_livem_fkey'
+            columns: ['customer_id', 'billing_account_id', 'livemode']
             isOneToOne: false
-            referencedRelation: "billing_customers"
-            referencedColumns: ["id", "billing_account_id", "livemode"]
+            referencedRelation: 'billing_customers'
+            referencedColumns: ['id', 'billing_account_id', 'livemode']
           },
         ]
       }
@@ -640,7 +634,7 @@ export type Database = {
           object_id: string
           object_type: string
           processed_at: string | null
-          processing_state: Database["private"]["Enums"]["billing_webhook_processing_state"]
+          processing_state: Database['private']['Enums']['billing_webhook_processing_state']
           received_at: string
           stripe_event_created_at: string
           stripe_event_id: string
@@ -660,7 +654,7 @@ export type Database = {
           object_id: string
           object_type: string
           processed_at?: string | null
-          processing_state?: Database["private"]["Enums"]["billing_webhook_processing_state"]
+          processing_state?: Database['private']['Enums']['billing_webhook_processing_state']
           received_at?: string
           stripe_event_created_at: string
           stripe_event_id: string
@@ -680,7 +674,7 @@ export type Database = {
           object_id?: string
           object_type?: string
           processed_at?: string | null
-          processing_state?: Database["private"]["Enums"]["billing_webhook_processing_state"]
+          processing_state?: Database['private']['Enums']['billing_webhook_processing_state']
           received_at?: string
           stripe_event_created_at?: string
           stripe_event_id?: string
@@ -692,34 +686,34 @@ export type Database = {
         Row: {
           created_at: string
           organization_id: string
-          role: Database["private"]["Enums"]["organization_membership_role"]
-          status: Database["private"]["Enums"]["organization_membership_status"]
+          role: Database['private']['Enums']['organization_membership_role']
+          status: Database['private']['Enums']['organization_membership_status']
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
           organization_id: string
-          role?: Database["private"]["Enums"]["organization_membership_role"]
-          status?: Database["private"]["Enums"]["organization_membership_status"]
+          role?: Database['private']['Enums']['organization_membership_role']
+          status?: Database['private']['Enums']['organization_membership_status']
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
           organization_id?: string
-          role?: Database["private"]["Enums"]["organization_membership_role"]
-          status?: Database["private"]["Enums"]["organization_membership_status"]
+          role?: Database['private']['Enums']['organization_membership_role']
+          status?: Database['private']['Enums']['organization_membership_status']
           updated_at?: string
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "organization_memberships_organization_id_fkey"
-            columns: ["organization_id"]
+            foreignKeyName: 'organization_memberships_organization_id_fkey'
+            columns: ['organization_id']
             isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
+            referencedRelation: 'organizations'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -771,11 +765,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "plan_features_plan_id_fkey"
-            columns: ["plan_id"]
+            foreignKeyName: 'plan_features_plan_id_fkey'
+            columns: ['plan_id']
             isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["id"]
+            referencedRelation: 'plans'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -940,7 +934,7 @@ export type Database = {
           p_recipient_account_id: string
           p_recipient_set_commitment: string
           p_recovery_envelopes: Json
-          p_requested_role: Database["public"]["Enums"]["vault_member_role"]
+          p_requested_role: Database['public']['Enums']['vault_member_role']
           p_session_id: string
           p_transition_hash: string
           p_transition_payload: string
@@ -1108,7 +1102,7 @@ export type Database = {
           p_membership_id: string
           p_operation_id: string
           p_recipient_account_id: string
-          p_requested_role: Database["public"]["Enums"]["vault_member_role"]
+          p_requested_role: Database['public']['Enums']['vault_member_role']
           p_session_id: string
           p_verification_commitment: string
         }
@@ -1266,17 +1260,13 @@ export type Database = {
       }
     }
     Enums: {
-      account_entitlement_status: "active" | "grace" | "read_only"
-      ai_usage_event_kind: "reserve" | "settle" | "refund" | "adjustment"
-      billing_account_kind: "personal" | "organization"
-      billing_account_status: "active" | "closed"
-      billing_webhook_processing_state:
-        | "pending"
-        | "processing"
-        | "processed"
-        | "failed"
-      organization_membership_role: "owner" | "admin" | "member"
-      organization_membership_status: "active" | "removed"
+      account_entitlement_status: 'active' | 'grace' | 'read_only'
+      ai_usage_event_kind: 'reserve' | 'settle' | 'refund' | 'adjustment'
+      billing_account_kind: 'personal' | 'organization'
+      billing_account_status: 'active' | 'closed'
+      billing_webhook_processing_state: 'pending' | 'processing' | 'processed' | 'failed'
+      organization_membership_role: 'owner' | 'admin' | 'member'
+      organization_membership_status: 'active' | 'removed'
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1314,11 +1304,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "sync_devices_user_id_fkey"
-            columns: ["user_id"]
+            foreignKeyName: 'sync_devices_user_id_fkey'
+            columns: ['user_id']
             isOneToOne: false
-            referencedRelation: "sync_profiles"
-            referencedColumns: ["user_id"]
+            referencedRelation: 'sync_profiles'
+            referencedColumns: ['user_id']
           },
         ]
       }
@@ -1382,11 +1372,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "sync_records_user_id_fkey"
-            columns: ["user_id"]
+            foreignKeyName: 'sync_records_user_id_fkey'
+            columns: ['user_id']
             isOneToOne: false
-            referencedRelation: "sync_profiles"
-            referencedColumns: ["user_id"]
+            referencedRelation: 'sync_profiles'
+            referencedColumns: ['user_id']
           },
         ]
       }
@@ -1435,18 +1425,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_account_operations_author_device_id_fkey"
-            columns: ["author_device_id"]
+            foreignKeyName: 'vault_account_operations_author_device_id_fkey'
+            columns: ['author_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_account_operations_recovery_key_id_fkey"
-            columns: ["recovery_key_id"]
+            foreignKeyName: 'vault_account_operations_recovery_key_id_fkey'
+            columns: ['recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1507,18 +1497,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_collection_epochs_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_collection_epochs_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_epochs_created_by_device_id_fkey"
-            columns: ["created_by_device_id"]
+            foreignKeyName: 'vault_collection_epochs_created_by_device_id_fkey'
+            columns: ['created_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1544,8 +1534,8 @@ export type Database = {
           inviter_signature: string
           membership_id: string
           recipient_account_id: string
-          requested_role: Database["public"]["Enums"]["vault_member_role"]
-          status: Database["public"]["Enums"]["vault_invitation_status"]
+          requested_role: Database['public']['Enums']['vault_member_role']
+          status: Database['public']['Enums']['vault_invitation_status']
           verification_commitment: string
           verification_mode: string
         }
@@ -1570,8 +1560,8 @@ export type Database = {
           inviter_signature: string
           membership_id: string
           recipient_account_id: string
-          requested_role: Database["public"]["Enums"]["vault_member_role"]
-          status?: Database["public"]["Enums"]["vault_invitation_status"]
+          requested_role: Database['public']['Enums']['vault_member_role']
+          status?: Database['public']['Enums']['vault_invitation_status']
           verification_commitment: string
           verification_mode: string
         }
@@ -1596,39 +1586,39 @@ export type Database = {
           inviter_signature?: string
           membership_id?: string
           recipient_account_id?: string
-          requested_role?: Database["public"]["Enums"]["vault_member_role"]
-          status?: Database["public"]["Enums"]["vault_invitation_status"]
+          requested_role?: Database['public']['Enums']['vault_member_role']
+          status?: Database['public']['Enums']['vault_invitation_status']
           verification_commitment?: string
           verification_mode?: string
         }
         Relationships: [
           {
-            foreignKeyName: "vault_collection_invitations_accepted_by_device_id_fkey"
-            columns: ["accepted_by_device_id"]
+            foreignKeyName: 'vault_collection_invitations_accepted_by_device_id_fkey'
+            columns: ['accepted_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_invitations_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_collection_invitations_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_invitations_inviter_device_id_fkey"
-            columns: ["inviter_device_id"]
+            foreignKeyName: 'vault_collection_invitations_inviter_device_id_fkey'
+            columns: ['inviter_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_invitations_membership_id_fkey"
-            columns: ["membership_id"]
+            foreignKeyName: 'vault_collection_invitations_membership_id_fkey'
+            columns: ['membership_id']
             isOneToOne: true
-            referencedRelation: "vault_collection_memberships"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collection_memberships'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1644,8 +1634,8 @@ export type Database = {
           membership_operation_id: string
           removed_at: string | null
           removed_epoch: number | null
-          role: Database["public"]["Enums"]["vault_member_role"]
-          status: Database["public"]["Enums"]["vault_member_status"]
+          role: Database['public']['Enums']['vault_member_role']
+          status: Database['public']['Enums']['vault_member_status']
         }
         Insert: {
           account_id: string
@@ -1658,8 +1648,8 @@ export type Database = {
           membership_operation_id: string
           removed_at?: string | null
           removed_epoch?: number | null
-          role: Database["public"]["Enums"]["vault_member_role"]
-          status: Database["public"]["Enums"]["vault_member_status"]
+          role: Database['public']['Enums']['vault_member_role']
+          status: Database['public']['Enums']['vault_member_status']
         }
         Update: {
           account_id?: string
@@ -1672,23 +1662,23 @@ export type Database = {
           membership_operation_id?: string
           removed_at?: string | null
           removed_epoch?: number | null
-          role?: Database["public"]["Enums"]["vault_member_role"]
-          status?: Database["public"]["Enums"]["vault_member_status"]
+          role?: Database['public']['Enums']['vault_member_role']
+          status?: Database['public']['Enums']['vault_member_status']
         }
         Relationships: [
           {
-            foreignKeyName: "vault_collection_memberships_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_collection_memberships_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_memberships_invited_by_device_id_fkey"
-            columns: ["invited_by_device_id"]
+            foreignKeyName: 'vault_collection_memberships_invited_by_device_id_fkey'
+            columns: ['invited_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1737,25 +1727,25 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_collection_operations_author_device_id_fkey"
-            columns: ["author_device_id"]
+            foreignKeyName: 'vault_collection_operations_author_device_id_fkey'
+            columns: ['author_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_operations_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_collection_operations_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_collection_operations_recovery_key_id_fkey"
-            columns: ["recovery_key_id"]
+            foreignKeyName: 'vault_collection_operations_recovery_key_id_fkey'
+            columns: ['recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1855,25 +1845,25 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_device_authorizations_authorized_by_device_id_fkey"
-            columns: ["authorized_by_device_id"]
+            foreignKeyName: 'vault_device_authorizations_authorized_by_device_id_fkey'
+            columns: ['authorized_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_device_authorizations_device_id_fkey"
-            columns: ["device_id"]
+            foreignKeyName: 'vault_device_authorizations_device_id_fkey'
+            columns: ['device_id']
             isOneToOne: true
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_device_authorizations_recovery_key_id_fkey"
-            columns: ["recovery_key_id"]
+            foreignKeyName: 'vault_device_authorizations_recovery_key_id_fkey'
+            columns: ['recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1934,39 +1924,39 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_device_epoch_envelopes_collection_id_epoch_number_fkey"
-            columns: ["collection_id", "epoch_number"]
+            foreignKeyName: 'vault_device_epoch_envelopes_collection_id_epoch_number_fkey'
+            columns: ['collection_id', 'epoch_number']
             isOneToOne: false
-            referencedRelation: "vault_collection_epochs"
-            referencedColumns: ["collection_id", "epoch_number"]
+            referencedRelation: 'vault_collection_epochs'
+            referencedColumns: ['collection_id', 'epoch_number']
           },
           {
-            foreignKeyName: "vault_device_epoch_envelopes_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_device_epoch_envelopes_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_device_epoch_envelopes_recipient_device_id_fkey"
-            columns: ["recipient_device_id"]
+            foreignKeyName: 'vault_device_epoch_envelopes_recipient_device_id_fkey'
+            columns: ['recipient_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_device_epoch_envelopes_sender_device_id_fkey"
-            columns: ["sender_device_id"]
+            foreignKeyName: 'vault_device_epoch_envelopes_sender_device_id_fkey'
+            columns: ['sender_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_device_epoch_envelopes_sender_recovery_key_id_fkey"
-            columns: ["sender_recovery_key_id"]
+            foreignKeyName: 'vault_device_epoch_envelopes_sender_recovery_key_id_fkey'
+            columns: ['sender_recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -1989,7 +1979,7 @@ export type Database = {
           revoked_at: string | null
           signing_algorithm: string
           signing_public_key: string
-          status: Database["public"]["Enums"]["vault_device_status"]
+          status: Database['public']['Enums']['vault_device_status']
         }
         Insert: {
           account_id: string
@@ -2009,7 +1999,7 @@ export type Database = {
           revoked_at?: string | null
           signing_algorithm: string
           signing_public_key: string
-          status?: Database["public"]["Enums"]["vault_device_status"]
+          status?: Database['public']['Enums']['vault_device_status']
         }
         Update: {
           account_id?: string
@@ -2029,7 +2019,7 @@ export type Database = {
           revoked_at?: string | null
           signing_algorithm?: string
           signing_public_key?: string
-          status?: Database["public"]["Enums"]["vault_device_status"]
+          status?: Database['public']['Enums']['vault_device_status']
         }
         Relationships: []
       }
@@ -2114,32 +2104,32 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_note_revisions_author_device_id_fkey"
-            columns: ["author_device_id"]
+            foreignKeyName: 'vault_note_revisions_author_device_id_fkey'
+            columns: ['author_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_note_revisions_collection_id_collection_epoch_fkey"
-            columns: ["collection_id", "collection_epoch"]
+            foreignKeyName: 'vault_note_revisions_collection_id_collection_epoch_fkey'
+            columns: ['collection_id', 'collection_epoch']
             isOneToOne: false
-            referencedRelation: "vault_collection_epochs"
-            referencedColumns: ["collection_id", "epoch_number"]
+            referencedRelation: 'vault_collection_epochs'
+            referencedColumns: ['collection_id', 'epoch_number']
           },
           {
-            foreignKeyName: "vault_note_revisions_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_note_revisions_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_note_revisions_note_id_fkey"
-            columns: ["note_id"]
+            foreignKeyName: 'vault_note_revisions_note_id_fkey'
+            columns: ['note_id']
             isOneToOne: false
-            referencedRelation: "vault_notes"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_notes'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -2173,18 +2163,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_notes_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_notes_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_notes_created_by_device_id_fkey"
-            columns: ["created_by_device_id"]
+            foreignKeyName: 'vault_notes_created_by_device_id_fkey'
+            columns: ['created_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -2245,32 +2235,32 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_recovery_epoch_envelopes_collection_id_epoch_number_fkey"
-            columns: ["collection_id", "epoch_number"]
+            foreignKeyName: 'vault_recovery_epoch_envelopes_collection_id_epoch_number_fkey'
+            columns: ['collection_id', 'epoch_number']
             isOneToOne: false
-            referencedRelation: "vault_collection_epochs"
-            referencedColumns: ["collection_id", "epoch_number"]
+            referencedRelation: 'vault_collection_epochs'
+            referencedColumns: ['collection_id', 'epoch_number']
           },
           {
-            foreignKeyName: "vault_recovery_epoch_envelopes_recovery_key_id_fkey"
-            columns: ["recovery_key_id"]
+            foreignKeyName: 'vault_recovery_epoch_envelopes_recovery_key_id_fkey'
+            columns: ['recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_recovery_epoch_envelopes_sender_device_id_fkey"
-            columns: ["sender_device_id"]
+            foreignKeyName: 'vault_recovery_epoch_envelopes_sender_device_id_fkey'
+            columns: ['sender_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_recovery_epoch_envelopes_sender_recovery_key_id_fkey"
-            columns: ["sender_recovery_key_id"]
+            foreignKeyName: 'vault_recovery_epoch_envelopes_sender_recovery_key_id_fkey'
+            columns: ['sender_recovery_key_id']
             isOneToOne: false
-            referencedRelation: "vault_recovery_keys"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_recovery_keys'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -2340,32 +2330,32 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "vault_tombstones_collection_id_fkey"
-            columns: ["collection_id"]
+            foreignKeyName: 'vault_tombstones_collection_id_fkey'
+            columns: ['collection_id']
             isOneToOne: false
-            referencedRelation: "vault_collections"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_collections'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_tombstones_delete_operation_id_fkey"
-            columns: ["delete_operation_id"]
+            foreignKeyName: 'vault_tombstones_delete_operation_id_fkey'
+            columns: ['delete_operation_id']
             isOneToOne: true
-            referencedRelation: "vault_collection_operations"
-            referencedColumns: ["operation_id"]
+            referencedRelation: 'vault_collection_operations'
+            referencedColumns: ['operation_id']
           },
           {
-            foreignKeyName: "vault_tombstones_deleted_by_device_id_fkey"
-            columns: ["deleted_by_device_id"]
+            foreignKeyName: 'vault_tombstones_deleted_by_device_id_fkey'
+            columns: ['deleted_by_device_id']
             isOneToOne: false
-            referencedRelation: "vault_devices"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_devices'
+            referencedColumns: ['id']
           },
           {
-            foreignKeyName: "vault_tombstones_note_id_fkey"
-            columns: ["note_id"]
+            foreignKeyName: 'vault_tombstones_note_id_fkey'
+            columns: ['note_id']
             isOneToOne: true
-            referencedRelation: "vault_notes"
-            referencedColumns: ["id"]
+            referencedRelation: 'vault_notes'
+            referencedColumns: ['id']
           },
         ]
       }
@@ -2402,10 +2392,10 @@ export type Database = {
       sync_revoke_device: { Args: { p_device_id: string }; Returns: undefined }
     }
     Enums: {
-      vault_device_status: "pending" | "active" | "revoked"
-      vault_invitation_status: "created" | "accepted" | "expired" | "cancelled"
-      vault_member_role: "owner" | "editor" | "viewer"
-      vault_member_status: "invited" | "active" | "removed"
+      vault_device_status: 'pending' | 'active' | 'revoked'
+      vault_invitation_status: 'created' | 'accepted' | 'expired' | 'cancelled'
+      vault_member_role: 'owner' | 'editor' | 'viewer'
+      vault_member_status: 'invited' | 'active' | 'removed'
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2413,33 +2403,31 @@ export type Database = {
   }
 }
 
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+type DatabaseWithoutInternals = Omit<Database, '__InternalSupabase'>
 
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, 'public'>]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | keyof (DefaultSchema['Tables'] & DefaultSchema['Views'])
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Views'])
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Views'])[TableName] extends {
       Row: infer R
     }
     ? R
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema['Tables'] & DefaultSchema['Views'])
+    ? (DefaultSchema['Tables'] & DefaultSchema['Views'])[DefaultSchemaTableNameOrOptions] extends {
         Row: infer R
       }
       ? R
@@ -2448,23 +2436,23 @@ export type Tables<
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
+    | keyof DefaultSchema['Tables']
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables']
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'][TableName] extends {
       Insert: infer I
     }
     ? I
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema['Tables']
+    ? DefaultSchema['Tables'][DefaultSchemaTableNameOrOptions] extends {
         Insert: infer I
       }
       ? I
@@ -2473,23 +2461,23 @@ export type TablesInsert<
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
+    | keyof DefaultSchema['Tables']
     | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables']
     : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'][TableName] extends {
       Update: infer U
     }
     ? U
     : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema['Tables']
+    ? DefaultSchema['Tables'][DefaultSchemaTableNameOrOptions] extends {
         Update: infer U
       }
       ? U
@@ -2498,36 +2486,36 @@ export type TablesUpdate<
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
+    | keyof DefaultSchema['Enums']
     | { schema: keyof DatabaseWithoutInternals },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums']
     : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums'][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema['Enums']
+    ? DefaultSchema['Enums'][DefaultSchemaEnumNameOrOptions]
     : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
+    | keyof DefaultSchema['CompositeTypes']
     | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes']
     : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
-  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes'][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema['CompositeTypes']
+    ? DefaultSchema['CompositeTypes'][PublicCompositeTypeNameOrOptions]
     : never
 
 export const Constants = {
@@ -2536,27 +2524,21 @@ export const Constants = {
   },
   private: {
     Enums: {
-      account_entitlement_status: ["active", "grace", "read_only"],
-      ai_usage_event_kind: ["reserve", "settle", "refund", "adjustment"],
-      billing_account_kind: ["personal", "organization"],
-      billing_account_status: ["active", "closed"],
-      billing_webhook_processing_state: [
-        "pending",
-        "processing",
-        "processed",
-        "failed",
-      ],
-      organization_membership_role: ["owner", "admin", "member"],
-      organization_membership_status: ["active", "removed"],
+      account_entitlement_status: ['active', 'grace', 'read_only'],
+      ai_usage_event_kind: ['reserve', 'settle', 'refund', 'adjustment'],
+      billing_account_kind: ['personal', 'organization'],
+      billing_account_status: ['active', 'closed'],
+      billing_webhook_processing_state: ['pending', 'processing', 'processed', 'failed'],
+      organization_membership_role: ['owner', 'admin', 'member'],
+      organization_membership_status: ['active', 'removed'],
     },
   },
   public: {
     Enums: {
-      vault_device_status: ["pending", "active", "revoked"],
-      vault_invitation_status: ["created", "accepted", "expired", "cancelled"],
-      vault_member_role: ["owner", "editor", "viewer"],
-      vault_member_status: ["invited", "active", "removed"],
+      vault_device_status: ['pending', 'active', 'revoked'],
+      vault_invitation_status: ['created', 'accepted', 'expired', 'cancelled'],
+      vault_member_role: ['owner', 'editor', 'viewer'],
+      vault_member_status: ['invited', 'active', 'removed'],
     },
   },
 } as const
-
