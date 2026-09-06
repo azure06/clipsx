@@ -28,6 +28,7 @@ const {
       onSettingsClick: () => void
     } | null,
     settingsProps: null as { initialTab?: string } | null,
+    clipboardHistoryProps: null as { onPreviewItem?: (clipId: string | null) => void } | null,
   },
 }))
 
@@ -73,7 +74,10 @@ vi.mock('../../shared/components/Sidebar', () => ({
 }))
 
 vi.mock('../clipboard/ClipboardHistory', () => ({
-  ClipboardHistory: () => <div data-testid="clipboard-history" />,
+  ClipboardHistory: (props: { onPreviewItem?: (clipId: string | null) => void }) => {
+    testRefs.clipboardHistoryProps = props
+    return <div data-testid="clipboard-history" />
+  },
 }))
 
 vi.mock('../clipboard/ClipPreview', () => ({
@@ -102,6 +106,7 @@ describe('AppLayout search focus ownership', () => {
     eventHandlers.clear()
     testRefs.sidebarProps = null
     testRefs.settingsProps = null
+    testRefs.clipboardHistoryProps = null
     listenMock.mockImplementation(
       (eventName: string, handler: (event: { payload: unknown }) => void) => {
         const handlers = eventHandlers.get(eventName) ?? []
@@ -183,6 +188,15 @@ describe('AppLayout search focus ownership', () => {
       performCopy: vi.fn(),
       resetPagination: vi.fn(),
     })
+  })
+
+  it('keeps the preview-selection callback stable across renders', () => {
+    const { rerender } = render(<AppLayout />)
+    const first = testRefs.clipboardHistoryProps?.onPreviewItem
+
+    rerender(<AppLayout />)
+
+    expect(testRefs.clipboardHistoryProps?.onPreviewItem).toBe(first)
   })
 
   it('processes a callback that launched ClipsX and brings the main window forward', async () => {

@@ -102,6 +102,13 @@ export const AppLayout = () => {
     setRightTab('recall')
     void recall.startRoot(parsedRecallQuery.query, recallScope)
   }, [generationStatus, parsedRecallQuery.query, recall, recallScope, setActiveView])
+  const handlePreviewItem = useCallback(
+    (clipId: string | null) => {
+      setPreviewClipId(clipId)
+      setRightTab('preview')
+    },
+    [setPreviewClipId]
+  )
 
   const openSettings = useCallback(
     (tab: SettingsTab) => {
@@ -459,10 +466,7 @@ export const AppLayout = () => {
                     <ClipboardHistory
                       searchQuery={searchQuery}
                       className="flex-1"
-                      onPreviewItem={clipId => {
-                        setPreviewClipId(clipId)
-                        setRightTab('preview')
-                      }}
+                      onPreviewItem={handlePreviewItem}
                     />
                   </div>
                   <button
