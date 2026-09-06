@@ -1,3 +1,4 @@
+import type { Database, Json } from './database.types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { createClient, type Provider, type SupportedStorage } from '@supabase/supabase-js'
@@ -15,7 +16,7 @@ export const DEFAULT_SUPABASE_AUTH_PROVIDER: Provider = 'google'
 const configuredProvider = (import.meta.env.VITE_SUPABASE_AUTH_PROVIDER?.trim() ||
   DEFAULT_SUPABASE_AUTH_PROVIDER) as Provider
 
-let client: ReturnType<typeof createClient> | undefined
+let client: ReturnType<typeof createClient<Database>> | undefined
 let rejectPendingCallback = false
 
 const credentialVaultStorage: SupportedStorage = {
@@ -41,7 +42,7 @@ const getClient = () => {
     throw new Error('Account sign-in is not configured for this build.')
   }
 
-  client ??= createClient(supabaseUrl, supabasePublishableKey, {
+  client ??= createClient<Database>(supabaseUrl, supabasePublishableKey, {
     auth: {
       flowType: 'pkce',
       detectSessionInUrl: false,
@@ -133,7 +134,7 @@ export const parseAuthCallbackUrl = (rawUrl: string): ParsedAuthCallback => {
 }
 
 export const startOAuthLogin = async (
-  authClient: ReturnType<typeof createClient>,
+  authClient: ReturnType<typeof createClient<Database>>,
   provider: Provider
 ) => {
   let redirectTo = getDesktopOAuthRedirectUrl(import.meta.env.VITE_NEXT_PUBLIC_SITE_URL)
@@ -238,32 +239,56 @@ export const resetSupabaseLocalSignIn = async () => {
 }
 
 export const applySupabaseSyncBatch = async (batch: {
+  protocolVersion: number
+  generation: number
   deviceId: string
-  deviceName: string
   afterCursor: number
-  records: unknown[]
+  records: Json[]
 }) => {
-  // The project schema is deployed independently from the desktop bundle, so the
-  // generated Supabase type does not include this RPC until registry promotion.
-  // Keep the temporary boundary narrow and remove it when generated types land.
-  const syncClient = getClient() as unknown as {
-    rpc: (
-      name: 'sync_apply_batch',
-      args: {
-        p_device_id: string
-        p_device_name: string
-        p_after_cursor: number
-        p_records: unknown[]
-      }
-    ) => Promise<{ data: unknown; error: { message?: string } | null }>
-  }
-  const { data, error } = await syncClient.rpc('sync_apply_batch', {
+  const { data, error } = await getClient().rpc('sync_apply_batch', {
+    p_protocol_version: batch.protocolVersion,
+    p_generation: batch.generation,
     p_device_id: batch.deviceId,
-    p_device_name: batch.deviceName,
     p_after_cursor: batch.afterCursor,
     p_records: batch.records,
   })
-  if (error) throw new Error(error.message || 'Configuration sync failed.')
-  if (!data || typeof data !== 'object') throw new Error('Configuration sync returned no data.')
+  if (error) throw new Error(error.message)
+  return data
+}
+export const enrollSyncDevice = async (deviceId: string, deviceName: string) => {
+  const { data, error } = await getClient().rpc('sync_enroll_device', {
+    p_device_id: deviceId,
+    p_device_name: deviceName,
+  })
+  if (error) throw new Error(error.message)
+  return data
+}
+export const listSyncDevices = async () => {
+  const { data, error } = await getClient().rpc('sync_list_devices')
+  if (error) throw new Error(error.message)
+  return data
+}
+export const revokeSyncDevice = async (deviceId: string) => {
+  const { error } = await getClient().rpc('sync_revoke_device', { p_device_id: deviceId })
+  if (error) throw new Error(error.message)
+}
+export const resetSyncProfile = async (generation: number) => {
+  const { data, error } = await getClient().rpc('sync_reset_profile', { p_generation: generation })
+  if (error) throw new Error(error.message)
+  return data
+}
+export const replaceSyncProfile = async (
+  generation: number,
+  deviceId: string,
+  records: Json[],
+  replace: boolean
+) => {
+  const { data, error } = await getClient().rpc('sync_replace_profile', {
+    p_generation: generation,
+    p_device_id: deviceId,
+    p_records: records,
+    p_replace: replace,
+  })
+  if (error) throw new Error(error.message)
   return data
 }

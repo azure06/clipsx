@@ -55,29 +55,29 @@ after installation and recovery are explicit and certified.
 
 ## 3. Configuration sync and account completion
 
-- [ ] Audit the restored Supabase project's Auth configuration, redirect URLs,
-  schema, grants, applied migrations, and security/performance advisors.
-- [ ] Finish and certify the hosted desktop PKCE callback bridge.
-- [ ] Deploy and verify owner-scoped RLS for `sync_devices` and `sync_records`,
-  plus the security-invoker batch RPC that derives ownership from `auth.uid()`
-  and applies only deterministically newer revisions.
-- [ ] Complete the versioned sync allowlist for profile preferences, renderer and
-  OCR preferences, signed-extension intent and non-secret settings, and
-  shortcuts. Clips, notes, tags, files, credentials, grants, local provider
-  configuration, jobs, diagnostics, and derived data must remain local.
-- [ ] Complete Sync UI and IPC for device listing/revocation, retry, remote-profile
-  reset, quarantined-record recovery, and precise included/excluded data.
-- [ ] Reinstall synchronized extensions only through the signed registry and
-  require fresh local consent for external capabilities.
-- [ ] Add verified account deletion through a JWT-protected backend function;
-  sign-out must retain local data and stop synchronization.
-- [ ] Test two-device restore, concurrent and offline edits, clock skew,
-  tombstones, reconnect/backoff, revoked devices, unavailable packages, corrupt
-  payload quarantine, cross-user RLS isolation, remote reset, and deletion.
+The local backend and desktop implement the domain-based migration baseline,
+versioned configuration protocol, account/generation isolation, atomic cloud
+initialization/replacement, staged restore, device revocation, quarantine,
+signed-registry restoration, portable setting approval, and app-command shortcuts.
+Local automated coverage is recorded in the backend configuration-sync guide.
+Remaining production work:
 
-The exit gate is a second device restoring only the supported configuration and
-extension intent, with no clipboard content, secrets, device-local settings, or
-old consent transferred.
+- [ ] Audit the hosted Supabase Auth configuration, redirect URLs, schema,
+  grants, and security/performance advisors before deploying the fresh baseline.
+- [ ] Deploy and certify the hosted desktop PKCE callback bridge and deep-link
+  round trip with the actual OAuth provider.
+- [ ] Publish signed package releases declaring reviewed portable settings and
+  populate the matching server approval catalog through the release process.
+- [ ] Certify installed two-device restore across advertised platforms, including
+  concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
+  revoked devices, unavailable packages, quarantine recovery, and remote reset.
+- [ ] Add verified account deletion through a JWT-protected backend operation,
+  separately resolving billing, organization ownership, and shared vault data.
+
+The exit gate is a second installed device restoring only supported configuration
+and extension intent, with no clipboard content, secrets, device-local settings,
+or old consent transferred. Configuration sync is the first backend product
+milestone; existing billing/vault functionality remains independently maintained.
 
 ## 4. Native packaging and release certification
 

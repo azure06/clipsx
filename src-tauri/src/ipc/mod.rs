@@ -2002,6 +2002,71 @@ async fn set_sync_enabled(
 }
 
 #[tauri::command]
+async fn begin_configuration_sync(
+    user_id: String,
+    device_id: String,
+    generation: i64,
+    server_time_ms: i64,
+    upload: bool,
+    state: State<'_, AppState>,
+) -> Result<crate::sync::SyncStatus, String> {
+    crate::sync::begin(
+        &state.history,
+        &user_id,
+        &device_id,
+        generation,
+        server_time_ms,
+        upload,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_recovery(
+    action: String,
+    id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    if action == "retry_effects" {
+        state
+            .extensions
+            .reconcile_configuration_sync(&state.history)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    crate::sync::recovery(&state.history, &action, id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn get_command_shortcuts(
+    state: State<'_, AppState>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    crate::sync::command_shortcuts(&state.history)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn set_command_shortcut(
+    command_id: String,
+    accelerator: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::sync::set_command_shortcut(&state.history, &command_id, accelerator.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn snapshot_configuration_sync(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    crate::sync::snapshot(&state.history)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
 async fn prepare_sync_batch(state: State<'_, AppState>) -> Result<crate::sync::SyncBatch, String> {
     crate::sync::batch(&state.history)
         .await
@@ -2026,6 +2091,13 @@ async fn apply_sync_response(
     crate::app::workers::wake_ocr(&app, state.history.clone());
     refresh_ocr_dependents(app.clone(), state.history.clone());
     let _ = app.emit("ocr-status-changed", ());
+    let _ = app.emit("renderer-preferences-updated", ());
+    state
+        .extensions
+        .reconcile_configuration_sync(&state.history)
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("extensions-changed", ());
     Ok(status)
 }
 
@@ -3045,6 +3117,11 @@ pub(crate) fn run() {
             get_sync_status,
             set_sync_enabled,
             prepare_sync_batch,
+            begin_configuration_sync,
+            snapshot_configuration_sync,
+            sync_recovery,
+            get_command_shortcuts,
+            set_command_shortcut,
             apply_sync_response,
             record_sync_error,
             update_capture_settings,

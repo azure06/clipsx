@@ -1,9 +1,10 @@
+import { matchCommandShortcut } from '../../shared/keyboard/commands'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { getDeleteShortcut, getPlatform, matchShortcut } from '../../shared/keyboard/shortcuts'
+import { getDeleteShortcut, getPlatform } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -322,25 +323,39 @@ export const ClipboardHistory = ({
         return
       }
 
-      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'C' }, platform)) {
+      if (
+        selectedClip &&
+        matchCommandShortcut(e, 'core.copy', { modifiers: ['primary'], key: 'C' }, platform)
+      ) {
         if (hasNativeCopySelection()) return
         e.preventDefault()
         void handleExplicitCopy(selectedClip.historyPreview.title, selectedClip.id)
         return
       }
-      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'F' }, platform)) {
+      if (
+        selectedClip &&
+        matchCommandShortcut(e, 'core.favorite', { modifiers: ['primary'], key: 'F' }, platform)
+      ) {
         e.preventDefault()
         void toggleFavorite(selectedClip.id)
         return
       }
-      if (selectedClip && matchShortcut(e, { modifiers: ['primary'], key: 'P' }, platform)) {
+      if (
+        selectedClip &&
+        matchCommandShortcut(e, 'core.pin', { modifiers: ['primary'], key: 'P' }, platform)
+      ) {
         e.preventDefault()
         void togglePin(selectedClip.id)
         return
       }
       if (
         selectedClip &&
-        matchShortcut(e, { modifiers: ['primary', 'shift'], key: 'O' }, platform)
+        matchCommandShortcut(
+          e,
+          'core.open',
+          { modifiers: ['primary', 'shift'], key: 'O' },
+          platform
+        )
       ) {
         e.preventDefault()
         const extension =
@@ -353,6 +368,21 @@ export const ClipboardHistory = ({
 
       const maxIndex = clips.length - 1
       if (maxIndex < 0) return
+
+      if (
+        (!isInput || platform === 'macos') &&
+        matchCommandShortcut(e, 'core.delete', getDeleteShortcut(platform), platform)
+      ) {
+        e.preventDefault()
+        if (selectedClip) {
+          void handleDelete(selectedClip.id)
+          const afterDeleteIdx = Math.min(currentIndex, maxIndex - 1)
+          const afterDeleteClip =
+            clips[afterDeleteIdx === currentIndex ? afterDeleteIdx + 1 : afterDeleteIdx]
+          setSelectedId(afterDeleteClip?.id ?? clips[0]?.id ?? null)
+        }
+        return
+      }
 
       switch (e.key) {
         case 'Home': {
@@ -389,25 +419,6 @@ export const ClipboardHistory = ({
           e.preventDefault()
           if (selectedClip) {
             void handleAction(selectedClip.historyPreview.title, selectedClip.id)
-          }
-          break
-        }
-        case 'Delete':
-        case 'Backspace': {
-          const isMacInputDelete = isInput && platform === 'macos'
-
-          if (isInput && !isMacInputDelete) break
-          if (!matchShortcut(e, getDeleteShortcut(platform), platform)) {
-            break
-          }
-          e.preventDefault()
-          if (selectedClip) {
-            void handleDelete(selectedClip.id)
-            // Move selection to the next clip (or previous if at end)
-            const afterDeleteIdx = Math.min(currentIndex, maxIndex - 1)
-            const afterDeleteClip =
-              clips[afterDeleteIdx === currentIndex ? afterDeleteIdx + 1 : afterDeleteIdx]
-            setSelectedId(afterDeleteClip?.id ?? clips[0]?.id ?? null)
           }
           break
         }

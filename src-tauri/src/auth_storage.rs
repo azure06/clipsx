@@ -330,14 +330,14 @@ mod backend {
         fn dpapi_round_trips_large_unicode_values_without_plaintext_on_disk() {
             let root = tempfile::tempdir().unwrap();
             let value = format!("こんにちは:{}", "session-value".repeat(1024));
-            set(&root.path().to_path_buf(), AUTH_STORAGE_KEY, value.clone()).unwrap();
+            set(root.path(), AUTH_STORAGE_KEY, value.clone()).unwrap();
             assert_eq!(
-                get(&root.path().to_path_buf(), AUTH_STORAGE_KEY).unwrap(),
+                get(root.path(), AUTH_STORAGE_KEY).unwrap(),
                 Some(value.clone())
             );
             let encrypted = fs::read(root.path().join(FILE_NAME)).unwrap();
             assert!(!encrypted
-                .windows(value.as_bytes().len())
+                .windows(value.len())
                 .any(|part| part == value.as_bytes()));
         }
 

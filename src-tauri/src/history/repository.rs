@@ -4,9 +4,7 @@ use crate::clipboard::capabilities;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::{
-    sqlite::SqlitePoolOptions, AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool, Transaction,
-};
+use sqlx::{sqlite::SqlitePoolOptions, AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool};
 use std::{
     collections::HashMap,
     fs,
@@ -1184,18 +1182,8 @@ impl HistoryRepository {
             ),
         ] {
             let now = now_ms();
-            let previous: Option<String> =
-                sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key=?")
-                    .bind(key)
-                    .fetch_optional(&mut *transaction)
-                    .await?;
             sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
                 .bind(key).bind(&value).bind(now).bind(now).execute(&mut *transaction).await?;
-            if previous.as_deref() != Some(value.as_str())
-                && matches!(key, "ui.theme" | "ui.language")
-            {
-                Self::enqueue_profile_sync(&mut transaction, key, &value, now).await?;
-            }
         }
         transaction.commit().await?;
         for (key, value) in [
@@ -1219,54 +1207,6 @@ impl HistoryRepository {
         Ok(())
     }
 
-    pub(crate) async fn enqueue_profile_sync(
-        transaction: &mut Transaction<'_, Sqlite>,
-        key: &str,
-        payload_json: &str,
-        now: i64,
-    ) -> Result<()> {
-        let identity: Option<(String, i64, i64)> = sqlx::query_as(
-            "SELECT device_id,last_physical_ms,last_logical_counter FROM sync_device_identity WHERE singleton=1",
-        )
-        .fetch_optional(&mut **transaction)
-        .await?;
-        let (device_id, last_physical, last_counter) = match identity {
-            Some(value) => value,
-            None => {
-                let device_id = new_id();
-                sqlx::query("INSERT INTO sync_device_identity(singleton,device_id,display_name,created_at,last_physical_ms,last_logical_counter) VALUES(1,?,'This device',?,0,0)")
-                    .bind(&device_id)
-                    .bind(now)
-                    .execute(&mut **transaction)
-                    .await?;
-                (device_id, 0, 0)
-            }
-        };
-        let revision_physical = now.max(last_physical);
-        let revision_counter = if revision_physical > last_physical {
-            0
-        } else {
-            last_counter
-                .checked_add(1)
-                .context("sync logical revision overflow")?
-        };
-        sqlx::query("UPDATE sync_device_identity SET last_physical_ms=?,last_logical_counter=? WHERE singleton=1")
-            .bind(revision_physical)
-            .bind(revision_counter)
-            .execute(&mut **transaction)
-            .await?;
-        sqlx::query("INSERT INTO sync_outbox(record_kind,record_key,payload_json,tombstone,revision_physical_ms,revision_counter,source_device_id,attempts,next_attempt_at,last_error,created_at,updated_at) VALUES('profile_setting',?,?,0,?,?,?,0,NULL,NULL,?,?) ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=0,revision_physical_ms=excluded.revision_physical_ms,revision_counter=excluded.revision_counter,source_device_id=excluded.source_device_id,attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=excluded.updated_at")
-            .bind(key)
-            .bind(payload_json)
-            .bind(revision_physical)
-            .bind(revision_counter)
-            .bind(device_id)
-            .bind(now)
-            .bind(now)
-            .execute(&mut **transaction)
-            .await?;
-        Ok(())
-    }
     async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
         if let Some(max) = s.max_ordinary_clips {
             let ids=sqlx::query_scalar::<_, String>("SELECT id FROM clip_items WHERE lifecycle_state='ready' AND is_pinned=0 AND is_favorite=0 ORDER BY captured_at DESC,id DESC LIMIT -1 OFFSET ?").bind(max as i64).fetch_all(&self.pool).await?;
@@ -2178,6 +2118,13 @@ mod tests {
             ..AppSettings::default()
         };
 
+        crate::sync::begin(&repo, "account-a", &new_id(), 1, now_ms(), true)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM sync_outbox")
+            .execute(&repo.pool)
+            .await
+            .unwrap();
         repo.update_app_settings(&settings).await.unwrap();
 
         let rows: Vec<(String, String, String)> = sqlx::query_as(
@@ -2186,11 +2133,11 @@ mod tests {
         .fetch_all(&repo.pool)
         .await
         .unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, "ui.language");
-        assert_eq!(rows[0].1, "\"ja\"");
-        assert_eq!(rows[1].0, "ui.theme");
-        assert_eq!(rows[1].1, "\"dark\"");
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[1].0, "ui.language");
+        assert_eq!(rows[1].1, "\"ja\"");
+        assert_eq!(rows[3].0, "ui.theme");
+        assert_eq!(rows[3].1, "\"dark\"");
         assert_eq!(rows[0].2, rows[1].2);
         assert!(!rows.iter().any(|row| row.1.contains("private-app")));
     }

@@ -1,3 +1,4 @@
+import { CommandShortcuts } from './components/CommandShortcuts'
 import { useEffect, useState, useRef } from 'react'
 import { enable, disable } from '@tauri-apps/plugin-autostart'
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -39,12 +40,7 @@ import {
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 import { normalizeLanguage } from '../../i18n'
-import {
-  getSyncStatus,
-  setSyncEnabled,
-  synchronizeConfiguration,
-  type SyncStatus,
-} from '../../shared/sync/configSync'
+import { ConfigurationSync } from './components/ConfigurationSync'
 import { SettingsNavigation, type SettingsNavigationItem } from './components/SettingsNavigation'
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
@@ -187,42 +183,11 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const signOut = useAuthStore(state => state.signOut)
   const resetLocalSignIn = useAuthStore(state => state.resetLocalSignIn)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
-  const [syncBusy, setSyncBusy] = useState(false)
   const [shortcutError, setShortcutError] = useState<string | null>(null)
 
   useEffect(() => {
     setActiveTab(initialTab)
   }, [initialTab])
-
-  useEffect(() => {
-    if (activeTab === 'sync') {
-      void getSyncStatus()
-        .then(setSyncStatus)
-        .catch(() => setSyncStatus(null))
-    }
-  }, [activeTab])
-
-  const toggleSync = async () => {
-    if (!authUserId || !syncStatus) return
-    setSyncBusy(true)
-    try {
-      const next = await setSyncEnabled(authUserId, !syncStatus.enabled)
-      setSyncStatus(next)
-      if (next.enabled) setSyncStatus(await synchronizeConfiguration())
-    } finally {
-      setSyncBusy(false)
-    }
-  }
-
-  const syncNow = async () => {
-    setSyncBusy(true)
-    try {
-      setSyncStatus(await synchronizeConfiguration())
-    } finally {
-      setSyncBusy(false)
-    }
-  }
 
   useEffect(() => {
     void initializeUpdater()
@@ -504,6 +469,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             </>
           )}
 
+          {activeTab === 'keyboard' && <CommandShortcuts />}
           {activeTab === 'keyboard' && (
             <>
               <SettingsSection
@@ -546,78 +512,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
           )}
 
           {activeTab === 'sync' && (
-            <SettingsSection
-              icon={<Cloud className="h-4 w-4" />}
-              title="Configuration sync"
-              description="Keep preferences and extension choices consistent across your devices."
-            >
-              <div className="space-y-4 rounded-xl border border-violet-300/50 bg-linear-to-br from-violet-500/[0.07] to-transparent px-4 py-4 dark:border-violet-400/20 dark:from-violet-500/[0.12]">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
-                      {syncStatus?.enabled ? 'Sync enabled' : 'Sync disabled'}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {authStatus === 'signed_in'
-                        ? `${syncStatus?.pendingRecords ?? 0} pending · ${syncStatus?.quarantinedRecords ?? 0} quarantined`
-                        : 'Sign in from Account before enabling configuration sync.'}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={syncBusy || authStatus !== 'signed_in' || !syncStatus}
-                      onClick={() => void toggleSync()}
-                    >
-                      {syncBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                      {syncStatus?.enabled ? 'Disable' : 'Enable'}
-                    </Button>
-                    <Button
-                      disabled={syncBusy || !syncStatus?.enabled}
-                      onClick={() => void syncNow()}
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${syncBusy ? 'animate-spin' : ''}`} />
-                      Sync now
-                    </Button>
-                  </div>
-                </div>
-                {syncStatus?.lastError && (
-                  <p className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                    {syncStatus.lastError}
-                  </p>
-                )}
-                <dl className="grid gap-2 text-xs sm:grid-cols-2">
-                  <div>
-                    <dt className="text-slate-500">Device</dt>
-                    <dd>{syncStatus?.deviceName ?? 'Loading…'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500">Last success</dt>
-                    <dd>
-                      {syncStatus?.lastSuccessAt
-                        ? new Date(syncStatus.lastSuccessAt).toLocaleString()
-                        : 'Never'}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="grid gap-3 text-xs leading-5 md:grid-cols-2">
-                  <div>
-                    <p className="font-semibold">Included</p>
-                    <p className="text-slate-500">
-                      Theme and language now; renderer preferences, OCR preferences, signed
-                      extension intent/settings, and shortcuts join this same typed record boundary.
-                    </p>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Always local</p>
-                    <p className="text-slate-500">
-                      Clips, notes, tags, files, credentials, provider endpoints/models, grants,
-                      device capture/window settings, jobs, diagnostics, and derived data.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </SettingsSection>
+            <ConfigurationSync userId={authStatus === 'signed_in' ? authUserId : null} />
           )}
 
           {/* CLIPBOARD TAB */}

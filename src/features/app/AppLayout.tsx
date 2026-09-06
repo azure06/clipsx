@@ -1,3 +1,4 @@
+import { loadCommandBindings } from '../../shared/keyboard/commands'
 import {
   useCallback,
   useEffect,
@@ -27,7 +28,11 @@ import type {
   TextEmbeddingStatus,
 } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
-import { PROFILE_MUTATED_EVENT, synchronizeIfEnabled } from '../../shared/sync/configSync'
+import {
+  PROFILE_MUTATED_EVENT,
+  SYNC_APPLIED_EVENT,
+  synchronizeIfEnabled,
+} from '../../shared/sync/configSync'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
@@ -190,6 +195,15 @@ export const AppLayout = () => {
   }, [completeAuthCallback, initializeAuth])
 
   useEffect(() => {
+    const reload = () => {
+      void loadCommandBindings().catch(() => undefined)
+    }
+    reload()
+    window.addEventListener(SYNC_APPLIED_EVENT, reload)
+    return () => window.removeEventListener(SYNC_APPLIED_EVENT, reload)
+  }, [])
+
+  useEffect(() => {
     if (authStatus !== 'signed_in' || !authUserId) return
     let cancelled = false
     const synchronize = () => {
@@ -200,14 +214,19 @@ export const AppLayout = () => {
         .catch(() => undefined)
     }
     const onOnline = () => synchronize()
-    const onProfileMutation = () => synchronize()
+    let mutationTimer: ReturnType<typeof setTimeout> | undefined
+    const onProfileMutation = () => {
+      clearTimeout(mutationTimer)
+      mutationTimer = setTimeout(synchronize, 500)
+    }
     synchronize()
     window.addEventListener('online', onOnline)
     window.addEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
-    const timer = window.setInterval(synchronize, 5 * 60 * 1000)
+    const timer = window.setInterval(synchronize, 60 * 1000)
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      clearTimeout(mutationTimer)
       window.removeEventListener('online', onOnline)
       window.removeEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
     }

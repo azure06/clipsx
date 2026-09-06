@@ -32,6 +32,12 @@ export default tseslint.config(
     },
   },
 
+  // Supabase CLI output uses conditional never unions; keep generated code intact.
+  {
+    files: ['src/shared/auth/database.types.ts'],
+    rules: { '@typescript-eslint/no-redundant-type-constituents': 'off' },
+  },
+
   // Config files without type checking
   {
     files: ['*.config.ts', '*.config.js'],

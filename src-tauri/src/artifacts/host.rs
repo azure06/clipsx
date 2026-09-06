@@ -196,11 +196,6 @@ pub async fn update_ocr_settings(repo: &HistoryRepository, settings: &OcrSetting
             serde_json::to_string(&settings.language)?,
         ),
     ] {
-        let prior: Option<String> =
-            sqlx::query_scalar("SELECT value_json FROM config_profile_values WHERE key=?")
-                .bind(key)
-                .fetch_optional(&mut *transaction)
-                .await?;
         sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
             .bind(key)
             .bind(&value)
@@ -208,9 +203,6 @@ pub async fn update_ocr_settings(repo: &HistoryRepository, settings: &OcrSetting
             .bind(now)
             .execute(&mut *transaction)
             .await?;
-        if prior.as_deref() != Some(value.as_str()) {
-            HistoryRepository::enqueue_profile_sync(&mut transaction, key, &value, now).await?;
-        }
     }
     if previous != *settings {
         sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")

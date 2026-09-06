@@ -259,6 +259,9 @@ pub struct CredentialPermission {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionSetting {
+    /// Only explicit portable boolean/number settings may enter configuration sync.
+    #[serde(default)]
+    pub portable: bool,
     pub id: String,
     pub label: String,
     pub kind: String,
@@ -661,6 +664,7 @@ impl ExtensionManifest {
             };
             if setting.label.trim().is_empty()
                 || setting.label.len() > 120
+                || (setting.portable && !matches!(setting.kind.as_str(), "boolean" | "number"))
                 || !valid_default
                 || !settings.insert(&setting.id)
             {
@@ -1104,6 +1108,7 @@ mod tests {
     fn settings_are_typed_and_have_matching_defaults() {
         let mut value = manifest(contribution(ContributionKind::Transformer));
         value.settings.push(ExtensionSetting {
+            portable: false,
             id: "tone".into(),
             label: "Tone".into(),
             kind: "string".into(),

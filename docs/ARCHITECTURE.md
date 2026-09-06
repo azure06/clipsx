@@ -182,7 +182,13 @@ Search owns chunking, embedding spaces, generations, jobs, indexing, and retriev
 
 Recall is an explicit bounded search action, not an automatic search source. It accepts at most the first ten already-ranked result IDs, deduplicates and eligibility-checks them through a host-owned query, and excludes clips carrying `core.security.secret`. The search service then reuses Meaning Search over only those IDs to select each long document's best matching passage; if embeddings are unavailable, it falls back to derived search text. Each passage is bounded to 2 KiB (20 KiB total at the ten-result limit), the question to 2 KiB, and the answer to 32 KiB before the configured local generation provider is invoked. Clipboard source text is delimited as untrusted data, output is presented as generated and fallible, and neither prompts nor answers become canonical clip metadata.
 
-Configuration sync is record-based and opt-in. SQLite owns a device identity, hybrid-logical clock, monotonic server cursor, transactional outbox, and invalid-remote quarantine. A supported profile mutation and its outbox record commit together. The client synchronizes at startup, after mutations, periodically, on reconnect, and manually; deterministic `(physical time, logical counter, source device)` ordering resolves conflicts and tombstones. The remote contract derives ownership from `auth.uid()` behind RLS and a security-invoker batch RPC. Only explicitly whitelisted profile records cross this boundary. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables local sync but preserves local data.
+Configuration sync v1 is opt-in and account-protected, independently of the browser vault and billing. SQLite owns the local configuration, per-account/generation outbox and acknowledged revisions, hybrid-logical clock, server cursor, staged first restore, invalid-record quarantine, and pending domain effects. SQLite triggers commit supported mutations and outbox records together. The coordinator synchronizes on startup, debounced mutations, reconnect, every 60 seconds, and manually, using exact revision acknowledgements and deterministic `(physical time, logical counter, source device)` conflict ordering. Received clocks are observed; excessive future clocks are corrected using server time.
+
+Supabase stores `sync_profiles`, `sync_devices`, and `sync_records`. Public invoker RPCs call closed, non-exposed operations running as a NOLOGIN/NOBYPASSRLS role with owner-scoped policies. Clients have no raw sync-table access. Enrollment is bound to a live Auth session; revoked sessions cannot create replacement device identities. Reset/replacement increment a profile generation, preventing offline devices from restoring deliberately cleared state. Late responses are rejected by account, generation, and local session epoch.
+
+First connection defaults to cloud restore; empty-cloud initialization and explicit replacement are atomic server snapshots. Multi-page cloud restores stage before replacing portable local values. Sync carries explicitly allowlisted preferences, renderer selections, OCR preferences, signed-registry extension intent, approved portable boolean/number settings, and app-command shortcuts. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables sync and preserves local data. Sync does not upgrade installed extensions or copy capability consent. Unavailable packages and conflicting/unknown commands remain pending with recovery controls.
+
+The backend protocol, domain migrations, limits, and deployment/recovery procedures are maintained in the sibling `clipsx-web/docs/backend/configuration-sync.md`. Hosted deployment and installed two-device certification are distinct from local automated verification.
 
 Hosted providers and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data. Ollama remains restricted to loopback endpoints until a separate LAN-provider policy exists.
 
@@ -206,8 +212,8 @@ import/export format.
 
 | Setting class | Examples | Storage and synchronization |
 | --- | --- | --- |
-| Profile, currently syncable | theme, language, OCR enablement and language | Namespaced typed SQLite records; only the explicit server allowlist synchronizes |
-| Profile, local for now | search behavior, desired packages, non-secret package settings, enablement, shortcuts | Typed SQLite records; synchronization requires an explicit versioned contract |
+| Profile, syncable | theme, language, output format, copy toast, search behavior, OCR preferences, renderer choices | Typed SQLite records; versioned closed server/client contract |
+| Portable extension and command intent | signed-registry packages, enablement, approved boolean/number settings, app shortcuts | Per-record sync; local validation, fresh capability consent, and pending recovery |
 | Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and similarity floor, local package path | Device-owned SQLite records; never copied automatically |
 | Secret | Provider/API credentials and account sessions | OS-protected storage only; never ordinary export or sync data |
 | Consent | Checksum-bound grants and invocation tokens | Local security state; never synchronized and renewed after package updates |
@@ -216,10 +222,7 @@ import/export format.
 
 Extension settings use stable package and setting IDs, are host-validated, and
 survive package removal unless the user explicitly deletes them. Credentials
-and grants are removed by default. The current remote contract synchronizes only
-`ui.theme`, `ui.language`, `artifacts.ocr.enabled`, and
-`artifacts.ocr.language`; clips, managed files, local endpoints/models,
-credentials, grants, caches, indexes, jobs, and diagnostics remain local.
+and grants are removed by default. The remote contract uses an explicit versioned allowlist. Extension declarations default to `portable: false`; only reviewed signed-package boolean/number declarations with matching server approval can sync. Clips, managed files, local endpoints/models, credentials, grants, caches, indexes, jobs, and diagnostics remain local.
 
 Account authentication remains owned by the Supabase client, including PKCE,
 session serialization, refresh, and local sign-out. The host exposes only an

@@ -562,6 +562,17 @@ impl ExtensionService {
         package_id: &str,
         version: &str,
     ) -> Result<ExtensionSummary> {
+        self.install_registry_guarded(repo, package_id, version, None)
+            .await
+    }
+
+    async fn install_registry_guarded(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        version: &str,
+        epoch: Option<i64>,
+    ) -> Result<ExtensionSummary> {
         let index = self.registry().await?;
         let entry = index
             .find(package_id, version)
@@ -574,6 +585,12 @@ impl ExtensionService {
             bail!("this reviewed extension release has been revoked");
         }
         let archive = download_release(&entry).await?;
+        if let Some(epoch) = epoch {
+            let current = crate::sync::status(repo).await?;
+            if !current.enabled || current.local_epoch != epoch {
+                bail!("Sync session changed during package download");
+            }
+        }
         let package = self
             .store
             .install(&archive, InstallSource::Registry, Some(&entry))?;
@@ -582,8 +599,22 @@ impl ExtensionService {
                 .validate_component(&package.sha256, component_path)
                 .await?;
         }
-        self.persist_install(repo, package, InstallSource::Registry, Some(&entry))
-            .await
+        if let Some(epoch) = epoch {
+            let current = crate::sync::status(repo).await?;
+            if !current.enabled || current.local_epoch != epoch {
+                bail!("Sync session changed during package validation");
+            }
+        }
+        if epoch.is_some() {
+            crate::sync::set_applying_remote(repo, true).await?;
+        }
+        let result = self
+            .persist_install(repo, package, InstallSource::Registry, Some(&entry))
+            .await;
+        if epoch.is_some() {
+            crate::sync::set_applying_remote(repo, false).await?;
+        }
+        result
     }
 
     async fn enforce_revocations(
@@ -2175,9 +2206,127 @@ impl ExtensionService {
         if !setting_value_is_valid(setting, &value) {
             bail!("extension setting value does not match its declaration");
         }
+        let mut tx = repo.pool.begin().await?;
+        let registry: bool = sqlx::query_scalar(
+            "SELECT source='registry' FROM extension_installs WHERE package_id=?",
+        )
+        .bind(package_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if registry && setting.portable {
+            sqlx::query("INSERT OR IGNORE INTO sync_portable_extension_settings VALUES(?,?)")
+                .bind(package_id)
+                .bind(setting_id)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query(
+                "DELETE FROM sync_portable_extension_settings WHERE package_id=? AND setting_id=?",
+            )
+            .bind(package_id)
+            .bind(setting_id)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query("INSERT INTO extension_package_settings_v2(package_id,setting_id,value_json,updated_at) VALUES(?,?,?,?) ON CONFLICT(package_id,setting_id) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
             .bind(package_id).bind(setting_id).bind(serde_json::to_string(&value)?).bind(now_ms())
-            .execute(&repo.pool).await?;
+            .execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn reconcile_configuration_sync(&self, repo: &HistoryRepository) -> Result<()> {
+        let status = crate::sync::status(repo).await?;
+        if !status.enabled {
+            return Ok(());
+        }
+        let effects=sqlx::query("SELECT * FROM sync_pending_effects ORDER BY CASE record_kind WHEN 'extension_intent' THEN 0 ELSE 1 END,record_key").fetch_all(&repo.pool).await?;
+        for effect in effects {
+            let current = crate::sync::status(repo).await?;
+            if !current.enabled || current.local_epoch != status.local_epoch {
+                break;
+            }
+            let kind: String = effect.get("record_kind");
+            let key: String = effect.get("record_key");
+            let payload: Option<String> = effect.get("payload_json");
+            let deleted = effect.get::<i64, _>("tombstone") != 0;
+            let result:Result<()> = async {
+                let value:serde_json::Value=payload.as_deref().map(serde_json::from_str).transpose()?.unwrap_or(serde_json::Value::Null);
+                match kind.as_str() {
+                    "extension_intent" => {
+                        let installed:Option<String>=sqlx::query_scalar("SELECT source FROM extension_installs WHERE package_id=?").bind(&key).fetch_optional(&repo.pool).await?;
+                        if installed.as_deref()==Some("developer") { bail!("Local developer package takes precedence; remove it to restore registry intent"); }
+                        if deleted { if installed.is_some() {
+                            crate::sync::set_applying_remote(repo,true).await?;
+                            let changed=self.set_enabled(repo,&key,false).await;
+                            crate::sync::set_applying_remote(repo,false).await?;
+                            changed?;
+                        } }
+                        else {
+                            if installed.is_none() {
+                                let index=self.registry().await?;
+                                let entry=index.packages.iter().filter(|p|p.package_id==key && !p.version.contains('-')).max_by(|a,b|version_cmp(&a.version,&b.version)).context("Package unavailable in the signed registry")?;
+                                self.install_registry_guarded(repo,&key,&entry.version,Some(status.local_epoch)).await?;
+                            }
+                            crate::sync::set_applying_remote(repo,true).await?;
+                            let changed=self.set_enabled(repo,&key,value["enabled"].as_bool().context("Invalid extension intent")?).await;
+                            crate::sync::set_applying_remote(repo,false).await?;
+                            changed?;
+                        }
+                    }
+                    "extension_setting" => {
+                        let (package_id,setting_id)=key.split_once('/').context("Invalid extension setting")?;
+                        let (_,package)=self.package_for_settings(repo,package_id).await?;
+                        let setting=package.manifest.settings.iter().find(|s|s.id==setting_id && s.portable).context("Setting is not declared portable by the signed package")?;
+                        let source:String=sqlx::query_scalar("SELECT source FROM extension_installs WHERE package_id=?").bind(package_id).fetch_one(&repo.pool).await?;
+                        if source!="registry" {bail!("Portable settings require a signed registry package");}
+                        crate::sync::set_applying_remote(repo,true).await?;
+                        let changed=self.set_package_setting(repo,package_id,setting_id,if deleted {setting.default.clone()} else {value}).await;
+                        crate::sync::set_applying_remote(repo,false).await?;
+                        changed?;
+                    }
+                    "shortcut" => {
+                        if key.starts_with("core.") {
+                            if !matches!(key.as_str(),"core.copy"|"core.favorite"|"core.pin"|"core.open"|"core.delete") {bail!("Command unavailable in this application version");}
+                            if deleted {
+                                crate::sync::set_applying_remote(repo,true).await?;
+                                let changed=sqlx::query("DELETE FROM config_command_shortcuts WHERE command_id=?").bind(&key).execute(&repo.pool).await;
+                                crate::sync::set_applying_remote(repo,false).await?;
+                                changed?;
+                            }
+                            else {
+                                let accelerator=value.as_str().context("Invalid shortcut")?;
+                                crate::sync::validate_shortcut_assignment(repo,&key,accelerator).await?;
+                                let collision:i64=sqlx::query_scalar("SELECT count(*) FROM config_command_shortcuts WHERE lower(accelerator)=lower(?) AND command_id<>?").bind(accelerator).bind(&key).fetch_one(&repo.pool).await?;
+                                if collision>0 {bail!("Shortcut conflicts with another command; choose a new binding");}
+                                crate::sync::set_applying_remote(repo,true).await?;
+                                let changed=sqlx::query("INSERT INTO config_command_shortcuts VALUES(?,?,?) ON CONFLICT(command_id) DO UPDATE SET accelerator=excluded.accelerator,updated_at=excluded.updated_at").bind(&key).bind(accelerator).bind(now_ms()).execute(&repo.pool).await;
+                                crate::sync::set_applying_remote(repo,false).await?;
+                                changed?;
+                            }
+                        } else {
+                            if !deleted {crate::sync::validate_shortcut_assignment(repo,&key,value.as_str().context("Invalid shortcut")?).await?;}
+                            let native=value.as_str().map(|s|s.replace("Primary+",if cfg!(target_os="macos") {"Cmd+"} else {"Ctrl+"}));
+                            crate::sync::set_applying_remote(repo,true).await?;
+                            let changed=self.set_action_shortcut(repo,&key,if deleted {None} else {native.as_deref()}).await;
+                            crate::sync::set_applying_remote(repo,false).await?;
+                            changed?;
+                        }
+                    }
+                    _=>bail!("Unsupported configuration domain"),
+                }
+                Ok(())
+            }.await;
+            match result {
+                Ok(()) => {
+                    sqlx::query("DELETE FROM sync_pending_effects WHERE record_kind=? AND record_key=? AND payload_json IS ? AND tombstone=?").bind(&kind).bind(&key).bind(&payload).bind(deleted).execute(&repo.pool).await?;
+                }
+                Err(error) => {
+                    let reason: String = error.to_string().chars().take(180).collect();
+                    sqlx::query("UPDATE sync_pending_effects SET reason=? WHERE record_kind=? AND record_key=?").bind(reason).bind(&kind).bind(&key).execute(&repo.pool).await?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2262,6 +2411,7 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id)
             .context("extension action is not installed and enabled")?;
+        let mut tx = repo.pool.begin().await?;
         if let Some(accelerator) = accelerator {
             if accelerator.is_empty() || accelerator.len() > 80 {
                 bail!("action shortcut is invalid");
@@ -2271,7 +2421,7 @@ impl ExtensionService {
             )
             .bind(accelerator)
             .bind(action_id)
-            .fetch_one(&repo.pool)
+            .fetch_one(&mut *tx)
             .await?;
             if conflict != 0 {
                 bail!("action shortcut conflicts with an existing assignment");
@@ -2281,15 +2431,34 @@ impl ExtensionService {
                 .bind(action_id)
                 .bind(accelerator)
                 .bind(now_ms())
-                .execute(&repo.pool)
+                .execute(&mut *tx)
                 .await
                 .context("action shortcut conflicts with an existing assignment")?;
         } else {
             sqlx::query("DELETE FROM extension_action_shortcuts WHERE action_id=?")
                 .bind(action_id)
-                .execute(&repo.pool)
+                .execute(&mut *tx)
                 .await?;
         }
+        if let Some(accelerator) = accelerator {
+            let portable = accelerator.replace("CmdOrCtrl+", "Primary+").replace(
+                if cfg!(target_os = "macos") {
+                    "Cmd+"
+                } else {
+                    "Ctrl+"
+                },
+                "Primary+",
+            );
+            if crate::sync::contract::valid_shortcut(&portable) {
+                sqlx::query("INSERT INTO config_command_shortcuts VALUES(?,?,?) ON CONFLICT(command_id) DO UPDATE SET accelerator=excluded.accelerator,updated_at=excluded.updated_at").bind(action_id).bind(portable).bind(now_ms()).execute(&mut *tx).await?;
+            }
+        } else {
+            sqlx::query("DELETE FROM config_command_shortcuts WHERE command_id=?")
+                .bind(action_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
