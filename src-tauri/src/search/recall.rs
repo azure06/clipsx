@@ -18,6 +18,7 @@ use sqlx::{QueryBuilder, Row, Sqlite};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tauri::ipc::Channel;
 
@@ -31,6 +32,7 @@ const MAX_TURNS: usize = 10;
 const MAX_SESSION_BYTES: usize = 1024 * 1024;
 const SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const MAX_OUTPUT_TOKENS: u32 = 1_024;
+const RETRIEVAL_STAGE_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +67,11 @@ pub struct RecallEvidence {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum RecallEvent {
     Stage {
         request_id: String,
@@ -295,7 +301,8 @@ pub async fn start_turn(
         return Err(ProviderError::Cancelled.into());
     }
     let (candidates, excluded_count) = load_candidates(repo, &ids).await?;
-    let mut evidence = select_evidence(repo, &request.question, &candidates).await;
+    let mut evidence =
+        select_evidence(repo, &request.question, &candidates, !degraded_retrieval).await;
     if evidence.is_empty() {
         channel.send(RecallEvent::NoEvidence {
             request_id: request.request_id,
@@ -424,16 +431,39 @@ async fn candidate_ids(
         syntax_mode: SyntaxMode::Simple,
         enabled_source_ids: current.enabled_source_ids,
     };
-    let page = search::search(
-        repo,
-        &search_request(request, request.question.clone()),
-        &settings,
+    let primary_request = search_request(request, request.question.clone());
+    let (page, timed_out) = match tokio::time::timeout(
+        RETRIEVAL_STAGE_TIMEOUT,
+        search::search(repo, &primary_request, &settings),
     )
-    .await?;
-    let degraded = page.source_outcomes.iter().any(|value| {
-        value.source_id != search::FTS_SOURCE_ID
-            && value.status != search::SearchSourceOutcomeStatus::Used
-    });
+    .await
+    {
+        Ok(result) => (result?, false),
+        Err(_) => {
+            // A cold or unavailable semantic provider must not block Recall.
+            // Retry immediately with mandatory keyword search only.
+            let mut keyword_request = primary_request;
+            keyword_request.enabled_source_ids = vec![search::FTS_SOURCE_ID.into()];
+            let keyword_settings = SearchSettings {
+                syntax_mode: SyntaxMode::Simple,
+                enabled_source_ids: vec![search::FTS_SOURCE_ID.into()],
+            };
+            (
+                tokio::time::timeout(
+                    RETRIEVAL_STAGE_TIMEOUT,
+                    search::search(repo, &keyword_request, &keyword_settings),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("Recall keyword retrieval timed out"))??,
+                true,
+            )
+        }
+    };
+    let degraded = timed_out
+        || page.source_outcomes.iter().any(|value| {
+            value.source_id != search::FTS_SOURCE_ID
+                && value.status != search::SearchSourceOutcomeStatus::Used
+        });
     let mut ids = page
         .items
         .into_iter()
@@ -441,7 +471,22 @@ async fn candidate_ids(
         .collect::<Vec<_>>();
     let relaxed = relaxed_question(&request.question);
     if relaxed != request.question && ids.len() < MAX_CANDIDATES as usize {
-        if let Ok(page) = search::search(repo, &search_request(request, relaxed), &settings).await {
+        let mut relaxed_request = search_request(request, relaxed);
+        let relaxed_settings = if timed_out {
+            relaxed_request.enabled_source_ids = vec![search::FTS_SOURCE_ID.into()];
+            SearchSettings {
+                syntax_mode: SyntaxMode::Simple,
+                enabled_source_ids: vec![search::FTS_SOURCE_ID.into()],
+            }
+        } else {
+            settings.clone()
+        };
+        if let Ok(Ok(page)) = tokio::time::timeout(
+            RETRIEVAL_STAGE_TIMEOUT,
+            search::search(repo, &relaxed_request, &relaxed_settings),
+        )
+        .await
+        {
             let mut seen = ids.iter().cloned().collect::<HashSet<_>>();
             ids.extend(
                 page.items
@@ -530,18 +575,28 @@ async fn select_evidence(
     repo: &HistoryRepository,
     question: &str,
     candidates: &[Candidate],
+    semantic_enabled: bool,
 ) -> Vec<RecallEvidence> {
     let eligible = candidates
         .iter()
         .map(|value| (value.clip_id.clone(), value.updated_at))
         .collect::<HashMap<_, _>>();
-    let semantic = semantic_matches(repo, question, &eligible, candidates.len())
+    let semantic = if semantic_enabled {
+        tokio::time::timeout(
+            RETRIEVAL_STAGE_TIMEOUT,
+            semantic_matches(repo, question, &eligible, candidates.len()),
+        )
         .await
         .ok()
+        .and_then(Result::ok)
         .unwrap_or_default()
-        .into_iter()
-        .map(|(id, _, text)| (id, text))
-        .collect::<HashMap<_, _>>();
+    } else {
+        Vec::new()
+    }
+    .into_iter()
+    .into_iter()
+    .map(|(id, _, text)| (id, text))
+    .collect::<HashMap<_, _>>();
     let mut seen = HashSet::new();
     let mut total = 0usize;
     let mut evidence = Vec::new();
@@ -689,6 +744,23 @@ fn truncate_utf8(value: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recall_events_use_the_frontend_camel_case_wire_contract() {
+        let event = RecallEvent::Sources {
+            request_id: "request-1".into(),
+            sources: Vec::new(),
+            excluded_count: 2,
+            degraded_retrieval: true,
+            context_reduced: false,
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "sources");
+        assert_eq!(value["requestId"], "request-1");
+        assert_eq!(value["excludedCount"], 2);
+        assert_eq!(value["degradedRetrieval"], true);
+        assert!(value.get("request_id").is_none());
+    }
     #[test]
     fn relaxes_questions_without_losing_identifiers() {
         assert_eq!(

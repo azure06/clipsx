@@ -122,14 +122,28 @@ export function useRecall() {
       setActiveRequestId(requestId)
       setTurns(current => [...current, emptyTurn(requestId, trimmed)].slice(-10))
       const onEvent = new Channel<RecallEvent>()
+      let terminal = false
+      const retrievalWatchdog = window.setTimeout(() => {
+        if (terminal) return
+        terminal = true
+        void invoke('cancel_recall_turn', { requestId }).catch(() => undefined)
+        updateTurn(requestId, turn => ({
+          ...turn,
+          status: 'error',
+          error:
+            'Finding clips took too long. Recall stopped; retry to use keyword retrieval if Meaning Search is unavailable.',
+        }))
+        setActiveRequestId(current => (current === requestId ? null : current))
+      }, 12_000)
       onEvent.onmessage = event => {
-        if (event.requestId !== requestId) return
+        if (event.requestId !== requestId || terminal) return
         touchExpiry()
         switch (event.type) {
           case 'stage':
             updateTurn(requestId, turn => ({ ...turn, stage: event.stage }))
             break
           case 'sources':
+            window.clearTimeout(retrievalWatchdog)
             updateTurn(requestId, turn => ({
               ...turn,
               sources: event.sources,
@@ -142,6 +156,8 @@ export function useRecall() {
             updateTurn(requestId, turn => ({ ...turn, answer: turn.answer + event.text }))
             break
           case 'completed':
+            terminal = true
+            window.clearTimeout(retrievalWatchdog)
             updateTurn(requestId, turn => ({
               ...turn,
               answer: event.answer,
@@ -154,6 +170,8 @@ export function useRecall() {
             setActiveRequestId(current => (current === requestId ? null : current))
             break
           case 'no_evidence':
+            terminal = true
+            window.clearTimeout(retrievalWatchdog)
             updateTurn(requestId, turn => ({
               ...turn,
               status: 'no_evidence',
@@ -163,10 +181,14 @@ export function useRecall() {
             setActiveRequestId(current => (current === requestId ? null : current))
             break
           case 'cancelled':
+            terminal = true
+            window.clearTimeout(retrievalWatchdog)
             updateTurn(requestId, turn => ({ ...turn, status: 'incomplete' }))
             setActiveRequestId(current => (current === requestId ? null : current))
             break
           case 'error':
+            terminal = true
+            window.clearTimeout(retrievalWatchdog)
             updateTurn(requestId, turn => ({ ...turn, status: 'error', error: event.message }))
             setActiveRequestId(current => (current === requestId ? null : current))
             break
@@ -188,6 +210,8 @@ export function useRecall() {
           onEvent,
         })
       } catch (error) {
+        terminal = true
+        window.clearTimeout(retrievalWatchdog)
         updateTurn(requestId, turn => ({ ...turn, status: 'error', error: String(error) }))
         setActiveRequestId(current => (current === requestId ? null : current))
       }
