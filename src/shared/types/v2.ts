@@ -59,7 +59,50 @@ export type SearchSourceOutcome = {
   status: 'used' | 'unavailable' | 'failed'
   diagnostic: string | null
 }
-export type RecallResult = { answer: string; includedCount: number; excludedCount: number }
+export type GenerationProviderStatus = {
+  enabled: boolean
+  available: boolean
+  diagnostic: string | null
+  providerId: string | null
+  model: string | null
+}
+
+export type RecallEvidence = {
+  citation: number
+  clipId: string
+  excerpt: string
+  sourceKind: string
+  sourceId: string | null
+  contextPath: string[]
+  sourceFingerprint: string
+  sourceAppName: string | null
+  capturedAt: number
+  selectionMethod: 'semantic' | 'keyword'
+}
+
+export type RecallEvent =
+  | { type: 'stage'; requestId: string; stage: string }
+  | {
+      type: 'sources'
+      requestId: string
+      sources: RecallEvidence[]
+      excludedCount: number
+      degradedRetrieval: boolean
+      contextReduced: boolean
+    }
+  | { type: 'delta'; requestId: string; text: string }
+  | {
+      type: 'completed'
+      requestId: string
+      answer: string
+      completionReason: string
+      providerId: string
+      model: string
+      executionLocation: 'local' | 'remote'
+    }
+  | { type: 'no_evidence'; requestId: string; message: string; degradedRetrieval: boolean }
+  | { type: 'cancelled'; requestId: string }
+  | { type: 'error'; requestId: string; code: string; message: string }
 
 export type ClipSummary = {
   id: string

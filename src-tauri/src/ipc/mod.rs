@@ -25,7 +25,7 @@ use anyhow::Context;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, State};
+use tauri::{ipc::Channel, AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use tauri_plugin_shell::ShellExt;
@@ -2470,17 +2470,25 @@ async fn list_failed_text_embedding_jobs(
 #[tauri::command]
 async fn configure_text_generation_provider(
     model: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::providers::generation::GenerationProviderStatus, String> {
-    crate::providers::generation::configure(&state.history, model)
+    let status = crate::providers::generation::configure(&state.history, model)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("generation-provider-status-changed", ());
+    Ok(status)
 }
 #[tauri::command]
-async fn disable_text_generation_provider(state: State<'_, AppState>) -> Result<(), String> {
+async fn disable_text_generation_provider(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     crate::providers::generation::disable(&state.history)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("generation-provider-status-changed", ());
+    Ok(())
 }
 #[tauri::command]
 async fn get_text_generation_status(
@@ -2491,14 +2499,45 @@ async fn get_text_generation_status(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
-async fn recall_search(
-    question: String,
-    clip_ids: Vec<String>,
+async fn start_recall_turn(
+    request: search::recall::RecallTurnRequest,
+    on_event: Channel<search::recall::RecallEvent>,
     state: State<'_, AppState>,
-) -> Result<search::recall::RecallResult, String> {
-    search::recall::answer(&state.history, &question, clip_ids)
-        .await
-        .map_err(|error| error.to_string())
+) -> Result<(), String> {
+    let request_id = request.request_id.clone();
+    if let Err(error) =
+        search::recall::start_turn(&state.recall, &state.history, request, on_event.clone()).await
+    {
+        let event = if error.downcast_ref::<crate::providers::error::ProviderError>()
+            == Some(&crate::providers::error::ProviderError::Cancelled)
+        {
+            search::recall::RecallEvent::Cancelled { request_id }
+        } else {
+            search::recall::RecallEvent::Error {
+                request_id,
+                code: error
+                    .downcast_ref::<crate::providers::error::ProviderError>()
+                    .map(|value| value.code())
+                    .unwrap_or("recall_failed")
+                    .into(),
+                message: error.to_string(),
+            }
+        };
+        on_event
+            .send(event)
+            .map_err(|send_error| send_error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_recall_turn(request_id: String, state: State<'_, AppState>) -> bool {
+    state.recall.cancel(&request_id)
+}
+
+#[tauri::command]
+fn clear_recall_session(session_id: String, state: State<'_, AppState>) {
+    state.recall.clear_session(&session_id);
 }
 #[tauri::command]
 async fn reindex_text_embeddings(
@@ -2865,6 +2904,7 @@ pub(crate) fn run() {
                     transforms: transformers::TransformService::default(),
                     extensions: extensions.clone(),
                     workers: crate::app::workers::BackgroundWorkers::default(),
+                    recall: Default::default(),
                 });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
@@ -3150,7 +3190,9 @@ pub(crate) fn run() {
             configure_text_generation_provider,
             disable_text_generation_provider,
             get_text_generation_status,
-            recall_search,
+            start_recall_turn,
+            cancel_recall_turn,
+            clear_recall_session,
             retry_text_embedding_provider,
             reindex_text_embeddings,
             index_missing_text_embeddings,
@@ -3354,7 +3396,9 @@ mod tests {
         let main_permissions = include_str!("../../permissions/main-app-commands.toml");
         assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
         assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
-        assert!(main_permissions.contains("\"allow-recall-search\""));
+        assert!(main_permissions.contains("\"allow-start-recall-turn\""));
+        assert!(main_permissions.contains("\"allow-cancel-recall-turn\""));
+        assert!(main_permissions.contains("\"allow-clear-recall-session\""));
         assert!(main_permissions.contains("\"allow-update-text-embedding-threshold\""));
     }
 

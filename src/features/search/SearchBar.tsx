@@ -116,6 +116,8 @@ interface SearchBarProps {
   canRecall?: boolean
   isRecalling?: boolean
   recallElapsedSeconds?: number
+  recallShortcut?: string
+  recallAvailable?: boolean
   onRecall?: () => void
 }
 
@@ -141,6 +143,8 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     canRecall = false,
     isRecalling = false,
     recallElapsedSeconds = 0,
+    recallShortcut = 'Ctrl+Enter',
+    recallAvailable = true,
     onRecall,
   },
   ref
@@ -227,6 +231,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
   const scopePillConfig = hasScopePill ? SCOPE_OPTIONS.find(opt => opt.scope === activeScope) : null
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing && !e.repeat) {
+      e.preventDefault()
+      e.stopPropagation()
+      onRecall?.()
+      return
+    }
     if (showFilterMenu) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -312,6 +322,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
         {/* The Input */}
         <input
+          data-recall-input="main"
           ref={inputRef}
           type="text"
           role="combobox"
@@ -352,10 +363,15 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               onClick={onRecall}
               disabled={isRecalling}
               className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 disabled:opacity-50 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
-              title="Ask the configured local model to answer from the first 10 results"
+              title={recallAvailable ? `Ask Recall (${recallShortcut})` : 'Set up Recall'}
             >
               <Sparkles className={`h-3.5 w-3.5 ${isRecalling ? 'animate-pulse' : ''}`} />
               {isRecalling ? `Reading… ${recallElapsedSeconds}s` : 'Recall'}
+              {!isRecalling && (
+                <span aria-hidden="true" className="hidden lg:inline opacity-60">
+                  {recallShortcut}
+                </span>
+              )}
             </button>
           )}
           {/* Search sources */}

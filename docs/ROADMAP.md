@@ -58,7 +58,8 @@ after installation and recovery are explicit and certified.
 The local backend and desktop implement the domain-based migration baseline,
 versioned configuration protocol, account/generation isolation, atomic cloud
 initialization/replacement, staged restore, device revocation, quarantine,
-signed-registry restoration, portable setting approval, and app-command shortcuts.
+signed-registry restoration, portable setting approval, app-command shortcuts,
+and event-driven low-traffic synchronization without idle polling.
 Local automated coverage is recorded in the backend configuration-sync guide.
 Remaining production work:
 
@@ -93,7 +94,9 @@ milestone; existing billing/vault functionality remains independently maintained
 - [ ] Run and record the complete installed-build matrices in
   [RELEASE.md](RELEASE.md), including native clipboard fidelity, window focus and
   paste, tray and shortcuts, autostart, deep links, OAuth/sync, accessibility,
-  extensions, OCR, search/Recall quality, latency, memory, disk, and recovery.
+  extensions, OCR, search/Recall quality, latency, memory, disk, and recovery. Recall release
+  certification includes the versioned synthetic retrieval/grounding corpus, exact-identifier
+  recovery, citation support, cancellation, and clipboard self-write checks.
 - [ ] Add a bundle-size budget and confirm that removing core Mermaid materially
   reduces the main bundle and eliminates its diagram/Cytoscape/KaTeX chunks.
 - [ ] Update website, download, and release messaging to advertise only certified

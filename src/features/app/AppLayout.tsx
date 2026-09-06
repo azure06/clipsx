@@ -1,13 +1,20 @@
-import { loadCommandBindings } from '../../shared/keyboard/commands'
+import {
+  commandShortcut,
+  loadCommandBindings,
+  matchCommandShortcut,
+} from '../../shared/keyboard/commands'
+import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 
 import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
@@ -20,10 +27,13 @@ import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import { Settings, type SettingsTab } from '../settings/Settings'
 import { Plugins } from '../settings/Plugins'
 import { IntelligencePage } from '../intelligence/IntelligencePage'
+import { RecallWorkspace } from '../recall/RecallWorkspace'
+import { useRecall } from '../recall/useRecall'
+import { parseSearch } from '../search/searchQuery'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
 import type {
-  RecallResult,
+  GenerationProviderStatus,
   SearchSourceDescriptor,
   TextEmbeddingStatus,
 } from '../../shared/types/v2'
@@ -31,7 +41,7 @@ import { useTranslation } from 'react-i18next'
 import {
   PROFILE_MUTATED_EVENT,
   SYNC_APPLIED_EVENT,
-  synchronizeIfEnabled,
+  configurationSyncScheduler,
 } from '../../shared/sync/configSync'
 
 export const AppLayout = () => {
@@ -52,6 +62,7 @@ export const AppLayout = () => {
   const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
   const refreshSearch = useClipboardStore(state => state.refreshSearch)
+  const addNewClip = useClipboardStore(state => state.addNewClip)
   const searchSourceOutcomes = useClipboardStore(state => state.searchSourceOutcomes)
   const { setThemeMode } = useTheme()
   const initializeAuth = useAuthStore(state => state.initialize)
@@ -60,54 +71,37 @@ export const AppLayout = () => {
   const authUserId = useAuthStore(state => state.userId)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
-  const [recallResult, setRecallResult] = useState<RecallResult | null>(null)
-  const [recallError, setRecallError] = useState<string | null>(null)
-  const [isRecalling, setIsRecalling] = useState(false)
-  const [recallElapsedSeconds, setRecallElapsedSeconds] = useState(0)
+  const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
+  const recall = useRecall()
+  const [rightTab, setRightTab] = useState<'preview' | 'recall'>('preview')
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
-  const latestSearchQueryRef = useRef(searchQuery)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
   const [historyWidth, setHistoryWidth] = useState(50)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
-  latestSearchQueryRef.current = searchQuery
-
-  useEffect(() => {
-    setRecallResult(null)
-    setRecallError(null)
-  }, [searchQuery])
-
-  useEffect(() => {
-    if (!isRecalling) return
-    setRecallElapsedSeconds(0)
-    const timer = window.setInterval(() => {
-      setRecallElapsedSeconds(seconds => seconds + 1)
-    }, 1000)
-    return () => window.clearInterval(timer)
-  }, [isRecalling])
-
-  const runRecall = async () => {
-    const question = searchQuery.trim()
-    const clipIds = clips.slice(0, 10).map(clip => clip.id)
-    if (!question || clipIds.length === 0 || isRecalling) return
-    setIsRecalling(true)
-    setRecallResult(null)
-    setRecallError(null)
-    try {
-      const result = await invoke<RecallResult>('recall_search', {
-        question,
-        clipIds,
-      })
-      if (latestSearchQueryRef.current.trim() === question) setRecallResult(result)
-    } catch (error) {
-      if (latestSearchQueryRef.current.trim() === question) {
-        setRecallError(error instanceof Error ? error.message : String(error))
-      }
-    } finally {
-      setIsRecalling(false)
+  const parsedRecallQuery = parseSearch(searchQuery)
+  const recallScope = useMemo(
+    () => ({
+      scope: activeTab,
+      tagId: null,
+      representationFamilies: parsedRecallQuery.representationFamilies,
+      facetIds: parsedRecallQuery.facetIds,
+      enabledSourceIds: searchSources.filter(source => source.enabled).map(source => source.id),
+      label:
+        activeTab === 'all' ? 'All history' : activeTab === 'favorites' ? 'Favorites' : 'Pinned',
+    }),
+    [activeTab, parsedRecallQuery.facetIds, parsedRecallQuery.representationFamilies, searchSources]
+  )
+  const runRecall = useCallback(() => {
+    if (!parsedRecallQuery.query || recall.isRunning) return
+    if (!generationStatus?.enabled || !generationStatus.available) {
+      setActiveView('intelligence')
+      return
     }
-  }
+    setRightTab('recall')
+    void recall.startRoot(parsedRecallQuery.query, recallScope)
+  }, [generationStatus, parsedRecallQuery.query, recall, recallScope, setActiveView])
 
   const openSettings = useCallback(
     (tab: SettingsTab) => {
@@ -206,27 +200,46 @@ export const AppLayout = () => {
   useEffect(() => {
     if (authStatus !== 'signed_in' || !authUserId) return
     let cancelled = false
-    const synchronize = () => {
-      void synchronizeIfEnabled(authUserId)
-        .then(status => {
-          if (!cancelled && status) return useSettingsStore.getState().loadSettings()
+    let unlistenFocus: (() => void) | undefined
+    const onOnline = () => {
+      void configurationSyncScheduler.request('reconnect').catch(() => undefined)
+    }
+    const onProfileMutation = () => {
+      void configurationSyncScheduler.request('mutation')
+    }
+    const setup = async () => {
+      let focused = true
+      try {
+        const currentWindow = getCurrentWindow()
+        focused = await currentWindow.isFocused()
+        const dispose = await currentWindow.onFocusChanged(event => {
+          configurationSyncScheduler.setWindowActive(event.payload)
+        })
+        if (cancelled) {
+          dispose()
+          return
+        }
+        unlistenFocus = dispose
+      } catch {
+        // The web fallback stays active when native focus inspection is unavailable.
+      }
+      if (cancelled) return
+      void configurationSyncScheduler
+        .start({
+          userId: authUserId,
+          active: focused,
+          onSynchronized: () => useSettingsStore.getState().loadSettings(),
         })
         .catch(() => undefined)
     }
-    const onOnline = () => synchronize()
-    let mutationTimer: ReturnType<typeof setTimeout> | undefined
-    const onProfileMutation = () => {
-      clearTimeout(mutationTimer)
-      mutationTimer = setTimeout(synchronize, 500)
-    }
-    synchronize()
+
     window.addEventListener('online', onOnline)
     window.addEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
-    const timer = window.setInterval(synchronize, 60 * 1000)
+    void setup()
     return () => {
       cancelled = true
-      window.clearInterval(timer)
-      clearTimeout(mutationTimer)
+      unlistenFocus?.()
+      configurationSyncScheduler.stop()
       window.removeEventListener('online', onOnline)
       window.removeEventListener(PROFILE_MUTATED_EVENT, onProfileMutation)
     }
@@ -242,12 +255,14 @@ export const AppLayout = () => {
   useEffect(() => {
     const loadTextSearchStatus = async () => {
       try {
-        const [status, sources] = await Promise.all([
+        const [status, sources, generation] = await Promise.all([
           invoke<TextEmbeddingStatus>('get_text_embedding_status'),
           invoke<SearchSourceDescriptor[]>('list_search_sources'),
+          invoke<GenerationProviderStatus>('get_text_generation_status'),
         ])
         setTextSearchStatus(status)
-        setSearchSources(sources)
+        setSearchSources(Array.isArray(sources) ? sources : [])
+        setGenerationStatus(generation)
         setSemanticActive(
           sources.some(source => source.id === 'builtin.search.semantic_text' && source.enabled)
         )
@@ -259,6 +274,9 @@ export const AppLayout = () => {
     void loadTextSearchStatus()
 
     const unlistenCapabilities = listen('embedding-provider-status-changed', () => {
+      void loadTextSearchStatus()
+    })
+    const unlistenGeneration = listen('generation-provider-status-changed', () => {
       void loadTextSearchStatus()
     })
     const unlistenThreshold = listen('meaning-search-threshold-changed', () => {
@@ -277,6 +295,7 @@ export const AppLayout = () => {
 
     return () => {
       void unlistenCapabilities.then(fn => fn())
+      void unlistenGeneration.then(fn => fn())
       void unlistenThreshold.then(fn => fn())
       void unlistenTextSearchStatus.then(fn => fn())
       void unlistenSourceStatus.then(fn => fn())
@@ -319,14 +338,29 @@ export const AppLayout = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (matchCommandShortcut(e, 'core.recall', { modifiers: ['primary'], key: 'Enter' })) {
+        // Recall owns modified Enter in Clips. Consuming it prevents history activation/paste.
+        if (activeView !== 'clips' || e.repeat || e.isComposing) return
+        const target = e.target as HTMLElement | null
+        const editable = target?.matches('input, textarea, [contenteditable="true"]') ?? false
+        const isMainSearch = target?.closest('[data-recall-input="main"]') != null
+        const isFollowUp = target?.closest('[data-recall-input="follow-up"]') != null
+        if (isFollowUp) return
+        if (editable && !isMainSearch && !isFollowUp) return
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        if (!searchQuery.trim()) searchBarRef.current?.focus()
+        else runRecall()
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         searchBarRef.current?.focus()
       }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [activeView, runRecall, searchQuery])
 
   useEffect(() => {
     const unlisten = listen('main-window-activated', focusSearchBar)
@@ -402,59 +436,17 @@ export const AppLayout = () => {
                     searchSources={searchSources}
                     onToggleSource={sourceId => void handleToggleSource(sourceId)}
                     sourceOutcomes={searchSourceOutcomes}
-                    canRecall={searchQuery.trim().length > 0 && clips.length > 0}
-                    isRecalling={isRecalling}
-                    recallElapsedSeconds={recallElapsedSeconds}
+                    placeholder="Search clips or ask a question…"
+                    canRecall={parsedRecallQuery.query.length > 0}
+                    isRecalling={recall.isRunning}
+                    recallShortcut={formatShortcut(
+                      commandShortcut('core.recall', { modifiers: ['primary'], key: 'Enter' })
+                    )}
+                    recallAvailable={Boolean(
+                      generationStatus?.enabled && generationStatus.available
+                    )}
                     onRecall={() => void runRecall()}
                   />
-                  {(isRecalling || recallResult || recallError) && (
-                    <div className="mt-3 rounded-xl border border-violet-200/70 bg-white/80 p-4 text-sm shadow-sm dark:border-violet-400/20 dark:bg-slate-900/80">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">
-                            Recall · local generation
-                          </p>
-                          {isRecalling ? (
-                            <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                              Selecting the best passages and generating locally…{' '}
-                              {recallElapsedSeconds}s. A local model can take a minute or two.
-                            </p>
-                          ) : recallResult ? (
-                            <>
-                              <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap leading-6 text-slate-800 dark:text-slate-100">
-                                {recallResult.answer}
-                              </p>
-                              <p className="mt-2 text-[10px] text-slate-500">
-                                Used {recallResult.includedCount} ranked result
-                                {recallResult.includedCount === 1 ? '' : 's'}
-                                {recallResult.excludedCount > 0
-                                  ? `; excluded ${recallResult.excludedCount} sensitive or non-text result${recallResult.excludedCount === 1 ? '' : 's'}`
-                                  : ''}
-                                . Verify important answers against the clips.
-                              </p>
-                            </>
-                          ) : (
-                            <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">
-                              {recallError}
-                            </p>
-                          )}
-                        </div>
-                        {!isRecalling && (
-                          <button
-                            type="button"
-                            aria-label="Close Recall answer"
-                            className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
-                            onClick={() => {
-                              setRecallResult(null)
-                              setRecallError(null)
-                            }}
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* Split View Container */}
@@ -467,7 +459,10 @@ export const AppLayout = () => {
                     <ClipboardHistory
                       searchQuery={searchQuery}
                       className="flex-1"
-                      onPreviewItem={setPreviewClipId}
+                      onPreviewItem={clipId => {
+                        setPreviewClipId(clipId)
+                        setRightTab('preview')
+                      }}
                     />
                   </div>
                   <button
@@ -483,7 +478,62 @@ export const AppLayout = () => {
                   </button>
                   {/* RIGHT PANEL: Preview & Actions */}
                   <div className="min-w-0 flex-1 flex flex-col gap-6 overflow-hidden">
+                    {recall.turns.length > 0 && (
+                      <div className="flex shrink-0 gap-1 rounded-lg bg-slate-100/60 p-1 text-xs dark:bg-white/5">
+                        {(['preview', 'recall'] as const).map(tab => (
+                          <button
+                            key={tab}
+                            onClick={() => setRightTab(tab)}
+                            className={`flex-1 rounded-md px-3 py-1.5 capitalize ${rightTab === tab ? 'bg-white text-violet-700 shadow-sm dark:bg-white/10 dark:text-violet-200' : 'text-gray-500'}`}
+                          >
+                            {tab}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {(() => {
+                      if (rightTab === 'recall' && recall.turns.length > 0) {
+                        return (
+                          <RecallWorkspace
+                            turns={recall.turns}
+                            scopeLabel={recall.scope?.label ?? recallScope.label}
+                            isRunning={recall.isRunning}
+                            expired={recall.expired}
+                            onCancel={() => void recall.cancel()}
+                            onClear={() => {
+                              recall.clear()
+                              setRightTab('preview')
+                              searchBarRef.current?.focus()
+                            }}
+                            onFollowUp={question => void recall.followUp(question)}
+                            onRetry={turn =>
+                              void recall.startRoot(turn.question, recall.scope ?? recallScope)
+                            }
+                            onApplySources={(turn, clipIds) =>
+                              void recall.rerunWithSources(turn.question, clipIds)
+                            }
+                            onSearchAll={turn => void recall.searchAll(turn.question)}
+                            onOpenClip={clipId => {
+                              const open = async () => {
+                                if (
+                                  !useClipboardStore
+                                    .getState()
+                                    .clips.some(clip => clip.id === clipId)
+                                ) {
+                                  const detail = await invoke<{ clip: (typeof clips)[number] }>(
+                                    'get_clip_detail',
+                                    { clipId }
+                                  )
+                                  addNewClip(detail.clip)
+                                }
+                                setPreviewClipId(clipId)
+                                setRightTab('preview')
+                              }
+                              void open()
+                            }}
+                          />
+                        )
+                      }
                       const displayedClip = previewClip
                       if (displayedClip) {
                         return <ClipPreview clip={displayedClip} />

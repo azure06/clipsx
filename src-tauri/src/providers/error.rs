@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderError {
+    Cancelled,
     Disabled,
     InvalidConfiguration(String),
     Unavailable(String),
@@ -28,6 +29,7 @@ impl ProviderError {
 
     pub fn code(&self) -> &'static str {
         match self {
+            Self::Cancelled => "cancelled",
             Self::Disabled => "disabled",
             Self::InvalidConfiguration(_) => "invalid_configuration",
             Self::Unavailable(_) => "unavailable",
@@ -45,6 +47,7 @@ impl ProviderError {
 impl Display for ProviderError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Cancelled => formatter.write_str("generation was cancelled"),
             Self::Disabled => formatter.write_str("provider is disabled"),
             Self::InvalidConfiguration(message) => {
                 write!(formatter, "invalid provider configuration: {message}")

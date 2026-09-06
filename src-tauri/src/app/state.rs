@@ -40,4 +40,5 @@ pub struct AppState {
     pub transforms: TransformService,
     pub extensions: ExtensionService,
     pub workers: super::workers::BackgroundWorkers,
+    pub recall: crate::search::recall::RecallRuntime,
 }

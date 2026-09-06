@@ -9,6 +9,7 @@ import {
 } from './shortcuts'
 
 export const APP_COMMANDS = [
+  { id: 'core.recall', label: 'Ask Recall', shortcut: 'Primary+Enter' },
   { id: 'core.copy', label: 'Copy selected clip', shortcut: 'Primary+C' },
   { id: 'core.favorite', label: 'Toggle favorite', shortcut: 'Primary+F' },
   { id: 'core.pin', label: 'Toggle pin', shortcut: 'Primary+P' },

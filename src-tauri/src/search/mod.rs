@@ -574,7 +574,7 @@ pub async fn search(
         .iter()
         .any(|source| source.id() == SEMANTIC_TEXT_SOURCE_ID)
     {
-        Some(eligible_clips(repo, request).await?)
+        Some(eligible_clip_ids(repo, request).await?)
     } else {
         None
     };
@@ -747,7 +747,7 @@ fn log_search_timing(operation: &str, started: Instant, count: usize, slow_ms: u
     }
 }
 
-async fn eligible_clips(
+pub(crate) async fn eligible_clip_ids(
     repo: &HistoryRepository,
     request: &SearchRequest,
 ) -> Result<HashMap<String, i64>> {

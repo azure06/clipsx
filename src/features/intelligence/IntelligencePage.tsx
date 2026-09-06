@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import type {
   FailedTextEmbeddingJob,
+  GenerationProviderStatus,
   SearchSourceDescriptor,
   TextEmbeddingStatus,
 } from '../../shared/types/v2'
@@ -49,13 +50,6 @@ type ModelProviderConnectionStatus = {
   models: ModelDescriptor[]
 }
 type SearchSettings = { syntaxMode: 'simple' | 'advanced'; enabledSourceIds: string[] }
-type GenerationProviderStatus = {
-  enabled: boolean
-  available: boolean
-  diagnostic: string | null
-  providerId: string | null
-  model: string | null
-}
 type OcrLanguage = { id: string; label: string }
 type OcrRuntimeStatus = {
   settings: { enabled: boolean; language: string }

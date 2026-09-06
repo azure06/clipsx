@@ -6,6 +6,7 @@ import {
   replaceSyncProfile,
 } from '../auth/supabaseAuth'
 import type { Json } from '../auth/database.types'
+import { ConfigurationSyncScheduler } from './configSyncScheduler'
 
 export type SyncStatus = {
   enabled: boolean
@@ -75,8 +76,6 @@ export const clearCloudConfiguration = async () => {
   return getSyncStatus()
 }
 let active: Promise<SyncStatus> | null = null
-let failures = 0
-let retryAt = 0
 export const synchronizeConfiguration = (): Promise<SyncStatus> => {
   active ??= run().finally(() => {
     active = null
@@ -109,8 +108,6 @@ async function run(): Promise<SyncStatus> {
       })
       window.dispatchEvent(new Event(SYNC_APPLIED_EVENT))
       if (response['hasMore'] !== true && status.pendingRecords === 0) {
-        failures = 0
-        retryAt = 0
         return status
       }
     }
@@ -128,14 +125,16 @@ async function run(): Promise<SyncStatus> {
       // Only sanitized protocol/network errors are retained; never request bodies.
       await invoke('record_sync_error', { message: message.slice(0, 512) }).catch(() => undefined)
     }
-    failures++
-    retryAt =
-      Date.now() + Math.min(60_000, 1000 * 2 ** Math.min(failures, 6)) * (0.5 + Math.random())
     throw error
   }
 }
 export const synchronizeIfEnabled = async (userId: string) => {
   const status = await getSyncStatus()
-  if (!status.enabled || status.activeUserId !== userId || Date.now() < retryAt) return null
+  if (!status.enabled || status.activeUserId !== userId) return null
   return synchronizeConfiguration()
 }
+
+export const configurationSyncScheduler = new ConfigurationSyncScheduler({
+  getStatus: getSyncStatus,
+  synchronize: synchronizeIfEnabled,
+})

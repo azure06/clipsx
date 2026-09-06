@@ -2287,7 +2287,7 @@ impl ExtensionService {
                     }
                     "shortcut" => {
                         if key.starts_with("core.") {
-                            if !matches!(key.as_str(),"core.copy"|"core.favorite"|"core.pin"|"core.open"|"core.delete") {bail!("Command unavailable in this application version");}
+                            if !matches!(key.as_str(),"core.copy"|"core.favorite"|"core.pin"|"core.open"|"core.delete"|"core.recall") {bail!("Command unavailable in this application version");}
                             if deleted {
                                 crate::sync::set_applying_remote(repo,true).await?;
                                 let changed=sqlx::query("DELETE FROM config_command_shortcuts WHERE command_id=?").bind(&key).execute(&repo.pool).await;

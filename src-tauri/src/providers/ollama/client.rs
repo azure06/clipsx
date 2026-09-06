@@ -80,6 +80,27 @@ impl OllamaClient {
             .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
         response_json_bounded(response, path, max_response_bytes).await
     }
+
+    pub async fn post_stream(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+        timeout: Duration,
+    ) -> ProviderResult<reqwest::Response> {
+        let response = self
+            .client
+            .post(self.api(path)?)
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            Err(response_error(response, path).await)
+        }
+    }
 }
 
 async fn response_json_bounded(
@@ -108,38 +129,40 @@ async fn response_json(
     response: reqwest::Response,
     operation: &str,
 ) -> ProviderResult<serde_json::Value> {
-    if response.status().is_redirection() {
-        return Err(ProviderError::Unavailable(
-            "Ollama redirect rejected".into(),
-        ));
-    }
     if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let body = response.text().await.unwrap_or_default();
-        let detail = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|value| value["error"].as_str().map(str::to_owned))
-            .or_else(|| (!body.trim().is_empty()).then(|| body.trim().to_owned()))
-            .map(|value| value.chars().take(300).collect::<String>());
-        let context_overflow = status == 400
-            && operation == "api/embed"
-            && detail.as_deref().is_some_and(|value| {
-                let value = value.to_ascii_lowercase();
-                value.contains("context length")
-                    || value.contains("context window")
-                    || value.contains("too long")
-            });
-        return Err(ProviderError::Rejected {
-            operation: format!("/{}", operation.trim_start_matches('/')),
-            status,
-            detail,
-            context_overflow,
-        });
+        return Err(response_error(response, operation).await);
     }
     response
         .json()
         .await
         .map_err(|error| ProviderError::InvalidOutput(error.to_string()))
+}
+
+async fn response_error(response: reqwest::Response, operation: &str) -> ProviderError {
+    if response.status().is_redirection() {
+        return ProviderError::Unavailable("Ollama redirect rejected".into());
+    }
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+    let detail = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value["error"].as_str().map(str::to_owned))
+        .or_else(|| (!body.trim().is_empty()).then(|| body.trim().to_owned()))
+        .map(|value| value.chars().take(300).collect::<String>());
+    let context_overflow = status == 400
+        && operation == "api/embed"
+        && detail.as_deref().is_some_and(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("context length")
+                || value.contains("context window")
+                || value.contains("too long")
+        });
+    ProviderError::Rejected {
+        operation: format!("/{}", operation.trim_start_matches('/')),
+        status,
+        detail,
+        context_overflow,
+    }
 }
 
 fn validate_endpoint(raw: &str) -> ProviderResult<Url> {

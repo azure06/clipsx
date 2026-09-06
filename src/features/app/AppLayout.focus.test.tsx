@@ -3,21 +3,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
 import { useAuthStore, useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
 
-const { listenMock, invokeMock, getCurrentMock, onOpenUrlMock, eventHandlers, testRefs } =
-  vi.hoisted(() => ({
-    listenMock: vi.fn(),
-    invokeMock: vi.fn(),
-    getCurrentMock: vi.fn(),
-    onOpenUrlMock: vi.fn(),
-    eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
-    testRefs: {
-      sidebarProps: null as {
-        onAccountClick: () => void
-        onSettingsClick: () => void
-      } | null,
-      settingsProps: null as { initialTab?: string } | null,
-    },
-  }))
+const {
+  listenMock,
+  invokeMock,
+  getCurrentMock,
+  onOpenUrlMock,
+  isFocusedMock,
+  onFocusChangedMock,
+  focusHandlers,
+  eventHandlers,
+  testRefs,
+} = vi.hoisted(() => ({
+  listenMock: vi.fn(),
+  invokeMock: vi.fn(),
+  getCurrentMock: vi.fn(),
+  onOpenUrlMock: vi.fn(),
+  isFocusedMock: vi.fn(),
+  onFocusChangedMock: vi.fn(),
+  focusHandlers: [] as Array<(event: { payload: boolean }) => void>,
+  eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
+  testRefs: {
+    sidebarProps: null as {
+      onAccountClick: () => void
+      onSettingsClick: () => void
+    } | null,
+    settingsProps: null as { initialTab?: string } | null,
+  },
+}))
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock,
@@ -25,6 +37,13 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}))
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    isFocused: isFocusedMock,
+    onFocusChanged: onFocusChangedMock,
+  }),
 }))
 
 vi.mock('@tauri-apps/plugin-deep-link', () => ({
@@ -79,6 +98,7 @@ vi.mock('./UpdateBanner', () => ({
 describe('AppLayout search focus ownership', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    focusHandlers.length = 0
     eventHandlers.clear()
     testRefs.sidebarProps = null
     testRefs.settingsProps = null
@@ -100,6 +120,11 @@ describe('AppLayout search focus ownership', () => {
     })
     getCurrentMock.mockResolvedValue(null)
     onOpenUrlMock.mockResolvedValue(vi.fn())
+    isFocusedMock.mockResolvedValue(true)
+    onFocusChangedMock.mockImplementation((handler: (event: { payload: boolean }) => void) => {
+      focusHandlers.push(handler)
+      return Promise.resolve(vi.fn())
+    })
 
     useUIStore.setState({
       activeView: 'clips',
@@ -119,6 +144,7 @@ describe('AppLayout search focus ownership', () => {
 
     useAuthStore.setState({
       status: 'unconfigured',
+      userId: null,
       email: null,
       error: null,
       initialize: vi.fn().mockResolvedValue(undefined),
@@ -251,13 +277,13 @@ describe('AppLayout search focus ownership', () => {
     render(<AppLayout />)
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Type to search or paste...')).toHaveFocus()
+      expect(screen.getByPlaceholderText('Search clips or ask a question…')).toHaveFocus()
     })
   })
 
   it('refocuses search input after an explicit host activation in clips view', async () => {
     render(<AppLayout />)
-    const input = screen.getByPlaceholderText('Type to search or paste...')
+    const input = screen.getByPlaceholderText('Search clips or ask a question…')
 
     await waitFor(() => expect(input).toHaveFocus())
 
@@ -271,7 +297,7 @@ describe('AppLayout search focus ownership', () => {
 
   it('does not steal focus on another page after explicit host activation', async () => {
     render(<AppLayout />)
-    const input = screen.getByPlaceholderText('Type to search or paste...')
+    const input = screen.getByPlaceholderText('Search clips or ask a question…')
 
     await waitFor(() => expect(input).toHaveFocus())
 
@@ -294,6 +320,21 @@ describe('AppLayout search focus ownership', () => {
 
     expect(eventHandlers.get('clip-updated')).toBeUndefined()
     expect(eventHandlers.get('clip-captured')).toBeUndefined()
+  })
+
+  it('uses native focus changes for sync activation', async () => {
+    useAuthStore.setState({ status: 'signed_in', userId: 'account-1' })
+
+    render(<AppLayout />)
+
+    await waitFor(() => {
+      expect(isFocusedMock).toHaveBeenCalledTimes(1)
+      expect(onFocusChangedMock).toHaveBeenCalledTimes(1)
+    })
+    act(() => {
+      focusHandlers[0]?.({ payload: false })
+      focusHandlers[0]?.({ payload: true })
+    })
   })
 
   it('re-fetches embedding status when embedding-space-changed fires after startup', async () => {

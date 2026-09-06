@@ -213,11 +213,18 @@ missed cleanup.
 
 ## Recall
 
-Recall runs only after the user explicitly requests it from search results. It
-accepts at most the first 10 ranked IDs, deduplicates and eligibility-checks
+Recall runs only after the user explicitly submits a question. It owns a scoped
+retrieval request over eligible history and shortlists at most 100 candidates independently
+of visible results or UI pagination. It deduplicates and eligibility-checks
 them, and excludes every clip carrying `core.security.secret`. For each retained
 clip, Meaning Search selects the best matching passage; if embeddings are
-unavailable, Recall falls back to bounded derived search text.
+unavailable, Recall falls back to keyword-centered passages from current bounded derived text.
+
+Each turn snapshots its citation mapping and evidence fingerprints before dispatch. The
+temporary host session retains at most ten completed turns or 1 MiB for 30 minutes, accepts
+one active generation, and streams ordered stages, evidence, text deltas, and one terminal
+event through a typed channel. Provider adapters receive only prepared bounded messages and
+declare streaming, cancellation, execution location, and context-budget capabilities.
 
 Each source passage is limited to 2 KiB, for at most 20 KiB of source material.
 The question is limited to 2 KiB and the generated answer to 32 KiB. Clipboard

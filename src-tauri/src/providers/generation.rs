@@ -3,7 +3,10 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    contracts::generation::GenerationProvider,
+    contracts::generation::{
+        GenerationCancellation, GenerationMessage, GenerationProvider, GenerationRequest,
+        GenerationResponse, GenerationRole,
+    },
     model_catalog::{self, ModelCapability},
     ollama::OllamaGenerationProvider,
 };
@@ -99,23 +102,67 @@ pub async fn available(repo: &HistoryRepository) -> Result<bool> {
 }
 
 pub async fn generate(repo: &HistoryRepository, prompt: &str) -> Result<String> {
+    let cancellation = GenerationCancellation::default();
+    let output = generate_stream(
+        repo,
+        vec![GenerationMessage {
+            role: GenerationRole::User,
+            content: prompt.to_owned(),
+        }],
+        4_096,
+        &cancellation,
+        &|_| Ok(()),
+    )
+    .await?;
+    Ok(output.text)
+}
+
+pub async fn resolve(
+    repo: &HistoryRepository,
+) -> Result<(GenerationProviderConfig, Box<dyn GenerationProvider>)> {
     let config = get_config(repo)
         .await?
         .context("generation.text provider is not configured")?;
     if !config.enabled {
         bail!("generation.text provider is disabled");
     }
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let result = OllamaGenerationProvider::new(&endpoint, config.model)?
-        .generate(prompt)
+    let provider: Box<dyn GenerationProvider> = match config.provider_id.as_str() {
+        PROVIDER_ID => Box::new(OllamaGenerationProvider::new(
+            &model_catalog::endpoint(repo).await?,
+            config.model.clone(),
+        )?),
+        value => bail!("unknown text-generation provider {value}"),
+    };
+    Ok((config, provider))
+}
+
+pub async fn generate_stream(
+    repo: &HistoryRepository,
+    messages: Vec<GenerationMessage>,
+    max_output_tokens: u32,
+    cancellation: &GenerationCancellation,
+    on_delta: &(dyn Fn(String) -> super::error::ProviderResult<()> + Send + Sync),
+) -> Result<GenerationResponse> {
+    let (config, provider) = resolve(repo).await?;
+    let result = provider
+        .generate_stream(
+            &GenerationRequest {
+                messages,
+                max_output_tokens,
+            },
+            cancellation,
+            on_delta,
+        )
         .await;
     match result {
         Ok(output) => {
-            record_success(repo).await?;
+            record_success_for(repo, &config.provider_id).await?;
             Ok(output)
         }
         Err(error) => {
-            record_failure(repo, &error).await?;
+            if !matches!(error, super::error::ProviderError::Cancelled) {
+                record_failure_for(repo, &config.provider_id, &error).await?;
+            }
             Err(error.into())
         }
     }
@@ -146,6 +193,10 @@ async fn put_config(repo: &HistoryRepository, config: &GenerationProviderConfig)
 }
 
 async fn record_success(repo: &HistoryRepository) -> Result<()> {
+    record_success_for(repo, PROVIDER_ID).await
+}
+
+pub(crate) async fn record_success_for(repo: &HistoryRepository, provider_id: &str) -> Result<()> {
     let now = now_ms();
     sqlx::query(
         "INSERT INTO provider_runtime_diagnostics(provider_id,capability,last_checked_at,last_success_at)
@@ -153,7 +204,7 @@ async fn record_success(repo: &HistoryRepository) -> Result<()> {
          last_checked_at=excluded.last_checked_at,last_success_at=excluded.last_success_at,
          last_error_code=NULL,last_error_message=NULL",
     )
-    .bind(PROVIDER_ID)
+    .bind(provider_id)
     .bind(now)
     .bind(now)
     .execute(&repo.pool)
@@ -165,13 +216,21 @@ async fn record_failure(
     repo: &HistoryRepository,
     error: &super::error::ProviderError,
 ) -> Result<()> {
+    record_failure_for(repo, PROVIDER_ID, error).await
+}
+
+pub(crate) async fn record_failure_for(
+    repo: &HistoryRepository,
+    provider_id: &str,
+    error: &super::error::ProviderError,
+) -> Result<()> {
     sqlx::query(
         "INSERT INTO provider_runtime_diagnostics(provider_id,capability,last_checked_at,last_error_code,last_error_message)
          VALUES(?,'text_generation',?,?,?) ON CONFLICT(provider_id,capability) DO UPDATE SET
          last_checked_at=excluded.last_checked_at,last_error_code=excluded.last_error_code,
          last_error_message=excluded.last_error_message",
     )
-    .bind(PROVIDER_ID)
+    .bind(provider_id)
     .bind(now_ms())
     .bind(error.code())
     .bind(error.to_string().chars().take(512).collect::<String>())

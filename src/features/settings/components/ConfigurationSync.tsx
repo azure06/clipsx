@@ -4,10 +4,10 @@ import { Button } from '../../../shared/components/ui'
 import { listSyncDevices, revokeSyncDevice } from '../../../shared/auth/supabaseAuth'
 import {
   clearCloudConfiguration,
+  configurationSyncScheduler,
   connectConfigurationSync,
   getSyncStatus,
   setSyncEnabled,
-  synchronizeConfiguration,
   SYNC_APPLIED_EVENT,
   type SyncStatus,
 } from '../../../shared/sync/configSync'
@@ -86,7 +86,10 @@ export function ConfigurationSync({ userId }: { userId: string | null }) {
       <div className="flex flex-wrap gap-2">
         {enabled ? (
           <>
-            <Button disabled={busy} onClick={() => void run(synchronizeConfiguration)}>
+            <Button
+              disabled={busy}
+              onClick={() => void run(() => configurationSyncScheduler.request('manual'))}
+            >
               Sync now
             </Button>
             <Button

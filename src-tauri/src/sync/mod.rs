@@ -539,7 +539,7 @@ pub async fn set_command_shortcut(
 ) -> Result<()> {
     if !matches!(
         id,
-        "core.copy" | "core.favorite" | "core.pin" | "core.open" | "core.delete"
+        "core.copy" | "core.favorite" | "core.pin" | "core.open" | "core.delete" | "core.recall"
     ) {
         bail!("Unknown built-in command");
     }
@@ -656,7 +656,9 @@ pub async fn validate_shortcut_assignment(
         parts.join("+")
     }
     let mut bindings = std::collections::BTreeMap::from([
+        ("core.focus_search".to_owned(), "Primary+K".to_owned()),
         ("core.copy".to_owned(), "Primary+C".to_owned()),
+        ("core.recall".to_owned(), "Primary+Enter".to_owned()),
         ("core.favorite".to_owned(), "Primary+F".to_owned()),
         ("core.pin".to_owned(), "Primary+P".to_owned()),
         ("core.open".to_owned(), "Primary+Shift+O".to_owned()),
