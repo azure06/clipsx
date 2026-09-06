@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
+  ArrowUp,
+  Layers3,
+  Plus,
+  Sparkles,
   Check,
   ChevronDown,
   Copy,
@@ -15,6 +19,7 @@ import { copyLiteralText } from '../../shared/clipboardOutput'
 import type { RecallEvidence } from '../../shared/types/v2'
 import type { RecallTurn } from './useRecall'
 import { linkRecallCitations } from './recallMarkdown'
+import './recall.css'
 
 type Props = {
   turns: RecallTurn[]
@@ -103,8 +108,11 @@ export function RecallWorkspace({
   }
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white/55 dark:bg-slate-950/30">
-      <header className="flex items-start justify-between border-b border-slate-200/60 px-5 py-4 dark:border-white/10">
+    <section
+      aria-label="Recall"
+      className="recall-workspace relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white/55 text-gray-800 dark:bg-slate-950/30 dark:text-gray-200"
+    >
+      <header className="recall-header">
         <div className="min-w-0">
           {onBack && (
             <button className="mb-2 flex items-center gap-1 text-xs text-gray-500" onClick={onBack}>
@@ -112,34 +120,57 @@ export function RecallWorkspace({
               Back to results
             </button>
           )}
-          <p className="text-xs font-medium uppercase tracking-wider text-violet-600 dark:text-violet-300">
-            Recall · {scopeLabel}
-          </p>
-          <h2 className="mt-1 text-base font-semibold text-gray-900 dark:text-white">
-            {latest.question}
-          </h2>
-          {latest.providerId && (
-            <p className="mt-1 text-xs text-gray-500">
-              {latest.executionLocation === 'local' ? 'On this device' : 'Remote'} · {latest.model}
-            </p>
-          )}
+          <div className="recall-brand">
+            <span className="recall-mark">
+              <Sparkles size={17} strokeWidth={1.7} />
+            </span>
+            <div>
+              <p className="recall-title">Recall</p>
+              <p className="recall-scope" title={scopeLabel}>
+                {scopeLabel}
+              </p>
+            </div>
+          </div>
         </div>
         <button
           onClick={onClear}
-          className="rounded-lg p-2 text-gray-400 hover:bg-black/5 dark:hover:bg-white/5"
+          className="recall-new"
           title="New question"
+          aria-label="New question"
         >
-          <X className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
+          <span>New</span>
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="recall-body custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="recall-question" key={latest.requestId}>
+          <p className="recall-eyebrow">Your question</p>
+          <h2>{latest.question}</h2>
+        </div>
+        <div className="recall-answer-label">
+          <Sparkles size={13} />
+          <span>{latest.answer ? 'Answer' : 'Working on your question'}</span>
+          {latest.sources.length > 0 && (
+            <button
+              onClick={() => setSourcesOpen(value => !value)}
+              className="recall-evidence-count"
+            >
+              <Layers3 size={12} />
+              {latest.sources.length} sources
+            </button>
+          )}
+        </div>
         {latest.status === 'running' && (
-          <p className="mb-3 text-xs text-violet-600 dark:text-violet-300">
-            {latest.stage === 'preparing_answer'
-              ? 'Preparing answer'
-              : latest.answer
-                ? 'Writing answer'
+          <p
+            role="status"
+            className="mb-4 flex items-center gap-2 text-xs font-medium text-violet-600 dark:text-violet-300"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
+            {latest.answer
+              ? 'Writing answer'
+              : latest.stage === 'preparing_answer' || latest.stage === 'generating'
+                ? 'Preparing answer'
                 : 'Finding relevant clips'}
           </p>
         )}
@@ -170,7 +201,7 @@ export function RecallWorkspace({
         )}
 
         {latest.answer && (
-          <div className="prose prose-sm max-w-none dark:prose-invert prose-a:text-violet-600 prose-pre:bg-slate-950">
+          <div className="recall-answer">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -179,7 +210,8 @@ export function RecallWorkspace({
                   const evidence = match ? citations.get(Number(match[1])) : undefined
                   return evidence ? (
                     <button
-                      className="rounded bg-violet-100 px-1 text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-200"
+                      className="recall-citation rounded bg-violet-100 px-1.5 text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-200"
+                      aria-label={`Show source ${evidence.citation}`}
                       onClick={() => setOpenEvidence(evidence)}
                     >
                       {children}
@@ -225,24 +257,32 @@ export function RecallWorkspace({
         )}
 
         {latest.sources.length > 0 && (
-          <div className="mt-5 border-t border-slate-200/70 pt-4 dark:border-white/10">
+          <div className="recall-sources">
             <button
               className="flex w-full items-center justify-between text-sm font-medium"
               onClick={() => setSourcesOpen(value => !value)}
+              aria-expanded={sourcesOpen}
             >
-              <span>Sources ({latest.sources.length})</span>
+              <span className="flex items-center gap-2">
+                <Layers3 size={14} />
+                Sources <span className="recall-count">{latest.sources.length}</span>
+              </span>
               <ChevronDown
                 className={`h-4 w-4 transition-transform ${sourcesOpen ? 'rotate-180' : ''}`}
               />
             </button>
             {sourcesOpen && (
-              <div className="mt-3 space-y-2">
+              <div className="recall-source-grid">
                 {latest.sources.map(source => (
                   <div
                     key={`${source.citation}-${source.clipId}`}
-                    className="flex items-start gap-2 rounded-xl border border-slate-200/70 p-3 dark:border-white/10"
+                    className="recall-source-card"
+                    data-excluded={!selected.has(source.clipId)}
                   >
                     <button
+                      role="checkbox"
+                      aria-checked={selected.has(source.clipId)}
+                      aria-label={`Include source ${source.citation}`}
                       onClick={() =>
                         setExcluded(current => {
                           const next = new Set(current)
@@ -268,7 +308,7 @@ export function RecallWorkspace({
                     </button>
                   </div>
                 ))}
-                <div className="flex flex-wrap gap-2 pt-1">
+                <div className="recall-source-actions flex flex-wrap gap-2 pt-1">
                   <button
                     className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
                     disabled={selected.size === 0 || isRunning}
@@ -287,61 +327,82 @@ export function RecallWorkspace({
             )}
           </div>
         )}
+        {latest.answer && (
+          <div className="recall-copy-actions flex flex-wrap gap-1">
+            <button
+              disabled={!latest.answer}
+              onClick={() => void copyLiteralText(latest.answer)}
+              className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy answer
+            </button>
+            <button
+              disabled={!latest.answer}
+              onClick={() => void copyLiteralText(withSources(latest))}
+              className="rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
+            >
+              Copy with sources
+            </button>
+          </div>
+        )}
       </div>
 
-      <footer className="border-t border-slate-200/60 p-4 dark:border-white/10">
-        <div className="mb-3 flex flex-wrap gap-2">
+      <footer className="recall-footer">
+        {isRunning && (
           <button
-            disabled={!latest.answer}
-            onClick={() => void copyLiteralText(latest.answer)}
-            className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
+            onClick={onCancel}
+            className="recall-stop flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"
           >
-            <Copy className="h-3.5 w-3.5" />
-            Copy answer
+            <Square className="h-3 w-3 fill-current" />
+            Stop
           </button>
+        )}
+        <div className="recall-composer">
+          <textarea
+            aria-label="Ask a follow-up"
+            data-recall-input="follow-up"
+            ref={composerRef}
+            value={followUp}
+            onChange={event => setFollowUp(event.target.value)}
+            onKeyDown={event => {
+              if (
+                event.key === 'Enter' &&
+                (event.metaKey || event.ctrlKey) &&
+                !event.nativeEvent.isComposing &&
+                !event.repeat
+              ) {
+                event.preventDefault()
+                event.stopPropagation()
+                submit()
+              }
+            }}
+            rows={2}
+            placeholder="Ask a follow-up…"
+            className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1 text-[13px] leading-5 outline-none placeholder:text-gray-500"
+          />
           <button
-            disabled={!latest.answer}
-            onClick={() => void copyLiteralText(withSources(latest))}
-            className="rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
+            onClick={submit}
+            disabled={!followUp.trim() || isRunning}
+            aria-label="Send follow-up"
+            title="Send follow-up"
+            className="recall-send"
           >
-            Copy with sources
+            <ArrowUp size={17} />
           </button>
-          {isRunning && (
-            <button
-              onClick={onCancel}
-              className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"
-            >
-              <Square className="h-3 w-3 fill-current" />
-              Stop
-            </button>
-          )}
         </div>
-        <textarea
-          data-recall-input="follow-up"
-          ref={composerRef}
-          value={followUp}
-          onChange={event => setFollowUp(event.target.value)}
-          onKeyDown={event => {
-            if (
-              event.key === 'Enter' &&
-              (event.metaKey || event.ctrlKey) &&
-              !event.nativeEvent.isComposing &&
-              !event.repeat
-            ) {
-              event.preventDefault()
-              event.stopPropagation()
-              submit()
-            }
-          }}
-          rows={2}
-          placeholder="Ask a follow-up…"
-          className="w-full resize-none rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-sm outline-none focus:border-violet-400 dark:border-white/10 dark:bg-white/5"
-        />
-        <p className="mt-1 text-right text-[10px] text-gray-400">Ctrl/Cmd + Enter to ask</p>
+        <div className="recall-footer-meta">
+          <span title={latest.model ?? undefined}>
+            {latest.providerId
+              ? `${latest.executionLocation === 'local' ? 'On this device' : 'Remote'} · ${latest.model}`
+              : 'Temporary conversation'}
+          </span>
+          <span className="recall-key-hint">Ctrl/Cmd + Enter</span>
+        </div>
       </footer>
 
       {openEvidence && (
-        <aside className="absolute inset-0 z-20 flex flex-col bg-white/95 p-5 backdrop-blur-xl dark:bg-slate-950/95">
+        <aside className="recall-evidence absolute inset-0 z-20 flex flex-col bg-white/95 p-5 backdrop-blur-xl dark:bg-slate-950/95">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-violet-600">
@@ -352,11 +413,15 @@ export function RecallWorkspace({
                 {new Date(openEvidence.capturedAt).toLocaleString()}
               </p>
             </div>
-            <button onClick={() => setOpenEvidence(null)} className="p-1">
+            <button
+              aria-label="Close evidence"
+              onClick={() => setOpenEvidence(null)}
+              className="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/5"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <pre className="mt-5 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-100 p-4 text-xs dark:bg-white/5">
+          <pre className="custom-scrollbar mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200/60 bg-slate-100/70 p-4 text-[13px] leading-relaxed dark:border-white/10 dark:bg-white/5">
             {openEvidence.excerpt}
           </pre>
           <button
