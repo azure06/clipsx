@@ -267,6 +267,13 @@ mod tests {
             prepared_url,
             PreparedShare::Url("https://example.com/path".into())
         );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            fs::read_dir(roots.share_staging()).unwrap().count(),
+            2,
+            "Linux sharing must retain one staged file per prepared item"
+        );
+        #[cfg(not(target_os = "linux"))]
         assert!(!roots.share_staging().exists());
     }
 
