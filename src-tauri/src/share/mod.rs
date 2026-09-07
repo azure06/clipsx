@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exact_plain_text_and_url_are_shared_without_exporting_files() {
+    async fn exact_plain_text_and_url_use_the_platform_share_contract() {
         let (_temp, roots, repository) = repository().await;
         let text_id = capture(
             &repository,
@@ -224,10 +224,18 @@ mod tests {
             },
         )
         .await;
+        let prepared_text = prepare(&repository, &roots, &text_id).await.unwrap();
+        #[cfg(target_os = "linux")]
         assert_eq!(
-            prepare(&repository, &roots, &text_id).await.unwrap(),
-            PreparedShare::Text("  雪\n".into())
+            fs::read(match &prepared_text {
+                PreparedShare::Files(paths) if paths.len() == 1 => &paths[0],
+                _ => panic!("Linux text sharing must stage exactly one file"),
+            })
+            .unwrap(),
+            "  雪\n".as_bytes()
         );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(prepared_text, PreparedShare::Text("  雪\n".into()));
         let summary = repository.summary(&text_id).await.unwrap();
         assert!(summary.has_plain_text);
         assert!(summary.shareable);
@@ -244,8 +252,19 @@ mod tests {
             },
         )
         .await;
+        let prepared_url = prepare(&repository, &roots, &url_id).await.unwrap();
+        #[cfg(target_os = "linux")]
         assert_eq!(
-            prepare(&repository, &roots, &url_id).await.unwrap(),
+            fs::read(match &prepared_url {
+                PreparedShare::Files(paths) if paths.len() == 1 => &paths[0],
+                _ => panic!("Linux URL sharing must stage exactly one file"),
+            })
+            .unwrap(),
+            "https://example.com/path".as_bytes()
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            prepared_url,
             PreparedShare::Url("https://example.com/path".into())
         );
         assert!(!roots.share_staging().exists());

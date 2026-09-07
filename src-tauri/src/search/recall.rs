@@ -632,7 +632,6 @@ async fn select_evidence(
         Vec::new()
     }
     .into_iter()
-    .into_iter()
     .map(|(id, _, text)| (id, text))
     .collect::<HashMap<_, _>>();
     let mut seen = HashSet::new();
