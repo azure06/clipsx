@@ -1,9 +1,6 @@
 use super::PreparedShare;
 use anyhow::{bail, Result};
-use ashpd::{
-    desktop::{open_uri::OpenFileRequest, request::ResponseError},
-    Error,
-};
+use ashpd::{desktop::open_uri::OpenFileRequest, Error};
 use std::{fs::File, path::PathBuf};
 use tauri::WebviewWindow;
 
@@ -28,7 +25,10 @@ async fn open_with_chooser(path: PathBuf) -> Result<()> {
         .await?
         .response();
     match response {
-        Ok(()) | Err(Error::Response(ResponseError::Cancelled)) => Ok(()),
+        Ok(()) => Ok(()),
+        Err(error @ Error::Response(_)) if error.to_string() == "Portal request was cancelled" => {
+            Ok(())
+        }
         Err(error) => Err(error.into()),
     }
 }
