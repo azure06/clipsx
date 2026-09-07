@@ -1,22 +1,23 @@
 .recall-workspace {
   --recall-ink: #253047;
   --recall-muted: #69748a;
-  --recall-line: rgb(124 109 169 / 0.16);
-  --recall-surface: rgb(255 255 255 / 0.65);
+  --recall-line: rgb(100 116 139 / 0.18);
+  --recall-surface: rgb(255 255 255 / 0.55);
   --recall-accent: #7c3aed;
   container-type: inline-size;
   border: 1px solid var(--recall-line);
-  box-shadow: 0 8px 32px -20px rgb(76 29 149 / 0.25);
-  background: linear-gradient(155deg, rgb(255 255 255 / 0.88), rgb(248 247 255 / 0.65));
+  border-radius: 16px;
+  box-shadow: 0 8px 24px -18px rgb(15 23 42 / 0.18);
+  background: rgb(255 255 255 / 0.55);
   color: var(--recall-ink);
 }
 .dark .recall-workspace {
   --recall-ink: #e2e5f0;
   --recall-muted: #9ba4bc;
-  --recall-line: rgb(167 139 250 / 0.16);
+  --recall-line: rgb(148 163 184 / 0.14);
   --recall-surface: rgb(255 255 255 / 0.035);
   --recall-accent: #c4b5fd;
-  background: linear-gradient(155deg, rgb(31 28 49 / 0.92), rgb(15 23 42 / 0.8));
+  background: rgb(15 23 42 / 0.3);
 }
 .recall-workspace button {
   transition:
@@ -31,9 +32,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 15px 20px;
+  /* height/right-padding matched to ClipPreview's header row for AppLayout's toggle overlay */
+  padding: 8px 80px 8px 18px;
   border-bottom: 1px solid var(--recall-line);
-  background: radial-gradient(ellipse at 0% 0%, rgb(167 139 250 / 0.19), transparent 75%);
+  background: var(--recall-surface);
 }
 .recall-brand {
   display: flex;
@@ -44,14 +46,20 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  color: white;
-  background: linear-gradient(145deg, #a78bfa, #7c3aed 65%, #6d28d9);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--recall-accent);
+  background: linear-gradient(155deg, rgb(167 139 250 / 0.22), rgb(124 58 237 / 0.1));
+  border: 1px solid rgb(167 139 250 / 0.35);
   box-shadow:
-    0 3px 10px rgb(124 58 237 / 0.22),
-    inset 0 1px 0 rgb(255 255 255 / 0.35);
+    0 1px 2px rgb(76 29 149 / 0.06),
+    inset 0 1px 0 rgb(255 255 255 / 0.4);
+}
+.dark .recall-mark {
+  background: linear-gradient(155deg, rgb(167 139 250 / 0.26), rgb(124 58 237 / 0.14));
+  border-color: rgb(167 139 250 / 0.3);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 .recall-title {
   font-size: 14px;
@@ -81,10 +89,10 @@
   border-color: #a78bfa;
 }
 .recall-body {
-  padding: 24px clamp(16px, 5cqi, 32px) 20px;
+  padding: 20px clamp(16px, 5cqi, 32px) 18px;
 }
 .recall-question {
-  margin-bottom: 26px;
+  margin-bottom: 22px;
 }
 .recall-eyebrow {
   margin-bottom: 7px;
@@ -127,7 +135,7 @@
   background: rgb(139 92 246 / 0.08);
 }
 .recall-sources {
-  margin-top: 24px;
+  margin-top: 18px;
   padding: 12px;
   border: 1px solid var(--recall-line);
   border-radius: 12px;
@@ -185,8 +193,44 @@
 }
 .recall-footer {
   flex-shrink: 0;
-  padding: 10px 14px 12px;
-  background: linear-gradient(0deg, rgb(139 92 246 / 0.06), transparent);
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--recall-line);
+  background: linear-gradient(0deg, rgb(139 92 246 / 0.07), transparent 60%);
+}
+.recall-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 8px;
+  background: rgb(139 92 246 / 0.08);
+  color: var(--recall-accent);
+  font-size: 11px;
+  font-weight: 500;
+}
+.recall-status-dot {
+  height: 6px;
+  width: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.recall-stop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 500;
+}
+.recall-stop:hover {
+  background: rgb(220 38 38 / 0.1);
+}
+.dark .recall-stop {
+  color: #fca5a5;
 }
 .recall-composer {
   display: flex;
@@ -233,22 +277,41 @@
 }
 .recall-footer-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 3px 0;
+  padding: 7px 3px 0;
   font-size: 10px;
   color: var(--recall-muted);
 }
-.recall-footer-meta > :first-child {
+.recall-model-chip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.recall-model-dot {
+  flex-shrink: 0;
+  height: 5px;
+  width: 5px;
+  border-radius: 50%;
+}
+.recall-model-dot.is-local {
+  background: #22c55e;
+}
+.recall-model-dot.is-remote {
+  background: #60a5fa;
+}
 .recall-key-hint {
   flex-shrink: 0;
-}
-.recall-stop {
-  margin: 0 auto 8px;
+  padding: 1px 5px;
+  border: 1px solid var(--recall-line);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 9.5px;
 }
 .recall-evidence {
   animation: recall-reveal 180ms ease-out;

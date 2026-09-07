@@ -12,6 +12,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { Eye, Sparkles } from 'lucide-react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -74,12 +75,40 @@ export const AppLayout = () => {
   const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
   const recall = useRecall()
   const [rightTab, setRightTab] = useState<'preview' | 'recall'>('preview')
+  const effectiveRightTab = recall.turns.length > 0 ? rightTab : 'preview'
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const handledAuthUrlsRef = useRef(new Set<string>())
   const [historyWidth, setHistoryWidth] = useState(50)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+  const tabSwitcher = (
+    <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200/70 bg-slate-100/50 p-0.5 dark:border-white/5 dark:bg-white/5">
+      {(['preview', 'recall'] as const).map(tab => {
+        const disabled = tab === 'recall' && recall.turns.length === 0
+        const active = effectiveRightTab === tab
+        const Icon = tab === 'preview' ? Eye : Sparkles
+        return (
+          <button
+            key={tab}
+            disabled={disabled}
+            title={disabled ? 'Ask a question to start a Recall session' : tab}
+            aria-label={tab}
+            onClick={() => setRightTab(tab)}
+            className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+              active
+                ? 'bg-white text-violet-700 shadow-sm dark:bg-white/10 dark:text-violet-200'
+                : disabled
+                  ? 'cursor-not-allowed text-gray-300 dark:text-gray-700'
+                  : 'text-gray-500 hover:bg-white/70 dark:hover:bg-white/10'
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </button>
+        )
+      })}
+    </div>
+  )
   const parsedRecallQuery = parseSearch(searchQuery)
   const recallScope = useMemo(
     () => ({
@@ -481,22 +510,12 @@ export const AppLayout = () => {
                     <span className="absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full bg-slate-300/55 transition-colors group-hover:bg-violet-400/70 group-focus-visible:bg-violet-500 dark:bg-white/10" />
                   </button>
                   {/* RIGHT PANEL: Preview & Actions */}
-                  <div className="min-w-0 flex-1 flex flex-col gap-6 overflow-hidden">
-                    {recall.turns.length > 0 && (
-                      <div className="flex shrink-0 gap-1 rounded-lg bg-slate-100/60 p-1 text-xs dark:bg-white/5">
-                        {(['preview', 'recall'] as const).map(tab => (
-                          <button
-                            key={tab}
-                            onClick={() => setRightTab(tab)}
-                            className={`flex-1 rounded-md px-3 py-1.5 capitalize ${rightTab === tab ? 'bg-white text-violet-700 shadow-sm dark:bg-white/10 dark:text-violet-200' : 'text-gray-500'}`}
-                          >
-                            {tab}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                  <div className="relative min-w-0 flex-1 flex flex-col overflow-hidden">
+                    <div className="pointer-events-none absolute right-4.5 top-3 z-10">
+                      <div className="pointer-events-auto">{tabSwitcher}</div>
+                    </div>
                     {(() => {
-                      if (rightTab === 'recall' && recall.turns.length > 0) {
+                      if (effectiveRightTab === 'recall' && recall.turns.length > 0) {
                         return (
                           <RecallWorkspace
                             turns={recall.turns}
@@ -543,7 +562,7 @@ export const AppLayout = () => {
                         return <ClipPreview clip={displayedClip} />
                       }
                       return (
-                        <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 border-dashed">
+                        <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl border border-dashed border-slate-200/70 bg-slate-100/10 dark:border-white/5 dark:bg-slate-100/5">
                           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                             {t('app.emptyTitle')}
                           </p>

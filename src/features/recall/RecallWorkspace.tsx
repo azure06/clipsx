@@ -110,7 +110,7 @@ export function RecallWorkspace({
   return (
     <section
       aria-label="Recall"
-      className="recall-workspace relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-white/55 text-gray-800 dark:bg-slate-950/30 dark:text-gray-200"
+      className="recall-workspace relative flex h-full min-h-0 flex-col overflow-hidden bg-white/55 text-gray-800 dark:bg-slate-950/30 dark:text-gray-200"
     >
       <header className="recall-header">
         <div className="min-w-0">
@@ -350,13 +350,14 @@ export function RecallWorkspace({
 
       <footer className="recall-footer">
         {isRunning && (
-          <button
-            onClick={onCancel}
-            className="recall-stop flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10"
-          >
-            <Square className="h-3 w-3 fill-current" />
-            Stop
-          </button>
+          <div className="recall-status-bar">
+            <span className="recall-status-dot motion-safe:animate-pulse" />
+            Generating…
+            <button onClick={onCancel} className="recall-stop">
+              <Square className="h-2.5 w-2.5 fill-current" />
+              Stop
+            </button>
+          </div>
         )}
         <div className="recall-composer">
           <textarea
@@ -392,12 +393,17 @@ export function RecallWorkspace({
           </button>
         </div>
         <div className="recall-footer-meta">
-          <span title={latest.model ?? undefined}>
+          <span className="recall-model-chip" title={latest.model ?? undefined}>
+            {latest.providerId && (
+              <span
+                className={`recall-model-dot ${latest.executionLocation === 'local' ? 'is-local' : 'is-remote'}`}
+              />
+            )}
             {latest.providerId
               ? `${latest.executionLocation === 'local' ? 'On this device' : 'Remote'} · ${latest.model}`
               : 'Temporary conversation'}
           </span>
-          <span className="recall-key-hint">Ctrl/Cmd + Enter</span>
+          <kbd className="recall-key-hint">Ctrl/Cmd + Enter</kbd>
         </div>
       </footer>
 
