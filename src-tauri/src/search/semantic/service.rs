@@ -18,11 +18,13 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Duration;
 
 const PROVIDER_CONFIG_KEY: &str = "providers.text_embedding.active";
 const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
 const MAX_EMBED_REQUESTS_PER_CLIP: usize = 128;
+const QUERY_EMBEDDING_TIMEOUT: Duration = Duration::from_secs(4);
 const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
   trim(COALESCE(c.note,'')) <> ''
   OR EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id)
@@ -1149,7 +1151,12 @@ async fn semantic_matches_with_provider(
     if limit == 0 || eligible_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut query_vectors = provider.embed_queries(&[query.into()]).await?;
+    let mut query_vectors = tokio::time::timeout(
+        QUERY_EMBEDDING_TIMEOUT,
+        provider.embed_queries(&[query.into()]),
+    )
+    .await
+    .map_err(|_| ProviderError::Unavailable("query embedding timed out".into()))??;
     let query_vector = query_vectors.pop().context("missing query embedding")?;
     validate_vector(&query_vector, Some(generation.dimensions))?;
     Ok(SemanticIndexStore::new(&repo.semantic_index_root)?

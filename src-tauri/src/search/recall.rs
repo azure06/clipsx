@@ -496,8 +496,46 @@ async fn candidate_ids(
             );
         }
     }
+    if ids.is_empty() {
+        if let Some(query) = relaxed_keyword_query(&request.question) {
+            let mut fallback_request = search_request(request, query);
+            fallback_request.enabled_source_ids = vec![search::FTS_SOURCE_ID.into()];
+            let fallback_settings = SearchSettings {
+                syntax_mode: SyntaxMode::Advanced,
+                enabled_source_ids: vec![search::FTS_SOURCE_ID.into()],
+            };
+            if let Ok(Ok(page)) = tokio::time::timeout(
+                RETRIEVAL_STAGE_TIMEOUT,
+                search::search(repo, &fallback_request, &fallback_settings),
+            )
+            .await
+            {
+                ids.extend(page.items.into_iter().map(|value| value.clip.id));
+            }
+        }
+    }
     ids.truncate(MAX_CANDIDATES as usize);
     Ok((ids, degraded))
+}
+
+fn relaxed_keyword_query(question: &str) -> Option<String> {
+    let terms = relaxed_question(question)
+        .split_whitespace()
+        .filter_map(|term| {
+            let escaped = term
+                .trim_matches(|character: char| character.is_ascii_punctuation())
+                .replace('"', "");
+            (escaped.chars().count() >= 2).then_some(escaped)
+        })
+        .take(8)
+        .collect::<Vec<_>>();
+    (!terms.is_empty()).then(|| {
+        terms
+            .into_iter()
+            .map(|term| format!("\"{term}\"*"))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    })
 }
 
 fn relaxed_question(question: &str) -> String {
@@ -771,6 +809,14 @@ mod tests {
             relaxed_question("教えてください TLS 設定は何ですか"),
             "TLS 設定"
         );
+    }
+    #[test]
+    fn builds_bounded_or_query_for_keyword_fallback() {
+        assert_eq!(
+            relaxed_keyword_query("What was the kubectl command for staging?").as_deref(),
+            Some("\"kubectl\"* OR \"command\"* OR \"staging\"*")
+        );
+        assert_eq!(relaxed_keyword_query("a?"), None);
     }
     #[test]
     fn excerpt_is_unicode_safe() {
