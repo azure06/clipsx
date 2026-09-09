@@ -2,8 +2,13 @@ import { Pin, Sparkles, X } from 'lucide-react'
 import { ExtensionIcon } from './ClipActionsToolbar'
 import type { ContextAction, Transformer } from './useTransformState'
 
-const panelItemClass =
-  'flex min-w-0 items-center rounded-lg px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-violet-500/10 hover:text-violet-700 focus-visible:bg-violet-500/10 focus-visible:text-violet-700 dark:hover:bg-violet-500/15 dark:hover:text-violet-200 dark:focus-visible:bg-violet-500/15 dark:focus-visible:text-violet-200'
+const cardButtonClass =
+  'flex w-full flex-col items-center gap-1.5 rounded-xl p-2.5 text-center outline-none transition-colors hover:bg-violet-500/10 focus-visible:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-violet-500/15'
+
+const cardIconClass =
+  'flex h-9 w-9 items-center justify-center rounded-xl bg-slate-500/8 text-violet-500 dark:bg-white/5 dark:text-violet-300'
+
+const cardLabelClass = 'line-clamp-2 text-[10.5px] leading-tight text-slate-700 dark:text-slate-200'
 
 const formatTokens = ['BASE64', 'JSON', 'CSV', 'TSV', 'YAML', 'TOML', 'MARKDOWN', 'URL', 'JWT']
 
@@ -64,21 +69,21 @@ const ExtensionActionRows = ({
   runAction: (id: string) => void
   pinAction: (id: string, pinned: boolean) => void
 }) => (
-  <div className="space-y-0.5">
+  <div className="grid grid-cols-3 gap-1.5">
     {actions.map(action => (
-      <div key={action.id} className="group flex items-center gap-0.5">
+      <div key={action.id} className="group relative">
         <button
           type="button"
           disabled={!action.available || busy !== null}
           aria-describedby={
             !action.available ? `unavailable-${action.id.replaceAll('/', '-')}` : undefined
           }
-          className={`min-w-0 flex-1 gap-2 disabled:cursor-not-allowed disabled:opacity-40 ${panelItemClass}`}
+          className={cardButtonClass}
           onClick={() => runAction(action.id)}
         >
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-500/8 text-slate-500 dark:bg-white/5 dark:text-slate-300">
+          <span className={cardIconClass}>
             {busy === action.id ? (
-              <span className="h-2.5 w-2.5 animate-spin rounded-full border border-current border-t-transparent" />
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border border-current border-t-transparent" />
             ) : (
               <OperationVisual
                 label={action.label}
@@ -89,18 +94,22 @@ const ExtensionActionRows = ({
               />
             )}
           </span>
-          <span className="min-w-0 flex-1 truncate">{action.label}</span>
+          <span className={cardLabelClass}>{action.label}</span>
           {action.shortcut && (
-            <span className="shrink-0 font-mono text-[8px] text-slate-400">{action.shortcut}</span>
+            <span className="font-mono text-[8px] text-slate-400">{action.shortcut}</span>
           )}
         </button>
         <button
           type="button"
           aria-label={`${action.pinned ? 'Unpin' : 'Pin'} ${action.label}`}
-          className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition-colors hover:bg-violet-500/10 hover:text-amber-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 group-hover:opacity-100 dark:text-slate-600"
+          className={`absolute right-1 top-1 rounded-md p-1 transition-opacity hover:bg-white/70 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 dark:hover:bg-black/30 ${
+            action.pinned
+              ? 'text-amber-500 opacity-100'
+              : 'text-slate-300 opacity-0 group-hover:opacity-100 dark:text-slate-600'
+          }`}
           onClick={() => pinAction(action.id, !action.pinned)}
         >
-          <Pin className={`h-3 w-3 ${action.pinned ? 'fill-current text-amber-500' : ''}`} />
+          <Pin className={`h-3 w-3 ${action.pinned ? 'fill-current' : ''}`} />
         </button>
         {!action.available && action.unavailableReason && (
           <span id={`unavailable-${action.id.replaceAll('/', '-')}`} className="sr-only">
@@ -199,23 +208,23 @@ export const TransformActionsPanel = ({
             >
               Transform
             </h3>
-            <div className="space-y-0.5">
+            <div className="grid grid-cols-3 gap-1.5">
               {items.map(item => (
                 <button
                   key={item.id}
                   type="button"
                   disabled={busy !== null}
-                  className={`w-full gap-2 disabled:cursor-wait disabled:opacity-45 ${panelItemClass}`}
+                  className={cardButtonClass}
                   onClick={() => run(item.id)}
                 >
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-500/8 text-violet-500 dark:bg-white/5 dark:text-violet-300">
+                  <span className={cardIconClass}>
                     {busy === item.id ? (
-                      <span className="h-2.5 w-2.5 animate-spin rounded-full border border-current border-t-transparent" />
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border border-current border-t-transparent" />
                     ) : (
                       <OperationVisual label={item.label} />
                     )}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  <span className={cardLabelClass}>{item.label}</span>
                 </button>
               ))}
             </div>
