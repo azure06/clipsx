@@ -39,6 +39,7 @@ import {
 } from '../../shared/keyboard/shortcuts'
 import { useToast } from '../../shared/contexts/ToastContext'
 import { copyClipboardOutput } from '../../shared/clipboardOutput'
+import { commandShortcut } from '../../shared/keyboard/commands'
 
 const platform = getPlatform()
 const representationsShortcut: ShortcutDef = { modifiers: ['primary'], key: 'I' }
@@ -166,7 +167,7 @@ export const ClipActionsToolbar = ({
         active: copied,
         activeColor:
           'bg-emerald-500/20 text-emerald-600 ring-1 ring-emerald-500/40 dark:text-emerald-400 dark:bg-emerald-500/15',
-        shortcut: { modifiers: ['primary'], key: 'C' },
+        shortcut: commandShortcut('core.copy', { modifiers: ['primary'], key: 'C' }, platform),
         run: async () => {
           try {
             await performCopy('', presentation.id)
@@ -190,6 +191,11 @@ export const ClipActionsToolbar = ({
         active: plainCopied,
         activeColor:
           'bg-emerald-500/20 text-emerald-600 ring-1 ring-emerald-500/40 dark:text-emerald-400 dark:bg-emerald-500/15',
+        shortcut: commandShortcut(
+          'core.copy_plain_text',
+          { modifiers: ['primary', 'shift'], key: 'C' },
+          platform
+        ),
         run: async () => {
           try {
             await copyClipboardOutput({ kind: 'plain_text', clipId: presentation.id })
@@ -211,6 +217,11 @@ export const ClipActionsToolbar = ({
         label: sharing ? 'Opening share…' : 'Share',
         icon: Share2,
         disabled: sharing,
+        shortcut: commandShortcut(
+          'core.share',
+          { modifiers: ['primary', 'shift'], key: 'S' },
+          platform
+        ),
         run: async () => {
           if (sharing) return
           setSharing(true)

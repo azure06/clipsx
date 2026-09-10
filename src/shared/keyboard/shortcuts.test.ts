@@ -84,6 +84,14 @@ describe('shortcut helpers', () => {
       'Shift',
       'V',
     ])
+    expect(getShortcutChips(parseAccelerator('Primary+K', 'windows'), 'windows')).toEqual([
+      'Ctrl',
+      'K',
+    ])
+    const macPrimary = getShortcutChips(parseAccelerator('Primary+K', 'macos'), 'macos')
+    expect(macPrimary).toHaveLength(2)
+    expect(macPrimary[0]).not.toBe('Ctrl')
+    expect(macPrimary[1]).toBe('K')
   })
 
   it('normalizes recorded shortcuts into accelerators', () => {

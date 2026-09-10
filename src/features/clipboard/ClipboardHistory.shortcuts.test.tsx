@@ -203,6 +203,30 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     input.remove()
   })
 
+  it('runs the default copy-plain-text and share shortcuts', async () => {
+    setNavigatorPlatform('Win32')
+    render(<ClipboardHistory />)
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'C', ctrlKey: true, shiftKey: true })
+      )
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'S', ctrlKey: true, shiftKey: true })
+      )
+    })
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('execute_clipboard_output', {
+        request: {
+          disposition: 'copy',
+          source: { kind: 'plain_text', clipId: 'clip-1' },
+        },
+      })
+      expect(invokeMock).toHaveBeenCalledWith('share_clip', { clipId: 'clip-1' })
+    })
+  })
+
   it('deletes selected clip with Cmd+Backspace while search input is focused on macOS', async () => {
     setNavigatorPlatform('MacIntel')
     render(<ClipboardHistory />)

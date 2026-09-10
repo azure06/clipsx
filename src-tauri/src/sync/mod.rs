@@ -725,6 +725,11 @@ pub async fn validate_shortcut_assignment(
     let mut bindings = std::collections::BTreeMap::from([
         ("core.focus_search".to_owned(), "Primary+K".to_owned()),
         ("core.copy".to_owned(), "Primary+C".to_owned()),
+        (
+            "core.copy_plain_text".to_owned(),
+            "Primary+Shift+C".to_owned(),
+        ),
+        ("core.share".to_owned(), "Primary+Shift+S".to_owned()),
         ("core.recall".to_owned(), "Primary+Enter".to_owned()),
         ("core.favorite".to_owned(), "Primary+F".to_owned()),
         ("core.pin".to_owned(), "Primary+P".to_owned()),
@@ -781,6 +786,8 @@ fn default_command_shortcut(id: &str) -> Option<String> {
     match id {
         "core.focus_search" => Some("Primary+K".into()),
         "core.copy" => Some("Primary+C".into()),
+        "core.copy_plain_text" => Some("Primary+Shift+C".into()),
+        "core.share" => Some("Primary+Shift+S".into()),
         "core.recall" => Some("Primary+Enter".into()),
         "core.favorite" => Some("Primary+F".into()),
         "core.pin" => Some("Primary+P".into()),

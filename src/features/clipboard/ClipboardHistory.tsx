@@ -331,7 +331,12 @@ export const ClipboardHistory = ({
       }
       if (
         selectedClip?.hasPlainText &&
-        matchCommandShortcut(e, 'core.copy_plain_text', { modifiers: [], key: '' }, platform)
+        matchCommandShortcut(
+          e,
+          'core.copy_plain_text',
+          { modifiers: ['primary', 'shift'], key: 'C' },
+          platform
+        )
       ) {
         if (hasNativeCopySelection()) return
         e.preventDefault()
@@ -340,7 +345,12 @@ export const ClipboardHistory = ({
       }
       if (
         selectedClip?.shareable &&
-        matchCommandShortcut(e, 'core.share', { modifiers: [], key: '' }, platform)
+        matchCommandShortcut(
+          e,
+          'core.share',
+          { modifiers: ['primary', 'shift'], key: 'S' },
+          platform
+        )
       ) {
         e.preventDefault()
         void invoke('share_clip', { clipId: selectedClip.id })

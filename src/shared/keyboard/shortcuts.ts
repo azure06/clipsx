@@ -80,6 +80,7 @@ const DEFAULT_GLOBAL_SHORTCUT_DEF: ShortcutDef = {
 }
 
 const MODIFIER_TOKEN_TO_MODIFIER: Record<string, ShortcutModifier | 'cmd_or_ctrl'> = {
+  primary: 'cmd_or_ctrl',
   cmd: 'primary',
   command: 'primary',
   ctrl: 'primary',

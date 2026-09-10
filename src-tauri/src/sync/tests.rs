@@ -245,9 +245,13 @@ async fn command_catalog_reports_defaults_and_effective_overrides() {
         .unwrap();
     assert_eq!(focus.default_shortcut.as_deref(), Some("Primary+K"));
     assert_eq!(focus.effective_shortcut.as_deref(), Some("Primary+L"));
-    assert!(catalog
-        .iter()
-        .any(|command| command.id == "core.share" && command.default_shortcut.is_none()));
+    assert!(catalog.iter().any(|command| {
+        command.id == "core.copy_plain_text"
+            && command.default_shortcut.as_deref() == Some("Primary+Shift+C")
+    }));
+    assert!(catalog.iter().any(|command| {
+        command.id == "core.share" && command.default_shortcut.as_deref() == Some("Primary+Shift+S")
+    }));
 }
 
 #[tokio::test]
