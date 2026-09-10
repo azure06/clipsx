@@ -188,6 +188,13 @@ Configuration sync v1 is opt-in and account-protected, independently of the brow
 
 Supabase stores `sync_profiles`, `sync_devices`, and `sync_records`. Public invoker RPCs call closed, non-exposed operations running as a NOLOGIN/NOBYPASSRLS role with owner-scoped policies. Clients have no raw sync-table access. Enrollment is bound to a live Auth session; revoked sessions cannot create replacement device identities. Reset/replacement increment a profile generation, preventing offline devices from restoring deliberately cleared state. Late responses are rejected by account, generation, and local session epoch.
 
+The authoritative Supabase project, migrations, database tests, and local
+development stack are owned by the sibling `clipsx-web` repository. This
+desktop repository owns the client contract, generated database types, secure
+session storage, coordinator, and local SQLite state only. Backend migrations
+must not be duplicated here; contract changes are made and tested in
+`clipsx-web`, then its generated database types are copied into the desktop.
+
 First connection defaults to cloud restore; empty-cloud initialization and explicit replacement are atomic server snapshots. Multi-page cloud restores stage before replacing portable local values. Sync carries explicitly allowlisted preferences, renderer selections, OCR preferences, signed-registry extension intent, approved portable boolean/number settings, and app-command shortcuts. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables sync and preserves local data. Sync does not upgrade installed extensions or copy capability consent. Unavailable packages and conflicting/unknown commands remain pending with recovery controls.
 
 The backend protocol, domain migrations, limits, and deployment/recovery procedures are maintained in the sibling `clipsx-web/docs/backend/configuration-sync.md`. Hosted deployment and installed two-device certification are distinct from local automated verification.

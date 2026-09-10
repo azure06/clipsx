@@ -38,24 +38,6 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](docs/RELEASE.md) covers distributable-build
 requirements.
 
-### Local Supabase
-
-Docker Desktop is required. Start and verify the version-pinned local stack:
-
-```bash
-npm run supabase:start
-npm run supabase:reset
-npm run supabase:test
-```
-
-Open local Studio at <http://127.0.0.1:55423>. Run `npm run supabase:status` to
-print the local API URL and publishable key. Use those as
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in a local environment
-when testing against the local project; never put the printed secret key in the
-desktop client. Local database/RLS testing does not require hosted OAuth
-credentials. Google sign-in and the production callback bridge remain hosted
-integration checks.
-
 ## Features
 
 ClipsX includes, but is not limited to:
