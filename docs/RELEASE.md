@@ -117,6 +117,16 @@ Orca, native sharing, security-review disposition, artifact inspection, and
 signed-out Sponsors checks remain external release gates; this automated record
 does not mark them complete.
 
+### Local Supabase evidence (2026-09-10)
+
+Supabase CLI `2.117.0` started the versioned local stack on the Windows-safe
+`55420` port range. A clean local database reset loaded
+`supabase/schema/sync.sql`; all six pgTAP ownership/RLS assertions passed and
+`supabase db lint --local --schema public --level warning --fail-on error`
+reported no schema errors. Local Studio is served at
+`http://127.0.0.1:55423`. Hosted OAuth provider configuration and the production
+callback bridge remain external certification work.
+
 ## Shared native clipboard sequence
 
 Before platform clipboard certification, verify account storage in an installed

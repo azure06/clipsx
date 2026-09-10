@@ -8,12 +8,6 @@ historical checklist.
 
 ## 1. Product completion and security
 
-- [ ] Finish the shared command registry and configurable built-in shortcuts;
-  remove remaining hard-coded command bindings from UI handlers.
-- [ ] Persist and validate the resizable history/preview layout, including
-  restart and reset behavior.
-- [ ] Complete English/Japanese localization and keyboard/screen-reader
-  accessibility for Settings, Intelligence, Extensions, and recovery states.
 - [ ] Verify every user-facing setting covers validation, persistence, restart,
   reset, import/export where applicable, and recoverable failure handling.
 - [ ] Complete mutation-level cascade and invalidation tests for clips, tags,
@@ -23,17 +17,6 @@ historical checklist.
   tokens, and unnecessary filesystem paths.
 - [ ] Add dependency and license auditing, SBOM generation, secret scanning, and
   release-artifact inspection to CI.
-- [ ] Complete the production security review with no unresolved high-severity
-  findings.
-- [ ] Certify native clip sharing for text, URLs, files, images, documents,
-  cancellation, missing sources, and corrupt managed assets on every advertised
-  platform.
-- [ ] Run an LLM-assisted release review of feature completeness, architecture,
-  concurrency/persistence boundaries, and the threat model; validate every
-  actionable finding against source code or tests before accepting it.
-- [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
-  is approved and enabled.
-
 ## 2. Cross-platform OCR certification
 
 The provider contract, bounded background queue, Windows WinRT executor, macOS
@@ -105,6 +88,26 @@ milestone; existing billing/vault functionality remains independently maintained
 The release gate is signed application artifacts from one revision, a signed
 extension catalog with published packages, production Auth/configuration sync,
 and complete installed-build evidence.
+
+## 5. External and installed-build certification
+
+These checks require hosted services, release artifacts, assistive technology,
+or operating systems outside the ordinary local test loop. They remain release
+gates without blocking completion of local implementation sections:
+
+- [ ] Complete English/Japanese keyboard and screen-reader certification for
+  Settings, Intelligence, Extensions, and recovery states with NVDA, VoiceOver,
+  and Orca in installed builds.
+- [ ] Certify native clip sharing for text, URLs, files, images, documents,
+  cancellation, missing sources, and corrupt managed assets on every advertised
+  platform.
+- [ ] Complete the production security review with no unresolved high-severity
+  findings.
+- [ ] Run an LLM-assisted release review of feature completeness, architecture,
+  concurrency/persistence boundaries, and the threat model; validate every
+  actionable finding against source code or tests before accepting it.
+- [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
+  is approved and enabled.
 
 ## Post-release candidates
 
