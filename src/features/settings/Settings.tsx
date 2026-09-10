@@ -508,7 +508,10 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
           )}
 
           {activeTab === 'sync' && (
-            <ConfigurationSync userId={authStatus === 'signed_in' ? authUserId : null} />
+            <ConfigurationSync
+              userId={authStatus === 'signed_in' ? authUserId : null}
+              onOpenAccount={() => setActiveTab('account')}
+            />
           )}
 
           {/* CLIPBOARD TAB */}
