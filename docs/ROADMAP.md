@@ -6,108 +6,109 @@ the executable certification matrix and recorded evidence belong in
 [RELEASE.md](RELEASE.md). Completed items are removed instead of retained as a
 historical checklist.
 
-## 1. Product completion and security
+## 1. Implementation remaining
 
-- [ ] Verify every user-facing setting covers validation, persistence, restart,
-  reset, import/export where applicable, and recoverable failure handling.
-- [ ] Complete mutation-level cascade and invalidation tests for clips, tags,
+Only work that changes product code, backend behavior, build infrastructure, or
+release configuration belongs in this section. Testing an already implemented
+behavior belongs in Section 2.
+
+### Desktop product
+
+- [ ] Complete the settings lifecycle contract: host-side validation, atomic
+  persistence, restart-safe effects, reset behavior, import/export for portable
+  settings, and actionable recovery for failed native effects such as autostart.
+- [ ] Remove or redact clipboard content, notes, credentials, tokens, and
+  unnecessary filesystem paths from production logging.
+
+### Account and backend (`clipsx-web`)
+
+- [ ] Add verified account deletion through a JWT-protected backend operation,
+  explicitly handling billing, organization ownership, and shared vault data.
+- [ ] Publish signed extension packages with reviewed portable-setting
+  declarations and populate the matching server approval catalog through the
+  release process.
+- [ ] Deploy the reviewed fresh Supabase baseline and hosted desktop PKCE callback
+  bridge from the authoritative `clipsx-web` repository.
+
+### Release engineering
+
+- [ ] Add dependency and license auditing, SBOM generation, secret scanning,
+  release-artifact inspection, and enforceable bundle-size budgets to CI.
+- [ ] Configure reproducible Windows x64, Linux x64 `.deb`/AppImage, and macOS
+  arm64/x64 builds from one revision.
+- [ ] Configure Developer ID signing, hardened runtime, notarization, and
+  stapling for macOS arm64/x64 artifacts.
+- [ ] Configure signing for Windows installers and executables.
+- [ ] Configure signed updater metadata and a documented rollback/recovery path.
+- [ ] Update website, download, and release messaging after certification so it
+  advertises only supported platforms and capabilities.
+
+## 2. QA and release certification
+
+This section contains verification specifications. Failures may create new
+implementation work, but passing checks are recorded in [RELEASE.md](RELEASE.md)
+rather than being converted into product features.
+
+### Automated and review gates
+
+- [ ] Exercise every user-facing setting across validation, persistence,
+  restart, reset, applicable import/export, and recoverable failure paths.
+- [ ] Complete mutation-level cascade and invalidation coverage for clips, tags,
   notes, OCR, search projections, artifacts, extension-derived data, and managed
   files.
-- [ ] Audit production logging and remove clipboard content, notes, credentials,
-  tokens, and unnecessary filesystem paths.
-- [ ] Add dependency and license auditing, SBOM generation, secret scanning, and
-  release-artifact inspection to CI.
-## 2. Cross-platform OCR certification
-
-The provider contract, bounded background queue, Windows WinRT executor, macOS
-Vision provider, Linux Tesseract provider, language configuration, retry and
-reprocessing behavior, provenance invalidation, and runtime diagnostics are
-implemented. What remains is platform certification:
-
-- [ ] Verify macOS Vision language selection, bounded execution, cancellation,
-  retry, and reprocessing in installed arm64 and x64 builds.
-- [ ] Verify Linux/X11 Tesseract discovery, version/language reporting, `.deb`
-  dependencies, and actionable AppImage recovery when the engine or language
-  data is absent.
-- [ ] Run the installed OCR lifecycle on Windows x64, macOS arm64/x64, and Linux
-  x64: empty success, failure, unsupported input, retry, deletion, language
-  change, FTS refresh, and semantic reindexing in English and Japanese.
-
-Windows OCR remains release-blocking. Linux may depend on system Tesseract only
-after installation and recovery are explicit and certified.
-
-## 3. Configuration sync and account completion
-
-The local backend and desktop implement the domain-based migration baseline,
-versioned configuration protocol, account/generation isolation, atomic cloud
-initialization/replacement, staged restore, device revocation, quarantine,
-signed-registry restoration, portable setting approval, app-command shortcuts,
-and event-driven low-traffic synchronization without idle polling.
-Local automated coverage is recorded in the backend configuration-sync guide.
-Remaining production work:
-
-- [ ] Audit the hosted Supabase Auth configuration, redirect URLs, schema,
-  grants, and security/performance advisors before deploying the fresh baseline.
-- [ ] Deploy and certify the hosted desktop PKCE callback bridge and deep-link
-  round trip with the actual OAuth provider.
-- [ ] Publish signed package releases declaring reviewed portable settings and
-  populate the matching server approval catalog through the release process.
-- [ ] Certify installed two-device restore across advertised platforms, including
-  concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
-  revoked devices, unavailable packages, quarantine recovery, and remote reset.
-- [ ] Add verified account deletion through a JWT-protected backend operation,
-  separately resolving billing, organization ownership, and shared vault data.
-
-The exit gate is a second installed device restoring only supported configuration
-and extension intent, with no clipboard content, secrets, device-local settings,
-or old consent transferred. Configuration sync is the first backend product
-milestone; existing billing/vault functionality remains independently maintained.
-
-## 4. Native packaging and release certification
-
-- [ ] Build Windows x64, Linux x64 `.deb`/AppImage, and macOS arm64/x64 artifacts
-  from one reviewed revision.
-- [ ] Add Developer ID signing, hardened runtime, notarization, stapling, and
-  installed verification for both macOS architectures.
-- [ ] Sign Windows installers and executables; verify clean install, update,
-  downgrade rejection, and uninstall.
-- [ ] Verify Linux desktop integration, X11-only claims, package dependencies,
-  AppImage behavior, Tesseract recovery, and updater support.
-- [ ] Validate signed updater metadata and rollback/recovery behavior.
-- [ ] Run and record the complete installed-build matrices in
-  [RELEASE.md](RELEASE.md), including native clipboard fidelity, window focus and
-  paste, tray and shortcuts, autostart, deep links, OAuth/sync, accessibility,
-  extensions, OCR, search/Recall quality, latency, memory, disk, and recovery. Recall release
-  certification includes the versioned synthetic retrieval/grounding corpus, exact-identifier
-  recovery, citation support, cancellation, and clipboard self-write checks.
-- [ ] Add a bundle-size budget and confirm that removing core Mermaid materially
-  reduces the main bundle and eliminates its diagram/Cytoscape/KaTeX chunks.
-- [ ] Update website, download, and release messaging to advertise only certified
-  platforms and capabilities.
-
-The release gate is signed application artifacts from one revision, a signed
-extension catalog with published packages, production Auth/configuration sync,
-and complete installed-build evidence.
-
-## 5. External and installed-build certification
-
-These checks require hosted services, release artifacts, assistive technology,
-or operating systems outside the ordinary local test loop. They remain release
-gates without blocking completion of local implementation sections:
-
-- [ ] Complete English/Japanese keyboard and screen-reader certification for
-  Settings, Intelligence, Extensions, and recovery states with NVDA, VoiceOver,
-  and Orca in installed builds.
-- [ ] Certify native clip sharing for text, URLs, files, images, documents,
-  cancellation, missing sources, and corrupt managed assets on every advertised
-  platform.
+- [ ] Audit production logs and built artifacts for sensitive content, secrets,
+  credentials, tokens, and unnecessary filesystem paths.
+- [ ] Run dependency, license, SBOM, secret-scanning, bundle-budget, and artifact
+  inspection gates against the release revision.
 - [ ] Complete the production security review with no unresolved high-severity
   findings.
-- [ ] Run an LLM-assisted release review of feature completeness, architecture,
+- [ ] Run an LLM-assisted review of feature completeness, architecture,
   concurrency/persistence boundaries, and the threat model; validate every
-  actionable finding against source code or tests before accepting it.
+  actionable finding against source or tests before accepting it.
+
+### Hosted account and sync
+
+- [ ] Audit hosted Supabase Auth, redirect URLs, deployed migrations, grants, and
+  security/performance advisors against the `clipsx-web` source of truth.
+- [ ] Certify the Google OAuth, hosted PKCE callback, `clipsx://` deep-link, and
+  desktop session round trip.
+- [ ] Certify two-device restore across advertised platforms, including
+  concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
+  revocation, unavailable packages, quarantine recovery, and remote reset.
+- [ ] Confirm that sync transfers only supported configuration and extension
+  intent—never clipboard content, secrets, device-local settings, permission
+  grants, or old consent.
+
+### Installed platforms
+
+- [ ] Run the complete OCR lifecycle on Windows x64, macOS arm64/x64, and
+  Linux/X11 x64: success, empty output, failure, unsupported input, cancellation,
+  retry, deletion, language changes, FTS refresh, and semantic reindexing in
+  English and Japanese.
+- [ ] On macOS, verify Vision language selection and bounded execution in both
+  architectures. On Linux, verify Tesseract discovery, language/version
+  reporting, `.deb` dependencies, and actionable AppImage recovery.
+- [ ] Certify native sharing for text, URLs, files, images, documents,
+  cancellation, missing sources, and corrupt managed assets on every advertised
+  platform.
+- [ ] Certify English/Japanese keyboard and screen-reader behavior with NVDA,
+  VoiceOver, and Orca for Settings, Intelligence, Extensions, and recovery.
+- [ ] Verify Windows clean install, update, downgrade rejection, and uninstall;
+  macOS notarization/stapling; and Linux desktop integration, X11 claims,
+  dependencies, AppImage behavior, and updater support.
+- [ ] Run and record the complete installed-build matrix from one signed revision:
+  clipboard fidelity, focus/paste, tray and shortcuts, autostart, deep links,
+  OAuth/sync, extensions, OCR, search/Recall quality, accessibility, latency,
+  memory, disk, and recovery. Recall includes the versioned synthetic corpus,
+  exact-identifier recovery, citation support, cancellation, and clipboard
+  self-write checks.
+- [ ] Verify signed updater metadata and rollback/recovery behavior.
 - [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
   is approved and enabled.
+
+The production release gate is one reviewed revision with signed artifacts, a
+signed extension catalog, deployed Auth/configuration sync, no unresolved
+high-severity security findings, and complete evidence in `RELEASE.md`.
 
 ## Post-release candidates
 
