@@ -37,6 +37,16 @@ impl SingleWorker {
             let mut retry = 0_usize;
             let mut validated = false;
             loop {
+                match embeddings::process_cleanup(&history).await {
+                    Ok(_) => {}
+                    Err(error) => {
+                        let _ = app.emit("embedding-index-failed", error.to_string());
+                        let delay = delays[retry.min(delays.len() - 1)];
+                        retry = (retry + 1).min(delays.len() - 1);
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                }
                 if !validated {
                     match embeddings::validate_configured_provider(&history).await {
                         Ok(()) => {

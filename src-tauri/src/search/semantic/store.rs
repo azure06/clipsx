@@ -175,6 +175,69 @@ pub struct SidecarChunk {
 }
 
 impl BuildingSidecar {
+    /// Removes every sidecar-owned row for a deleted clip and any vector inputs
+    /// that become unreferenced. This is idempotent for retryable cleanup work.
+    pub async fn remove_clip(&mut self, clip_id: &str) -> Result<()> {
+        let mut transaction = self.connection.begin().await?;
+        let ordinal: Option<i64> =
+            sqlx::query_scalar("SELECT clip_ordinal FROM semantic_clips WHERE clip_id = ?")
+                .bind(clip_id)
+                .fetch_optional(&mut *transaction)
+                .await?;
+        if let Some(ordinal) = ordinal {
+            let page_ordinal = ordinal / SCAN_PAGE_CLIPS;
+            let dimensions: i64 = sqlx::query_scalar(
+                "SELECT dimensions FROM semantic_sidecar_meta WHERE singleton = 1",
+            )
+            .fetch_one(&mut *transaction)
+            .await?;
+            let payload: Option<Vec<u8>> = sqlx::query_scalar(
+                "SELECT payload FROM semantic_clip_scans WHERE page_ordinal = ?",
+            )
+            .bind(page_ordinal)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            if let Some(payload) = payload {
+                let mut page = decode_scan_page(
+                    &payload,
+                    page_ordinal,
+                    usize::try_from(dimensions)?.div_ceil(8),
+                )?;
+                page.remove(&ordinal);
+                if page.is_empty() {
+                    sqlx::query("DELETE FROM semantic_clip_scans WHERE page_ordinal = ?")
+                        .bind(page_ordinal)
+                        .execute(&mut *transaction)
+                        .await?;
+                } else {
+                    sqlx::query(
+                        "UPDATE semantic_clip_scans SET payload = ? WHERE page_ordinal = ?",
+                    )
+                    .bind(encode_scan_page(
+                        &page,
+                        page_ordinal,
+                        usize::try_from(dimensions)?.div_ceil(8),
+                    )?)
+                    .bind(page_ordinal)
+                    .execute(&mut *transaction)
+                    .await?;
+                }
+            }
+            sqlx::query("DELETE FROM semantic_clips WHERE clip_ordinal = ?")
+                .bind(ordinal)
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("DELETE FROM semantic_inputs WHERE NOT EXISTS (SELECT 1 FROM semantic_chunks WHERE semantic_chunks.input_ordinal = semantic_inputs.input_ordinal)")
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut self.connection)
+            .await?;
+        Ok(())
+    }
+
     /// Atomically replaces all derived semantic rows for one clip.
     ///
     /// Clip ordinals survive replacements. Equal complete embedding inputs share

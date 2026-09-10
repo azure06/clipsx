@@ -894,6 +894,11 @@ impl HistoryRepository {
     }
     pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        sqlx::query("INSERT OR IGNORE INTO search_semantic_cleanup(clip_id,requested_at) SELECT id,? FROM clip_items WHERE id=?")
+            .bind(now_ms())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM clip_items WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
@@ -909,6 +914,10 @@ impl HistoryRepository {
         .fetch_all(&self.pool)
         .await?;
         let mut tx = self.pool.begin().await?;
+        sqlx::query("INSERT OR IGNORE INTO search_semantic_cleanup(clip_id,requested_at) SELECT id,? FROM clip_items WHERE lifecycle_state='ready'")
+            .bind(now_ms())
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM clip_items WHERE lifecycle_state='ready'")
             .execute(&mut *tx)
             .await?;
@@ -928,6 +937,11 @@ impl HistoryRepository {
             return Ok(ids);
         }
         let mut transaction = self.pool.begin().await?;
+        sqlx::query("INSERT OR IGNORE INTO search_semantic_cleanup(clip_id,requested_at) SELECT c.id,? FROM clip_items c WHERE c.lifecycle_state='ready' AND c.captured_at<=? AND EXISTS (SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret')")
+            .bind(now_ms())
+            .bind(cutoff_ms)
+            .execute(&mut *transaction)
+            .await?;
         sqlx::query("DELETE FROM clip_items WHERE lifecycle_state='ready' AND captured_at<=? AND EXISTS (SELECT 1 FROM content_clip_facets f WHERE f.clip_id=clip_items.id AND f.facet_id='core.security.secret')")
             .bind(cutoff_ms)
             .execute(&mut *transaction)
@@ -1048,6 +1062,7 @@ impl HistoryRepository {
         Ok(s)
     }
     pub async fn update_settings(&self, s: &CaptureSettings) -> Result<()> {
+        let mut transaction = self.pool.begin().await?;
         for (k, v) in [
             (
                 "capture.max_ordinary_clips",
@@ -1071,8 +1086,9 @@ impl HistoryRepository {
             ),
         ] {
             let now = now_ms();
-            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(k).bind(v).bind(now).bind(now).execute(&self.pool).await?;
+            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(k).bind(v).bind(now).bind(now).execute(&mut *transaction).await?;
         }
+        transaction.commit().await?;
         self.enforce_retention(s).await
     }
 
@@ -1129,10 +1145,62 @@ impl HistoryRepository {
         Ok(settings)
     }
 
+    pub async fn history_split_ratio(&self) -> Result<f64> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value_json FROM config_device_values WHERE key='window.history_split_ratio'",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let ratio = value
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<f64>(value).ok())
+            .unwrap_or(0.5);
+        Ok(ratio.clamp(0.2, 0.8))
+    }
+
+    pub async fn set_history_split_ratio(&self, ratio: f64) -> Result<f64> {
+        if !ratio.is_finite() || !(0.2..=0.8).contains(&ratio) {
+            bail!("history split ratio must be between 0.20 and 0.80");
+        }
+        let now = now_ms();
+        sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES('window.history_split_ratio',?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(serde_json::to_string(&ratio)?)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        Ok(ratio)
+    }
+
     pub async fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
         settings.validate()?;
-        self.update_settings(&settings.capture).await?;
         let mut transaction = self.pool.begin().await?;
+        for (key, value) in [
+            (
+                "capture.max_ordinary_clips",
+                serde_json::to_string(&settings.capture.max_ordinary_clips)?,
+            ),
+            (
+                "capture.max_age_days",
+                serde_json::to_string(&settings.capture.max_age_days)?,
+            ),
+            (
+                "capture.max_managed_bytes",
+                serde_json::to_string(&settings.capture.max_managed_bytes)?,
+            ),
+            (
+                "capture.max_representation_bytes",
+                serde_json::to_string(&settings.capture.max_representation_bytes)?,
+            ),
+            (
+                "capture.max_snapshot_bytes",
+                serde_json::to_string(&settings.capture.max_snapshot_bytes)?,
+            ),
+        ] {
+            let now = now_ms();
+            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+                .bind(key).bind(value).bind(now).bind(now).execute(&mut *transaction).await?;
+        }
         for (key, value) in [
             ("ui.theme", serde_json::to_string(&settings.theme)?),
             ("ui.language", serde_json::to_string(&settings.language)?),
@@ -1185,7 +1253,6 @@ impl HistoryRepository {
             sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
                 .bind(key).bind(&value).bind(now).bind(now).execute(&mut *transaction).await?;
         }
-        transaction.commit().await?;
         for (key, value) in [
             (
                 "capture.filters",
@@ -1202,9 +1269,10 @@ impl HistoryRepository {
         ] {
             let now = now_ms();
             sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
-                .bind(key).bind(value).bind(now).bind(now).execute(&self.pool).await?;
+                .bind(key).bind(value).bind(now).bind(now).execute(&mut *transaction).await?;
         }
-        Ok(())
+        transaction.commit().await?;
+        self.enforce_retention(&settings.capture).await
     }
 
     async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
@@ -1560,6 +1628,64 @@ mod tests {
         #[cfg(target_os = "windows")]
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
+    }
+
+    #[tokio::test]
+    async fn device_split_ratio_is_validated_and_persisted() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        assert_eq!(repo.history_split_ratio().await.unwrap(), 0.5);
+        assert!(repo.set_history_split_ratio(0.19).await.is_err());
+        repo.set_history_split_ratio(0.62).await.unwrap();
+        assert_eq!(repo.history_split_ratio().await.unwrap(), 0.62);
+    }
+
+    #[tokio::test]
+    async fn clip_deletion_retains_semantic_cleanup_intent() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    representations: vec![CapturedRepresentation {
+                        format_key: "text/plain".into(),
+                        canonical_mime_type: Some("text/plain".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 1,
+                        payload: CapturedPayload::Text("cleanup me".into()),
+                    }],
+                    format_observations: Vec::new(),
+                },
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        repo.delete(&clip_id).await.unwrap();
+        let queued: String =
+            sqlx::query_scalar("SELECT clip_id FROM search_semantic_cleanup WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, clip_id);
     }
 
     #[tokio::test]

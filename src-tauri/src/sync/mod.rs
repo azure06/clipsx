@@ -34,6 +34,15 @@ pub struct SyncBatch {
     pub after_cursor: i64,
     pub records: Vec<Value>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandDescriptor {
+    pub id: String,
+    pub label_key: String,
+    pub default_shortcut: Option<String>,
+    pub effective_shortcut: Option<String>,
+}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SyncRemoteRecord {
@@ -532,6 +541,44 @@ pub async fn command_shortcuts(
     .map(|r| (r.get(0), r.get(1)))
     .collect())
 }
+pub async fn command_catalog(repo: &HistoryRepository) -> Result<Vec<CommandDescriptor>> {
+    let overrides = command_shortcuts(repo).await?;
+    let mut commands = vec![
+        ("core.focus_search", "commands.focusSearch"),
+        ("core.recall", "commands.recall"),
+        ("core.copy", "commands.copy"),
+        ("core.copy_plain_text", "commands.copyPlainText"),
+        ("core.share", "commands.share"),
+        ("core.favorite", "commands.favorite"),
+        ("core.pin", "commands.pin"),
+        ("core.open", "commands.open"),
+        ("core.delete", "commands.delete"),
+    ]
+    .into_iter()
+    .map(|(id, label)| (id.to_owned(), label.to_owned()))
+    .collect::<Vec<_>>();
+    for digit in 1..=9 {
+        commands.push((
+            format!("core.quick_slot_{digit}"),
+            "commands.quickSlot".into(),
+        ));
+    }
+    Ok(commands
+        .into_iter()
+        .map(|(id, label_key)| {
+            let default_shortcut = default_command_shortcut(&id);
+            CommandDescriptor {
+                effective_shortcut: overrides
+                    .get(&id)
+                    .cloned()
+                    .or_else(|| default_shortcut.clone()),
+                id,
+                label_key,
+                default_shortcut,
+            }
+        })
+        .collect())
+}
 pub async fn set_command_shortcut(
     repo: &HistoryRepository,
     id: &str,
@@ -539,7 +586,24 @@ pub async fn set_command_shortcut(
 ) -> Result<()> {
     if !matches!(
         id,
-        "core.copy" | "core.favorite" | "core.pin" | "core.open" | "core.delete" | "core.recall"
+        "core.focus_search"
+            | "core.copy"
+            | "core.copy_plain_text"
+            | "core.share"
+            | "core.favorite"
+            | "core.pin"
+            | "core.open"
+            | "core.delete"
+            | "core.recall"
+            | "core.quick_slot_1"
+            | "core.quick_slot_2"
+            | "core.quick_slot_3"
+            | "core.quick_slot_4"
+            | "core.quick_slot_5"
+            | "core.quick_slot_6"
+            | "core.quick_slot_7"
+            | "core.quick_slot_8"
+            | "core.quick_slot_9"
     ) {
         bail!("Unknown built-in command");
     }
@@ -551,6 +615,9 @@ pub async fn set_command_shortcut(
         }
         sqlx::query("INSERT INTO config_command_shortcuts VALUES(?,?,?) ON CONFLICT(command_id) DO UPDATE SET accelerator=excluded.accelerator,updated_at=excluded.updated_at").bind(id).bind(value).bind(now_ms()).execute(&repo.pool).await?;
     } else {
+        if let Some(default) = default_command_shortcut(id) {
+            validate_shortcut_assignment(repo, id, &default).await?;
+        }
         sqlx::query("DELETE FROM config_command_shortcuts WHERE command_id=?")
             .bind(id)
             .execute(&repo.pool)
@@ -672,6 +739,12 @@ pub async fn validate_shortcut_assignment(
             .to_owned(),
         ),
     ]);
+    for digit in 1..=9 {
+        bindings.insert(
+            format!("core.quick_slot_{digit}"),
+            format!("Primary+{digit}"),
+        );
+    }
     bindings.extend(command_shortcuts(repo).await?);
     if bindings
         .iter()
@@ -679,5 +752,49 @@ pub async fn validate_shortcut_assignment(
     {
         bail!("Shortcut conflicts with another command; choose a new binding");
     }
+    let extension_bindings: Vec<String> =
+        sqlx::query_scalar("SELECT accelerator FROM extension_action_shortcuts")
+            .fetch_all(&repo.pool)
+            .await?;
+    if extension_bindings
+        .iter()
+        .any(|binding| canonical(binding) == canonical(value))
+    {
+        bail!("Shortcut conflicts with an extension action; choose a new binding");
+    }
+    let activation: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_device_values WHERE key='window.global_shortcut'",
+    )
+    .fetch_optional(&repo.pool)
+    .await?;
+    if activation
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<String>(raw).ok())
+        .is_some_and(|binding| canonical(&binding) == canonical(value))
+    {
+        bail!("Shortcut conflicts with the ClipsX activation shortcut");
+    }
     Ok(())
+}
+
+fn default_command_shortcut(id: &str) -> Option<String> {
+    match id {
+        "core.focus_search" => Some("Primary+K".into()),
+        "core.copy" => Some("Primary+C".into()),
+        "core.recall" => Some("Primary+Enter".into()),
+        "core.favorite" => Some("Primary+F".into()),
+        "core.pin" => Some("Primary+P".into()),
+        "core.open" => Some("Primary+Shift+O".into()),
+        "core.delete" => Some(if cfg!(target_os = "macos") {
+            "Primary+Backspace".into()
+        } else {
+            "Delete".into()
+        }),
+        value if value.starts_with("core.quick_slot_") => value
+            .strip_prefix("core.quick_slot_")
+            .and_then(|d| d.parse::<u8>().ok())
+            .filter(|d| (1..=9).contains(d))
+            .map(|d| format!("Primary+{d}")),
+        _ => None,
+    }
 }

@@ -59,6 +59,32 @@
     "emptyTitle": "Capture Something First",
     "emptyDescription": "Your clipboard history is currently empty. Start copying items, and they'll appear here for preview."
   },
+  "layout": {
+    "resizeHistoryPreview": "Resize history and preview. Use Left and Right arrows; hold Shift for larger steps. Press 0 to reset.",
+    "historyWidthPercent": "History width {{value}} percent",
+    "saveFailed": "The layout changed, but ClipsX could not save it. Try resizing again."
+  },
+  "commands": {
+    "title": "Built-in shortcuts",
+    "action": "Action",
+    "binding": "Shortcut",
+    "default": "Uses the default",
+    "custom": "Custom shortcut",
+    "record": "Record shortcut for {{action}}",
+    "pressKeys": "Press shortcut",
+    "reset": "Reset",
+    "loadFailed": "Shortcuts could not be loaded. Try reopening Settings.",
+    "focusSearch": "Focus search",
+    "recall": "Ask Recall",
+    "copy": "Copy selected clip",
+    "copyPlainText": "Copy plain text",
+    "share": "Share",
+    "favorite": "Toggle favorite",
+    "pin": "Toggle pin",
+    "open": "Open in editor",
+    "delete": "Delete selected clip",
+    "quickSlot": "Activate quick slot {{number}}"
+  },
   "theme": {
     "toggle": "Toggle theme",
     "switchTo": "Switch to {{theme}} mode",

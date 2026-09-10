@@ -28,7 +28,9 @@ type V2Settings = {
   capture: {
     maxOrdinaryClips: number | null
     maxAgeDays: number | null
+    maxManagedBytes: number | null
     maxRepresentationBytes: number | null
+    maxSnapshotBytes: number | null
   }
 }
 const fromV2 = (settings: V2Settings): AppSettings => ({
@@ -45,6 +47,8 @@ const fromV2 = (settings: V2Settings): AppSettings => ({
   max_clips: settings.capture.maxOrdinaryClips ?? 0,
   max_age_days: settings.capture.maxAgeDays ?? 0,
   max_item_size_mb: Math.round((settings.capture.maxRepresentationBytes ?? 0) / 1_048_576),
+  max_managed_bytes: settings.capture.maxManagedBytes,
+  max_snapshot_bytes: settings.capture.maxSnapshotBytes,
   default_paste_format: settings.defaultOutputFormat === 'plain_text' ? 'plain' : 'auto',
   paste_on_enter: settings.pasteOnEnter,
   item_activation_mode: settings.activationMode,
@@ -81,9 +85,11 @@ const toV2 = (settings: AppSettings): V2Settings => ({
   capture: {
     maxOrdinaryClips: settings.max_clips || null,
     maxAgeDays: settings.max_age_days || null,
+    maxManagedBytes: settings.max_managed_bytes,
     maxRepresentationBytes: settings.max_item_size_mb
       ? settings.max_item_size_mb * 1_048_576
       : null,
+    maxSnapshotBytes: settings.max_snapshot_bytes,
   },
 })
 

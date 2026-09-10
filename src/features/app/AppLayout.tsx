@@ -44,6 +44,7 @@ import {
   SYNC_APPLIED_EVENT,
   configurationSyncScheduler,
 } from '../../shared/sync/configSync'
+import { clampHistoryRatio, SPLITTER_WIDTH_PX } from './splitLayout'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
@@ -79,8 +80,13 @@ export const AppLayout = () => {
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
+  const splitCleanupRef = useRef<(() => void) | null>(null)
+  const historyRatioRef = useRef(0.5)
   const handledAuthUrlsRef = useRef(new Set<string>())
-  const [historyWidth, setHistoryWidth] = useState(50)
+  const [historyRatio, setHistoryRatio] = useState(0.5)
+  const [splitContainerWidth, setSplitContainerWidth] = useState(0)
+  const [splitSaveError, setSplitSaveError] = useState(false)
+  const effectiveHistoryRatio = clampHistoryRatio(historyRatio, splitContainerWidth)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
   const tabSwitcher = (
     <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200/70 bg-slate-100/50 p-0.5 dark:border-white/5 dark:bg-white/5">
@@ -232,6 +238,41 @@ export const AppLayout = () => {
     window.addEventListener(SYNC_APPLIED_EVENT, reload)
     return () => window.removeEventListener(SYNC_APPLIED_EVENT, reload)
   }, [])
+
+  useEffect(() => {
+    historyRatioRef.current = historyRatio
+  }, [historyRatio])
+
+  useEffect(() => {
+    let cancelled = false
+    void invoke<number>('get_history_split_ratio')
+      .then(ratio => {
+        if (!cancelled) setHistoryRatio(ratio)
+      })
+      .catch(() => {
+        if (!cancelled) setSplitSaveError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const container = splitViewRef.current
+    if (!container) return
+    const update = () => setSplitContainerWidth(container.getBoundingClientRect().width)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [activeView])
+
+  useEffect(
+    () => () => {
+      splitCleanupRef.current?.()
+    },
+    []
+  )
 
   useEffect(() => {
     if (authStatus !== 'signed_in' || !authUserId) return
@@ -389,7 +430,8 @@ export const AppLayout = () => {
         else runRecall()
         return
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      if (matchCommandShortcut(e, 'core.focus_search', { modifiers: ['primary'], key: 'K' })) {
+        if (e.repeat || e.isComposing) return
         e.preventDefault()
         searchBarRef.current?.focus()
       }
@@ -411,29 +453,80 @@ export const AppLayout = () => {
     resetSearch()
   }
 
-  const beginSplitResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    const container = splitViewRef.current
-    if (!container) return
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: true } }))
-
-    const resize = (pointerEvent: PointerEvent) => {
-      const bounds = container.getBoundingClientRect()
-      if (bounds.width <= 0) return
-      const minimum = Math.min(34, (280 / bounds.width) * 100)
-      const maximum = Math.max(60, 100 - (420 / bounds.width) * 100)
-      const next = ((pointerEvent.clientX - bounds.left) / bounds.width) * 100
-      setHistoryWidth(Math.min(maximum, Math.max(minimum, next)))
+  const persistHistoryRatio = useCallback(async (ratio: number) => {
+    try {
+      const saved = await invoke<number>('set_history_split_ratio', { ratio })
+      setHistoryRatio(saved)
+      setSplitSaveError(false)
+    } catch {
+      setSplitSaveError(true)
     }
-    const finish = () => {
-      window.removeEventListener('pointermove', resize)
-      window.removeEventListener('pointerup', finish)
-      window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } }))
-    }
-    window.addEventListener('pointermove', resize)
-    window.addEventListener('pointerup', finish, { once: true })
   }, [])
+
+  const beginSplitResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const container = splitViewRef.current
+      if (!container) return
+      event.preventDefault()
+      const separator = event.currentTarget
+      const initialRatio = historyRatioRef.current
+      separator.setPointerCapture(event.pointerId)
+      window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: true } }))
+
+      const resize = (pointerEvent: PointerEvent) => {
+        const bounds = container.getBoundingClientRect()
+        if (bounds.width <= 0) return
+        const available = Math.max(1, bounds.width - SPLITTER_WIDTH_PX)
+        const next = (pointerEvent.clientX - bounds.left) / available
+        const clamped = clampHistoryRatio(next, bounds.width)
+        historyRatioRef.current = clamped
+        setHistoryRatio(clamped)
+      }
+      const cleanup = () => {
+        window.removeEventListener('pointermove', resize)
+        window.removeEventListener('pointerup', finish)
+        window.removeEventListener('pointercancel', cancel)
+        separator.removeEventListener('lostpointercapture', cancel)
+        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } }))
+        splitCleanupRef.current = null
+      }
+      const finish = () => {
+        cleanup()
+        void persistHistoryRatio(historyRatioRef.current)
+      }
+      const cancel = () => {
+        cleanup()
+        historyRatioRef.current = initialRatio
+        setHistoryRatio(initialRatio)
+      }
+      splitCleanupRef.current?.()
+      splitCleanupRef.current = cancel
+      window.addEventListener('pointermove', resize)
+      window.addEventListener('pointerup', finish, { once: true })
+      window.addEventListener('pointercancel', cancel, { once: true })
+      separator.addEventListener('lostpointercapture', cancel, { once: true })
+    },
+    [persistHistoryRatio]
+  )
+
+  const handleSplitKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 0.1 : 0.02
+      let next: number | null = null
+      if (event.key === 'ArrowLeft') next = historyRatioRef.current - step
+      if (event.key === 'ArrowRight') next = historyRatioRef.current + step
+      if (event.key === 'Home') next = 0.2
+      if (event.key === 'End') next = 0.8
+      if (event.key === '0') next = 0.5
+      if (next == null) return
+      event.preventDefault()
+      const clamped = clampHistoryRatio(next, splitContainerWidth)
+      historyRatioRef.current = clamped
+      setHistoryRatio(clamped)
+      void persistHistoryRatio(clamped)
+    },
+    [persistHistoryRatio, splitContainerWidth]
+  )
 
   return (
     // Main Container - Single Background Color/Gradient Source
@@ -490,7 +583,10 @@ export const AppLayout = () => {
                   {/* LEFT PANEL — glass L1, peers with Preview */}
                   <div
                     className="min-w-0 shrink-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left"
-                    style={{ width: `${historyWidth}%` }}
+                    id="history-panel"
+                    style={{
+                      width: `calc((100% - ${SPLITTER_WIDTH_PX}px) * ${effectiveHistoryRatio})`,
+                    }}
                   >
                     <ClipboardHistory
                       searchQuery={searchQuery}
@@ -501,16 +597,26 @@ export const AppLayout = () => {
                   <button
                     type="button"
                     role="separator"
-                    aria-label="Resize history and preview"
+                    aria-label={t('layout.resizeHistoryPreview')}
                     aria-orientation="vertical"
-                    aria-valuenow={Math.round(historyWidth)}
+                    aria-controls="history-panel preview-panel"
+                    aria-valuemin={20}
+                    aria-valuemax={80}
+                    aria-valuenow={Math.round(effectiveHistoryRatio * 100)}
+                    aria-valuetext={t('layout.historyWidthPercent', {
+                      value: Math.round(effectiveHistoryRatio * 100),
+                    })}
                     className="group relative w-6 shrink-0 cursor-col-resize touch-none outline-none"
                     onPointerDown={beginSplitResize}
+                    onKeyDown={handleSplitKeyDown}
                   >
                     <span className="absolute inset-y-3 left-1/2 w-px -translate-x-1/2 rounded-full bg-slate-300/55 transition-colors group-hover:bg-violet-400/70 group-focus-visible:bg-violet-500 dark:bg-white/10" />
                   </button>
                   {/* RIGHT PANEL: Preview & Actions */}
-                  <div className="relative min-w-0 flex-1 flex flex-col overflow-hidden">
+                  <div
+                    id="preview-panel"
+                    className="relative min-w-0 flex-1 flex flex-col overflow-hidden"
+                  >
                     <div className="pointer-events-none absolute right-4.5 top-3 z-10">
                       <div className="pointer-events-auto">{tabSwitcher}</div>
                     </div>
@@ -573,6 +679,11 @@ export const AppLayout = () => {
                       )
                     })()}
                   </div>
+                  {splitSaveError && (
+                    <p role="alert" className="sr-only">
+                      {t('layout.saveFailed')}
+                    </p>
+                  )}
                 </div>
               </div>
             )}

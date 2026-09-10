@@ -467,6 +467,75 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     Ok(count)
 }
 
+/// Applies durable clip-deletion work to every retained sidecar. This does not
+/// require an enabled or reachable embedding provider.
+pub async fn process_cleanup(repo: &HistoryRepository) -> Result<u64> {
+    let clips: Vec<String> = sqlx::query_scalar(
+        "SELECT clip_id FROM search_semantic_cleanup ORDER BY requested_at,clip_id LIMIT 32",
+    )
+    .fetch_all(&repo.pool)
+    .await?;
+    if clips.is_empty() {
+        return Ok(0);
+    }
+    let generations = sqlx::query(
+        "SELECT id,dimensions,sidecar_relative_path,status FROM search_index_generations WHERE status IN ('building','active','superseded') ORDER BY generation",
+    )
+    .fetch_all(&repo.pool)
+    .await?;
+    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+    for clip_id in &clips {
+        let result: Result<()> = async {
+            for row in &generations {
+                let generation_id: String = row.get(0);
+                let dimensions = usize::try_from(row.get::<i64, _>(1))?;
+                let relative_path: String = row.get(2);
+                let status: String = row.get(3);
+                let mut writer = if status == "building" {
+                    store
+                        .open_building(&relative_path, &generation_id, dimensions)
+                        .await?
+                } else {
+                    store
+                        .open_active(&relative_path, &generation_id, dimensions)
+                        .await?
+                };
+                writer.remove_clip(clip_id).await?;
+                writer.close().await?;
+                if status != "building" {
+                    let identity = store.checkpoint_identity(&relative_path)?;
+                    sqlx::query("UPDATE search_index_generations SET sidecar_byte_length=?,sidecar_sha256=?,updated_at=? WHERE id=?")
+                        .bind(i64::try_from(identity.byte_length)?)
+                        .bind(identity.sha256)
+                        .bind(now_ms())
+                        .bind(&generation_id)
+                        .execute(&repo.pool)
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                sqlx::query("DELETE FROM search_semantic_cleanup WHERE clip_id=?")
+                    .bind(clip_id)
+                    .execute(&repo.pool)
+                    .await?;
+            }
+            Err(error) => {
+                sqlx::query("UPDATE search_semantic_cleanup SET attempt_count=attempt_count+1,last_error=? WHERE clip_id=?")
+                    .bind(error.to_string().chars().take(512).collect::<String>())
+                    .bind(clip_id)
+                    .execute(&repo.pool)
+                    .await?;
+                return Err(error);
+            }
+        }
+    }
+    Ok(clips.len() as u64)
+}
+
 async fn settle_generation(repo: &HistoryRepository, generation: &Generation) -> Result<()> {
     if generation.status != "building"
         || job_count(repo, &generation.id, "status IN ('pending','running')").await? != 0

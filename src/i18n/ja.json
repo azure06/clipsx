@@ -59,6 +59,32 @@
     "emptyTitle": "まず何かをコピーしてください",
     "emptyDescription": "クリップボード履歴はまだ空です。コピーした項目がここに表示され、プレビューできます。"
   },
+  "layout": {
+    "resizeHistoryPreview": "履歴とプレビューの幅を変更します。左右の矢印キーで調整し、Shiftキーを押すと大きく調整できます。0キーでリセットします。",
+    "historyWidthPercent": "履歴の幅 {{value}} パーセント",
+    "saveFailed": "レイアウトは変更されましたが保存できませんでした。もう一度サイズを変更してください。"
+  },
+  "commands": {
+    "title": "組み込みショートカット",
+    "action": "操作",
+    "binding": "ショートカット",
+    "default": "既定値を使用",
+    "custom": "カスタムショートカット",
+    "record": "{{action}}のショートカットを記録",
+    "pressKeys": "キーを押してください",
+    "reset": "リセット",
+    "loadFailed": "ショートカットを読み込めませんでした。設定を開き直してください。",
+    "focusSearch": "検索にフォーカス",
+    "recall": "Recall に質問",
+    "copy": "選択したクリップをコピー",
+    "copyPlainText": "プレーンテキストをコピー",
+    "share": "共有",
+    "favorite": "お気に入りを切り替え",
+    "pin": "ピン留めを切り替え",
+    "open": "エディターで開く",
+    "delete": "選択したクリップを削除",
+    "quickSlot": "クイックスロット {{number}} を実行"
+  },
   "theme": {
     "toggle": "テーマを切り替える",
     "switchTo": "{{theme}}モードに切り替える",

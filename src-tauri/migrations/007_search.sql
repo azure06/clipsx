@@ -89,3 +89,13 @@ CREATE TABLE search_index_jobs (
 
 CREATE INDEX idx_search_index_jobs_status
     ON search_index_jobs(generation_id, status, requested_at);
+
+-- Sidecar SQLite files cannot participate in the canonical database transaction.
+-- Persist deletion intent independently of clip-owned indexing jobs so cleanup
+-- survives the clip cascade and process interruption.
+CREATE TABLE search_semantic_cleanup (
+    clip_id TEXT PRIMARY KEY NOT NULL,
+    requested_at INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT
+);

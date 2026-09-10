@@ -4,7 +4,7 @@ description = "Allows the primary ClipsX webview to invoke the registered applic
 permissions = [
   "allow-begin-configuration-sync",
   "allow-snapshot-configuration-sync",
-  "allow-get-command-shortcuts",
+  "allow-get-command-shortcuts", "allow-get-command-catalog",
   "allow-set-command-shortcut",
   "allow-sync-recovery",
   "allow-auth-storage-reset",
@@ -33,7 +33,8 @@ permissions = [
   "allow-get-transform-preferences", "allow-update-transform-preferences", "allow-delete-clip",
   "allow-clear-history", "allow-set-clip-pinned", "allow-set-clip-favorite", "allow-update-clip-note",
   "allow-list-tags", "allow-create-tag", "allow-delete-tag", "allow-add-clip-tag", "allow-remove-clip-tag",
-  "allow-get-capture-settings", "allow-get-app-settings", "allow-update-app-settings",
+  "allow-get-capture-settings", "allow-get-app-settings", "allow-get-history-split-ratio",
+  "allow-set-history-split-ratio", "allow-update-app-settings",
   "allow-register-global-shortcut", "allow-get-sync-status", "allow-set-sync-enabled",
   "allow-prepare-sync-batch", "allow-apply-sync-response", "allow-record-sync-error",
   "allow-update-capture-settings", "allow-get-clip-views",

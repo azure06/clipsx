@@ -25,6 +25,9 @@ export interface AppSettings {
   max_clips: number
   max_age_days: number
   max_item_size_mb: number
+  /** Host-owned limits retained across UI edits even though this screen does not expose them yet. */
+  max_managed_bytes: number | null
+  max_snapshot_bytes: number | null
 
   // Privacy & Behavior
   auto_clear_minutes: number
@@ -63,6 +66,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   max_clips: 1000,
   max_age_days: 0,
   max_item_size_mb: 50,
+  max_managed_bytes: 1_073_741_824,
+  max_snapshot_bytes: 104_857_600,
   auto_clear_minutes: 0,
   hide_on_copy: false,
   clear_on_exit: false,

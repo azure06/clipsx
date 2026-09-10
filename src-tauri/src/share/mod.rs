@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use std::{
     fs,
+    io::Write,
     path::PathBuf,
     time::{Duration, SystemTime},
 };
@@ -58,12 +59,11 @@ pub async fn prepare(
             item.file_references
                 .iter()
                 .map(PathBuf::from)
-                .filter(|path| path.is_file())
                 .collect::<Vec<_>>()
         })
     {
-        if files.is_empty() {
-            bail!("the shared files no longer exist")
+        if files.is_empty() || files.iter().any(|path| !path.is_file()) {
+            bail!("one or more shared files no longer exist")
         }
         return Ok(PreparedShare::Files(files));
     }
@@ -99,7 +99,12 @@ fn export_bytes(roots: &AppRoots, bytes: &[u8], extension: &str) -> Result<Prepa
     let staging = roots.share_staging();
     fs::create_dir_all(&staging)?;
     let path = staging.join(format!("clip-{}.{}", Uuid::now_v7(), extension));
-    fs::write(&path, bytes)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     Ok(PreparedShare::Files(vec![path]))
 }
 
@@ -303,6 +308,31 @@ mod tests {
             Some("png")
         );
         assert_eq!(fs::read(&paths[0]).unwrap(), vec![137, 80, 78, 71]);
+    }
+
+    #[tokio::test]
+    async fn multi_file_share_rejects_the_whole_request_when_one_source_is_missing() {
+        let (temp, roots, repository) = repository().await;
+        let present = temp.path().join("present.txt");
+        fs::write(&present, b"present").unwrap();
+        let missing = temp.path().join("missing.txt");
+        let clip_id = capture(
+            &repository,
+            CapturedRepresentation {
+                format_key: "files".into(),
+                canonical_mime_type: Some("text/uri-list".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Files(vec![
+                    present.to_string_lossy().into_owned(),
+                    missing.to_string_lossy().into_owned(),
+                ]),
+            },
+        )
+        .await;
+        let error = prepare(&repository, &roots, &clip_id).await.unwrap_err();
+        assert!(error.to_string().contains("one or more shared files"));
     }
 
     #[test]

@@ -1622,46 +1622,15 @@ async fn set_extension_action_shortcut(
         value
             .parse::<Shortcut>()
             .map_err(|_| "action shortcut is not a valid accelerator".to_string())?;
-        let key = normalized_accelerator(value);
-        let mut reserved = vec![
-            normalized_accelerator("Ctrl+C"),
-            normalized_accelerator("Cmd+C"),
-            normalized_accelerator("Ctrl+F"),
-            normalized_accelerator("Cmd+F"),
-            normalized_accelerator("Ctrl+P"),
-            normalized_accelerator("Cmd+P"),
-            normalized_accelerator("Ctrl+Shift+O"),
-            normalized_accelerator("Cmd+Shift+O"),
-        ];
-        for digit in '1'..='9' {
-            reserved.push(normalized_accelerator(&format!("Ctrl+{digit}")));
-            reserved.push(normalized_accelerator(&format!("Cmd+{digit}")));
-        }
-        let settings = state
-            .history
-            .app_settings()
+        crate::sync::validate_shortcut_assignment(&state.history, &action_id, value)
             .await
             .map_err(|error| error.to_string())?;
-        reserved.push(normalized_accelerator(&settings.global_shortcut));
-        if reserved.contains(&key) {
-            return Err("action shortcut conflicts with a ClipsX command".into());
-        }
     }
     state
         .extensions
         .set_action_shortcut(&state.history, &action_id, accelerator.as_deref())
         .await
         .map_err(|error| error.to_string())
-}
-
-fn normalized_accelerator(value: &str) -> String {
-    let mut parts = value
-        .split('+')
-        .map(|part| part.trim().to_ascii_lowercase())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    parts.sort();
-    parts.join("+")
 }
 
 #[tauri::command]
@@ -1829,6 +1798,7 @@ async fn delete_clip(
         .await
         .map_err(|e| e.to_string())?;
     crate::app::workers::wake_managed_files(&app, state.history.clone());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
     let _ = app.emit("clip-deleted", clip_id);
     Ok(())
 }
@@ -1840,6 +1810,7 @@ async fn clear_history(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
         .await
         .map_err(|e| e.to_string())?;
     crate::app::workers::wake_managed_files(&app, state.history.clone());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
     for id in &ids {
         let _ = app.emit("clip-deleted", id);
     }
@@ -1981,6 +1952,24 @@ async fn get_app_settings(state: State<'_, AppState>) -> Result<history::AppSett
 }
 
 #[tauri::command]
+async fn get_history_split_ratio(state: State<'_, AppState>) -> Result<f64, String> {
+    state
+        .history
+        .history_split_ratio()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_history_split_ratio(ratio: f64, state: State<'_, AppState>) -> Result<f64, String> {
+    state
+        .history
+        .set_history_split_ratio(ratio)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn get_sync_status(state: State<'_, AppState>) -> Result<crate::sync::SyncStatus, String> {
     crate::sync::status(&state.history)
         .await
@@ -2044,6 +2033,14 @@ async fn get_command_shortcuts(
     state: State<'_, AppState>,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
     crate::sync::command_shortcuts(&state.history)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn get_command_catalog(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::sync::CommandDescriptor>, String> {
+    crate::sync::command_catalog(&state.history)
         .await
         .map_err(|e| e.to_string())
 }
@@ -2147,12 +2144,15 @@ async fn update_app_settings(
             .window_behavior
             .apply_settings(&window, &effective);
     }
+    crate::app::workers::wake_managed_files(&app, state.history.clone());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
     let _ = app.emit("app-settings-updated", ());
     Ok(effective)
 }
 
 #[tauri::command]
 async fn update_capture_settings(
+    app: tauri::AppHandle,
     settings: CaptureSettings,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -2160,7 +2160,10 @@ async fn update_capture_settings(
         .history
         .update_settings(&settings)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app::workers::wake_managed_files(&app, state.history.clone());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    Ok(())
 }
 
 #[tauri::command]
@@ -2963,6 +2966,10 @@ pub(crate) fn run() {
                                 &auto_clear_app,
                                 auto_clear_history.clone(),
                             );
+                            crate::app::workers::wake_text_index(
+                                &auto_clear_app,
+                                auto_clear_history.clone(),
+                            );
                         }
                     }
                 });
@@ -3153,6 +3160,8 @@ pub(crate) fn run() {
             remove_clip_tag,
             get_capture_settings,
             get_app_settings,
+            get_history_split_ratio,
+            set_history_split_ratio,
             update_app_settings,
             get_sync_status,
             set_sync_enabled,
@@ -3161,6 +3170,7 @@ pub(crate) fn run() {
             snapshot_configuration_sync,
             sync_recovery,
             get_command_shortcuts,
+            get_command_catalog,
             set_command_shortcut,
             apply_sync_response,
             record_sync_error,
@@ -3279,14 +3289,6 @@ mod tests {
             remainder = arguments;
         }
         commands
-    }
-
-    #[test]
-    fn action_shortcut_normalization_is_order_and_case_insensitive() {
-        assert_eq!(
-            normalized_accelerator("Ctrl+Shift+O"),
-            normalized_accelerator(" shift + CTRL + o ")
-        );
     }
 
     #[test]

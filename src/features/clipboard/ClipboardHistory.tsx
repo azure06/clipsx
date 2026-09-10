@@ -7,6 +7,7 @@ import { useToast } from '../../shared/contexts/ToastContext'
 import { getDeleteShortcut, getPlatform } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
+import { copyClipboardOutput } from '../../shared/clipboardOutput'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -312,14 +313,37 @@ export const ClipboardHistory = ({
       const currentIndex = selectedId != null ? clips.findIndex(c => c.id === selectedId) : -1
       const selectedClip = currentIndex >= 0 ? clips[currentIndex] : null
 
-      // Handle primary+1 to primary+9
-      if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
-        e.preventDefault()
-        const index = parseInt(e.key, 10) - 1
-        const clip = clips[index]
-        if (clip) {
-          void handleAction(clip.historyPreview.title, clip.id)
+      for (let index = 0; index < 9; index += 1) {
+        if (
+          matchCommandShortcut(
+            e,
+            `core.quick_slot_${index + 1}`,
+            { modifiers: ['primary'], key: String(index + 1) },
+            platform
+          )
+        ) {
+          if (e.repeat) return
+          e.preventDefault()
+          const clip = clips[index]
+          if (clip) void handleAction(clip.historyPreview.title, clip.id)
+          return
         }
+      }
+      if (
+        selectedClip?.hasPlainText &&
+        matchCommandShortcut(e, 'core.copy_plain_text', { modifiers: [], key: '' }, platform)
+      ) {
+        if (hasNativeCopySelection()) return
+        e.preventDefault()
+        void copyClipboardOutput({ kind: 'plain_text', clipId: selectedClip.id })
+        return
+      }
+      if (
+        selectedClip?.shareable &&
+        matchCommandShortcut(e, 'core.share', { modifiers: [], key: '' }, platform)
+      ) {
+        e.preventDefault()
+        void invoke('share_clip', { clipId: selectedClip.id })
         return
       }
 

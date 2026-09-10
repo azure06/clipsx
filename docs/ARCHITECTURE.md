@@ -242,8 +242,23 @@ result, and discoverable label. UI handlers consume that registry instead of
 owning unrelated hard-coded keys. Context-only commands must be classified
 explicitly as configurable, menu-only, or intentionally unbound.
 
+The Rust host is authoritative for the configurable built-in catalog and
+effective bindings. Built-in overrides use portable `Primary` accelerators in
+`config_command_shortcuts`; SQLite triggers publish those changes through the
+configuration-sync outbox in the same transaction. The Keyboard settings UI
+records key combinations rather than accepting accelerator text, requires an
+explicit Save, and restores defaults by deleting the override. Fixed contextual
+navigation remains outside this catalog. Extension action shortcuts retain
+their separate contribution-owned table and lifecycle.
+
 Canonical and derived ownership determines invalidation: clip deletion cascades
-clip-owned database records and removes the clip from semantic sidecars; note,
+clip-owned database records and records semantic-sidecar cleanup intent in the
+same canonical SQLite transaction. That intent is not clip-owned, survives the
+cascade and restart, and is processed through the single semantic writer before
+provider validation, even when Meaning Search is disabled or unavailable. The
+writer removes clip chunks, routing entries, clip rows, and unreferenced vectors
+from every retained generation, checkpoints changed complete sidecars, and only
+then acknowledges the cleanup record. Note,
 tag, and OCR changes refresh lexical and semantic projections; extension update
 or removal invalidates its facets, views, sessions, and grants without changing
 canonical clip content. The host emits `clip-facets-updated` with
@@ -278,6 +293,21 @@ replacement before removing the current shortcut and persists it only after
 registration succeeds. A conflict therefore leaves both the saved setting and
 the working registration unchanged and returns a visible error. Frontend
 components edit the setting; they do not register OS shortcuts themselves.
+
+Application setting changes write capture, profile, and device-owned values in
+one SQLite transaction, including any trigger-generated sync outbox records.
+Retention begins only after that transaction commits. The frontend round-trips
+the complete effective host object, including managed-storage and snapshot
+limits that do not yet have controls, so an unrelated edit cannot erase them.
+
+The history/preview splitter stores a device-local ratio under
+`window.history_split_ratio`. Its canonical default is 0.50 and accepted range
+is 0.20 through 0.80. Rendering subtracts the separator before applying the
+ratio, preserves 280-pixel history and 420-pixel preview minimums when possible,
+and proportionally scales those minimums in narrower windows without rewriting
+the saved preference. Pointer gestures persist once on successful completion;
+keyboard adjustments persist per action. The value is excluded from profile
+sync and portable configuration.
 
 ## Code and data ownership
 

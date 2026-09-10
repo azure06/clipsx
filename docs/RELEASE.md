@@ -94,6 +94,29 @@ This evidence does not replace the installed native sequence below. A Windows
 development host cannot certify macOS pasteboard APIs, Linux/X11 ownership,
 real target focus/paste behavior, permissions, packaging, or signing.
 
+### Section 1 implementation evidence (2026-09-10)
+
+The in-repository product-completion work has automated evidence for:
+
+- device-local splitter validation/persistence and separator-aware wide and
+  narrow geometry; keyboard and pointer behavior remain installed-UI checks;
+- atomic capture/profile/device setting writes that retain host-only storage
+  limits and run retention after commit;
+- durable semantic cleanup intent recorded with clip deletion and retained after
+  clip-owned indexing jobs cascade;
+- a host-owned configurable command catalog with recorded-key editing, explicit
+  save/cancel/reset states, and effective bindings for search, clip actions,
+  sharing, and quick slots;
+- all-or-nothing multi-file share preparation plus exclusive, fsynced staging
+  exports.
+
+The verification commands completed with 232 frontend tests and 215 passing
+Rust application tests (7 intentionally ignored qualification tests), plus
+TypeScript, ESLint, and Clippy with warnings denied. Installed NVDA, VoiceOver,
+Orca, native sharing, security-review disposition, artifact inspection, and
+signed-out Sponsors checks remain external release gates; this automated record
+does not mark them complete.
+
 ## Shared native clipboard sequence
 
 Before platform clipboard certification, verify account storage in an installed

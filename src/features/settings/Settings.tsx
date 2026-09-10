@@ -469,7 +469,6 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             </>
           )}
 
-          {activeTab === 'keyboard' && <CommandShortcuts />}
           {activeTab === 'keyboard' && (
             <>
               <SettingsSection
@@ -501,12 +500,9 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
               <SettingsSection
                 icon={<Keyboard className="h-4 w-4" />}
                 title="Built-in actions"
-                description="Action-specific shortcuts will appear here as they become configurable."
+                description="Choose the keys you use for actions inside ClipsX."
               >
-                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-xs leading-5 text-slate-500 dark:border-white/10 dark:bg-white/[0.02]">
-                  Navigation, copy, pin, and other built-in actions currently use their documented
-                  defaults. Extension action shortcuts live with each extension.
-                </p>
+                <CommandShortcuts />
               </SettingsSection>
             </>
           )}

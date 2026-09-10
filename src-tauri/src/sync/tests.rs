@@ -230,3 +230,46 @@ async fn configuration_sync_first_snapshot_includes_effective_ui_defaults() {
     assert_eq!(value("ui.default_output_format"), Some(json!("original")));
     assert_eq!(value("ui.show_copy_toast"), Some(json!(true)));
 }
+
+#[tokio::test]
+async fn command_catalog_reports_defaults_and_effective_overrides() {
+    let (_temp, repo) = repo().await;
+    set_command_shortcut(&repo, "core.focus_search", Some("Primary+L"))
+        .await
+        .unwrap();
+
+    let catalog = command_catalog(&repo).await.unwrap();
+    let focus = catalog
+        .iter()
+        .find(|command| command.id == "core.focus_search")
+        .unwrap();
+    assert_eq!(focus.default_shortcut.as_deref(), Some("Primary+K"));
+    assert_eq!(focus.effective_shortcut.as_deref(), Some("Primary+L"));
+    assert!(catalog
+        .iter()
+        .any(|command| command.id == "core.share" && command.default_shortcut.is_none()));
+}
+
+#[tokio::test]
+async fn restoring_a_default_rejects_a_conflicting_override() {
+    let (_temp, repo) = repo().await;
+    set_command_shortcut(&repo, "core.focus_search", Some("Primary+L"))
+        .await
+        .unwrap();
+    set_command_shortcut(&repo, "core.copy", Some("Primary+K"))
+        .await
+        .unwrap();
+
+    let error = set_command_shortcut(&repo, "core.focus_search", None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("conflicts"));
+    assert_eq!(
+        command_shortcuts(&repo)
+            .await
+            .unwrap()
+            .get("core.focus_search")
+            .map(String::as_str),
+        Some("Primary+L")
+    );
+}
