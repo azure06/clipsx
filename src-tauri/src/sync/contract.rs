@@ -60,7 +60,8 @@ pub fn valid_record(r: &SyncRemoteRecord) -> bool {
             "ui.theme" => v
                 .as_str()
                 .is_some_and(|s| matches!(s, "system" | "light" | "dark")),
-            "ui.language" | "artifacts.ocr.language" => v.as_str().is_some_and(|s| {
+            "ui.language" => v.as_str().is_some_and(|s| matches!(s, "en" | "ja")),
+            "artifacts.ocr.language" => v.as_str().is_some_and(|s| {
                 !s.is_empty()
                     && s.len() <= 35
                     && s.bytes()

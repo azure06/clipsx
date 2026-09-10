@@ -23,6 +23,31 @@ adapter's supported-format contract changes.
   local Ollama text generation are implemented, but may be advertised only
   after this checklist validates them in installed builds.
 
+## Desktop settings certification
+
+The settings lifecycle and redacted diagnostic logging are implemented. Automated
+coverage includes host patch validation, atomic save/reset failure, portable
+round trips and exclusions, local outbox publication, offline pending recovery,
+cloud-echo protection against automatic installation, and frontend edit ordering.
+
+Installed-build certification remains required on Windows, macOS, and Linux/X11:
+
+- Toggle logging off/on and restart in each state; exercise capture, rendering,
+  sign-in failures, and native failures with sensitive sentinel values. Confirm
+  diagnostics honor the toggle and never contain the sentinel content or secrets.
+- Change autostart and always-on-top, restart, induce an OS refusal, and recover
+  using Retry. Test conflicting shortcut registration and rollback failure.
+- Export/import while signed out and with sync enabled, resolve missing packages
+  and conflicting commands, and verify no automatic installation or copied grants.
+- Reset settings and verify native defaults, logging enabled, app shortcut defaults,
+  and preserved clipboard history, account, Intelligence, and extension configuration.
+- Verify new Settings controls and recovery messages in English and Japanese with
+  keyboard navigation and the platform screen reader.
+
+Schema version 9 uses the documented pre-release reset flow for older databases.
+No installed cross-platform certification or release-artifact log audit is implied
+by the automated checks above.
+
 ## Required configuration and secrets
 
 - `VITE_SUPABASE_URL`

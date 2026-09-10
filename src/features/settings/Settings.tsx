@@ -1,8 +1,9 @@
+import { diagnostic } from '../../shared/diagnostics'
+import { PortableRecovery } from './components/PortableRecovery'
 import { CommandShortcuts } from './components/CommandShortcuts'
 import { useEffect, useState, useRef } from 'react'
-import { enable, disable } from '@tauri-apps/plugin-autostart'
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
+import { writeTextFile, readTextFile, stat } from '@tauri-apps/plugin-fs'
 
 import { useAuthStore, useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
@@ -39,7 +40,6 @@ import {
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
-import { normalizeLanguage } from '../../i18n'
 import { ConfigurationSync } from './components/ConfigurationSync'
 import { SettingsNavigation, type SettingsNavigationItem } from './components/SettingsNavigation'
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
@@ -160,7 +160,22 @@ export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => 
 
 export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const { t, i18n } = useTranslation()
-  const { settings, isLoading, error, updateSettings, resetSettings } = useSettingsStore()
+  const {
+    settings,
+    isLoading,
+    error,
+    saveError,
+    failedEffects,
+    updateSettings: persistSettings,
+    resetSettings,
+    exportSettings,
+    importSettings,
+    retryEffects,
+  } = useSettingsStore()
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [isManaging, setIsManaging] = useState(false)
+  const updateSettings = (updates: Partial<AppSettings>) =>
+    persistSettings(updates).catch(() => undefined)
   const clearAllClips = useClipboardStore(state => state.clearAllClips)
   const initializeUpdater = useUpdaterStore(state => state.initialize)
   const currentVersion = useUpdaterStore(state => state.currentVersion)
@@ -206,45 +221,47 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
     }
   }
 
-  const handleExport = async () => {
-    if (!settings) return
-    const path = await save({
-      defaultPath: `clips-settings-${new Date().toISOString().split('T')[0]}.json`,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    })
-    if (!path) return
-    await writeTextFile(path, JSON.stringify(settings, null, 2))
-  }
-
-  const handleImport = async () => {
-    const path = await openDialog({
-      multiple: false,
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    })
-    if (!path) return
+  const manage = async (operation: () => Promise<void>, failure: string) => {
+    setIsManaging(true)
+    setFeedback(null)
     try {
-      const text = await readTextFile(path)
-      const imported = JSON.parse(text) as Partial<AppSettings>
-      const importedLanguage =
-        typeof imported.language === 'string'
-          ? normalizeLanguage(imported.language)
-          : (settings?.language ?? 'en')
-      await updateSettings({
-        ...imported,
-        language: importedLanguage,
-        language_initialized: true,
-      })
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (_error) {
-      alert(t('errors.settingsImport'))
+      await operation()
+    } catch {
+      setFeedback(failure)
+    } finally {
+      setIsManaging(false)
     }
   }
 
-  const handleReset = async () => {
-    if (confirm(t('settings.resetConfirm'))) {
+  const handleExport = () =>
+    manage(async () => {
+      const path = await save({
+        defaultPath: `clips-settings-${new Date().toISOString().split('T')[0]}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      })
+      if (!path) return
+      await writeTextFile(path, await exportSettings())
+      setFeedback(t('settings.exportSuccess'))
+    }, t('settings.exportFailed'))
+
+  const handleImport = () =>
+    manage(async () => {
+      const path = await openDialog({
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      })
+      if (!path) return
+      if ((await stat(path)).size > 4 * 1024 * 1024) throw new Error('Settings file exceeds 4 MiB')
+      await importSettings(await readTextFile(path))
+      setFeedback(t('settings.importSuccess'))
+    }, t('errors.settingsImport'))
+
+  const handleReset = () =>
+    manage(async () => {
+      if (!confirm(t('settings.resetConfirm'))) return
       await resetSettings()
-    }
-  }
+      setFeedback(t('settings.resetSuccess'))
+    }, t('errors.settingsReset'))
 
   // --- Loading / Error states ---
 
@@ -256,7 +273,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
     )
   }
 
-  if (error || !settings) {
+  if (!settings) {
     return (
       <div className="flex h-full items-center justify-center">
         <div className="max-w-md text-center space-y-4">
@@ -273,8 +290,8 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
               void (async () => {
                 try {
                   await resetSettings()
-                } catch (err) {
-                  console.error('Failed to reset settings:', err)
+                } catch {
+                  diagnostic('failed_to_reset_settings')
                   alert(t('errors.settingsReset'))
                 }
               })()
@@ -407,6 +424,34 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             <p className="mt-1 text-sm text-gray-500">{tabDescriptions[activeTab]}</p>
           </div>
           {/* GENERAL TAB */}
+          {(saveError || error) && (
+            <p role="alert" className="text-sm text-red-600">
+              {t('settings.saveFailed')}
+            </p>
+          )}
+          {feedback && (
+            <p role="status" className="text-sm">
+              {feedback}
+            </p>
+          )}
+          {failedEffects.length > 0 && (
+            <div role="alert" className="space-y-2 rounded-lg border border-amber-400 p-3 text-sm">
+              <p>{t('settings.effectsPending')}</p>
+              {failedEffects.map(effect => (
+                <p key={effect}>
+                  {t(`settings.effectRecovery.${effect}`, {
+                    defaultValue: t('settings.effectRecovery.other'),
+                  })}
+                </p>
+              ))}
+              <Button
+                disabled={isManaging}
+                onClick={() => void manage(retryEffects, t('settings.retryFailed'))}
+              >
+                {t('settings.retryEffects')}
+              </Button>
+            </div>
+          )}
           {activeTab === 'general' && (
             <>
               <SettingsSection
@@ -484,7 +529,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                     value={settings.global_shortcut}
                     onChange={shortcut => {
                       setShortcutError(null)
-                      void updateSettings({ global_shortcut: shortcut }).catch(error => {
+                      void persistSettings({ global_shortcut: shortcut }).catch(error => {
                         setShortcutError(String(error))
                       })
                     }}
@@ -1024,6 +1069,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
           {/* ADVANCED TAB */}
           {activeTab === 'advanced' && (
             <>
+              <PortableRecovery />
               <SettingsSection
                 icon={<SettingsIcon className="h-4 w-4" />}
                 title={t('settings.system')}
@@ -1035,20 +1081,17 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                 >
                   <Switch
                     checked={settings.auto_start}
-                    onChange={value => {
-                      void (async () => {
-                        try {
-                          if (value) {
-                            await enable()
-                          } else {
-                            await disable()
-                          }
-                          void updateSettings({ auto_start: value })
-                        } catch (err) {
-                          console.error('Failed to toggle autostart:', err)
-                        }
-                      })()
-                    }}
+                    onChange={value => void updateSettings({ auto_start: value })}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label={t('settings.loggingEnabled')}
+                  description={t('settings.loggingDescription')}
+                >
+                  <Switch
+                    checked={settings.logging_enabled}
+                    onChange={value => void updateSettings({ logging_enabled: value })}
                   />
                 </SettingRow>
 
@@ -1138,6 +1181,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   <Button
                     variant="outline"
                     leftIcon={<Download className="h-4 w-4" />}
+                    disabled={isManaging}
                     onClick={() => void handleExport()}
                   >
                     {t('settings.export')}
@@ -1145,6 +1189,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   <Button
                     variant="outline"
                     leftIcon={<Upload className="h-4 w-4" />}
+                    disabled={isManaging}
                     onClick={() => void handleImport()}
                   >
                     {t('settings.import')}
@@ -1152,6 +1197,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   <Button
                     variant="destructive"
                     leftIcon={<RotateCcw className="h-4 w-4" />}
+                    disabled={isManaging}
                     onClick={() => void handleReset()}
                   >
                     {t('settings.resetToDefaults')}

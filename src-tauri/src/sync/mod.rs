@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use sqlx::{Row, Sqlite, Transaction};
 
 pub mod contract;
+pub mod portable;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,6 +232,19 @@ async fn apply_record(
     if local.is_some_and(|l| l > remote) {
         return Ok(());
     }
+    apply_domain(tx, r, false).await?;
+    sqlx::query("INSERT INTO sync_revisions VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,generation,record_kind,record_key) DO UPDATE SET revision_physical_ms=excluded.revision_physical_ms,revision_counter=excluded.revision_counter,source_device_id=excluded.source_device_id")
+        .bind(&s.user_id).bind(s.generation).bind(&r.kind).bind(&r.key).bind(r.revision_physical_ms).bind(r.revision_counter).bind(&r.source_device_id).execute(&mut **tx).await?;
+    // Observe the received HLC before any subsequent local mutation.
+    sqlx::query("UPDATE sync_device_identity SET last_logical_counter=CASE WHEN last_physical_ms=? THEN max(last_logical_counter,?) WHEN last_physical_ms<? THEN ? ELSE last_logical_counter END,last_physical_ms=max(last_physical_ms,?) WHERE singleton=1")
+        .bind(r.revision_physical_ms).bind(r.revision_counter).bind(r.revision_physical_ms).bind(r.revision_counter).bind(r.revision_physical_ms).execute(&mut **tx).await?;
+    Ok(())
+}
+async fn apply_domain(
+    tx: &mut Transaction<'_, Sqlite>,
+    r: &SyncRemoteRecord,
+    local_import: bool,
+) -> Result<()> {
     let payload = r.payload.as_ref().map(Value::to_string);
     sqlx::query("INSERT INTO sync_values VALUES(?,?,?,?) ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone")
         .bind(&r.kind).bind(&r.key).bind(&payload).bind(r.tombstone).execute(&mut **tx).await?;
@@ -272,16 +286,12 @@ async fn apply_record(
             sqlx::query("INSERT INTO config_profile_values(key,value_json,created_at,updated_at) VALUES('renderer.preferences',?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").bind(prefs.to_string()).bind(now_ms()).bind(now_ms()).execute(&mut **tx).await?;
         }
         _ => {
-            sqlx::query("INSERT INTO sync_pending_effects(record_kind,record_key,payload_json,tombstone) VALUES(?,?,?,?) ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone,reason='Waiting for package or command'").bind(&r.kind).bind(&r.key).bind(&payload).bind(r.tombstone).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO sync_pending_effects(record_kind,record_key,payload_json,tombstone,local_import) VALUES(?,?,?,?,?) ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone,reason='Waiting for package or command',local_import=CASE WHEN sync_pending_effects.local_import=1 AND sync_pending_effects.payload_json IS excluded.payload_json AND sync_pending_effects.tombstone=excluded.tombstone THEN 1 ELSE excluded.local_import END").bind(&r.kind).bind(&r.key).bind(&payload).bind(r.tombstone).bind(local_import).execute(&mut **tx).await?;
         }
     }
-    sqlx::query("INSERT INTO sync_revisions VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,generation,record_kind,record_key) DO UPDATE SET revision_physical_ms=excluded.revision_physical_ms,revision_counter=excluded.revision_counter,source_device_id=excluded.source_device_id")
-        .bind(&s.user_id).bind(s.generation).bind(&r.kind).bind(&r.key).bind(r.revision_physical_ms).bind(r.revision_counter).bind(&r.source_device_id).execute(&mut **tx).await?;
-    // Observe the received HLC before any subsequent local mutation.
-    sqlx::query("UPDATE sync_device_identity SET last_logical_counter=CASE WHEN last_physical_ms=? THEN max(last_logical_counter,?) WHEN last_physical_ms<? THEN ? ELSE last_logical_counter END,last_physical_ms=max(last_physical_ms,?) WHERE singleton=1")
-        .bind(r.revision_physical_ms).bind(r.revision_counter).bind(r.revision_physical_ms).bind(r.revision_counter).bind(r.revision_physical_ms).execute(&mut **tx).await?;
     Ok(())
 }
+
 pub async fn apply(repo: &HistoryRepository, response: SyncServerResponse) -> Result<SyncStatus> {
     if response.has_more && response.records.is_empty() {
         bail!("Empty sync continuation page");
@@ -627,8 +637,9 @@ pub async fn set_command_shortcut(
 }
 
 pub async fn snapshot(repo: &HistoryRepository) -> Result<Vec<Value>> {
+    let mut tx = repo.pool.begin().await?;
     let rows = sqlx::query("SELECT * FROM sync_values ORDER BY record_kind,record_key LIMIT 1001")
-        .fetch_all(&repo.pool)
+        .fetch_all(&mut *tx)
         .await?;
     if rows.len() > 1000 {
         bail!("Configuration snapshot exceeds 1000 records");
@@ -639,7 +650,7 @@ pub async fn snapshot(repo: &HistoryRepository) -> Result<Vec<Value>> {
         let value = json!({"kind":r.get::<String,_>("record_kind"),"key":r.get::<String,_>("record_key"),"payload":raw.as_deref().map(serde_json::from_str::<Value>).transpose()?,"tombstone":r.get::<i64,_>("tombstone")!=0,"revisionPhysicalMs":0,"revisionCounter":0});
         values.push(value);
     }
-    let settings = repo.app_settings().await?;
+    let settings = HistoryRepository::app_settings_in(&mut tx).await?;
     let defaults = [
         ("ui.theme", json!(settings.theme)),
         ("ui.language", json!(settings.language)),
@@ -664,11 +675,12 @@ pub async fn snapshot(repo: &HistoryRepository) -> Result<Vec<Value>> {
             }));
         }
     }
+    tx.commit().await?;
     Ok(values)
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub async fn validate_shortcut_assignment(
     repo: &HistoryRepository,

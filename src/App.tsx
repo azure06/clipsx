@@ -1,3 +1,4 @@
+import { diagnostic } from './shared/diagnostics'
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ErrorBoundary } from './shared/components/ErrorBoundary'
@@ -21,8 +22,8 @@ const applyAppLanguage = async (language: string) => {
       settings: i18n.t('tray.settings'),
       quit: i18n.t('tray.quit'),
     },
-  }).catch(error => {
-    console.error('Failed to update tray language:', error)
+  }).catch(() => {
+    diagnostic('failed_to_update_tray_language')
   })
 }
 
@@ -77,8 +78,8 @@ const App = () => {
       if (!cancelled) setIsLanguageReady(true)
     }
 
-    void bootstrap().catch(async error => {
-      console.error('Failed to initialize application language:', error)
+    void bootstrap().catch(async () => {
+      diagnostic('failed_to_initialize_application_language')
       await applyAppLanguage('en')
       if (!cancelled) setIsLanguageReady(true)
     })

@@ -755,7 +755,7 @@ impl SemanticIndexStore {
         hits.truncate(limit);
         let elapsed = started.elapsed();
         if cfg!(debug_assertions) || elapsed.as_millis() >= 125 {
-            eprintln!(
+            crate::diagnostic!(
                 "[PERF] semantic-scan count={} duration_ms={}",
                 hits.len(),
                 elapsed.as_millis()

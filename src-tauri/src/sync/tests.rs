@@ -1,6 +1,6 @@
 use super::*;
 
-async fn repo() -> (tempfile::TempDir, HistoryRepository) {
+pub(crate) async fn repo() -> (tempfile::TempDir, HistoryRepository) {
     let temp = tempfile::TempDir::new().unwrap();
     let roots = crate::foundation::AppRoots {
         data: temp.path().join("data"),

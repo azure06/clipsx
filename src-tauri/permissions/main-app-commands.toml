@@ -2,6 +2,13 @@
 identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
+  "allow-reset-app-settings",
+  "allow-get-settings-effects",
+  "allow-retry-settings-effects",
+  "allow-write-diagnostic",
+  "allow-export-portable-settings",
+  "allow-import-portable-settings",
+
   "allow-begin-configuration-sync",
   "allow-snapshot-configuration-sync",
   "allow-get-command-shortcuts", "allow-get-command-catalog",

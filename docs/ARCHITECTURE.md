@@ -35,7 +35,7 @@ React owns interaction and renders typed presentation models. Rust owns native c
 - Platform adapters alone interpret native clipboard identifiers. ClipsX never guesses UTI, OLE, or equivalent native types.
 - Renderer selection is ephemeral UI policy. It never changes canonical data or Original/Plain Text clipboard output.
 - Binary payloads live in managed application files; SQLite stores metadata and relative references, never a generic clipboard BLOB.
-- The schema is fresh and currently version 8. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
+- The schema is fresh and currently version 9. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
 - Community extensions are untrusted WebAssembly Components. Providers are host-owned because credentials, consent, scheduling, and vector-space integrity are privileged concerns.
 
 ## Capture and persistence
@@ -301,11 +301,53 @@ registration succeeds. A conflict therefore leaves both the saved setting and
 the working registration unchanged and returns a visible error. Frontend
 components edit the setting; they do not register OS shortcuts themselves.
 
-Application setting changes write capture, profile, and device-owned values in
-one SQLite transaction, including any trigger-generated sync outbox records.
-Retention begins only after that transaction commits. The frontend round-trips
-the complete effective host object, including managed-storage and snapshot
-limits that do not yet have controls, so an unrelated edit cannot erase them.
+Application setting changes are host-validated patches merged against the latest
+committed values under one lifecycle lock. Reads use a coherent SQLite snapshot;
+writes commit capture, profile, device-owned values, and trigger-generated sync
+outbox records together. Unedited values, including exact byte limits without UI
+controls, are preserved. The frontend serializes edits and reloads and displays
+committed values rather than rolling back a later edit after an earlier failure.
+
+Saved intent and native effects have separate results. Autostart, global shortcut,
+window behavior, logging, and retention reconcile at startup; failed effects have
+visible, localized recovery instructions and Retry. Shortcut edits register before
+commit and restore the previous registration on a failed save; failed rollback is
+reported. Retention failure after commit never reports the setting as unsaved.
+Reset settings uses host defaults and atomically clears built-in app shortcut
+overrides and pending built-in shortcut intent. It preserves clips, accounts,
+Intelligence configuration, renderer preferences, extension settings, and grants.
+Changing the app language invalidates automatic-language OCR in the settings
+transaction; interrupted derived work is recovered after restart.
+
+Portable export/import is account-independent and host-owned. Version 1 JSON uses
+`format: "clipsx-portable-settings"`, `version: 1`, and records containing only
+`kind`, `key`, `payload`, and `tombstone`. The closed configuration-sync allowlist
+and signed extension declarations define eligibility. Imports merge supplied
+records, including explicit tombstones, while preserving omitted records and all
+device-local settings. The entire document is validated before commit (4 MiB,
+1,000 records, existing per-record bounds, no duplicate kind/key pairs or unknown
+fields); installed signed-package settings also pass declaration validation.
+Normal local triggers publish imported mutations when sync is enabled. OCR
+invalidation is atomic with imported settings, and affected workers/UI refresh
+after commit. No legacy settings-file import or compatibility path exists.
+
+Unavailable packages, unapproved declarations, and conflicting/unknown commands
+remain in relational pending effects with recovery available without sign-in.
+Local-import origin survives matching cloud echoes: imports and their retries
+never install packages automatically. Users install packages through Extensions
+and review fresh permissions; credentials and grants never travel in a settings
+file. The same validated domain application path serves sync and local imports.
+
+Diagnostic logging is enabled by default and controlled immediately by the
+device-local `diagnostics.logging_enabled` value in Settings ? Advanced. Startup
+loads this policy before ordinary diagnostic output; it remains quiet if the
+policy cannot be read. Rust diagnostics retain reviewed operational messages,
+counts, and timings. Frontend diagnostics send only allowlisted event identifiers
+to the host, never arbitrary error objects or payloads. Clipboard contents, notes,
+authentication URLs, credentials, tokens, and unnecessary paths are excluded in
+both development and production. Disabling logs suppresses new application
+diagnostic output without hiding user-facing errors. Reset enables logging;
+portable export and configuration sync exclude the logging preference.
 
 The history/preview splitter stores a device-local ratio under
 `window.history_split_ratio`. Its canonical default is 0.50 and accepted range

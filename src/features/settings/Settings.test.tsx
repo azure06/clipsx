@@ -22,6 +22,7 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   autoClearMinutes: null,
   clearOnExit: false,
   autoStart: false,
+  loggingEnabled: true,
   captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
   capture: {
     maxOrdinaryClips: 1000,
@@ -42,12 +43,14 @@ describe('useSettingsStore', () => {
       settings: null,
       isLoading: false,
       error: null,
+      failedEffects: [],
+      saveError: null,
       resetSettings: useSettingsStore.getState().resetSettings,
     })
   })
 
   it('loads settings from the backend', async () => {
-    mockInvoke.mockResolvedValueOnce(v2Settings({ autoStart: true }))
+    mockInvoke.mockResolvedValueOnce(v2Settings({ autoStart: true })).mockResolvedValueOnce([])
 
     await useSettingsStore.getState().loadSettings()
 
@@ -56,9 +59,12 @@ describe('useSettingsStore', () => {
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
 
-  it('merges partial updates and persists the full payload', async () => {
+  it('sends only changed fields to avoid overwriting newer host settings', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, show_copy_toast: true } })
-    mockInvoke.mockResolvedValueOnce(v2Settings({ showCopyToast: false }))
+    mockInvoke.mockResolvedValueOnce({
+      settings: v2Settings({ showCopyToast: false }),
+      failedEffects: [],
+    })
 
     await useSettingsStore.getState().updateSettings({ show_copy_toast: false })
 
@@ -66,13 +72,12 @@ describe('useSettingsStore', () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       settings: expect.objectContaining({
         showCopyToast: false,
-        theme: 'system',
       }),
     })
     expect(useSettingsStore.getState().settings?.show_copy_toast).toBe(false)
   })
 
-  it('rolls back optimistic updates when persistence fails', async () => {
+  it('retains committed values and reports failed saves', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, auto_start: false } })
     mockInvoke.mockRejectedValueOnce(new Error('save failed'))
 
@@ -81,24 +86,15 @@ describe('useSettingsStore', () => {
     )
 
     expect(useSettingsStore.getState().settings?.auto_start).toBe(false)
-    expect(useSettingsStore.getState().error).toBeNull()
+    expect(useSettingsStore.getState().saveError).toContain('save failed')
   })
 
   it('resets settings through backend defaults', async () => {
-    mockInvoke.mockResolvedValueOnce(v2Settings())
+    mockInvoke.mockResolvedValueOnce({ settings: v2Settings(), failedEffects: [] })
 
     await useSettingsStore.getState().resetSettings()
 
-    expect(mockInvoke).toHaveBeenCalledWith('update_app_settings', {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      settings: expect.objectContaining({
-        globalShortcut: DEFAULT_SETTINGS.global_shortcut,
-        activationMode: 'double_click_primary',
-        pasteOnEnter: false,
-        hideOnCopy: false,
-        hideOnBlur: false,
-      }),
-    })
+    expect(mockInvoke).toHaveBeenCalledWith('reset_app_settings', undefined)
     expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
@@ -108,5 +104,68 @@ describe('useSettingsStore', () => {
     expect(DEFAULT_SETTINGS.paste_on_enter).toBe(false)
     expect(DEFAULT_SETTINGS.hide_on_copy).toBe(false)
     expect(DEFAULT_SETTINGS.hide_on_blur).toBe(false)
+  })
+  it('serializes rapid edits without losing successful changes after a failure', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    mockInvoke
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce({ settings: v2Settings({ loggingEnabled: false }), failedEffects: [] })
+    const first = useSettingsStore.getState().updateSettings({ theme: 'dark' })
+    const second = useSettingsStore.getState().updateSettings({ logging_enabled: false })
+    await expect(first).rejects.toThrow('disk full')
+    await second
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'update_app_settings', {
+      settings: { loggingEnabled: false },
+    })
+    expect(useSettingsStore.getState().settings?.theme).toBe('auto')
+    expect(useSettingsStore.getState().settings?.logging_enabled).toBe(false)
+  })
+
+  it('keeps saved values when native effects fail and exposes retry', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    mockInvoke
+      .mockResolvedValueOnce({
+        settings: v2Settings({ autoStart: true }),
+        failedEffects: ['autostart'],
+      })
+      .mockResolvedValueOnce({ settings: v2Settings({ autoStart: true }), failedEffects: [] })
+    await useSettingsStore.getState().updateSettings({ auto_start: true })
+    expect(useSettingsStore.getState().settings?.auto_start).toBe(true)
+    expect(useSettingsStore.getState().failedEffects).toEqual(['autostart'])
+    await useSettingsStore.getState().retryEffects()
+    expect(useSettingsStore.getState().failedEffects).toEqual([])
+  })
+
+  it('uses host-owned import and export and refreshes imported settings', async () => {
+    mockInvoke
+      .mockResolvedValueOnce('portable-document')
+      .mockResolvedValueOnce({ settings: v2Settings({ theme: 'dark' }), failedEffects: [] })
+    expect(await useSettingsStore.getState().exportSettings()).toBe('portable-document')
+    await useSettingsStore.getState().importSettings('portable-document')
+    expect(mockInvoke).toHaveBeenLastCalledWith('import_portable_settings', {
+      document: 'portable-document',
+    })
+    expect(useSettingsStore.getState().settings?.theme).toBe('dark')
+  })
+
+  it('does not resend rounded or hidden capture limits during an unrelated edit', async () => {
+    mockInvoke
+      .mockResolvedValueOnce(
+        v2Settings({
+          capture: {
+            maxOrdinaryClips: 37,
+            maxRepresentationBytes: 1234567,
+            maxManagedBytes: 987654321,
+            maxSnapshotBytes: 12345678,
+          },
+        })
+      )
+      .mockResolvedValueOnce([])
+    await useSettingsStore.getState().loadSettings()
+    mockInvoke.mockResolvedValueOnce({ settings: v2Settings({ theme: 'dark' }), failedEffects: [] })
+    await useSettingsStore.getState().updateSettings({ theme: 'dark' })
+    expect(mockInvoke).toHaveBeenLastCalledWith('update_app_settings', {
+      settings: { theme: 'dark' },
+    })
   })
 })

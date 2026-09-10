@@ -1518,10 +1518,8 @@ pub async fn render(
             Ok(None) => Ok(RenderModel::Error {
                 message: "unknown renderer".into(),
             }),
-            Err(error) => {
-                eprintln!(
-                    "[RENDER] extension renderer {renderer_id} failed: {error}; using Original"
-                );
+            Err(_) => {
+                crate::diagnostic!("[RENDER] Extension renderer failed; using Original");
                 Ok(original(rep))
             }
         };
@@ -1559,10 +1557,10 @@ pub async fn render(
                 }
                 Ok(model)
             }
-            Err(error) => {
+            Err(_) => {
                 // Rendering is derived UI state. A failed rich renderer must
                 // never block access to canonical original content.
-                eprintln!("[RENDER] renderer {renderer_id} failed: {error}; using Original");
+                crate::diagnostic!("[RENDER] Renderer failed; using Original");
                 Ok(original(rep))
             }
         };

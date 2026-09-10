@@ -32,13 +32,18 @@ impl Default for WindowBehaviorState {
 }
 
 impl WindowBehaviorState {
-    pub fn apply_settings(&self, window: &WebviewWindow, settings: &AppSettings) {
+    pub fn apply_settings(
+        &self,
+        window: &WebviewWindow,
+        settings: &AppSettings,
+    ) -> Result<(), tauri::Error> {
+        window.set_always_on_top(settings.always_on_top)?;
         self.hide_on_blur
             .store(settings.hide_on_blur, Ordering::SeqCst);
         self.always_on_top
             .store(settings.always_on_top, Ordering::SeqCst);
         self.generation.fetch_add(1, Ordering::SeqCst);
-        let _ = window.set_always_on_top(settings.always_on_top);
+        Ok(())
     }
 
     pub fn mark_native_interaction(&self) {

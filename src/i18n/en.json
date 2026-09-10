@@ -456,7 +456,28 @@
     "latestVersion": "Latest version: {{version}}",
     "updaterKeyMissing": "This build does not have an updater public key configured yet.",
     "updateInstalled": "The update was installed successfully. Restart the app to apply it.",
-    "resetToDefaults": "Reset to Defaults"
+    "resetToDefaults": "Reset to Defaults",
+    "loggingEnabled": "Diagnostic logging",
+    "loggingDescription": "Record operations, timings, and failures. Clipboard contents, notes, credentials, and tokens are never logged. Changes apply immediately on this device.",
+    "saveFailed": "Settings could not be saved. Check the entered values and available disk space, then retry.",
+    "exportSuccess": "Portable settings exported.",
+    "exportFailed": "Unable to export settings. Check the destination and try again.",
+    "importSuccess": "Portable settings imported. Any unavailable packages or commands remain pending below.",
+    "resetSuccess": "Settings restored to defaults.",
+    "effectsPending": "Settings are saved, but some effects could not be applied.",
+    "retryEffects": "Retry",
+    "retryFailed": "Unable to complete recovery. Check the affected settings and retry.",
+    "portablePending": "Some portable configuration is awaiting application.",
+    "portableRecovery": "Install missing packages from Extensions, review their permissions, or resolve shortcut conflicts in Keyboard, then retry.",
+    "effectRecovery": {
+      "autostart": "Autostart: check your operating system startup-app permissions, then retry.",
+      "shortcut": "Shortcut: resolve the conflicting system shortcut or choose a different combination, then retry.",
+      "window": "Window: reopen the main window and retry.",
+      "retention": "Storage: check available disk space and file permissions, then retry.",
+      "ocr": "OCR: check Intelligence ? Indexing and retry.",
+      "extensions": "Extensions: review installed packages and retry.",
+      "other": "Review the affected setting and retry."
+    }
   },
   "plugins": {
     "title": "AI Capabilities",

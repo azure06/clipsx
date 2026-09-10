@@ -1,3 +1,4 @@
+import { diagnostic } from '../../shared/diagnostics'
 import {
   commandShortcut,
   loadCommandBindings,
@@ -166,23 +167,7 @@ export const AppLayout = () => {
 
     const handleUrls = (urls: string[]) => {
       if (import.meta.env.DEV) {
-        console.info(
-          '[AUTH] Deep-link callback received',
-          urls.map(url => {
-            try {
-              const parsed = new URL(url)
-              return {
-                protocol: parsed.protocol,
-                host: parsed.host,
-                path: parsed.pathname,
-                hasCode: parsed.searchParams.has('code'),
-                hasError: parsed.searchParams.has('error'),
-              }
-            } catch {
-              return { invalidUrl: true }
-            }
-          })
-        )
+        diagnostic('auth_deep_link_callback_received')
       }
 
       for (const url of urls) {
@@ -208,11 +193,11 @@ export const AppLayout = () => {
         if (!cancelled) handleUrls(urls)
       })
 
-      if (import.meta.env.DEV) console.info('[AUTH] Deep-link listener registered')
+      if (import.meta.env.DEV) diagnostic('auth_deep_link_listener_registered')
 
       const initialUrls = await getCurrent()
       if (import.meta.env.DEV) {
-        console.info('[AUTH] Initial deep-link state', { urlCount: initialUrls?.length ?? 0 })
+        diagnostic('auth_initial_deep_link_state')
       }
       if (!cancelled && initialUrls) {
         handleUrls(initialUrls)

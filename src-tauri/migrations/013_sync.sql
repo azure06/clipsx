@@ -35,6 +35,7 @@ CREATE TABLE sync_remote_quarantine (
 );
 CREATE TABLE sync_pending_effects (
  record_kind TEXT NOT NULL,record_key TEXT NOT NULL,payload_json TEXT,tombstone INTEGER NOT NULL,
+ local_import INTEGER NOT NULL DEFAULT 0 CHECK(local_import IN (0,1)),
  reason TEXT NOT NULL DEFAULT 'Waiting for package or command',PRIMARY KEY(record_kind,record_key)
 );
 CREATE TABLE sync_portable_extension_settings (

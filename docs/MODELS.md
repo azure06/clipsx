@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations). Runtime boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 8 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 9 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
 
 ## Data flow
 
@@ -59,6 +59,11 @@ Model configuration uses three device-local keys with distinct ownership:
 Installed-model inventory, model digests, capability inspection results, and connection health are derived observations rather than settings. The application refreshes them from Ollama and may discard them at any time. Changing the endpoint retains capability assignments so a missing model is visible and recoverable instead of being silently replaced.
 
 This remains a pre-release fresh schema. The keys above are defined directly in `002_config.sql`; there is no compatibility migration from the former duplicated endpoint values. A database created from an older migration checksum must use the documented reset flow.
+
+Diagnostic logging uses the device-local boolean `diagnostics.logging_enabled`
+(default true). Settings reset restores its default; exports and sync never carry
+it. Settings read a consistent SQLite snapshot and commit host-validated patches
+with their sync outbox entries atomically.
 
 ### Why settings are stored as JSON values in SQLite
 
@@ -208,6 +213,7 @@ flowchart LR
 | `sync_device_identity` | Infrastructure | Stores the device ID, display name, and hybrid-logical-clock state used to order local mutations. | Configuration-sync service | Device-scoped singleton retained until reset or device-forget operations replace it. |
 | `sync_outbox` | Operational | Stores the latest pending revision for each supported configuration record, including tombstones and retry state. | The owning settings mutation and sync service in the same local transaction | One row per record kind/key remains until an accepted server response supersedes or acknowledges it. Clipboard content cannot enter this table. |
 | `sync_remote_state` | Operational | Stores opt-in state, active account, monotonic server cursor, and latest synchronization status. | Configuration-sync service | Device-scoped singleton. Signing out disables sync without deleting local settings. |
+| `sync_pending_effects` | Operational | Stores unapplied package/setting/shortcut intent and its recovery reason. `local_import` distinguishes manually imported intent from remote restore. | Sync or portable import in the same transaction as portable values | Survives restart. Local-import effects can be retried without an account and never auto-install packages, including after matching cloud echoes. |
 | `sync_remote_quarantine` | Operational security state | Retains bounded diagnostics for invalid or unsupported remote records instead of applying them. | Configuration-sync response validator | Local diagnostic evidence retained until explicit recovery/reset policy clears it. |
 
 The schema can represent future configuration record kinds, but the current

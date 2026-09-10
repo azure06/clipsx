@@ -1,7 +1,9 @@
 //! Desktop composition root.
 
+pub(crate) mod diagnostics;
 pub(crate) mod global_shortcut;
 pub(crate) mod host;
+pub(crate) mod settings;
 pub(crate) mod state;
 pub(crate) mod window_behavior;
 pub(crate) mod window_chrome;

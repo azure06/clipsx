@@ -236,6 +236,25 @@ pub async fn recover_ocr_queue(repo: &HistoryRepository) -> Result<()> {
     Ok(())
 }
 
+/// Resume settings-derived work without treating live jobs as interrupted.
+pub async fn resume_ocr_settings(repo: &HistoryRepository) -> Result<()> {
+    if ocr_settings(repo).await?.enabled {
+        enqueue_all_ocr(repo).await?;
+    }
+    Ok(())
+}
+
+pub async fn invalidate_ocr_settings(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> Result<()> {
+    let now = now_ms();
+    sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
+        .bind(now).bind(now).bind(OCR_PRODUCER_ID).execute(&mut **transaction).await?;
+    sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
+        .bind(now).bind(OCR_PRODUCER_ID).execute(&mut **transaction).await?;
+    Ok(())
+}
+
 pub async fn reconcile_ocr_settings(
     repo: &HistoryRepository,
     previous: &OcrSettings,

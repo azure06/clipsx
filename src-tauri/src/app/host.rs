@@ -35,7 +35,7 @@ fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<()
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;
     if !activate_native_window(&window) {
-        eprintln!("[WINDOW] The operating system did not grant foreground activation");
+        crate::diagnostic!("[WINDOW] The operating system did not grant foreground activation");
     }
     app.get_webview("main")
         .ok_or_else(|| "main webview is unavailable".to_owned())?

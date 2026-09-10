@@ -7,6 +7,27 @@ pub struct GlobalShortcutState {
 }
 
 impl GlobalShortcutState {
+    pub fn current(&self) -> Option<String> {
+        self.active.lock().ok().and_then(|value| value.clone())
+    }
+
+    pub fn clear(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "Global shortcut state is unavailable")?;
+        if let Some(value) = active.as_deref() {
+            let shortcut = value
+                .parse::<Shortcut>()
+                .map_err(|_| "Invalid global shortcut")?;
+            app.global_shortcut()
+                .unregister(shortcut)
+                .map_err(|_| "Unable to remove shortcut")?;
+        }
+        *active = None;
+        Ok(())
+    }
+
     pub fn replace(&self, app: &tauri::AppHandle, requested: &str) -> Result<(), String> {
         requested
             .parse::<Shortcut>()
@@ -52,7 +73,9 @@ fn replace_registration(
     register(requested).map_err(|error| format!("Could not register shortcut: {error}"))?;
     if let Some(previous) = active.as_deref() {
         if let Err(error) = unregister(previous) {
-            let _ = unregister(requested);
+            if unregister(requested).is_err() {
+                return Err("Could not replace shortcut or remove the replacement. Restart ClipsX to recover.".into());
+            }
             return Err(format!("Could not replace the existing shortcut: {error}"));
         }
     }

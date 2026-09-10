@@ -411,16 +411,16 @@ fn local_auth_callback_response(status_line: &str, body: &str) -> String {
 async fn serve_local_auth_callback(listener: TcpListener, port: u16, app: tauri::AppHandle) {
     let Ok(accept_result) = tokio::time::timeout(Duration::from_secs(300), listener.accept()).await
     else {
-        eprintln!("[AUTH] Local auth callback listener timed out.");
+        crate::diagnostic!("[AUTH] Local auth callback listener timed out.");
         return;
     };
     let Ok((mut stream, _)) = accept_result else {
-        eprintln!("[AUTH] Local auth callback listener failed to accept a connection.");
+        crate::diagnostic!("[AUTH] Local auth callback listener failed to accept a connection.");
         return;
     };
     let mut buffer = [0_u8; 8 * 1024];
     let Ok(bytes_read) = stream.read(&mut buffer).await else {
-        eprintln!("[AUTH] Local auth callback listener failed to read the request.");
+        crate::diagnostic!("[AUTH] Local auth callback listener failed to read the request.");
         return;
     };
     if bytes_read == 0 {
@@ -447,8 +447,8 @@ async fn serve_local_auth_callback(listener: TcpListener, port: u16, app: tauri:
             "HTTP/1.1 404 Not Found",
             "<!doctype html><title>Not Found</title><p>This callback URL is not used by ClipsX.</p>",
         ),
-        Err(error) => {
-            eprintln!("[AUTH] Failed to parse local auth callback request: {error}");
+        Err(_) => {
+            crate::diagnostic!("[AUTH] Failed to parse local auth callback request");
             local_auth_callback_response(
                 "HTTP/1.1 400 Bad Request",
                 "<!doctype html><title>Bad Request</title><p>ClipsX could not read the sign-in callback.</p>",
@@ -2013,10 +2013,13 @@ async fn begin_configuration_sync(
 
 #[tauri::command]
 async fn sync_recovery(
+    app: tauri::AppHandle,
     action: String,
     id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
     if action == "retry_effects" {
         state
             .extensions
@@ -2046,10 +2049,13 @@ async fn get_command_catalog(
 }
 #[tauri::command]
 async fn set_command_shortcut(
+    app: tauri::AppHandle,
     command_id: String,
     accelerator: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
     crate::sync::set_command_shortcut(&state.history, &command_id, accelerator.as_deref())
         .await
         .map_err(|e| e.to_string())
@@ -2076,6 +2082,8 @@ async fn apply_sync_response(
     response: crate::sync::SyncServerResponse,
     state: State<'_, AppState>,
 ) -> Result<crate::sync::SyncStatus, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
     let previous_ocr = artifacts::ocr_settings(&state.history)
         .await
         .map_err(|error| error.to_string())?;
@@ -2106,48 +2114,198 @@ async fn record_sync_error(message: String, state: State<'_, AppState>) -> Resul
 }
 
 #[tauri::command]
-async fn update_app_settings(
-    settings: history::AppSettings,
+fn write_diagnostic(event: String) {
+    if let Some(message) = crate::app::diagnostics::frontend_message(&event) {
+        crate::diagnostic!("{message}");
+    }
+}
+
+#[tauri::command]
+async fn export_portable_settings(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<history::AppSettings, String> {
-    settings.validate().map_err(|error| error.to_string())?;
-    let previous = state
-        .history
-        .app_settings()
+) -> Result<String, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
+    crate::sync::portable::export(&state.history)
         .await
-        .map_err(|error| error.to_string())?;
-    let shortcut_changed = previous.global_shortcut != settings.global_shortcut;
-    let host_state = app
-        .try_state::<HostState>()
-        .ok_or_else(|| "Native application state is unavailable".to_string())?;
-    if shortcut_changed {
-        host_state
-            .global_shortcut
-            .replace(&app, &settings.global_shortcut)?;
-    }
-    if let Err(error) = state.history.update_app_settings(&settings).await {
-        if shortcut_changed {
-            let _ = host_state
-                .global_shortcut
-                .replace(&app, &previous.global_shortcut);
-        }
-        return Err(error.to_string());
-    }
-    let effective = state
-        .history
-        .app_settings()
+        .map_err(|_| "Unable to export portable settings".into())
+}
+
+#[tauri::command]
+async fn import_portable_settings(
+    document: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::app::settings::SettingsResult, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
+    let records = crate::sync::portable::parse(&document).map_err(|e| e.to_string())?;
+    state
+        .extensions
+        .validate_portable_import(&state.history, &records)
+        .await
+        .map_err(|_| "An imported setting does not match its signed package declaration")?;
+    let settings = crate::sync::portable::import(&state.history, &document)
         .await
         .map_err(|e| e.to_string())?;
-    if let Some(window) = app.get_webview_window("main") {
-        host_state
-            .window_behavior
-            .apply_settings(&window, &effective);
+    let mut result = lifecycle.reconcile(&app, &state.history, settings).await;
+    if artifacts::resume_ocr_settings(&state.history)
+        .await
+        .is_err()
+    {
+        lifecycle.record_failure("ocr");
+        result.failed_effects.push("ocr".into());
     }
-    crate::app::workers::wake_managed_files(&app, state.history.clone());
-    crate::app::workers::wake_text_index(&app, state.history.clone());
-    let _ = app.emit("app-settings-updated", ());
-    Ok(effective)
+    if state
+        .extensions
+        .reconcile_configuration_sync(&state.history)
+        .await
+        .is_err()
+    {
+        lifecycle.record_failure("extensions");
+        result.failed_effects.push("extensions".into());
+    }
+    crate::app::workers::wake_ocr(&app, state.history.clone());
+    refresh_ocr_dependents(app.clone(), state.history.clone());
+    for event in [
+        "ocr-status-changed",
+        "renderer-preferences-updated",
+        "extensions-changed",
+        "app-settings-updated",
+    ] {
+        let _ = app.emit(event, ());
+    }
+    Ok(result)
+}
+
+async fn save_desktop_settings(
+    settings: history::AppSettings,
+    reset: bool,
+    state: &AppState,
+    app: &tauri::AppHandle,
+) -> Result<crate::app::settings::SettingsResult, String> {
+    settings.validate().map_err(|error| error.to_string())?;
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let previous_language = state
+        .history
+        .app_settings()
+        .await
+        .ok()
+        .map(|value| value.language);
+    let language_changed = previous_language.as_deref() != Some(&settings.language);
+    let host = app.state::<HostState>();
+    let previous_shortcut = host.global_shortcut.current();
+    let changed = previous_shortcut.as_deref() != Some(&settings.global_shortcut);
+    if changed {
+        host.global_shortcut
+            .replace(app, &settings.global_shortcut)?;
+    }
+    if state
+        .history
+        .save_app_settings(&settings, reset)
+        .await
+        .is_err()
+    {
+        let rollback = if !changed {
+            Ok(())
+        } else if let Some(previous) = previous_shortcut {
+            host.global_shortcut.replace(app, &previous)
+        } else {
+            host.global_shortcut.clear(app)
+        };
+        if rollback.is_err() {
+            lifecycle.record_failure("shortcut");
+            return Err(
+                "Settings were not saved; shortcut recovery is required. Retry native effects."
+                    .into(),
+            );
+        }
+        return Err("Unable to save settings. Check available disk space and retry.".into());
+    }
+    let mut result = lifecycle.reconcile(app, &state.history, settings).await;
+    if language_changed {
+        if artifacts::resume_ocr_settings(&state.history)
+            .await
+            .is_err()
+        {
+            lifecycle.record_failure("ocr");
+            result.failed_effects.push("ocr".into());
+        }
+        crate::app::workers::wake_ocr(app, state.history.clone());
+        refresh_ocr_dependents(app.clone(), state.history.clone());
+    }
+    crate::app::workers::wake_managed_files(app, state.history.clone());
+    crate::app::workers::wake_text_index(app, state.history.clone());
+    Ok(result)
+}
+
+#[tauri::command]
+async fn update_app_settings(
+    settings: serde_json::Value,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::app::settings::SettingsResult, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
+    // IPC accepts a patch, merged against the latest committed host values.
+    let current = state
+        .history
+        .app_settings()
+        .await
+        .map_err(|_| "Unable to read settings")?;
+    let next = crate::app::settings::merge_settings(current, settings)?;
+    save_desktop_settings(next, false, &state, &app).await
+}
+
+#[tauri::command]
+async fn reset_app_settings(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::app::settings::SettingsResult, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
+    save_desktop_settings(history::AppSettings::default(), true, &state, &app).await
+}
+
+#[tauri::command]
+fn get_settings_effects(app: tauri::AppHandle) -> Vec<String> {
+    app.state::<crate::app::settings::SettingsLifecycle>()
+        .failures()
+}
+
+#[tauri::command]
+async fn retry_settings_effects(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<crate::app::settings::SettingsResult, String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
+    let settings = state
+        .history
+        .app_settings()
+        .await
+        .map_err(|_| "Unable to read settings")?;
+    let mut result = lifecycle.reconcile(&app, &state.history, settings).await;
+    if artifacts::resume_ocr_settings(&state.history)
+        .await
+        .is_err()
+    {
+        lifecycle.record_failure("ocr");
+    }
+    if state
+        .extensions
+        .reconcile_configuration_sync(&state.history)
+        .await
+        .is_err()
+    {
+        lifecycle.record_failure("extensions");
+    }
+    crate::app::workers::wake_ocr(&app, state.history.clone());
+    refresh_ocr_dependents(app.clone(), state.history.clone());
+    let _ = app.emit("extensions-changed", ());
+    result.failed_effects = lifecycle.failures();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2156,6 +2314,8 @@ async fn update_capture_settings(
     settings: CaptureSettings,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+    let _guard = lifecycle.gate.lock().await;
     state
         .history
         .update_settings(&settings)
@@ -2637,10 +2797,8 @@ fn quit_app(app: &tauri::AppHandle) {
         let should_clear = tauri::async_runtime::block_on(state.history.app_settings())
             .map(|settings| settings.clear_on_exit)
             .unwrap_or(false);
-        if should_clear {
-            if let Err(error) = tauri::async_runtime::block_on(state.history.clear_history()) {
-                eprintln!("[EXIT] Failed to clear clipboard history: {error}");
-            }
+        if should_clear && tauri::async_runtime::block_on(state.history.clear_history()).is_err() {
+            crate::diagnostic!("[EXIT] Failed to clear clipboard history");
         }
     }
     app.exit(0);
@@ -2830,6 +2988,7 @@ pub(crate) fn run() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
             let _tray = tray_builder.build(app)?;
+            app.manage(crate::app::settings::SettingsLifecycle::default());
             app.manage(HostState {
                 updater_configured: updater_configured(),
                 tray_open_item: open_item,
@@ -2855,7 +3014,7 @@ pub(crate) fn run() {
                 .expect("Failed to resolve local authentication storage");
             app.manage(AuthStorage::new(auth_data));
             if crate::share::cleanup_stale(&roots).is_err() {
-                eprintln!("[SHARE] Failed to clean stale share exports");
+                crate::diagnostic!("[SHARE] Failed to clean stale share exports");
             }
             crate::clipboard::capabilities::validate_embedded()
                 .context("embedded clipboard capability policy is invalid")?;
@@ -2863,8 +3022,11 @@ pub(crate) fn run() {
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
                 .expect("Failed to prepare the ClipsX v2 foundation");
             let foundation_elapsed = foundation_started.elapsed();
+            if schema_state == foundation::SchemaState::Ready {
+                let _ = tauri::async_runtime::block_on(crate::app::diagnostics::initialize(&roots.database()));
+            }
             if cfg!(debug_assertions) || foundation_elapsed.as_millis() >= 250 {
-                eprintln!(
+                crate::diagnostic!(
                     "[PERF] foundation-prepare count=0 duration_ms={}",
                     foundation_elapsed.as_millis()
                 );
@@ -2880,22 +3042,8 @@ pub(crate) fn run() {
                 ))
                 .expect("Failed to open ClipsX history");
                 if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
-                    if let Some(host_state) = app.try_state::<HostState>() {
-                        if let Err(error) = host_state
-                            .global_shortcut
-                            .replace(app.handle(), &settings.global_shortcut)
-                        {
-                            eprintln!("[SHORTCUT] Failed to register startup shortcut: {error}");
-                            let _ = app.emit("global-shortcut-registration-failed", error);
-                        }
-                    }
-                    if let (Some(window), Some(host_state)) =
-                        (app.get_webview_window("main"), app.try_state::<HostState>())
-                    {
-                        host_state
-                            .window_behavior
-                            .apply_settings(&window, &settings);
-                    }
+                    let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
+                    tauri::async_runtime::block_on(lifecycle.reconcile(app.handle(), &history, settings));
                 }
                 let extensions = ExtensionService::new(&roots)
                     .expect("Failed to initialize ClipsX extension storage");
@@ -2938,7 +3086,11 @@ pub(crate) fn run() {
                     }
                 });
                 let extension_history = history.clone();
+                let extension_app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    let lifecycle = extension_app.state::<crate::app::settings::SettingsLifecycle>();
+                    let _guard = lifecycle.gate.lock().await;
+                    let _ = redetect_extensions.reconcile_configuration_sync(&extension_history).await;
                     let _ = redetect_extensions
                         .redetect_outdated(&extension_history)
                         .await;
@@ -3163,6 +3315,12 @@ pub(crate) fn run() {
             get_history_split_ratio,
             set_history_split_ratio,
             update_app_settings,
+            reset_app_settings,
+            get_settings_effects,
+            retry_settings_effects,
+            write_diagnostic,
+            export_portable_settings,
+            import_portable_settings,
             get_sync_status,
             set_sync_enabled,
             prepare_sync_batch,

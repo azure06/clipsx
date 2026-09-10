@@ -1016,11 +1016,20 @@ impl HistoryRepository {
         Ok(())
     }
     pub async fn settings(&self) -> Result<CaptureSettings> {
+        let mut transaction = self.pool.begin().await?;
+        let settings = Self::capture_settings_in(&mut transaction).await?;
+        transaction.commit().await?;
+        Ok(settings)
+    }
+
+    async fn capture_settings_in(
+        transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    ) -> Result<CaptureSettings> {
         let mut s = CaptureSettings::default();
         for (key, value) in sqlx::query(
             "SELECT key,value_json FROM config_device_values WHERE key LIKE 'capture.%'",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await?
         .into_iter()
         .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
@@ -1043,12 +1052,12 @@ impl HistoryRepository {
         s.managed_bytes_used = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(SUM(byte_length),0) FROM clip_binary_files WHERE lifecycle_state='ready'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **transaction)
         .await? as u64;
         let removable_binary_clip: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM clip_items c JOIN clip_representations r ON r.clip_id=c.id WHERE c.lifecycle_state='ready' AND c.is_pinned=0 AND c.is_favorite=0 AND r.binary_file_id IS NOT NULL LIMIT 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut **transaction)
         .await?;
         if s.max_managed_bytes
             .is_some_and(|limit| s.managed_bytes_used > limit)
@@ -1062,6 +1071,11 @@ impl HistoryRepository {
         Ok(s)
     }
     pub async fn update_settings(&self, s: &CaptureSettings) -> Result<()> {
+        AppSettings {
+            capture: s.clone(),
+            ..AppSettings::default()
+        }
+        .validate()?;
         let mut transaction = self.pool.begin().await?;
         for (k, v) in [
             (
@@ -1093,13 +1107,22 @@ impl HistoryRepository {
     }
 
     pub async fn app_settings(&self) -> Result<AppSettings> {
+        let mut transaction = self.pool.begin().await?;
+        let settings = Self::app_settings_in(&mut transaction).await?;
+        transaction.commit().await?;
+        Ok(settings)
+    }
+
+    pub async fn app_settings_in(
+        transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    ) -> Result<AppSettings> {
         let mut settings = AppSettings {
-            capture: self.settings().await?,
+            capture: Self::capture_settings_in(transaction).await?,
             ..AppSettings::default()
         };
         for (key, value) in
             sqlx::query("SELECT key,value_json FROM config_profile_values WHERE key LIKE 'ui.%'")
-                .fetch_all(&self.pool)
+                .fetch_all(&mut **transaction)
                 .await?
                 .into_iter()
                 .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
@@ -1128,9 +1151,9 @@ impl HistoryRepository {
             }
         }
         for (key, value) in sqlx::query(
-            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut')",
+            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut','diagnostics.logging_enabled')",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await?
         .into_iter()
         .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
@@ -1139,9 +1162,11 @@ impl HistoryRepository {
                 "capture.filters" => settings.capture_filters = serde_json::from_str(&value)?,
                 "capture.excluded_apps" => settings.excluded_apps = serde_json::from_str(&value)?,
                 "window.global_shortcut" => settings.global_shortcut = serde_json::from_str(&value)?,
+                "diagnostics.logging_enabled" => settings.logging_enabled = serde_json::from_str(&value)?,
                 _ => {}
             }
         }
+        settings.validate()?;
         Ok(settings)
     }
 
@@ -1172,9 +1197,43 @@ impl HistoryRepository {
         Ok(ratio)
     }
 
+    #[cfg(test)]
     pub async fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        self.save_app_settings(settings, false).await?;
+        self.enforce_retention(&settings.capture).await
+    }
+
+    pub async fn save_app_settings(&self, settings: &AppSettings, reset: bool) -> Result<()> {
         settings.validate()?;
         let mut transaction = self.pool.begin().await?;
+        // Reserve the writer before reading settings, avoiding a deferred
+        // read-to-write upgrade racing with clipboard capture.
+        sqlx::query("UPDATE sync_remote_state SET updated_at=updated_at WHERE singleton=1")
+            .execute(&mut *transaction)
+            .await?;
+        let previous_language: Option<String> = sqlx::query_scalar(
+            "SELECT value_json FROM config_profile_values WHERE key='ui.language'",
+        )
+        .fetch_optional(&mut *transaction)
+        .await?;
+        let ocr_language: Option<String> = sqlx::query_scalar(
+            "SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.language'",
+        )
+        .fetch_optional(&mut *transaction)
+        .await?;
+        if previous_language.as_deref().unwrap_or("\"en\"")
+            != serde_json::to_string(&settings.language)?
+            && ocr_language.as_deref().unwrap_or("\"auto\"") == "\"auto\""
+        {
+            crate::artifacts::invalidate_ocr_settings(&mut transaction).await?;
+        }
+        if reset {
+            sqlx::query("UPDATE sync_values SET payload_json=NULL,tombstone=1 WHERE record_kind='shortcut' AND record_key LIKE 'core.%'").execute(&mut *transaction).await?;
+            sqlx::query("DELETE FROM config_command_shortcuts")
+                .execute(&mut *transaction)
+                .await?;
+            sqlx::query("DELETE FROM sync_pending_effects WHERE record_kind='shortcut' AND record_key LIKE 'core.%'").execute(&mut *transaction).await?;
+        }
         for (key, value) in [
             (
                 "capture.max_ordinary_clips",
@@ -1255,6 +1314,10 @@ impl HistoryRepository {
         }
         for (key, value) in [
             (
+                "diagnostics.logging_enabled",
+                serde_json::to_string(&settings.logging_enabled)?,
+            ),
+            (
                 "capture.filters",
                 serde_json::to_string(&settings.capture_filters)?,
             ),
@@ -1272,10 +1335,10 @@ impl HistoryRepository {
                 .bind(key).bind(value).bind(now).bind(now).execute(&mut *transaction).await?;
         }
         transaction.commit().await?;
-        self.enforce_retention(&settings.capture).await
+        Ok(())
     }
 
-    async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
+    pub async fn enforce_retention(&self, s: &CaptureSettings) -> Result<()> {
         if let Some(max) = s.max_ordinary_clips {
             let ids=sqlx::query_scalar::<_, String>("SELECT id FROM clip_items WHERE lifecycle_state='ready' AND is_pinned=0 AND is_favorite=0 ORDER BY captured_at DESC,id DESC LIMIT -1 OFFSET ?").bind(max as i64).fetch_all(&self.pool).await?;
             for id in ids {
@@ -1561,10 +1624,10 @@ fn managed_files(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(result)
 }
 
-fn log_history_timing(operation: &str, started: Instant, count: usize, slow_ms: u128) {
+fn log_history_timing(operation: &'static str, started: Instant, count: usize, slow_ms: u128) {
     let elapsed = started.elapsed();
     if cfg!(debug_assertions) || elapsed.as_millis() >= slow_ms {
-        eprintln!(
+        crate::diagnostic!(
             "[PERF] {operation} count={count} duration_ms={}",
             elapsed.as_millis()
         );

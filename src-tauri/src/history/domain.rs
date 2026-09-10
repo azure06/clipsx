@@ -68,6 +68,7 @@ pub struct AppSettings {
     pub auto_clear_minutes: Option<u32>,
     pub clear_on_exit: bool,
     pub auto_start: bool,
+    pub logging_enabled: bool,
     pub global_shortcut: String,
     pub excluded_apps: Vec<String>,
     pub capture_filters: CaptureFilters,
@@ -90,6 +91,7 @@ impl Default for AppSettings {
             auto_clear_minutes: None,
             clear_on_exit: false,
             auto_start: false,
+            logging_enabled: true,
             global_shortcut: if cfg!(target_os = "macos") {
                 "Cmd+Shift+V".into()
             } else {
@@ -106,7 +108,8 @@ impl AppSettings {
         if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
             bail!("theme is invalid");
         }
-        if self.language.is_empty()
+        if !matches!(self.language.as_str(), "en" | "ja")
+            || self.language.is_empty()
             || self.language.len() > 35
             || !self
                 .language
@@ -118,6 +121,9 @@ impl AppSettings {
         if self.global_shortcut.is_empty() || self.global_shortcut.len() > 128 {
             bail!("global shortcut is invalid");
         }
+        self.global_shortcut
+            .parse::<tauri_plugin_global_shortcut::Shortcut>()
+            .map_err(|_| anyhow::anyhow!("global shortcut is invalid"))?;
         if self.excluded_apps.len() > 256
             || self.excluded_apps.iter().any(|value| {
                 value.is_empty() || value.len() > 512 || value.chars().any(char::is_control)
@@ -131,10 +137,15 @@ impl AppSettings {
         {
             bail!("auto-clear interval is invalid");
         }
-        if self
-            .capture
-            .max_ordinary_clips
-            .is_some_and(|value| value > 100_000)
+        if self.capture.max_ordinary_clips == Some(0)
+            || self.capture.max_age_days == Some(0)
+            || self.capture.max_representation_bytes == Some(0)
+            || self.capture.max_snapshot_bytes == Some(0)
+            || self.capture.max_managed_bytes == Some(0)
+            || self
+                .capture
+                .max_ordinary_clips
+                .is_some_and(|value| value > 100_000)
             || self.capture.max_age_days.is_some_and(|value| value > 3_650)
             || self
                 .capture

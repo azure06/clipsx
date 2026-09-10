@@ -1,3 +1,4 @@
+import { diagnostic } from '../diagnostics'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
@@ -54,7 +55,7 @@ export const TitleBar = () => {
       void appWindow
         .setFocus()
         .then(() => invoke('plugin:decorum|show_snap_overlay'))
-        .catch(error => console.warn('[WINDOW] Unable to show Snap Layout', error))
+        .catch(() => diagnostic('window_unable_to_show_snap_layout'))
     }, SNAP_LAYOUT_DELAY_MS)
   }
 

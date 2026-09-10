@@ -1,3 +1,4 @@
+import { diagnostic } from '../diagnostics'
 import type { Database, Json } from './database.types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
@@ -23,17 +24,17 @@ const credentialVaultStorage: SupportedStorage = {
   getItem: async key => {
     const value = await invoke<string | null>('auth_storage_get', { key })
     if (import.meta.env.DEV) {
-      console.info('[AUTH] Secure storage read', { key, found: value !== null })
+      diagnostic('auth_secure_storage_read')
     }
     return value
   },
   setItem: async (key, value) => {
     await invoke('auth_storage_set', { key, value })
-    if (import.meta.env.DEV) console.info('[AUTH] Secure storage write', { key })
+    if (import.meta.env.DEV) diagnostic('auth_secure_storage_write')
   },
   removeItem: async key => {
     await invoke('auth_storage_remove', { key })
-    if (import.meta.env.DEV) console.info('[AUTH] Secure storage remove', { key })
+    if (import.meta.env.DEV) diagnostic('auth_secure_storage_remove')
   },
 }
 
@@ -147,14 +148,11 @@ export const startOAuthLogin = async (
       // the hosted bridge for production builds, where the bundle should be registered.
       redirectTo = await invoke<string>('start_local_auth_callback_listener')
       if (import.meta.env.DEV) {
-        console.info('[AUTH] Using local auth callback listener', { redirectTo })
+        diagnostic('auth_using_local_auth_callback_listener')
       }
-    } catch (error) {
+    } catch {
       if (import.meta.env.DEV) {
-        console.warn('[AUTH] Falling back to the hosted auth callback bridge', {
-          redirectTo,
-          error,
-        })
+        diagnostic('auth_falling_back_to_the_hosted_auth_callback_bridge')
       }
     }
   }
@@ -188,10 +186,7 @@ export const completeSupabaseCallback = async (rawUrl: string) => {
 
   if (error || !data.session) {
     if (import.meta.env.DEV) {
-      console.error('[AUTH] Supabase PKCE code exchange failed', {
-        errorName: error?.name ?? null,
-        errorMessage: error?.message ?? 'Supabase returned no session.',
-      })
+      diagnostic('auth_supabase_pkce_code_exchange_failed')
     }
 
     throw new Error(error?.message ?? 'Supabase returned no session after the code exchange.')

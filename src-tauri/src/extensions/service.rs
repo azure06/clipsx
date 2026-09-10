@@ -1034,7 +1034,7 @@ impl ExtensionService {
         }
         let elapsed = started.elapsed();
         if cfg!(debug_assertions) || elapsed.as_millis() >= 250 {
-            eprintln!(
+            crate::diagnostic!(
                 "[PERF] extension-stale-detection count={completed} duration_ms={}",
                 elapsed.as_millis()
             );
@@ -2235,16 +2235,56 @@ impl ExtensionService {
         Ok(())
     }
 
+    /// Validate installed signed declarations before committing a portable import.
+    /// Missing packages remain intent and are checked again when explicitly installed.
+    pub async fn validate_portable_import(
+        &self,
+        repo: &HistoryRepository,
+        records: &[crate::sync::SyncRemoteRecord],
+    ) -> Result<()> {
+        for record in records {
+            if record.kind != "extension_setting" {
+                continue;
+            }
+            let (package_id, setting_id) = record
+                .key
+                .split_once('/')
+                .context("Invalid extension setting")?;
+            let source: Option<String> =
+                sqlx::query_scalar("SELECT source FROM extension_installs WHERE package_id=?")
+                    .bind(package_id)
+                    .fetch_optional(&repo.pool)
+                    .await?;
+            if source.as_deref() != Some("registry") {
+                continue;
+            }
+            let (_, package) = self.package_for_settings(repo, package_id).await?;
+            let declaration = package
+                .manifest
+                .settings
+                .iter()
+                .find(|setting| setting.id == setting_id && setting.portable)
+                .context("Imported setting is not declared portable by its signed package")?;
+            if !record.tombstone
+                && !record
+                    .payload
+                    .as_ref()
+                    .is_some_and(|value| setting_value_is_valid(declaration, value))
+            {
+                bail!("Imported extension setting does not match its signed declaration");
+            }
+        }
+        Ok(())
+    }
+
     pub async fn reconcile_configuration_sync(&self, repo: &HistoryRepository) -> Result<()> {
         let status = crate::sync::status(repo).await?;
-        if !status.enabled {
-            return Ok(());
-        }
         let effects=sqlx::query("SELECT * FROM sync_pending_effects ORDER BY CASE record_kind WHEN 'extension_intent' THEN 0 ELSE 1 END,record_key").fetch_all(&repo.pool).await?;
         for effect in effects {
             let current = crate::sync::status(repo).await?;
-            if !current.enabled || current.local_epoch != status.local_epoch {
-                break;
+            let local_import = effect.get::<i64, _>("local_import") != 0;
+            if !local_import && (!current.enabled || current.local_epoch != status.local_epoch) {
+                continue;
             }
             let kind: String = effect.get("record_kind");
             let key: String = effect.get("record_key");
@@ -2264,6 +2304,7 @@ impl ExtensionService {
                         } }
                         else {
                             if installed.is_none() {
+                                if local_import { bail!("Install this package from Extensions, then retry the import effects"); }
                                 let index=self.registry().await?;
                                 let entry=index.packages.iter().filter(|p|p.package_id==key && !p.version.contains('-')).max_by(|a,b|version_cmp(&a.version,&b.version)).context("Package unavailable in the signed registry")?;
                                 self.install_registry_guarded(repo,&key,&entry.version,Some(status.local_epoch)).await?;
@@ -2287,7 +2328,7 @@ impl ExtensionService {
                     }
                     "shortcut" => {
                         if key.starts_with("core.") {
-                            if !matches!(key.as_str(),"core.copy"|"core.favorite"|"core.pin"|"core.open"|"core.delete"|"core.recall") {bail!("Command unavailable in this application version");}
+                            if !crate::sync::command_catalog(repo).await?.iter().any(|command| command.id == key) {bail!("Command unavailable in this application version");}
                             if deleted {
                                 crate::sync::set_applying_remote(repo,true).await?;
                                 let changed=sqlx::query("DELETE FROM config_command_shortcuts WHERE command_id=?").bind(&key).execute(&repo.pool).await;

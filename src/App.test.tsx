@@ -22,6 +22,7 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   autoClearMinutes: null,
   clearOnExit: false,
   autoStart: false,
+  loggingEnabled: true,
   captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
   capture: {
     maxOrdinaryClips: 1000,
@@ -46,16 +47,20 @@ vi.mock('./features/app/AppLayout', () => ({
 describe('App', () => {
   beforeEach(async () => {
     invokeMock.mockReset()
-    invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_startup_status') {
-        return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+    invokeMock.mockImplementation(
+      (command: string, args?: { settings?: Record<string, unknown> }) => {
+        if (command === 'get_startup_status') {
+          return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+        }
+        if (command === 'get_app_settings') {
+          return Promise.resolve(v2Settings())
+        }
+        if (command === 'get_settings_effects') return Promise.resolve([])
+        if (command === 'update_app_settings')
+          return Promise.resolve({ settings: v2Settings(args?.settings), failedEffects: [] })
+        return Promise.resolve(null)
       }
-      if (command === 'get_app_settings') {
-        return Promise.resolve(v2Settings())
-      }
-      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
-      return Promise.resolve(null)
-    })
+    )
     useSettingsStore.setState({ settings: null, isLoading: false, error: null })
     Object.defineProperty(navigator, 'languages', {
       configurable: true,
@@ -75,16 +80,20 @@ describe('App', () => {
       configurable: true,
       value: ['ja-JP', 'en-US'],
     })
-    invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_startup_status') {
-        return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+    invokeMock.mockImplementation(
+      (command: string, args?: { settings?: Record<string, unknown> }) => {
+        if (command === 'get_startup_status') {
+          return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+        }
+        if (command === 'get_app_settings') {
+          return Promise.resolve(v2Settings({ languageInitialized: false }))
+        }
+        if (command === 'get_settings_effects') return Promise.resolve([])
+        if (command === 'update_app_settings')
+          return Promise.resolve({ settings: v2Settings(args?.settings), failedEffects: [] })
+        return Promise.resolve(null)
       }
-      if (command === 'get_app_settings') {
-        return Promise.resolve(v2Settings({ languageInitialized: false }))
-      }
-      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
-      return Promise.resolve(null)
-    })
+    )
 
     render(<App />)
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
@@ -99,23 +108,27 @@ describe('App', () => {
   })
 
   it('normalizes an unsupported saved language to English and persists it', async () => {
-    invokeMock.mockImplementation((command: string, args?: { settings?: unknown }) => {
-      if (command === 'get_startup_status') {
-        return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+    invokeMock.mockImplementation(
+      (command: string, args?: { settings?: Record<string, unknown> }) => {
+        if (command === 'get_startup_status') {
+          return Promise.resolve({ state: 'ready', message: 'ready', resetAvailable: false })
+        }
+        if (command === 'get_app_settings') {
+          return Promise.resolve(v2Settings({ language: 'de' }))
+        }
+        if (command === 'get_settings_effects') return Promise.resolve([])
+        if (command === 'update_app_settings')
+          return Promise.resolve({ settings: v2Settings(args?.settings), failedEffects: [] })
+        return Promise.resolve(null)
       }
-      if (command === 'get_app_settings') {
-        return Promise.resolve(v2Settings({ language: 'de' }))
-      }
-      if (command === 'update_app_settings') return Promise.resolve(args?.settings)
-      return Promise.resolve(null)
-    })
+    )
 
     render(<App />)
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
     expect(document.documentElement.lang).toBe('en')
     expect(invokeMock).toHaveBeenCalledWith('update_app_settings', {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      settings: expect.objectContaining({ language: 'en', languageInitialized: true }),
+      settings: expect.objectContaining({ language: 'en' }),
     })
   })
 

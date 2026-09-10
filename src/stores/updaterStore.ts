@@ -1,3 +1,4 @@
+import { diagnostic } from '../shared/diagnostics'
 import { create } from 'zustand'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
@@ -36,8 +37,8 @@ const closePendingUpdate = async () => {
 
   try {
     await pendingUpdate.close()
-  } catch (error) {
-    console.warn('Failed to close pending updater resource:', error)
+  } catch {
+    diagnostic('failed_to_close_pending_updater_resource')
   } finally {
     pendingUpdate = null
   }

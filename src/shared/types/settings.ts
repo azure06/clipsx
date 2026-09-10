@@ -34,6 +34,7 @@ export interface AppSettings {
   hide_on_copy: boolean
   clear_on_exit: boolean
   auto_start: boolean
+  logging_enabled: boolean
 
   // Paste behavior
   default_paste_format: PasteFormat
@@ -44,13 +45,6 @@ export interface AppSettings {
 
   // Notifications
   show_copy_toast: boolean
-
-  // Onboarding
-  has_seen_welcome: boolean
-
-  // Plugins
-  text_search_enabled: boolean
-  image_search_enabled: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,13 +66,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hide_on_copy: false,
   clear_on_exit: false,
   auto_start: false,
+  logging_enabled: true,
   default_paste_format: 'auto',
   paste_on_enter: false,
   item_activation_mode: 'double_click_primary',
   hide_on_blur: false,
   always_on_top: false,
   show_copy_toast: true,
-  has_seen_welcome: false,
-  text_search_enabled: false,
-  image_search_enabled: true,
 }

@@ -159,8 +159,8 @@ pub async fn rebuild_stale_projections(repo: &HistoryRepository) -> Result<u64> 
         for id in stale_ids {
             match upsert_projection(repo, &id).await {
                 Ok(()) => rebuilt += 1,
-                Err(error) => {
-                    eprintln!("[SEARCH] Failed to rebuild FTS projection for {id}: {error}")
+                Err(_) => {
+                    crate::diagnostic!("[SEARCH] Failed to rebuild FTS projection")
                 }
             }
         }
@@ -740,7 +740,7 @@ async fn fts_snippets(
 fn log_search_timing(operation: &str, started: Instant, count: usize, slow_ms: u128) {
     let elapsed = started.elapsed();
     if cfg!(debug_assertions) || elapsed.as_millis() >= slow_ms {
-        eprintln!(
+        crate::diagnostic!(
             "[PERF] {operation} count={count} duration_ms={}",
             elapsed.as_millis()
         );
