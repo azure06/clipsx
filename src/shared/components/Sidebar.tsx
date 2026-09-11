@@ -9,7 +9,8 @@ type SidebarProps = {
 
 export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
   const { t } = useTranslation()
-  const { activeView, setActiveView } = useUIStore()
+  const activeView = useUIStore(state => state.activeView)
+  const setActiveView = useUIStore(state => state.setActiveView)
   const authStatus = useAuthStore(state => state.status)
   const authEmail = useAuthStore(state => state.email)
 

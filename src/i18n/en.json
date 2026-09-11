@@ -137,6 +137,7 @@
     "readyToPaste": "Ready to paste",
     "copiedToClipboard": "Copied to clipboard",
     "loadingMore": "Loading more...",
+    "updatingResults": "Updating results…",
     "loadingHistory": "Loading clipboard history...",
     "loadError": "Clipboard history could not be loaded.",
     "noSearchResults": "No clips match your search",

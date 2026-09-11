@@ -40,6 +40,11 @@ type ClipboardState = {
   clips: ClipSummary[]
   availableTags: V2Tag[]
   loading: boolean
+  // Query/filter state describes the desired page; clips remain the last
+  // committed page until a replacement succeeds.
+  resultsStale: boolean
+  // A prepared query is waiting for the input controller's idle timer/IME.
+  searchScheduled: boolean
   error: string | null
   hasMore: boolean
   currentOffset: number
@@ -50,6 +55,9 @@ type ClipboardState = {
   searchSourceOutcomes: SearchSourceOutcome[]
 }
 type ClipboardActions = {
+  prepareSearch: (query: string, force?: boolean) => void
+  commitSearch: () => Promise<void>
+  retryResults: () => Promise<void>
   loadMoreClips: (limit?: number) => Promise<void>
   addNewClip: (clip: ClipSummary) => void
   mergeClipUpdate: (clip: ClipSummary) => void
@@ -79,6 +87,8 @@ const initialState: ClipboardState = {
   clips: [],
   availableTags: [],
   loading: false,
+  resultsStale: false,
+  searchScheduled: false,
   error: null,
   hasMore: true,
   currentOffset: 0,
@@ -146,14 +156,16 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   ...initialState,
   loadMoreClips: async (limit = 50) => {
     const state = useClipboardStore.getState()
-    if (state.loading || !state.hasMore) return
+    if (state.loading || !state.hasMore || state.searchScheduled) return
     const generation = requestGeneration
+    const replace = state.resultsStale
     ensureEvents()
     set({ loading: true, error: null })
     try {
       const tagId = state.tagFilter
       let summaries: ClipSummary[]
       let cursor: string | null
+      let sourceOutcomes: SearchSourceOutcome[] = []
       if (state.mode === 'search') {
         const parsedSearch = parseSearch(state.searchQuery)
         const result = await invoke<V2SearchPage>('search_clips', {
@@ -170,12 +182,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
               : ['builtin.search.fts'],
           },
         })
+        if (generation !== requestGeneration) return
         summaries = result.items.map(item => ({
           ...item.clip,
           similarityScore: item.rank,
           searchMatches: item.matches,
         }))
-        set({ searchSourceOutcomes: result.sourceOutcomes })
+        sourceOutcomes = result.sourceOutcomes
         cursor = result.nextCursor
       } else {
         const result = await invoke<V2Page<ClipSummary>>('list_clips', {
@@ -188,10 +201,12 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       if (generation !== requestGeneration) return
       nextCursor = cursor
       set(current => ({
-        clips: [...current.clips, ...clips],
+        clips: replace ? clips : [...current.clips, ...clips],
         loading: false,
+        resultsStale: false,
+        searchSourceOutcomes: sourceOutcomes,
         hasMore: cursor !== null,
-        currentOffset: current.currentOffset + clips.length,
+        currentOffset: (replace ? 0 : current.currentOffset) + clips.length,
       }))
     } catch (error) {
       if (generation !== requestGeneration) return
@@ -201,7 +216,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   addNewClip: clip =>
     set(state => ({
       clips:
-        state.mode === 'browse' && matchesVisibleScope(state, clip)
+        !state.resultsStale && state.mode === 'browse' && matchesVisibleScope(state, clip)
           ? [clip, ...state.clips.filter(item => item.id !== clip.id)]
           : state.clips,
     })),
@@ -209,60 +224,69 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set(state => ({
       clips: state.clips
         .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
-        .filter(item => matchesVisibleScope(state, item)),
+        .filter(item => state.resultsStale || matchesVisibleScope(state, item)),
     })),
   resetPagination: () => {
     requestGeneration += 1
     nextCursor = undefined
-    set({ currentOffset: 0, hasMore: true, loading: false })
+    set({
+      currentOffset: 0,
+      hasMore: true,
+      loading: false,
+      resultsStale: true,
+      searchScheduled: false,
+      error: null,
+    })
+  },
+  prepareSearch: (raw, force = false) => {
+    const query = raw.trim()
+    const state = useClipboardStore.getState()
+    const mode = query ? 'search' : 'browse'
+    if (!force && state.searchQuery === query && state.mode === mode) return
+    requestGeneration += 1
+    nextCursor = undefined
+    set({
+      mode,
+      searchQuery: query,
+      resultsStale: true,
+      searchScheduled: true,
+      loading: false,
+      error: null,
+      currentOffset: 0,
+      hasMore: true,
+    })
+  },
+  commitSearch: async () => {
+    if (!useClipboardStore.getState().searchScheduled) return
+    set({ searchScheduled: false })
+    await useClipboardStore.getState().loadMoreClips()
+  },
+  retryResults: async () => {
+    useClipboardStore.getState().resetPagination()
+    await useClipboardStore.getState().loadMoreClips()
   },
   refreshSearch: async () => {
     const state = useClipboardStore.getState()
     if (state.mode !== 'search') return
-    requestGeneration += 1
-    nextCursor = undefined
-    set({ clips: [], currentOffset: 0, hasMore: true, loading: false })
-    await useClipboardStore.getState().loadMoreClips()
+    await state.retryResults()
   },
   setActiveTab: async tab => {
-    requestGeneration += 1
-    nextCursor = undefined
-    set({ activeTab: tab, clips: [], currentOffset: 0, hasMore: true, loading: false })
-    await useClipboardStore.getState().loadMoreClips()
+    if (useClipboardStore.getState().activeTab === tab) return
+    set({ activeTab: tab })
+    await useClipboardStore.getState().retryResults()
   },
   enterSearchMode: async query => {
-    const current = useClipboardStore.getState()
-    if (current.mode === 'search' && current.searchQuery === query) return
-    requestGeneration += 1
-    nextCursor = undefined
-    set({
-      mode: 'search',
-      searchQuery: query,
-      clips: [],
-      currentOffset: 0,
-      hasMore: true,
-      loading: false,
-    })
-    await useClipboardStore.getState().loadMoreClips()
+    useClipboardStore.getState().prepareSearch(query)
+    await useClipboardStore.getState().commitSearch()
   },
   exitSearchMode: () => {
-    requestGeneration += 1
-    nextCursor = undefined
-    set({
-      mode: 'browse',
-      searchQuery: '',
-      clips: [],
-      currentOffset: 0,
-      hasMore: true,
-      loading: false,
-    })
-    void useClipboardStore.getState().loadMoreClips()
+    useClipboardStore.getState().prepareSearch('')
+    void useClipboardStore.getState().commitSearch()
   },
   setTagFilter: async tagFilter => {
-    requestGeneration += 1
-    nextCursor = undefined
-    set({ tagFilter, clips: [], currentOffset: 0, hasMore: true, loading: false })
-    await useClipboardStore.getState().loadMoreClips()
+    if (useClipboardStore.getState().tagFilter === tagFilter) return
+    set({ tagFilter })
+    await useClipboardStore.getState().retryResults()
   },
   refreshAvailableTags: async () => {
     try {
@@ -276,17 +300,22 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     await refreshVisibleClip(clipId)
   },
   addClipTag: async (clipId, tag) => {
+    if (useClipboardStore.getState().resultsStale) return
     await invoke('add_clip_tag', { clipId, tagId: tag.id })
     await refreshVisibleClip(clipId)
   },
   removeClipTag: async (clipId, tagId) => {
+    if (useClipboardStore.getState().resultsStale) return
     await invoke('remove_clip_tag', { clipId, tagId })
     await refreshVisibleClip(clipId)
   },
   createTagAndAttach: async (clipId, name) => {
+    if (useClipboardStore.getState().resultsStale) return
     const result = await invoke<V2Tag>('create_tag', { name: name.trim(), color: '#3b82f6' })
     set(state => ({ availableTags: [...state.availableTags, result] }))
-    await useClipboardStore.getState().addClipTag(clipId, result)
+    // Finish the operation already started, even if typing made results stale.
+    await invoke('add_clip_tag', { clipId, tagId: result.id })
+    await refreshVisibleClip(clipId)
   },
   deleteAvailableTag: async tagId => {
     await invoke('delete_tag', { tagId })
@@ -299,10 +328,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     }))
   },
   deleteClip: async id => {
+    if (useClipboardStore.getState().resultsStale) return
     await invoke('delete_clip', { clipId: id })
     set(state => ({ clips: state.clips.filter(clip => clip.id !== id) }))
   },
   toggleFavorite: async id => {
+    if (useClipboardStore.getState().resultsStale) return
+    const generation = requestGeneration
     const before = useClipboardStore.getState()
     const clip = before.clips.find(item => item.id === id)
     if (!clip) return
@@ -320,11 +352,13 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       await invoke('set_clip_favorite', { clipId: id, value })
       await refreshVisibleClip(id)
     } catch (error) {
-      set({ clips: before.clips, error: String(error) })
+      if (generation === requestGeneration) set({ clips: before.clips, error: String(error) })
       throw error
     }
   },
   togglePin: async id => {
+    if (useClipboardStore.getState().resultsStale) return
+    const generation = requestGeneration
     const before = useClipboardStore.getState()
     const clip = before.clips.find(item => item.id === id)
     if (!clip) return
@@ -342,18 +376,30 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       await invoke('set_clip_pinned', { clipId: id, value })
       await refreshVisibleClip(id)
     } catch (error) {
-      set({ clips: before.clips, error: String(error) })
+      if (generation === requestGeneration) set({ clips: before.clips, error: String(error) })
       throw error
     }
   },
   clearAllClips: async () => {
     await invoke('clear_history')
-    set({ clips: [], currentOffset: 0, hasMore: false })
+    requestGeneration += 1
+    nextCursor = undefined
+    set({
+      clips: [],
+      currentOffset: 0,
+      hasMore: false,
+      loading: false,
+      resultsStale: false,
+      searchScheduled: false,
+      searchSourceOutcomes: [],
+      error: null,
+    })
   },
   copyDerivedText: async text => {
     await copyLiteralText(text)
   },
   performPrimaryAction: async (_text, clipId) => {
+    if (useClipboardStore.getState().resultsStale) return
     const settings = useSettingsStore.getState().settings
     const source: ClipboardOutputSource =
       settings?.default_paste_format === 'plain'
@@ -366,6 +412,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     }
   },
   performCopy: async (_text, clipId) => {
+    if (useClipboardStore.getState().resultsStale) return
     const settings = useSettingsStore.getState().settings
     const source: ClipboardOutputSource =
       settings?.default_paste_format === 'plain'

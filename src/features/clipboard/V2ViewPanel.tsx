@@ -14,6 +14,7 @@ import type {
 } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
 import { useTransformState, type TransformControls } from './useTransformState'
+import { useClipboardStore } from '../../stores/clipboardStore'
 import { useTheme } from '../../shared/hooks/useTheme'
 
 const OCR_TAB_ID = '__ocr__'
@@ -55,18 +56,23 @@ export const ExtensionCustomView = ({
     let timeout = 0
     let ready = false
     let overlayOpen = false
-    const handleOverlayVisibility = (event: Event) => {
-      const open = (event as CustomEvent<{ open: boolean }>).detail?.open ?? false
-      overlayOpen = open
+    const syncVisibility = () => {
       if (!session) return
       const next = bounds()
       if (next)
         void invoke('sync_extension_custom_view', {
           label: session.label,
           ...next,
-          visible: !open && ready,
+          visible: !overlayOpen && !useClipboardStore.getState().resultsStale && ready,
         })
     }
+    const handleOverlayVisibility = (event: Event) => {
+      overlayOpen = (event as CustomEvent<{ open: boolean }>).detail?.open ?? false
+      syncVisibility()
+    }
+    const unsubscribeResults = useClipboardStore.subscribe((next, previous) => {
+      if (next.resultsStale !== previous.resultsStale) syncVisibility()
+    })
     window.addEventListener('clipsx-host-overlay', handleOverlayVisibility)
 
     const applyState = (state: ExtensionCustomViewState) => {
@@ -86,7 +92,7 @@ export const ExtensionCustomView = ({
       } else {
         ready = true
         setReadyScope(scope)
-        if (overlayOpen && session) {
+        if ((overlayOpen || useClipboardStore.getState().resultsStale) && session) {
           const next = bounds()
           if (next)
             void invoke('sync_extension_custom_view', {
@@ -140,7 +146,11 @@ export const ExtensionCustomView = ({
             observer = new ResizeObserver(() => {
               const next = bounds()
               if (!next || !session) return
-              void invoke('sync_extension_custom_view', { label: session.label, ...next })
+              void invoke('sync_extension_custom_view', {
+                label: session.label,
+                ...next,
+                visible: !overlayOpen && !useClipboardStore.getState().resultsStale && ready,
+              })
             })
             if (container.current) observer.observe(container.current)
             if (!ready) {
@@ -174,6 +184,7 @@ export const ExtensionCustomView = ({
       observer?.disconnect()
       unlistenState?.()
       window.removeEventListener('clipsx-host-overlay', handleOverlayVisibility)
+      unsubscribeResults()
       if (session) {
         void invoke('close_extension_custom_view', {
           label: session.label,
@@ -285,6 +296,7 @@ const TransformAction = ({
 )
 
 const TransformResultTab = ({
+  appliedTheme,
   label,
   presentation,
   outputs,
@@ -293,6 +305,7 @@ const TransformResultTab = ({
   applyResult,
   onDismiss,
 }: {
+  appliedTheme: 'light' | 'dark'
   label: string
   presentation: ClipPresentation | null
   outputs: Array<{ canonicalMimeType: string | null; byteLength: number }>
@@ -342,7 +355,9 @@ const TransformResultTab = ({
             {error}
           </div>
         )}
-        {presentation && !busy && <RenderModelView presentation={presentation} />}
+        {presentation && !busy && (
+          <RenderModelView appliedTheme={appliedTheme} presentation={presentation} />
+        )}
       </div>
     </div>
   </Tooltip.Provider>
@@ -512,6 +527,7 @@ export const V2ViewPanel = ({
   onTabControls?: (info: ViewTabControls | null) => void
   onTransformControls?: (controls: TransformControls | null) => void
 }) => {
+  const { appliedTheme } = useTheme()
   const [detail, setDetail] = useState<ClipDetail | null>(null)
   const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
   const [active, setActive] = useState<string | null>(null)
@@ -810,6 +826,7 @@ export const V2ViewPanel = ({
       <div className="min-h-0 flex-1 overflow-hidden">
         {isTransformTab ? (
           <TransformResultTab
+            appliedTheme={appliedTheme}
             label={transformState.activeTransformer?.label ?? 'Transform'}
             presentation={transformPresentation}
             outputs={transformState.preview?.outputs ?? []}
@@ -827,7 +844,7 @@ export const V2ViewPanel = ({
         ) : view?.presentationKind === 'extension_ui' ? (
           <ExtensionCustomView clipId={clipId} view={view} />
         ) : (
-          <RenderModelView presentation={presentation} />
+          <RenderModelView appliedTheme={appliedTheme} presentation={presentation} />
         )}
       </div>
       {inspecting && <RawInspector detail={detail} onClose={() => setInspecting(false)} />}

@@ -27,7 +27,14 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
-import { useEffect, useState, useMemo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import {
+  memo,
+  useEffect,
+  useState,
+  useMemo,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
 import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
@@ -222,10 +229,10 @@ const LANG_CHIP_COLOR: Record<string, string> = {
 }
 
 const CodeView = ({ language, text }: { language: string | null; text: string }) => {
-  const lines = text.split('\n')
+  const lines = useMemo(() => text.split('\n'), [text])
   const chipColor =
     LANG_CHIP_COLOR[language?.toLowerCase() ?? ''] ?? 'bg-violet-500/15 text-violet-400'
-  const words = text.trim().split(/\s+/).length
+  const words = useMemo(() => text.trim().split(/\s+/).length, [text])
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-white/10 bg-slate-900/80 px-4 py-2">
@@ -949,7 +956,7 @@ const markdownChildrenToText = (children: ReactNode): string =>
       ? children
       : ''
 
-const MarkdownView = ({ markdown }: { markdown: string }) => {
+const MarkdownView = memo(function MarkdownView({ markdown }: { markdown: string }) {
   const components = useMemo(
     () => ({
       pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => <>{children}</>,
@@ -1056,10 +1063,10 @@ const MarkdownView = ({ markdown }: { markdown: string }) => {
       </div>
     </div>
   )
-}
+})
 
 const JsonView = ({ value }: { value: unknown }) => {
-  const jsonText = JSON.stringify(value, null, 2)
+  const jsonText = useMemo(() => JSON.stringify(value, null, 2), [value])
   const keyCount = Array.isArray(value)
     ? (value as unknown[]).length
     : value !== null && typeof value === 'object'
@@ -1087,9 +1094,14 @@ const JsonView = ({ value }: { value: unknown }) => {
   )
 }
 
-export const RenderModelView = ({ presentation }: { presentation: ClipPresentation }) => {
+export const RenderModelView = memo(function RenderModelView({
+  presentation,
+  appliedTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light',
+}: {
+  presentation: ClipPresentation
+  appliedTheme?: 'light' | 'dark'
+}) {
   const model = presentation.model
-  const appliedTheme = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
   switch (model.kind) {
     case 'text':
       return <TextBlock>{model.text}</TextBlock>
@@ -1190,4 +1202,4 @@ export const RenderModelView = ({ presentation }: { presentation: ClipPresentati
     default:
       return assertNever(model)
   }
-}
+})

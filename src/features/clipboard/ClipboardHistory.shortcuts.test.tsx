@@ -93,6 +93,8 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     useClipboardStore.setState({
       clips: [makeClip()],
       loading: false,
+      resultsStale: false,
+      searchScheduled: false,
       error: null,
       hasMore: false,
       currentOffset: 1,
@@ -142,6 +144,58 @@ describe('ClipboardHistory keyboard shortcuts', () => {
   afterEach(() => {
     cleanup()
     vi.unstubAllGlobals()
+  })
+
+  it('blocks stale result shortcuts while preserving native input editing', async () => {
+    setNavigatorPlatform('Win32')
+    render(<ClipboardHistory />)
+    await act(async () => {})
+    const input = document.createElement('input')
+    document.body.append(input)
+    input.value = 'selected text'
+    input.focus()
+    input.setSelectionRange(0, 8)
+    act(() => useClipboardStore.setState({ resultsStale: true }))
+    performCopyMock.mockClear()
+    loadMoreClipsMock.mockClear()
+    for (const key of ['Enter', 'End']) {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    }
+    for (const key of ['c', 'f', 'p', '1']) {
+      const event = new KeyboardEvent('keydown', {
+        key,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      input.dispatchEvent(event)
+      if (key === 'c') expect(event.defaultPrevented).toBe(false)
+    }
+    expect(performCopyMock).not.toHaveBeenCalled()
+    expect(toggleFavoriteMock).not.toHaveBeenCalled()
+    expect(togglePinMock).not.toHaveBeenCalled()
+    expect(loadMoreClipsMock).not.toHaveBeenCalled()
+    input.remove()
+  })
+
+  it('keeps the selected ID while replacing results and clears it on an empty page', async () => {
+    const onPreviewItem = vi.fn()
+    useClipboardStore.setState({ clips: [makeClip('selected')] })
+    render(<ClipboardHistory onPreviewItem={onPreviewItem} />)
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('selected'))
+    act(() => useClipboardStore.setState({ resultsStale: true }))
+    expect(onPreviewItem).toHaveBeenLastCalledWith('selected')
+    act(() =>
+      useClipboardStore.setState({
+        clips: [makeClip('other'), makeClip('selected')],
+        resultsStale: false,
+      })
+    )
+    expect(onPreviewItem).toHaveBeenLastCalledWith('selected')
+    act(() => useClipboardStore.setState({ clips: [makeClip('replacement')] }))
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('replacement'))
+    act(() => useClipboardStore.setState({ clips: [] }))
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith(null))
   })
 
   it('runs open in editor shortcut while search input is focused', async () => {

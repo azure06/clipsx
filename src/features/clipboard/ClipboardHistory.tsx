@@ -1,5 +1,6 @@
 import { matchCommandShortcut } from '../../shared/keyboard/commands'
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { memo, useEffect, useRef, useState, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
 import { TagFilter } from './components'
@@ -13,7 +14,6 @@ import { copyClipboardOutput } from '../../shared/clipboardOutput'
 export { ClipboardListItem } from './components'
 
 interface ClipboardHistoryProps {
-  searchQuery?: string
   className?: string
   onPreviewItem?: (clipId: string | null) => void
 }
@@ -33,11 +33,10 @@ const hasNativeCopySelection = (): boolean => {
   return selection != null && !selection.isCollapsed && selection.toString().length > 0
 }
 
-export const ClipboardHistory = ({
-  searchQuery = '',
+export const ClipboardHistory = memo(function ClipboardHistory({
   className,
   onPreviewItem,
-}: ClipboardHistoryProps) => {
+}: ClipboardHistoryProps) {
   const { t } = useTranslation()
   const {
     clips,
@@ -50,9 +49,24 @@ export const ClipboardHistory = ({
     togglePin,
     performPrimaryAction,
     performCopy,
-    enterSearchMode,
-    exitSearchMode,
-  } = useClipboardStore()
+    resultsStale,
+    retryResults,
+  } = useClipboardStore(
+    useShallow(state => ({
+      clips: state.clips,
+      loading: state.loading,
+      error: state.error,
+      mode: state.mode,
+      loadMoreClips: state.loadMoreClips,
+      deleteClip: state.deleteClip,
+      toggleFavorite: state.toggleFavorite,
+      togglePin: state.togglePin,
+      performPrimaryAction: state.performPrimaryAction,
+      performCopy: state.performCopy,
+      resultsStale: state.resultsStale,
+      retryResults: state.retryResults,
+    }))
+  )
 
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
@@ -66,7 +80,6 @@ export const ClipboardHistory = ({
 
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // macOS IME fix: we cannot use e.isComposing because on macOS WebKit,
   // compositionend fires *before* the confirming Enter keydown, making
   // e.isComposing already false by the time our handler runs.
@@ -116,33 +129,6 @@ export const ClipboardHistory = ({
     void loadMoreClips(50)
   }, [loadMoreClips])
 
-  // Handle search with debounce
-  useEffect(() => {
-    // Clear existing timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current)
-    }
-
-    // Debounce search input (300ms)
-    searchTimeoutRef.current = setTimeout(() => {
-      if (searchQuery.trim() === '') {
-        // Empty query - exit search mode and return to browse
-        if (mode === 'search') {
-          exitSearchMode()
-        }
-      } else {
-        // Non-empty query - enter search mode with FTS
-        void enterSearchMode(searchQuery.trim())
-      }
-    }, 300)
-
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current)
-      }
-    }
-  }, [searchQuery, mode, enterSearchMode, exitSearchMode])
-
   // Infinite scroll observer
   useEffect(() => {
     const trigger = loadMoreTriggerRef.current
@@ -153,10 +139,10 @@ export const ClipboardHistory = ({
     const observer = new IntersectionObserver(
       entries => {
         const isIntersecting = entries[0]?.isIntersecting
-        const { loading, hasMore } = useClipboardStore.getState()
+        const { loading, hasMore, resultsStale } = useClipboardStore.getState()
 
         if (!isIntersecting) return
-        if (!loading && hasMore) {
+        if (!loading && hasMore && !resultsStale) {
           void loadMoreClips(50)
         }
       },
@@ -175,6 +161,7 @@ export const ClipboardHistory = ({
   // Unified action handler for Click and Enter — delegates to centralized store
   const handleAction = useCallback(
     async (text: string, clipId: string) => {
+      if (useClipboardStore.getState().resultsStale) return
       await performPrimaryAction(text, clipId)
       if (settings?.show_copy_toast) {
         toast({ title: t('clipboard.readyToPaste'), type: 'success' })
@@ -186,6 +173,7 @@ export const ClipboardHistory = ({
   // Explicit Copy handler (copy icon) — delegates to centralized store
   const handleExplicitCopy = useCallback(
     async (text: string, clipId: string) => {
+      if (useClipboardStore.getState().resultsStale) return
       await performCopy(text, clipId)
       if (settings?.show_copy_toast) {
         toast({ title: t('clipboard.copiedToClipboard'), type: 'success' })
@@ -206,6 +194,7 @@ export const ClipboardHistory = ({
   // Stable handlers for child components to avoid Promise/void lint errors and ensure memoization
   const onSelectHandler = useCallback(
     (text: string, clipId: string) => {
+      if (useClipboardStore.getState().resultsStale) return
       setSelectedId(clipId)
       if (itemActivationMode === 'single_click_copy') {
         void handleAction(text, clipId)
@@ -216,6 +205,7 @@ export const ClipboardHistory = ({
 
   const onDoubleClickHandler = useCallback(
     (text: string, clipId: string) => {
+      if (useClipboardStore.getState().resultsStale) return
       if (itemActivationMode !== 'double_click_primary') return
       void handleAction(text, clipId)
     },
@@ -224,6 +214,7 @@ export const ClipboardHistory = ({
 
   const onCopyHandler = useCallback(
     (text: string, clipId: string) => {
+      if (useClipboardStore.getState().resultsStale) return
       void handleExplicitCopy(text, clipId)
     },
     [handleExplicitCopy]
@@ -231,12 +222,16 @@ export const ClipboardHistory = ({
 
   // Auto-select first clip on initial load; re-anchor if selected clip was deleted
   useEffect(() => {
-    if (clips.length === 0) return
+    if (resultsStale) return
+    if (clips.length === 0) {
+      setSelectedId(null)
+      return
+    }
     if (selectedId == null || !clips.some(c => c.id === selectedId)) {
       setSelectedId(clips[0]?.id ?? null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clips])
+  }, [clips, resultsStale])
 
   // Auto-scroll selected item into view
   const scrollSelectedIntoView = useCallback((index: number) => {
@@ -276,7 +271,7 @@ export const ClipboardHistory = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // If another component (like SearchBar) already handled and prevented this event, ignore it.
-      if (e.defaultPrevented) return
+      if (e.defaultPrevented || useClipboardStore.getState().resultsStale) return
 
       // Ignore events fired during IME composition (e.g. Japanese 変換 confirmation).
       // Uses a ref instead of e.isComposing because on macOS WebKit, compositionend
@@ -513,7 +508,7 @@ export const ClipboardHistory = ({
       )
     }
 
-    if (error) {
+    if (error && clips.length === 0) {
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
@@ -598,7 +593,26 @@ export const ClipboardHistory = ({
       </div>
       {/* Tag filter row — only visible when tags exist */}
       <TagFilter />
-      {renderContent()}
+      {(resultsStale || error) && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center justify-between gap-2 px-3 py-2 text-xs text-gray-500"
+        >
+          <span>{error ? t('clipboard.loadError') : t('clipboard.updatingResults')}</span>
+          {error && (
+            <button type="button" onClick={() => void retryResults()}>
+              {t('common.retry')}
+            </button>
+          )}
+        </div>
+      )}
+      <div
+        inert={resultsStale}
+        aria-busy={loading || (resultsStale && !error)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        {renderContent()}
+      </div>
     </div>
   )
-}
+})

@@ -65,6 +65,8 @@ describe('ClipboardHistory activation modes', () => {
       clips: [makeClip()],
       availableTags: [],
       loading: false,
+      resultsStale: false,
+      searchScheduled: false,
       error: null,
       hasMore: false,
       currentOffset: 1,

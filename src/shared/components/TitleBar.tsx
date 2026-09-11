@@ -14,8 +14,8 @@ const SNAP_LAYOUT_DELAY_MS = 620
 
 export const TitleBar = () => {
   const { t } = useTranslation()
-  const { activeView } = useUIStore()
-  const { clips } = useClipboardStore()
+  const activeView = useUIStore(state => state.activeView)
+  const clipCount = useClipboardStore(state => state.clips.length)
   const [maximized, setMaximized] = useState(false)
   const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -74,7 +74,7 @@ export const TitleBar = () => {
       </div>
 
       <div className="pointer-events-none ml-auto text-[11px] font-semibold text-gray-600 dark:text-gray-400">
-        {t('titleBar.clipCount', { count: clips.length })}
+        {t('titleBar.clipCount', { count: clipCount })}
       </div>
 
       {isWindows && (

@@ -198,6 +198,171 @@ const workTag: V2Tag = {
   color: '#fff',
 }
 
+describe('search replacement consistency', () => {
+  beforeEach(() => {
+    useClipboardStore.setState(useClipboardStore.getInitialState(), true)
+    useClipboardStore.getState().resetPagination()
+    useClipboardStore.setState(
+      { ...useClipboardStore.getInitialState(), clips: [makeClip({ id: 'previous' })] },
+      true
+    )
+    mockInvoke.mockReset()
+  })
+
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void
+    let reject!: (reason: Error) => void
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    return { promise, resolve, reject }
+  }
+  const page = (id: string, nextCursor: string | null = null) => ({
+    items: [{ clip: makeClip({ id }), snippet: null, rank: 1, matches: [] }],
+    nextCursor,
+    sourceOutcomes: [{ sourceId: 'builtin.search.fts', status: 'used' as const, diagnostic: null }],
+  })
+
+  it('retains results during debounce and replaces the first page atomically', async () => {
+    const pending = deferred<ReturnType<typeof page>>()
+    mockInvoke.mockReturnValueOnce(pending.promise)
+    const previous = useClipboardStore.getState().clips
+    useClipboardStore.getState().prepareSearch('new')
+    await useClipboardStore.getState().loadMoreClips()
+    expect(mockInvoke).not.toHaveBeenCalled()
+    const request = useClipboardStore.getState().commitSearch()
+    expect(useClipboardStore.getState().clips).toBe(previous)
+    expect(useClipboardStore.getState().resultsStale).toBe(true)
+    const published: string[][] = []
+    const unsubscribe = useClipboardStore.subscribe(state => {
+      if (!state.resultsStale) published.push(state.clips.map(clip => clip.id))
+    })
+    pending.resolve(page('new', 'cursor-new'))
+    await request
+    unsubscribe()
+    expect(published).toEqual([['new']])
+    expect(useClipboardStore.getState()).toMatchObject({
+      currentOffset: 1,
+      loading: false,
+      hasMore: true,
+      searchSourceOutcomes: page('new').sourceOutcomes,
+    })
+    mockInvoke.mockResolvedValueOnce(page('next'))
+    await useClipboardStore.getState().loadMoreClips()
+    expect(mockInvoke).toHaveBeenLastCalledWith('search_clips', {
+      request: expect.objectContaining({ query: 'new', cursor: 'cursor-new' }) as unknown,
+    })
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['new', 'next'])
+  })
+
+  it('discards stale results and diagnostics even before the next query is submitted', async () => {
+    const old = deferred<ReturnType<typeof page>>()
+    mockInvoke.mockReturnValueOnce(old.promise)
+    const request = useClipboardStore.getState().enterSearchMode('old')
+    useClipboardStore.getState().prepareSearch('latest')
+    old.resolve(page('obsolete', 'obsolete-cursor'))
+    await request
+    expect(useClipboardStore.getState()).toMatchObject({
+      searchQuery: 'latest',
+      searchSourceOutcomes: [],
+      resultsStale: true,
+      searchScheduled: true,
+    })
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('previous')
+    mockInvoke.mockResolvedValueOnce(page('latest'))
+    await useClipboardStore.getState().commitSearch()
+    expect(mockInvoke).toHaveBeenLastCalledWith('search_clips', {
+      request: expect.objectContaining({ cursor: null }) as unknown,
+    })
+  })
+
+  it('ignores late success and failure after a newer response', async () => {
+    for (const fail of [false, true]) {
+      const old = deferred<ReturnType<typeof page>>()
+      mockInvoke.mockReturnValueOnce(old.promise).mockResolvedValueOnce(page('latest'))
+      const request = useClipboardStore.getState().enterSearchMode(`old-${fail}`)
+      await useClipboardStore.getState().enterSearchMode(`latest-${fail}`)
+      if (fail) old.reject(new Error('obsolete failure'))
+      else old.resolve(page('obsolete'))
+      await request
+      expect(useClipboardStore.getState().clips[0]?.id).toBe('latest')
+      expect(useClipboardStore.getState()).toMatchObject({
+        error: null,
+        loading: false,
+        resultsStale: false,
+        searchSourceOutcomes: page('latest').sourceOutcomes,
+      })
+    }
+  })
+
+  it('retains prior results after failure and replaces them on retry', async () => {
+    mockInvoke
+      .mockRejectedValueOnce(new Error('search failed'))
+      .mockResolvedValueOnce(page('recovered'))
+    await useClipboardStore.getState().enterSearchMode('query')
+    expect(useClipboardStore.getState()).toMatchObject({
+      resultsStale: true,
+      loading: false,
+      error: 'Error: search failed',
+    })
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('previous')
+    await useClipboardStore.getState().retryResults()
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('recovered')
+    expect(useClipboardStore.getState().resultsStale).toBe(false)
+  })
+
+  it('clearing the query invalidates an active search and restores browsing', async () => {
+    const old = deferred<ReturnType<typeof page>>()
+    mockInvoke
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce({ items: [makeClip({ id: 'browse' })], nextCursor: null })
+    const request = useClipboardStore.getState().enterSearchMode('old')
+    useClipboardStore.getState().prepareSearch('')
+    await useClipboardStore.getState().commitSearch()
+    old.resolve(page('obsolete'))
+    await request
+    expect(useClipboardStore.getState()).toMatchObject({
+      mode: 'browse',
+      searchQuery: '',
+      searchSourceOutcomes: [],
+      resultsStale: false,
+    })
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('browse')
+  })
+
+  it('filters use the latest draft and cannot append an old page', async () => {
+    mockInvoke.mockResolvedValueOnce(page('initial', 'old-cursor'))
+    await useClipboardStore.getState().enterSearchMode('initial')
+    const oldPage = deferred<ReturnType<typeof page>>()
+    mockInvoke.mockReturnValueOnce(oldPage.promise)
+    const paging = useClipboardStore.getState().loadMoreClips()
+    useClipboardStore.getState().prepareSearch('new draft')
+    mockInvoke.mockResolvedValueOnce(page('filtered'))
+    await useClipboardStore.getState().setTagFilter('work')
+    oldPage.resolve(page('obsolete'))
+    await paging
+    await useClipboardStore.getState().commitSearch()
+    expect(mockInvoke).toHaveBeenLastCalledWith('search_clips', {
+      request: expect.objectContaining({
+        query: 'new draft',
+        tagId: 'work',
+        cursor: null,
+      }) as unknown,
+    })
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['filtered'])
+  })
+
+  it('blocks copy and mutations of stale results', async () => {
+    useClipboardStore.getState().prepareSearch('new')
+    await useClipboardStore.getState().performCopy('', 'previous')
+    await useClipboardStore.getState().performPrimaryAction('', 'previous')
+    await useClipboardStore.getState().toggleFavorite('previous')
+    await useClipboardStore.getState().deleteClip('previous')
+    expect(mockInvoke).not.toHaveBeenCalled()
+  })
+})
+
 describe('useClipboardStore filtered view stability', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -205,6 +370,8 @@ describe('useClipboardStore filtered view stability', () => {
       clips: [],
       availableTags: [],
       loading: false,
+      resultsStale: false,
+      searchScheduled: false,
       error: null,
       hasMore: false,
       currentOffset: 0,
@@ -355,6 +522,8 @@ describe('useClipboardStore authoritative summary updates', () => {
       clips: [makeClip({ id: 'img-1', primaryPresentationKind: 'image' })],
       availableTags: [],
       loading: false,
+      resultsStale: false,
+      searchScheduled: false,
       error: null,
       hasMore: false,
       currentOffset: 1,

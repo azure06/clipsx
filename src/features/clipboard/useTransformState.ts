@@ -1,3 +1,4 @@
+import { useClipboardStore } from '../../stores/clipboardStore'
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -367,7 +368,7 @@ export const useTransformState = ({
   useEffect(() => {
     const platform = getPlatform()
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) return
+      if (event.repeat || useClipboardStore.getState().resultsStale) return
       const action = actions.find(item => {
         if (!item.available || !item.shortcut) return false
         const shortcut = parseAccelerator(item.shortcut, platform)

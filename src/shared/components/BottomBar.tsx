@@ -12,7 +12,7 @@ const Kbd = ({ children }: { children?: ReactNode }) => (
 
 export const BottomBar = () => {
   const { t } = useTranslation()
-  const { activeView } = useUIStore()
+  const activeView = useUIStore(state => state.activeView)
   const [currentTipIndex, setCurrentTipIndex] = useState(0)
   const [isFading, setIsFading] = useState(false)
   const deleteShortcutHint = getShortcutChips(getDeleteShortcut())

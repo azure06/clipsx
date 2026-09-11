@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ClipSummary } from '../../../shared/types/v2'
 import { ClipboardListItem } from '../components'
@@ -13,7 +13,7 @@ type ClipboardListViewProps = {
   readonly selectedIndex?: number
 }
 
-export const ClipboardListView = ({
+export const ClipboardListView = memo(function ClipboardListView({
   clips,
   onCopy,
   onSelect,
@@ -21,7 +21,7 @@ export const ClipboardListView = ({
   infiniteScrollTrigger,
   scrollContainerRef,
   selectedIndex,
-}: ClipboardListViewProps) => {
+}: ClipboardListViewProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   // TanStack Virtual intentionally owns mutable measurement state; the React
   // compiler must not memoize the hook's returned functions.
@@ -41,10 +41,13 @@ export const ClipboardListView = ({
     }
   }, [selectedIndex, virtualizer])
 
-  const setScrollContainer = (node: HTMLDivElement | null) => {
-    parentRef.current = node
-    if (scrollContainerRef) scrollContainerRef.current = node
-  }
+  const setScrollContainer = useCallback(
+    (node: HTMLDivElement | null) => {
+      parentRef.current = node
+      if (scrollContainerRef) scrollContainerRef.current = node
+    },
+    [scrollContainerRef]
+  )
   const virtualItems = virtualizer.getVirtualItems()
   const bootstrapClip = virtualItems.length === 0 ? clips[0] : undefined
 
@@ -92,4 +95,4 @@ export const ClipboardListView = ({
       {infiniteScrollTrigger}
     </div>
   )
-}
+})
