@@ -3091,6 +3091,7 @@ pub(crate) fn run() {
                     let lifecycle = extension_app.state::<crate::app::settings::SettingsLifecycle>();
                     let _guard = lifecycle.gate.lock().await;
                     let _ = redetect_extensions.reconcile_configuration_sync(&extension_history).await;
+                    drop(_guard);
                     let _ = redetect_extensions
                         .redetect_outdated(&extension_history)
                         .await;

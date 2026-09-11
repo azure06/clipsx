@@ -12,14 +12,6 @@ Only work that changes product code, backend behavior, build infrastructure, or
 release configuration belongs in this section. Testing an already implemented
 behavior belongs in Section 2.
 
-### Desktop product
-
-- [ ] Complete the settings lifecycle contract: host-side validation, atomic
-  persistence, restart-safe effects, reset behavior, import/export for portable
-  settings, and actionable recovery for failed native effects such as autostart.
-- [ ] Remove or redact clipboard content, notes, credentials, tokens, and
-  unnecessary filesystem paths from production logging.
-
 ### Account and backend (`clipsx-web`)
 
 - [ ] Add verified account deletion through a JWT-protected backend operation,

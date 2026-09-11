@@ -30,6 +30,12 @@ coverage includes host patch validation, atomic save/reset failure, portable
 round trips and exclusions, local outbox publication, offline pending recovery,
 cloud-echo protection against automatic installation, and frontend edit ordering.
 
+Local verification for the Desktop settings change: all 244 Vitest tests and
+223 Rust application tests passed; 7 existing release-qualification tests remain
+ignored. TypeScript checking, ESLint, Rust formatting, and Clippy with warnings
+denied passed. These are working-tree checks,
+not signed-release certification.
+
 Installed-build certification remains required on Windows, macOS, and Linux/X11:
 
 - Toggle logging off/on and restart in each state; exercise capture, rendering,
