@@ -92,3 +92,62 @@ body,
     --border-color: #3d3d3d;
   }
 }
+
+/* Rotating gradient ring — signals a background result refresh (see
+   resultsStale in clipboardStore) while the previous list stays visible
+   underneath it, instead of clearing/replacing it. */
+.loading-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  border-radius: 0.625rem;
+  padding: 1.5px;
+  pointer-events: none;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+}
+
+.loading-ring::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  animation: loading-ring-spin 1.6s linear infinite;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 250deg,
+    #3b82f6 300deg,
+    #a78bfa 345deg,
+    transparent 360deg
+  );
+}
+
+.dark .loading-ring::before {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 250deg,
+    #60a5fa 300deg,
+    #c4b5fd 345deg,
+    transparent 360deg
+  );
+}
+
+@keyframes loading-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-ring::before {
+    animation: none;
+  }
+}
