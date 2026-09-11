@@ -92,6 +92,15 @@ pub struct RegistryPackage {
     pub icon_assets: Option<RegistryIconAssets>,
     #[serde(default)]
     pub permission_fingerprint: Option<String>,
+    #[serde(default)]
+    pub portable_settings: Vec<RegistryPortableSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistryPortableSetting {
+    pub setting_id: String,
+    pub value_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,7 +169,7 @@ impl RegistryIndex {
         }
         let index: Self =
             serde_json::from_slice(bytes).context("registry index is not valid JSON")?;
-        if !(1..=3).contains(&index.schema_version)
+        if !(1..=4).contains(&index.schema_version)
             || index.packages.len() > 10_000
             || index.revocations.len() > 10_000
         {
@@ -183,6 +192,9 @@ impl RegistryIndex {
             validate_release_url(&package.release_url)?;
             if index.schema_version >= 2 {
                 validate_marketplace_metadata(package)?;
+            }
+            if index.schema_version >= 4 {
+                validate_portable_settings(package)?;
             }
             if entries
                 .insert((&package.package_id, &package.version), ())
@@ -452,6 +464,9 @@ impl ExtensionPackageStore {
                     != Some(permission_fingerprint(&manifest).as_str())
             {
                 bail!("extension permissions do not match the reviewed registry entry");
+            }
+            if entry.portable_settings != portable_settings(&manifest) {
+                bail!("extension portable settings do not match the reviewed registry entry");
             }
         }
         if let Some(component) = contents.get("component.wasm") {
@@ -855,6 +870,35 @@ impl RegistryPackage {
     }
 }
 
+fn portable_settings(manifest: &ExtensionManifest) -> Vec<RegistryPortableSetting> {
+    let mut settings = manifest
+        .settings
+        .iter()
+        .filter(|setting| setting.portable)
+        .map(|setting| RegistryPortableSetting {
+            setting_id: setting.id.clone(),
+            value_kind: setting.kind.clone(),
+        })
+        .collect::<Vec<_>>();
+    settings.sort_by(|left, right| left.setting_id.cmp(&right.setting_id));
+    settings
+}
+
+fn validate_portable_settings(package: &RegistryPackage) -> Result<()> {
+    let mut previous = None;
+    for setting in &package.portable_settings {
+        if setting.setting_id.is_empty()
+            || setting.setting_id.len() > 120
+            || !matches!(setting.value_kind.as_str(), "boolean" | "number")
+            || previous.is_some_and(|value: &str| value >= setting.setting_id.as_str())
+        {
+            bail!("registry portable settings are invalid or not canonically sorted");
+        }
+        previous = Some(setting.setting_id.as_str());
+    }
+    Ok(())
+}
+
 pub fn permission_fingerprint(manifest: &ExtensionManifest) -> String {
     hex_digest(&serde_json::to_vec(&manifest.permissions).expect("extension permissions serialize"))
 }
@@ -920,6 +964,18 @@ mod tests {
             1,
         );
         assert!(RegistryIndex::parse(missing_publisher.as_bytes()).is_err());
+
+        let portable = valid
+            .replacen("\"schemaVersion\":3", "\"schemaVersion\":4", 1)
+            .replacen(
+                "\"permissionFingerprint\"",
+                "\"portableSettings\":[{\"settingId\":\"fit-diagram\",\"valueKind\":\"boolean\"}],\"permissionFingerprint\"",
+                1,
+            );
+        assert!(RegistryIndex::parse(portable.as_bytes()).is_ok());
+        assert!(
+            RegistryIndex::parse(portable.replace("\"boolean\"", "\"string\"").as_bytes()).is_err()
+        );
     }
 
     #[test]

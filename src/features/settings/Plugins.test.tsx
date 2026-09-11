@@ -42,6 +42,7 @@ const registryPackage = {
   providers: [],
   categories: ['Tools'],
   tags: [],
+  portableSettings: [],
 }
 
 const catalog: ExtensionCatalog = {
@@ -54,7 +55,7 @@ const catalog: ExtensionCatalog = {
       revoked: false,
     },
   ],
-  registry: { schemaVersion: 3, cached: true, lastSuccessfulCheckAt: null, error: null },
+  registry: { schemaVersion: 4, cached: true, lastSuccessfulCheckAt: null, error: null },
 }
 
 const packageDetail = (shortcut: string | null): PackageDetail => ({

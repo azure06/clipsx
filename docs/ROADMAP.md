@@ -19,6 +19,10 @@ behavior belongs in Section 2.
 - [ ] Publish signed extension packages with reviewed portable-setting
   declarations and populate the matching server approval catalog through the
   release process.
+  - [x] Registry schema v4, archive/declaration validation, release dispatch,
+    independent web verification, and transactional Supabase reconciliation.
+  - [ ] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1, merge their reviewed
+    signed registry entries, and retain the successful production readback.
 - [ ] Deploy the reviewed fresh Supabase baseline and hosted desktop PKCE callback
   bridge from the authoritative `clipsx-web` repository.
 

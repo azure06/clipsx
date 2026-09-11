@@ -193,6 +193,14 @@ fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
     let manifest = manifest::ExtensionManifest::parse(&files["clipsx-extension.toml"])?;
     let archive = fs::read(path)?;
     let permissions = serde_json::to_vec(&manifest.permissions)?;
+    let mut portable_settings = manifest
+        .settings
+        .iter()
+        .filter(|setting| setting.portable)
+        .map(|setting| json!({ "settingId": setting.id, "valueKind": setting.kind }))
+        .collect::<Vec<_>>();
+    portable_settings
+        .sort_by(|left, right| left["settingId"].as_str().cmp(&right["settingId"].as_str()));
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -206,6 +214,7 @@ fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
             "archiveSizeBytes": archive.len(),
             "permissionFingerprint": hex_digest(&permissions),
             "permissionReport": manifest.permissions,
+            "portableSettings": portable_settings,
         }))?
     );
     Ok(())

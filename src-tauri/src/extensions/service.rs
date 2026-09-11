@@ -3902,6 +3902,7 @@ fn registry_from_summary(value: &ExtensionSummary) -> RegistryPackage {
         documentation_url: None,
         icon_assets: None,
         permission_fingerprint: Some(value.permission_fingerprint.clone()),
+        portable_settings: Vec::new(),
     }
 }
 fn payload_bytes(value: &CapturedRepresentation) -> usize {
