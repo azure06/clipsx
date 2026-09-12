@@ -38,6 +38,18 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](docs/RELEASE.md) covers distributable-build
 requirements.
 
+To run a release-mode development binary against production services, copy
+`.env.production.example` to the ignored `.env.production.local`, populate only
+the public Supabase URL/publishable key and reviewed website origin, then run:
+
+```bash
+npm run tauri:dev:production
+```
+
+This command rejects loopback origins and Supabase secret/service-role keys. It
+does not change `.env.local`; normal development and tests continue to use the
+local environment.
+
 ## Features
 
 ClipsX includes, but is not limited to:
@@ -59,10 +71,10 @@ ClipsX includes, but is not limited to:
 ClipsX is intended for the following desktop platforms. Native validation,
 packaging, and signing are still in progress.
 
-| Platform | Status |
-| :------- | :----- |
-| Windows  | Targeted for the first release |
-| macOS    | Targeted for the first release |
+| Platform | Status                             |
+| :------- | :--------------------------------- |
+| Windows  | Targeted for the first release     |
+| macOS    | Targeted for the first release     |
 | Linux    | X11 targeted for the first release |
 
 See the [roadmap](docs/ROADMAP.md) for the current certification and packaging

@@ -71,6 +71,13 @@ the registry starts signing with the replacement key.
 Secrets belong in CI or the platform signing environment. Never commit them,
 print them in logs, or store them in application SQLite.
 
+For a production-connected local smoke test, copy `.env.production.example` to
+the ignored `.env.production.local` and run `npm run tauri:dev:production`. The
+command validates non-loopback HTTPS origins, rejects secret/service-role keys,
+generates the matching CSP, runs Vite in production mode so OAuth uses the hosted
+PKCE bridge, and starts the Rust host in release mode. This is not a signed or
+certified distributable build and must never be used for destructive test data.
+
 ## Automated preflight
 
 Run from a clean checkout of the release revision:
