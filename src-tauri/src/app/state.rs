@@ -18,6 +18,7 @@ pub struct HostState {
     pub tray_settings_item: MenuItem<tauri::Wry>,
     pub tray_quit_item: MenuItem<tauri::Wry>,
     pub paste_target: Mutex<Option<crate::output::paste::FocusTarget>>,
+    pub activation: super::host::ActivationCoordinator,
     pub window_behavior: Arc<super::window_behavior::WindowBehaviorState>,
     pub global_shortcut: super::global_shortcut::GlobalShortcutState,
 }

@@ -2995,6 +2995,7 @@ pub(crate) fn run() {
                 tray_settings_item: settings_item,
                 tray_quit_item: quit_item,
                 paste_target: std::sync::Mutex::new(None),
+                activation: Default::default(),
                 window_behavior: std::sync::Arc::new(Default::default()),
                 global_shortcut: Default::default(),
             });
