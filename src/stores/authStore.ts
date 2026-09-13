@@ -11,12 +11,7 @@ import {
 } from '../shared/auth/supabaseAuth'
 
 export type AuthStatus =
-  | 'unconfigured'
-  | 'loading'
-  | 'signed_out'
-  | 'signing_in'
-  | 'signed_in'
-  | 'error'
+  'unconfigured' | 'loading' | 'signed_out' | 'signing_in' | 'signed_in' | 'error'
 
 type AuthState = {
   status: AuthStatus

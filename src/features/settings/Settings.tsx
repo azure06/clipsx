@@ -45,14 +45,7 @@ import { SettingsNavigation, type SettingsNavigationItem } from './components/Se
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
 export type SettingsTab =
-  | 'general'
-  | 'clipboard'
-  | 'keyboard'
-  | 'storage'
-  | 'privacy'
-  | 'sync'
-  | 'account'
-  | 'advanced'
+  'general' | 'clipboard' | 'keyboard' | 'storage' | 'privacy' | 'sync' | 'account' | 'advanced'
 
 type SettingsProps = {
   initialTab?: SettingsTab

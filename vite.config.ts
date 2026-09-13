@@ -15,18 +15,18 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   build: {
     target: 'esnext',
-    minify: 'esbuild',
     sourcemap: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          tauri: ['@tauri-apps/api'],
+        manualChunks(id) {
+          if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/'))
+            return 'react'
+          if (id.includes('/node_modules/@tauri-apps/api/')) return 'tauri'
         },
       },
     },
