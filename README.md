@@ -38,7 +38,7 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](docs/RELEASE.md) covers distributable-build
 requirements.
 
-To run a release-mode development binary against production services, copy
+To run a development binary against production services, copy
 `.env.production.example` to the ignored `.env.production.local`, populate only
 the public Supabase URL/publishable key and reviewed website origin, then run:
 
@@ -47,8 +47,12 @@ npm run tauri:dev:production
 ```
 
 This command rejects loopback origins and Supabase secret/service-role keys. It
-does not change `.env.local`; normal development and tests continue to use the
-local environment.
+still uses Vite's development server. To build a release-mode executable with
+the production frontend embedded and no local web server, run
+`npm run tauri:build:production:smoke`. The executable is written to
+`src-tauri/target/release/clipsx.exe`. Use `npm run tauri:build:production` only
+when installer bundles are also required. None of these commands changes
+`.env.local`; normal development and tests continue to use the local environment.
 
 ## Features
 
