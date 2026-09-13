@@ -114,6 +114,6 @@ separately from the host and its canonical clipboard data.
 
 ## License
 
-ClipsX is preparing for an open-source release, but the final license has not
-yet been selected. Until one is added, this repository is not licensed for
-redistribution or reuse. See [LICENSE](LICENSE) for the current notice.
+ClipsX is licensed under the [Apache License 2.0](LICENSE). The license covers
+the desktop repository; the hosted website and third-party packages retain
+their own terms.

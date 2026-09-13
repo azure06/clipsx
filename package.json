@@ -1,7 +1,8 @@
 {
   "name": "clipsx",
   "version": "0.1.0",
-  "description": "AI-powered clipboard manager built with Tauri",
+  "description": "Free, programmable desktop clipboard built with Tauri",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +21,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "type-check": "tsc --noEmit",
+    "license:check": "node scripts/check-js-licenses.mjs && cargo deny check licenses bans sources --manifest-path src-tauri/Cargo.toml",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",

@@ -30,15 +30,25 @@ behavior belongs in Section 2.
 - [ ] Rework the website, pricing, billing, download, FAQ, privacy, and terms
       around an explicitly defined Free-default product. Do not advertise unfinished
       platforms or capabilities; deploy and smoke-test the revised site.
+  - [x] Implement the Free-first product architecture, guarded release manifest,
+        user/developer/docs/extensions paths, dormant checkout, and bilingual copy.
+  - [ ] Complete legal review and operator details, publish certified artifact
+        URLs, deploy the website, and record production smoke-test evidence.
 
 - [ ] Add verified account deletion through a JWT-protected backend operation,
       using the existing database account-closure support and explicitly handling
       billing, organization ownership, and shared vault data. Replace the currently
       disabled website action and cover the complete offboarding transaction.
+  - [x] Add recent-session enforcement, typed confirmation, blocker preflight,
+        subscription cancellation handoff, idempotent database closure, and UI states.
+  - [ ] Certify the flow against hosted Auth and live-mode Stripe webhook projection.
 - [ ] Select and review the release license strategy for the desktop app,
       website, and first-party extensions; add the applicable `LICENSE`, package
       metadata, third-party notices, and automated license-policy enforcement before
       publishing artifacts.
+  - [x] Select Apache-2.0, add desktop and first-party extension licenses and
+        metadata, document third-party notices, and configure JS/Rust policy gates.
+  - [ ] Run and retain the complete release-revision license evidence.
 
 ### Extensions and registry
 

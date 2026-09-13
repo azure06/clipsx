@@ -1,7 +1,8 @@
 [package]
 name = "clipsx"
 version = "0.1.0"
-description = "AI-powered clipboard manager"
+description = "Free, programmable desktop clipboard"
+license = "Apache-2.0"
 authors = ["gabriele.sato"]
 edition = "2021"
 default-run = "clipsx"
