@@ -38,9 +38,9 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](docs/RELEASE.md) covers distributable-build
 requirements.
 
-To run a development binary against production services, copy
-`.env.production.example` to the ignored `.env.production.local`, populate only
-the public Supabase URL/publishable key and reviewed website origin, then run:
+To run a development binary against production services, populate the ignored
+`.env` with the public Supabase URL/publishable key and reviewed website origin,
+then run:
 
 ```bash
 npm run tauri:dev:production

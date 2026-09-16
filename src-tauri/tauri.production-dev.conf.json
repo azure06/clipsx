@@ -1,5 +1,5 @@
 {
   "build": {
-    "beforeDevCommand": "npm run dev -- --mode production"
+    "beforeDevCommand": "npm run dev:production"
   }
 }

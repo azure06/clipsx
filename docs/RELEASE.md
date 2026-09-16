@@ -71,8 +71,7 @@ the registry starts signing with the replacement key.
 Secrets belong in CI or the platform signing environment. Never commit them,
 print them in logs, or store them in application SQLite.
 
-For a production-connected local smoke test, copy `.env.production.example` to
-the ignored `.env.production.local` and run
+For a production-connected local smoke test, populate the ignored `.env` and run
 `npm run tauri:build:production:smoke`. The command validates non-loopback HTTPS
 origins, rejects secret/service-role keys, generates the matching CSP, builds
 Vite in production mode so OAuth uses the hosted PKCE bridge, and creates the
