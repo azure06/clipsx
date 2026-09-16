@@ -43,7 +43,6 @@ export const validateProductionEnvironment = environment => {
   const supabaseUrl = httpsOrigin(environment, 'VITE_SUPABASE_URL')
   const websiteOrigin = httpsOrigin(environment, 'VITE_NEXT_PUBLIC_SITE_URL')
   const publishableKey = required(environment, 'VITE_SUPABASE_PUBLISHABLE_KEY')
-  const provider = required(environment, 'VITE_SUPABASE_AUTH_PROVIDER')
 
   if (publishableKey.startsWith('sb_secret_') || legacyJwtRole(publishableKey) === 'service_role') {
     throw new Error(
@@ -55,11 +54,5 @@ export const validateProductionEnvironment = environment => {
       'VITE_SUPABASE_PUBLISHABLE_KEY is not a recognized publishable or legacy anon key.'
     )
   }
-  if (provider !== 'google') {
-    throw new Error(
-      'VITE_SUPABASE_AUTH_PROVIDER must be google for the current production release.'
-    )
-  }
-
-  return { supabaseUrl, websiteOrigin, provider }
+  return { supabaseUrl, websiteOrigin }
 }

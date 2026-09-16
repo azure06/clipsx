@@ -8,6 +8,7 @@ import {
   restoreSupabaseSession,
   signOutSupabase,
   startSupabaseLogin,
+  type DesktopAuthProvider,
 } from '../shared/auth/supabaseAuth'
 
 export type AuthStatus =
@@ -18,14 +19,21 @@ type AuthState = {
   email: string | null
   userId: string | null
   error: string | null
+  signingInProvider: DesktopAuthProvider | null
   initialize: () => Promise<void>
-  signIn: () => Promise<void>
+  signIn: (provider: DesktopAuthProvider) => Promise<void>
   completeCallback: (url: string) => Promise<boolean>
   signOut: () => Promise<void>
   resetLocalSignIn: () => Promise<void>
 }
 
-const signedOutState = { status: 'signed_out' as const, email: null, userId: null, error: null }
+const signedOutState = {
+  status: 'signed_out' as const,
+  email: null,
+  userId: null,
+  error: null,
+  signingInProvider: null,
+}
 const genericError = 'Account sign-in could not be completed. Please try again.'
 const authErrorMessage = (error: unknown) => {
   if (!import.meta.env.DEV) return genericError
@@ -43,10 +51,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   email: null,
   userId: null,
   error: null,
+  signingInProvider: null,
 
   initialize: async () => {
     if (!isSupabaseConfigured()) {
-      set({ status: 'unconfigured', email: null, userId: null, error: null })
+      set({
+        status: 'unconfigured',
+        email: null,
+        userId: null,
+        error: null,
+        signingInProvider: null,
+      })
       return
     }
 
@@ -60,6 +75,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               email: session.user.email ?? session.user.id,
               userId: session.user.id,
               error: null,
+              signingInProvider: null,
             }
           : signedOutState
       )
@@ -68,12 +84,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signIn: async () => {
+  signIn: async provider => {
     if (!isSupabaseConfigured() || get().status === 'signing_in') return
 
-    set({ status: 'signing_in', error: null })
+    set({ status: 'signing_in', error: null, signingInProvider: provider })
     try {
-      await startSupabaseLogin()
+      await startSupabaseLogin(provider)
     } catch (error) {
       set({ ...signedOutState, status: 'error', error: authErrorMessage(error) })
     }
@@ -90,6 +106,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         email: session.user.email ?? session.user.id,
         userId: session.user.id,
         error: null,
+        signingInProvider: null,
       })
       return true
     } catch (error) {
@@ -109,7 +126,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await signOutSupabase()
       set(signedOutState)
     } catch (error) {
-      set({ status: 'error', error: authErrorMessage(error) })
+      set({ status: 'error', error: authErrorMessage(error), signingInProvider: null })
     }
   },
 

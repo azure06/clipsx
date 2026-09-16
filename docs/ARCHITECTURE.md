@@ -247,7 +247,9 @@ survive package removal unless the user explicitly deletes them. Credentials
 and grants are removed by default. The remote contract uses an explicit versioned allowlist. Extension declarations default to `portable: false`; only reviewed signed-package boolean/number declarations present in registry schema v4 can sync. After a signed registry publication is merged, the registry dispatches its exact commit and index digest to `clipsx-web`; that repository independently verifies the signature and digest, selects each package's latest stable unrevoked release, and transactionally replaces the private Supabase approval catalog. The signed registry is the source of truth, while Supabase is an enforcement projection used by sync RPCs. Clips, managed files, local endpoints/models, credentials, grants, caches, indexes, jobs, and diagnostics remain local.
 
 Account authentication remains owned by the Supabase client, including PKCE,
-session serialization, refresh, and local sign-out. The host exposes only an
+session serialization, refresh, and local sign-out. The desktop Account surface
+lets the user choose Google or GitHub for each sign-in attempt; provider choice is
+neither build configuration nor persisted preference. The host exposes only an
 allowlisted opaque key/value storage adapter. On Windows, values are stored in
 one versioned map encrypted and integrity-protected with current-user DPAPI
 under the private local application-data directory; macOS and Linux use their native

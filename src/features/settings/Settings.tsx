@@ -41,6 +41,7 @@ import {
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 import { ConfigurationSync } from './components/ConfigurationSync'
+import { AccountSignInOptions } from './components/AccountSignInOptions'
 import { SettingsNavigation, type SettingsNavigationItem } from './components/SettingsNavigation'
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
@@ -187,6 +188,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const authEmail = useAuthStore(state => state.email)
   const authUserId = useAuthStore(state => state.userId)
   const authError = useAuthStore(state => state.error)
+  const signingInProvider = useAuthStore(state => state.signingInProvider)
   const signIn = useAuthStore(state => state.signIn)
   const signOut = useAuthStore(state => state.signOut)
   const resetLocalSignIn = useAuthStore(state => state.resetLocalSignIn)
@@ -858,7 +860,11 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                           {import.meta.env.DEV ? authError : t('errors.genericDescription')}
                         </p>
                       )}
-                      <Button onClick={() => void signIn()}>{t('settings.signIn')}</Button>
+                      <AccountSignInOptions
+                        status={authStatus}
+                        signingInProvider={signingInProvider}
+                        onSignIn={provider => void signIn(provider)}
+                      />
                       {authStatus === 'error' && (
                         <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
                           <p className="text-xs text-gray-600 dark:text-gray-300">
@@ -883,9 +889,11 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   )}
 
                   {authStatus === 'signing_in' && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <Loader2 className="h-4 w-4 animate-spin" /> {t('settings.continueSignIn')}
-                    </div>
+                    <AccountSignInOptions
+                      status={authStatus}
+                      signingInProvider={signingInProvider}
+                      onSignIn={provider => void signIn(provider)}
+                    />
                   )}
                 </div>
 

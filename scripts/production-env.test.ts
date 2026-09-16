@@ -5,7 +5,6 @@ import { validateProductionEnvironment } from './production-env.mjs'
 const valid = {
   VITE_SUPABASE_URL: 'https://project-ref.supabase.co',
   VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
-  VITE_SUPABASE_AUTH_PROVIDER: 'google',
   VITE_NEXT_PUBLIC_SITE_URL: 'https://clipsx.app',
 }
 
@@ -14,7 +13,6 @@ describe('production environment validation', () => {
     expect(validateProductionEnvironment(valid)).toEqual({
       supabaseUrl: 'https://project-ref.supabase.co',
       websiteOrigin: 'https://clipsx.app',
-      provider: 'google',
     })
   })
 
@@ -34,11 +32,5 @@ describe('production environment validation', () => {
         VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_never_embed_this',
       })
     ).toThrow(/must never contain/)
-  })
-
-  it('requires the reviewed production provider', () => {
-    expect(() =>
-      validateProductionEnvironment({ ...valid, VITE_SUPABASE_AUTH_PROVIDER: 'github' })
-    ).toThrow(/must be google/)
   })
 })

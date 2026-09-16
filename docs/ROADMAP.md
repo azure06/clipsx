@@ -21,7 +21,7 @@ behavior belongs in Section 2.
   - [x] Add and deploy a forward migration preventing public Data API roles from
         invoking the platform-installed privileged RLS event-trigger function.
   - [ ] Enable Supabase Auth leaked-password protection and verify production
-        Google OAuth, site URL, and exact browser/desktop redirect allowlists.
+        Google and GitHub OAuth, site URL, and exact browser/desktop redirect allowlists.
   - [ ] Deploy and smoke-test the existing hosted desktop PKCE callback bridge;
         record the web deployment and database revision in `RELEASE.md`.
 
@@ -127,8 +127,8 @@ rather than being converted into product features.
 
 - [ ] Audit hosted Supabase Auth, redirect URLs, deployed migrations, grants, and
       security/performance advisors against the `clipsx-web` source of truth.
-- [ ] Certify the Google OAuth, hosted PKCE callback, `clipsx://` deep-link, and
-      desktop session round trip.
+- [ ] Certify Google and GitHub OAuth, the hosted PKCE callback, `clipsx://`
+      deep-link, and desktop session round trips.
 - [ ] Certify two-device restore across advertised platforms, including
       concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
       revocation, unavailable packages, quarantine recovery, and remote reset.
