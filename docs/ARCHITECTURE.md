@@ -301,15 +301,16 @@ moving keyboard focus into the WebView must not make the next toggle reopen it.
 The tray menu **Open**, second-instance launches, and deep links use the same open
 path and never hide the window. Windows verifies that foreground activation
 succeeded after raising the restored window in normal Z-order; refusal by the
-operating system is reported rather than silently ignored. Native event callbacks
-only enqueue activation: one host-owned coordinator coalesces overlapping requests
-and performs restore, foreground confirmation, and embedded-webview focus on a
-dedicated worker so the window message loop is never synchronously re-entered.
-Foreground confirmation is bounded, while fixed stage and timing diagnostics plus
-a watchdog identify a stalled activation without recording window or clipboard
-content. The host gives keyboard focus to the embedded webview only after native
-activation is confirmed; foregrounding only the native window is not sufficient
-for WebView keyboard input.
+operating system is reported rather than silently ignored. Native event callbacks,
+including the global-shortcut handler, only enqueue work and return: one host-owned
+coordinator coalesces overlapping activation requests and performs restore,
+foreground confirmation, and embedded-webview focus on a dedicated worker so the
+window message loop is never synchronously re-entered. Foreground confirmation is
+bounded. Fixed stage and timing diagnostics plus a diagnostic-only watchdog expose
+a stalled activation without releasing its single-flight guard or starting a
+competing worker, and without recording window or clipboard content. The host gives
+keyboard focus to the embedded webview only after native activation is confirmed;
+foregrounding only the native window is not sufficient for WebView keyboard input.
 
 Successful explicit activation emits a host event. The Clipboard History page
 responds by focusing Search, while Settings and Extensions preserve their

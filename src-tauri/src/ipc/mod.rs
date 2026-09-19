@@ -2829,7 +2829,13 @@ pub(crate) fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        let _ = host::toggle_main_window(app);
+                        crate::diagnostic!("[SHORTCUT] Global shortcut pressed");
+                        let app = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if host::toggle_main_window(&app).is_err() {
+                                crate::diagnostic!("[SHORTCUT] Failed to toggle main window");
+                            }
+                        });
                     }
                 })
                 .build(),

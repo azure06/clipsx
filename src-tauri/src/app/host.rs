@@ -18,6 +18,7 @@ const ACTIVATION_WATCHDOG: Duration = Duration::from_secs(5);
 #[derive(Default)]
 struct ActivationQueue {
     running: bool,
+    pending: bool,
     pending_focus_search: bool,
 }
 
@@ -52,23 +53,24 @@ impl ActivationCoordinator {
             .lock()
             .map_err(|_| "window activation coordinator is unavailable".to_owned())?;
         if queue.running {
+            queue.pending = true;
             queue.pending_focus_search |= focus_search;
             return Ok(ActivationSchedule::Coalesced);
         }
         queue.running = true;
-        Ok(ActivationSchedule::Start {
-            id: self.0.next_id.fetch_add(1, Ordering::Relaxed),
-            focus_search,
-        })
+        let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
+        Ok(ActivationSchedule::Start { id, focus_search })
     }
 
     fn complete(&self) -> Option<(u64, bool)> {
         let Ok(mut queue) = self.0.queue.lock() else {
             return None;
         };
-        if queue.pending_focus_search {
-            queue.pending_focus_search = false;
-            Some((self.0.next_id.fetch_add(1, Ordering::Relaxed), true))
+        if queue.pending {
+            queue.pending = false;
+            let focus_search = std::mem::take(&mut queue.pending_focus_search);
+            let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
+            Some((id, focus_search))
         } else {
             queue.running = false;
             None
@@ -358,5 +360,17 @@ mod tests {
             coordinator.request(false).unwrap(),
             ActivationSchedule::Start { id: 2, .. }
         ));
+    }
+
+    #[test]
+    fn activation_coordinator_replays_a_plain_coalesced_request() {
+        let coordinator = ActivationCoordinator::default();
+        let _ = coordinator.request(false).unwrap();
+        assert_eq!(
+            coordinator.request(false).unwrap(),
+            ActivationSchedule::Coalesced
+        );
+        assert_eq!(coordinator.complete(), Some((2, false)));
+        assert_eq!(coordinator.complete(), None);
     }
 }
