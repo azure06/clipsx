@@ -15,41 +15,19 @@ behavior belongs in Section 2.
 ### Production foundation (`clipsx-web`)
 
 - [ ] Complete the Supabase and hosted-auth production foundation.
-  - [x] Validate the fresh migration baseline against an isolated database and
-        deploy it to the empty production `clipsx` project; verify migration history,
-        RLS/grants, account closure, approval-catalog isolation, and hosted advisors.
-  - [x] Add and deploy a forward migration preventing public Data API roles from
-        invoking the platform-installed privileged RLS event-trigger function.
-  - [ ] Enable Supabase Auth leaked-password protection and verify production
-        Google and GitHub OAuth, site URL, and exact browser/desktop redirect allowlists.
+  - [ ] Enable Supabase Auth leaked-password protection and verify the production
+        site URL and exact browser/desktop redirect allowlists.
   - [ ] Deploy and smoke-test the existing hosted desktop PKCE callback bridge;
         record the web deployment and database revision in `RELEASE.md`.
 
 ### Website, account, and licensing (`clipsx-web`)
 
-- [ ] Rework the website, pricing, billing, download, FAQ, privacy, and terms
-      around an explicitly defined Free-default product. Do not advertise unfinished
-      platforms or capabilities; deploy and smoke-test the revised site.
-  - [x] Implement the Free-first product architecture, guarded release manifest,
-        user/developer/docs/extensions paths, dormant checkout, and bilingual copy.
-  - [ ] Complete legal review and operator details, publish certified artifact
-        URLs, deploy the website, and record production smoke-test evidence.
-
-- [ ] Add verified account deletion through a JWT-protected backend operation,
-      using the existing database account-closure support and explicitly handling
-      billing, organization ownership, and shared vault data. Replace the currently
-      disabled website action and cover the complete offboarding transaction.
-  - [x] Add recent-session enforcement, typed confirmation, blocker preflight,
-        subscription cancellation handoff, idempotent database closure, and UI states.
-  - [ ] Certify the flow against hosted Auth and live-mode Stripe webhook projection.
-- [ ] Select and review the release license strategy for the desktop app,
-      website, and first-party extensions; add the applicable `LICENSE`, package
-      metadata, third-party notices, and automated license-policy enforcement before
-      publishing artifacts.
-  - [x] Select Apache-2.0, add desktop and first-party extension licenses and
-        metadata, document third-party notices, and configure JS/Rust policy gates.
-  - [ ] Run and retain the complete release-revision license evidence.
-
+- [ ] Complete website legal review and operator details, publish certified
+      artifact URLs, deploy the Free-default website, and record production
+      smoke-test evidence without advertising unfinished platforms or capabilities.
+- [ ] Certify verified account deletion against hosted Auth and live-mode Stripe
+      webhook projection, including billing, organization ownership, and shared
+      vault blockers.
 ### Extensions and registry
 
 - [ ] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from the prepared
@@ -62,10 +40,8 @@ behavior belongs in Section 2.
 
 ### Release engineering
 
-- [ ] Complete the existing release supply-chain gates by adding dependency
-      license-policy enforcement, release-artifact content inspection, and
-      enforceable per-platform bundle-size budgets. Retain the implemented Rust
-      dependency audit, CycloneDX SBOM, secret scan, and artifact hash inventory.
+- [ ] Add release-artifact content inspection and enforceable per-platform
+      bundle-size budgets to the release supply-chain gates.
 - [ ] Add reproducibility checks and explicit expected-package assertions to the
       existing same-revision Windows x64, Linux x64 `.deb`/AppImage, and macOS
       arm64/x64 release matrix.
@@ -87,17 +63,17 @@ behavior belongs in Section 2.
 
 ### Release execution order
 
-1. Validate and deploy the Supabase production baseline and hosted PKCE bridge.
-2. Add the safe production-config launch workflow for the desktop app.
-3. Define the Free-default product and license strategy, then revise and redeploy
-   the complete website, including verified account deletion.
-4. Publish the prepared extensions and finish registry/extensions-site
+1. Finish hosted Auth production settings and deploy and certify the hosted PKCE
+   bridge.
+2. Complete legal/operator details, certified downloads, website deployment,
+   and account-deletion certification.
+3. Publish the prepared extensions and finish registry/extensions-site
    production readiness.
-5. Close release-infrastructure and signing gaps and freeze the app candidate.
-6. Run and record every applicable Section 2 test against that exact revision.
-7. Publish signed Windows x64, notarized macOS arm64/x64, and Linux x64
+4. Close release-infrastructure and signing gaps and freeze the app candidate.
+5. Run and record every applicable Section 2 test against that exact revision.
+6. Publish signed Windows x64, notarized macOS arm64/x64, and Linux x64
    `.deb`/AppImage artifacts; there is no iOS target in the first desktop release.
-8. Begin post-release brush-up and feedback-driven iteration without weakening
+7. Begin post-release brush-up and feedback-driven iteration without weakening
    the recorded release guarantees.
 
 ## 2. QA and release certification
