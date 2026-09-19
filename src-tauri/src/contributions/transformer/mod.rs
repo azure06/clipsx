@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_OUTPUT_BYTES: usize = 10_485_760;
+pub(crate) const MAX_OUTPUT_BYTES: usize = 14 * 1024 * 1024;
 const MAX_RESULTS: usize = 64;
 const MAX_CACHE_BYTES: usize = 67_108_864;
 const RESULT_TTL: Duration = Duration::from_secs(15 * 60);
@@ -107,7 +107,7 @@ impl TransformService {
     ) -> Result<TransformPreview> {
         let total: usize = outputs.iter().map(payload_bytes).sum();
         if outputs.is_empty() || total > MAX_OUTPUT_BYTES {
-            bail!("transform output exceeds 10 MiB")
+            bail!("transform output exceeds 14 MiB")
         }
         let result_id = new_id();
         let preview = TransformPreview {

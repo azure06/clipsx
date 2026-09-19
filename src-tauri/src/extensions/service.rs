@@ -17,6 +17,7 @@ use sqlx::Row;
 
 use crate::{
     contracts::{CompactPresentation, LeadingVisual, RenderModel},
+    contributions::transformer::MAX_OUTPUT_BYTES,
     foundation::AppRoots,
     history::{new_id, now_ms, CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
@@ -3067,7 +3068,7 @@ impl ExtensionService {
                     .collect::<Result<Vec<_>>>()?;
                 if outputs.is_empty()
                     || outputs.len() > 8
-                    || outputs.iter().map(payload_bytes).sum::<usize>() > 10 * 1024 * 1024
+                    || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
                 {
                     bail!("extension transformer output exceeds host limits");
                 }
@@ -3661,7 +3662,7 @@ fn extension_outputs(
         .collect::<Result<Vec<_>>>()?;
     if outputs.is_empty()
         || outputs.len() > 8
-        || outputs.iter().map(payload_bytes).sum::<usize>() > 10 * 1024 * 1024
+        || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
     {
         bail!("extension output exceeds host limits");
     }

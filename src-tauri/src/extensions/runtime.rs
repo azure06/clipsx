@@ -34,6 +34,7 @@ const DETECT_RENDER_FUEL: u64 = 10_000_000;
 const TRANSFORM_FUEL: u64 = 50_000_000;
 const LOCAL_FUEL: u64 = u64::MAX;
 const MIB: usize = 1024 * 1024;
+const HOSTCALL_TRANSFER_LIMIT: usize = 16 * MIB;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -543,7 +544,10 @@ fn new_store(
     );
     store.limiter(|state| &mut state.limits);
     store.set_fuel(fuel).map_err(wasmtime_error)?;
-    store.set_hostcall_fuel(1024 * 1024);
+    // Guest output is lifted through one hostcall. Keep this above the 14 MiB
+    // output boundary so expanding transforms such as Base64 can consume the
+    // full 10 MiB input allowance without exhausting canonical-ABI fuel.
+    store.set_hostcall_fuel(HOSTCALL_TRANSFER_LIMIT);
     store.set_epoch_deadline(1);
     // Yield every epoch so Tokio can enforce the invocation's outer timeout.
     // Trapping here would expire while an async broker call is legitimately
@@ -769,5 +773,13 @@ mod tests {
             runtime_error_code(&anyhow!("extension returned Failed: nope")),
             "guest_error"
         );
+    }
+
+    #[test]
+    fn hostcall_transfer_limit_covers_expanding_transform_output() {
+        let maximum_input = 10 * MIB;
+        let maximum_base64_output = maximum_input.div_ceil(3) * 4;
+        assert!(maximum_base64_output <= 14 * MIB);
+        assert!(14 * MIB < HOSTCALL_TRANSFER_LIMIT);
     }
 }
