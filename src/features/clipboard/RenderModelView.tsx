@@ -69,10 +69,12 @@ const rgbToHsl = (r: number, g: number, b: number): { h: number; s: number; l: n
   if (max === min) return { h: 0, s: 0, l: Math.round(l * 100) }
   const d = max - min
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-  let h = 0
-  if (max === rn) h = ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
-  else if (max === gn) h = ((bn - rn) / d + 2) / 6
-  else h = ((rn - gn) / d + 4) / 6
+  const h =
+    max === rn
+      ? ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
+      : max === gn
+        ? ((bn - rn) / d + 2) / 6
+        : ((rn - gn) / d + 4) / 6
   return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) }
 }
 
@@ -1070,7 +1072,7 @@ const JsonView = ({ value }: { value: unknown }) => {
   const keyCount = Array.isArray(value)
     ? (value as unknown[]).length
     : value !== null && typeof value === 'object'
-      ? Object.keys(value as Record<string, unknown>).length
+      ? Object.keys(value).length
       : null
   const label = Array.isArray(value) ? 'items' : 'keys'
   return (

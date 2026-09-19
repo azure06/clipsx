@@ -763,7 +763,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                       <Button
                         size="sm"
                         onClick={e => {
-                          const btn = e.currentTarget as HTMLButtonElement
+                          const btn = e.currentTarget
                           const input = btn.previousElementSibling as HTMLInputElement
                           const appName = input?.value.trim()
                           if (appName && !settings.excluded_apps.includes(appName)) {

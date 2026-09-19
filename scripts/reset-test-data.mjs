@@ -1,4 +1,3 @@
-/* global console, process */
 import { lstat, readdir, rm } from 'node:fs/promises'
 import { resolve, parse, relative, sep } from 'node:path'
 

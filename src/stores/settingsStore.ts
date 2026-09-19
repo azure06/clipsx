@@ -113,7 +113,7 @@ const changedValues = (previous: object, next: object): Record<string, unknown> 
     Object.entries(next as Record<string, unknown>).flatMap(([key, value]) => {
       if (JSON.stringify(before[key]) === JSON.stringify(value)) return []
       if (value && typeof value === 'object' && !Array.isArray(value) && before[key]) {
-        return [[key, changedValues(before[key] as object, value)]]
+        return [[key, changedValues(before[key], value)]]
       }
       return [[key, value]]
     })

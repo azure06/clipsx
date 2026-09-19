@@ -25,7 +25,6 @@ export const ClipboardListView = memo(function ClipboardListView({
   const parentRef = useRef<HTMLDivElement>(null)
   // TanStack Virtual intentionally owns mutable measurement state; the React
   // compiler must not memoize the hook's returned functions.
-  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: clips.length,
     getScrollElement: () => parentRef.current,
