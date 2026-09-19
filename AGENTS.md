@@ -1,51 +1,38 @@
 # AGENTS.md
 
-## Architecture
+ClipsX is a Tauri desktop clipboard app. The React/TypeScript frontend lives in
+`src/`; the Rust backend lives in `src-tauri/`.
 
-ClipsX is being redesigned as a local-first programmable clipboard:
+## Project docs
 
-```text
-Capture -> Understand -> Render / Transform -> Copy or Paste
-```
+Read the docs relevant to the task:
 
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the source of truth for stable
-system design, domain boundaries, and architecture invariants.
-[`docs/ROADMAP.md`](docs/ROADMAP.md) defines milestone scope, sequencing, and
-acceptance criteria. Read the relevant sections before architectural or
-persistence changes; documentation takes precedence over assumptions inferred
-from the in-progress source tree.
+- [Architecture](docs/ARCHITECTURE.md): boundaries and invariants.
+- [Roadmap](docs/ROADMAP.md): current and planned scope.
+- [Extension API](docs/EXTENSION_API_V2.md): extension contract.
+- [Semantic search](docs/SEMANTIC_SEARCH_ARCHITECTURE.md): meaning search and Recall.
+- [Release](docs/RELEASE.md): release and platform validation.
 
-* One capture has independent raw representations, additive semantic facets,
-  and rebuildable derived data. Do not reintroduce a single `ClipItem` content
-  type or sparse metadata model.
-* Store binary clipboard payloads in managed application files, with metadata
-  and relative paths in SQLite; do not add generic clipboard-payload BLOB or
-  JSON-metadata storage.
-* Renderer selection is UI policy, not persisted clip state.
-* Search indexes, embeddings, previews, OCR, and generation output are
-  rebuildable or versioned derived data, not canonical clip metadata.
-* Use the fresh domain-prefixed schema and documented reset flow. Do not add
-  v1 migrations, compatibility reads/writes, or dual schemas.
-
-## Clipboard Fidelity
-
-* Do not guess UTI, OLE, or other native clipboard types.
-* Reconstruct only formats explicitly supported by the platform adapter;
-  adapters regenerate platform wrappers when needed.
-* The architecture document's representation byte contract and supported-format
-  matrix are the capture and reconstruction source of truth, not legacy code.
-* Use `[RECONSTRUCT]`, not `[COPY]`, for shared reconstruction-helper logs.
+Update affected docs when behavior changes. Describe the intended system, not
+the history of the change.
 
 ## Workflow
 
-* Make minimal, focused changes and preserve local conventions.
-* Whenever a change affects the architecture, system design, domain
-  boundaries, persistence model, or architecture invariants, update
-  the relevant stable architecture document in the same change so it
-  remains the source of truth.
-* Add dependencies only when necessary and explain why.
-* Run the smallest relevant checks; common commands are `npm run type-check`,
-  `npm run lint`, `cargo fmt --all`, `cargo clippy --manifest-path
-  src-tauri/Cargo.toml`, and `cargo test --manifest-path src-tauri/Cargo.toml`.
-* Use conventional commit messages and do not add AI co-author trailers.
-* Never commit secrets, hardcode credentials, or log sensitive information.
+- Make minimal, focused changes and preserve local conventions.
+- Preserve unrelated work already in the working tree.
+- Add dependencies only when necessary and explain why.
+- Use conventional commit messages and do not add AI co-author trailers.
+- Never commit secrets, hardcode credentials, or log sensitive information.
+
+## Validation
+
+Run the checks relevant to the change:
+
+- TypeScript: `npm run type-check` and `npm run lint`.
+- Frontend tests: `npx vitest run <test-file>`.
+- Rust formatting: `cargo fmt --all --manifest-path src-tauri/Cargo.toml --check`.
+- Rust lint: `npm run lint:rust`.
+- Rust tests: `npm run test:rust -- <test-filter>`.
+
+Add or update tests for changed behavior when appropriate. Report what you
+checked and anything you could not verify.

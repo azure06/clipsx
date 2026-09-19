@@ -1,152 +1,104 @@
-# ClipsX production roadmap
+# ClipsX roadmap
 
-This roadmap contains only unfinished work for the first production release.
-Stable behavior and design decisions belong in [ARCHITECTURE.md](ARCHITECTURE.md);
-the executable certification matrix and recorded evidence belong in
-[RELEASE.md](RELEASE.md). Completed items are removed instead of retained as a
-historical checklist.
+ClipsX, `clipsx-web`, and the Extension API/registry infrastructure are feature
+complete for the first public release. Work that would improve the product but
+is not required to ship belongs under **After the first release**.
 
-## 1. Implementation remaining
+The detailed cross-platform test matrix remains in [RELEASE.md](RELEASE.md).
+This roadmap answers only three questions: what blocks the release, how the
+release is produced, and what waits until afterward.
 
-Only work that changes product code, backend behavior, build infrastructure, or
-release configuration belongs in this section. Testing an already implemented
-behavior belongs in Section 2.
+## Before the first release
 
-### Production foundation (`clipsx-web`)
+### 1. Publish the prepared extension updates
 
-- [ ] Complete the Supabase and hosted-auth production foundation.
-  - [ ] Enable Supabase Auth leaked-password protection and verify the production
-        site URL and exact browser/desktop redirect allowlists.
-  - [ ] Deploy and smoke-test the existing hosted desktop PKCE callback bridge;
-        record the web deployment and database revision in `RELEASE.md`.
+The extension repository, signed registry, validation workflows, signing flow,
+revocation process, and website approval-catalog sync are already implemented.
+They do not need another redesign.
 
-### Website, account, and licensing (`clipsx-web`)
+The remaining work is publication and one production smoke test:
 
-- [ ] Complete website legal review and operator details, publish certified
-      artifact URLs, deploy the Free-default website, and record production
-      smoke-test evidence without advertising unfinished platforms or capabilities.
-- [ ] Certify verified account deletion against hosted Auth and live-mode Stripe
-      webhook projection, including billing, organization ownership, and shared
-      vault blockers.
-### Extensions and registry
+- [ ] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from
+      `clipsx-extensions`.
+- [ ] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
+      registry**, and merge the generated publication PR.
+- [ ] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
+- [ ] In a production ClipsX build, refresh Discover and install, exercise,
+      disable, re-enable, and remove each package.
 
-- [ ] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from the prepared
-      `clipsx-extensions` sources, merge their reviewed signed schema-v4 entries
-      into `clipsx-registry`, and retain the successful production catalog and
-      Supabase approval-catalog readback.
-- [ ] Complete a production-readiness pass over the extensions site, immutable
-      package releases, registry signing environment, revocation/recovery process,
-      and web approval-catalog reconciliation.
+The live registry currently contains JWT Inspector 1.2.1 and Mermaid 1.0.0;
+that version difference is why this item is still open.
 
-### Release engineering
+### 2. Configure production desktop signing
 
-- [ ] Add release-artifact content inspection and enforceable per-platform
-      bundle-size budgets to the release supply-chain gates.
-- [ ] Add reproducibility checks and explicit expected-package assertions to the
-      existing same-revision Windows x64, Linux x64 `.deb`/AppImage, and macOS
-      arm64/x64 release matrix.
-- [ ] Configure Developer ID signing, hardened runtime, notarization, and
-      stapling for macOS arm64/x64 artifacts; replace the current ad-hoc signing
-      configuration.
-- [ ] Configure Authenticode signing for Windows installers and executables.
-- [ ] Document and automate the updater rollback/recovery path around the
-      existing signed updater-artifact and metadata generation.
-- [ ] Update website, download, and release messaging after certification so it
-      advertises only supported platforms and capabilities.
+The GitHub Actions release workflow already builds Windows x64, Linux x64,
+macOS arm64, and macOS x64 from one revision and creates signed Tauri updater
+artifacts. The remaining release-engineering work is platform trust signing:
 
-### Pre-certification product freeze
+- [ ] Configure Windows Authenticode credentials and sign the executable and
+      NSIS installer.
+- [ ] Configure the Apple Developer ID certificate and notarization credentials;
+      enable hardened runtime, notarize, and staple both macOS builds instead of
+      using the current ad-hoc signature.
+- [ ] Store and back up the Tauri updater private key securely. Keep the public
+      key already embedded in the app stable so future updates remain compatible.
+- [ ] Run a manual release candidate build and inspect the produced installers,
+      updater artifacts, `latest.json`, hashes, and release contents.
 
-- [ ] Complete release-blocking app polish, copy, recovery, and usability work,
-      then freeze the candidate revision before running Section 2. Later brush-up
-      continues post-release, but any release-affecting change requires the relevant
-      certification checks to be repeated.
+GitHub-hosted Windows, Linux, and macOS runners can build all platforms. A
+personal Mac is not required to produce the macOS artifacts, although testing
+the installed app on real Macs is still required. Apple signing still requires
+an Apple Developer account, Developer ID credentials, and notarization access.
 
-### Release execution order
+### 3. Certify the release candidate
 
-1. Finish hosted Auth production settings and deploy and certify the hosted PKCE
-   bridge.
-2. Complete legal/operator details, certified downloads, website deployment,
-   and account-deletion certification.
-3. Publish the prepared extensions and finish registry/extensions-site
-   production readiness.
-4. Close release-infrastructure and signing gaps and freeze the app candidate.
-5. Run and record every applicable Section 2 test against that exact revision.
-6. Publish signed Windows x64, notarized macOS arm64/x64, and Linux x64
-   `.deb`/AppImage artifacts; there is no iOS target in the first desktop release.
-7. Begin post-release brush-up and feedback-driven iteration without weakening
-   the recorded release guarantees.
+- [ ] Choose one candidate revision and let its automated CI and release
+      preflight pass.
+- [ ] Test the installed artifacts on Windows, macOS, and Linux/X11 using the
+      applicable checklist in [RELEASE.md](RELEASE.md). Record failures and fix
+      release blockers; rerun only the affected checks after a change.
+- [ ] Verify clean installation, clipboard capture/copy/paste, shortcuts and
+      tray behavior, OCR, search, extensions, OAuth/sync, native sharing,
+      uninstall, and update from a previous signed build.
+- [ ] Confirm there are no unresolved high-severity security findings or secrets
+      in the repository, logs, or distributable artifacts.
 
-## 2. QA and release certification
+There is no separate "pre-certification product freeze." The candidate revision
+and its draft artifacts are the boundary. If that revision changes, rebuild the
+draft and repeat the affected certification checks.
 
-This section contains verification specifications. Failures may create new
-implementation work, but passing checks are recorded in [RELEASE.md](RELEASE.md)
-rather than being converted into product features.
+### 4. Publish
 
-### Automated and review gates
+- [ ] Publish the certified draft GitHub Release with Windows, macOS, Linux, and
+      updater artifacts attached.
+- [ ] Update `clipsx-web` download URLs and final release documentation to point
+      to the published artifacts, then deploy and smoke-test the final site.
+- [ ] Verify a previously installed signed build discovers and installs the
+      published update.
 
-- [ ] Exercise every user-facing setting across validation, persistence,
-      restart, reset, applicable import/export, and recoverable failure paths.
-- [ ] Complete mutation-level cascade and invalidation coverage for clips, tags,
-      notes, OCR, search projections, artifacts, extension-derived data, and managed
-      files.
-- [ ] Audit production logs and built artifacts for sensitive content, secrets,
-      credentials, tokens, and unnecessary filesystem paths.
-- [ ] Run dependency, license, SBOM, secret-scanning, bundle-budget, and artifact
-      inspection gates against the release revision.
-- [ ] Complete the production security review with no unresolved high-severity
-      findings.
-- [ ] Run an LLM-assisted review of feature completeness, architecture,
-      concurrency/persistence boundaries, and the threat model; validate every
-      actionable finding against source or tests before accepting it.
+## How the automated release works
 
-### Hosted account and sync
+- Merging to `main` runs CI. It does **not** publish an application release.
+- A manual workflow run builds inspectable candidates but does not publish.
+- After the version in `src-tauri/tauri.conf.json` is set, pushing the matching
+  `v<version>` tag runs the release matrix and creates a **draft** GitHub Release.
+- Platform signing/notarization happens in those jobs once the required GitHub
+  secrets and Tauri configuration are present.
+- The draft is published only after the same artifacts pass installed-platform
+  testing. The website is finalized afterward so its URLs refer to real public
+  release assets.
 
-- [ ] Audit hosted Supabase Auth, redirect URLs, deployed migrations, grants, and
-      security/performance advisors against the `clipsx-web` source of truth.
-- [ ] Certify Google and GitHub OAuth, the hosted PKCE callback, `clipsx://`
-      deep-link, and desktop session round trips.
-- [ ] Certify two-device restore across advertised platforms, including
-      concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
-      revocation, unavailable packages, quarantine recovery, and remote reset.
-- [ ] Confirm that sync transfers only supported configuration and extension
-      intent—never clipboard content, secrets, device-local settings, permission
-      grants, or old consent.
+Do not rotate or lose the Tauri updater signing key after release. New releases
+must use the same key expected by installed clients unless a deliberate key
+rotation mechanism is shipped first.
 
-### Installed platforms
+## After the first release
 
-- [ ] Run the complete OCR lifecycle on Windows x64, macOS arm64/x64, and
-      Linux/X11 x64: success, empty output, failure, unsupported input, cancellation,
-      retry, deletion, language changes, FTS refresh, and semantic reindexing in
-      English and Japanese.
-- [ ] On macOS, verify Vision language selection and bounded execution in both
-      architectures. On Linux, verify Tesseract discovery, language/version
-      reporting, `.deb` dependencies, and actionable AppImage recovery.
-- [ ] Certify native sharing for text, URLs, files, images, documents,
-      cancellation, missing sources, and corrupt managed assets on every advertised
-      platform.
-- [ ] Certify English/Japanese keyboard and screen-reader behavior with NVDA,
-      VoiceOver, and Orca for Settings, Intelligence, Extensions, and recovery.
-- [ ] Verify Windows clean install, update, downgrade rejection, and uninstall;
-      macOS notarization/stapling; and Linux desktop integration, X11 claims,
-      dependencies, AppImage behavior, and updater support.
-- [ ] Run and record the complete installed-build matrix from one signed revision:
-      clipboard fidelity, focus/paste, tray and shortcuts, autostart, deep links,
-      OAuth/sync, extensions, OCR, search/Recall quality, accessibility, latency,
-      memory, disk, and recovery. Recall includes the versioned synthetic corpus,
-      exact-identifier recovery, citation support, cancellation, and clipboard
-      self-write checks.
-- [ ] Verify signed updater metadata and rollback/recovery behavior.
-- [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
-      is approved and enabled.
-
-The production release gate is one reviewed revision with signed artifacts, a
-signed extension catalog, deployed Auth/configuration sync, no unresolved
-high-severity security findings, and complete evidence in `RELEASE.md`.
-
-## Post-release candidates
-
-- [ ] Add bounded host-rendered tabs, code blocks, tables, key/value lists, and
-      comparison layouts to the extension render-model contract. Packages provide
-      structured data and approved primitives; the host owns interaction,
-      accessibility, theme, and styling. Keep isolated custom UI for genuinely
-      bespoke interactions until then.
+- Add release-artifact content inspection, enforceable bundle-size budgets,
+  stronger reproducibility checks, and automated updater rollback drills.
+- Add bounded host-rendered tabs, code blocks, tables, key/value lists, and
+  comparison layouts to the extension render-model contract.
+- Continue UI polish, copy improvements, performance work, additional platform
+  coverage, and feedback-driven features as normal versioned releases.
+- Add capabilities currently outside the first-release contract only after they
+  have explicit architecture, implementation, and certification scope.

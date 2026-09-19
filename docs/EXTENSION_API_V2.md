@@ -1,20 +1,40 @@
 # ClipsX Extension API v2
 
-This replaces the pre-release v2 draft. Packages without `contractRevision = 2`
-are rejected intentionally; there is no compatibility runtime.
+Extensions add detectors, views, conversions, and actions. Rust validates their
+input, permissions, and output. Registry approval does not make package code trusted.
+
+The **host** is ClipsX. The **guest** is extension code running in WebAssembly
+(WASM). The **broker** is the Rust service that checks permissions before
+performing an operation for a package.
+
+```mermaid
+flowchart LR
+    Source[Extension source] --> Release[Versioned GitHub archive]
+    Release --> Review[Reviewed metadata]
+    Review --> Catalog[Signed registry]
+    Catalog --> Validate[Host validation]
+    Release --> Validate
+    Validate --> Guest[Bounded WASM or isolated UI]
+    Guest --> Broker[Scoped Rust broker]
+    Broker --> Result[Preview, output, or declared effect]
+```
 
 ## Package and lifecycle
 
-A `.clipsx` ZIP contains `clipsx-extension.toml`, optional `component.wasm`, and
-bounded assets below `icons/` and `ui/`. A release is identified by
-`(packageId, version, archive checksum)`: package ID is stable identity, semantic
-version describes the release, and checksum pins its exact bytes.
+| Item                      | Contract                                                                    |
+| ------------------------- | --------------------------------------------------------------------------- |
+| Archive                   | `.clipsx` ZIP                                                               |
+| Required file             | `clipsx-extension.toml`                                                     |
+| Optional files            | `component.wasm`, `README.md`, `LICENSE`, bounded `icons/` and `ui/` assets |
+| API                       | `schemaVersion = 2`, `contractRevision = 2`, compatible `apiVersion`        |
+| Release identity          | `(packageId, version, archive SHA-256)`                                     |
+| Package ID                | Permanent `<publisher>.<package>`; lowercase ASCII kebab-case segments      |
+| Contribution / setting ID | Package-local kebab-case                                                    |
+| Host contribution ID      | `<package-id>/<contribution-id>`                                            |
+| Host facet ID             | `<package-id>.<facet-id>`                                                   |
 
-Published package IDs follow `<publisher>.<package>` with lowercase ASCII
-kebab-case segments and never change after first publication. Contribution and
-setting IDs are package-local kebab-case. The host qualifies a contribution as
-`<package-id>/<contribution-id>` and an emitted facet as
-`<package-id>.<facet-id>`; these qualified IDs are stable profile-data keys.
+Unsupported schemas/revisions are rejected; there is no compatibility runtime.
+WASM is required when the manifest declares guest logic.
 
 ```toml
 schemaVersion = 2
@@ -29,8 +49,6 @@ iconAssets = { light = "icons/package-light.svg", dark = "icons/package-dark.svg
 id = "ask-chatgpt"
 kind = "action"
 displayName = "Ask ChatGPT"
-iconAssets = { light = "icons/chatgpt-dark.svg", dark = "icons/chatgpt-light.svg" }
-iconScale = 1.85
 placements = ["preview_toolbar", "action_menu"]
 effects = ["open_https_url"]
 handler = { kind = "guest" }
@@ -42,257 +60,254 @@ mimeTypes = ["text/plain"]
 origin = "https://chatgpt.com"
 ```
 
-Installed packages are enabled, disabled, quarantined, or incompatible.
-Lifecycle never mutates canonical clips, facets, or saved output. Registry
-metadata is reviewed separately from package manifests and is snapshot when a
-release is installed. Updates always show release/checksum/permission changes.
-Safe automatic updates are opt-in: only enabled, ready registry packages may
-move to a newer stable compatible release with an identical complete permission
-set. Every other update remains reviewable and manual. Developer Mode may
-replace a package ID for iteration but can never auto-update. Updates,
-disablement, removal, and developer replacement revoke checksum-bound
-external-data grants.
+This guest-action manifest requires a matching WASM implementation.
+
+| Lifecycle                        | Behaviour                                                                                                                                |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Installed state                  | Enabled, disabled, quarantined, or incompatible                                                                                          |
+| Registry install                 | Snapshot reviewed marketplace metadata for offline identity                                                                              |
+| Manual update                    | Show release, checksum, and permission changes                                                                                           |
+| Automatic update                 | Off globally by default; opted-in, enabled/ready registry packages only; newer stable compatible version with identical full permissions |
+| Developer Mode                   | Unsigned local install/replacement; no registry auto-update                                                                              |
+| Update, disable, remove, replace | Revoke grants/sessions and invalidate package-derived data                                                                               |
+| Signed revocation                | Block exact package/version/checksum; quarantine installed match; manual recovery cannot bypass revocation                               |
+
+Canonical clips and saved output survive lifecycle changes. Derived facets and
+views may be invalidated and rebuilt.
 
 ## Contributions and actions
 
-Contribution kinds are detector, renderer, transformer, and action. WASM is
-required only when guest logic is declared. Actions require `preview_toolbar`,
-`action_menu`, or both; host UI controls overflow, pinning, and keyboard access.
-Transformers appear only in the host Transform menu and always produce a
-temporary result preview, unless the contribution sets `exposeInMenu = false`,
-in which case it is invocable only as the backing operation of one or more
-`transformer_preset` actions and never listed on its own. Actions never
-appear in Transform: `preview_toolbar` requests a direct icon, while
-`action_menu` places the action in the separate Actions menu. The host may move toolbar actions into Actions when direct space
-is exhausted, and pinned actions remain available there for management.
-Matchers establish applicability. The `action-state` guest export returns
-`hidden`, `disabled(reason)`, or `enabled`; host constraints (provider support,
-grant, input support, and session) can only downgrade that state and are checked
-again immediately before execution.
+| Kind                        | Role                                        | User surface                                         |
+| --------------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| Detector                    | Add semantic facets                         | Background understanding                             |
+| Renderer                    | Present a representation/facet              | Compatible detail views; cached compact presentation |
+| Transformer                 | Produce new bytes                           | Transform menu and temporary result preview          |
+| Action                      | Perform a declared operation                | Toolbar and/or Actions menu                          |
+| `transformer_preset` action | Invoke a transformer with preset parameters | Displayed as a transform                             |
 
-The host exposes a `transformer_preset` action to the UI as a transform, not an
-extension action. This keeps direct conversion shortcuts such as Encode Base64
-or CSV to JSON with the transformations they run; Actions contains only
-operations that do not invoke a transformer preset.
+Actions declare `preview_toolbar`, `action_menu`, or both. The host owns
+overflow, pinning, and keyboard access. `exposeInMenu = false` hides a transformer
+as a standalone entry; transformer presets expose its conversion instead.
+Detail renderers and dialogs are not transforms.
 
-Every contribution defaults to a 1 MiB representation-transfer ceiling.
-`inputLimitBytes` may opt one contribution into a larger local transfer, up to
-the host maximum of 10 MiB; the host enforces it before copying bytes into
-WASM. Output and memory limits remain independent. Offline local work uses
-epoch interruption and an input-aware, capped outer timeout so a permitted
-payload cannot exhaust a small fixed instruction allowance; capability-backed
-work retains deterministic fuel and its broker-aware timeout. Prefer the
-smallest transfer limit that covers the contribution's task.
+```text
+Match across all ready representations
+  -> prefer matching active-view source, otherwise highest-priority match
+  -> action-state: hidden | disabled(reason) | enabled
+  -> host validates input, provider, grant, session
+  -> consent/invocation/execution use the same bound source
+  -> host validates result and declared effect
+```
 
-`action-state` is a bounded discovery probe. If it traps, times out, exhausts a
-resource, or returns invalid output, the host records the specific diagnostic
-category and disables that action for the request; this alone never quarantines
-the package or removes its facets. Integrity/revocation failures and repeated
-detector, renderer, transform, or action execution failures retain their normal
-package quarantine behavior.
+The host can only downgrade guest availability and rechecks it before execution.
+A failed `action-state` probe records a diagnostic and disables that action for
+the request. It alone does not quarantine a package or remove facets. Integrity,
+revocation, or repeated execution failures can quarantine a package.
 
-Contextual actions match the complete clip rather than only the currently
-visible renderer. The host prefers the active view's representation when it
-matches; otherwise it binds the action to the highest-priority ready
-representation accepted by its matcher. That bound representation is used
-consistently for state evaluation, consent, invocation scope, and execution.
+| Result                                   | Behaviour                                   |
+| ---------------------------------------- | ------------------------------------------- |
+| Preview                                  | Open temporary result tab                   |
+| Copy, paste, save new clip               | Host output service; keep current view      |
+| Declared HTTPS URL, notification, dialog | Perform permitted effect; keep current view |
+| Failure                                  | Report error without an empty result tab    |
 
-Package SVGs live below `icons/`. A top-level `iconAssets` pair identifies the
-installed package. A contribution-level `iconAssets` pair identifies one view
-or action and is selected by the host theme; use it for marks that require
-contrast on both surfaces. The contribution-level single `iconAsset` remains a
-theme-neutral fallback. Catalog icons are separate registry-owned, hashed,
-bounded PNG/WebP assets because they must be verified and displayed before
-download. Registry schema v3 declares each theme as `{ url, sha256 }`; the
-client accepts only the official registry raw-content origin, verifies the
-signed descriptor and downloaded bytes, and caches the raster by hash. Package
-SVGs are never used as pre-install catalog content.
+Packages cannot update/delete existing clips, browse arbitrary history, or
+directly access filesystem, shell, database, host clipboard, or native URI
+handlers. Output enters the normal transform cache; UTF-8 and supported raster
+results use host previews. The host does not take over package parsing/detection.
 
-The exact registry `index.json` bytes are accompanied by a detached signature
-document containing Ed25519 signatures and key IDs. Clients verify a signature
-from an embedded trusted key before parsing or caching the index. Multiple
-signatures support key overlap. A signed `revocations` entry contains
-`packageId`, `version`, and archive `sha256`; matching registry releases are
-blocked and existing installations are quarantined. Developer Mode archives
-are explicitly unsigned and never receive registry updates.
-`iconScale` may be set between `0.75` and `2` when a supplied asset contains
-prescribed viewBox clear space; the host scales the image without cropping or
-rewriting it.
-Validated renderer icons are also exposed on preview-tab descriptors. When an
-extension renderer is the host-resolved primary view, its icon may also be used
-by the history row; alternate renderers never override that row independently.
-Installation rejects active/external SVG
-content including scripts, entities, event handlers, CSS URLs, foreignObject,
-animation, embedded HTML, and external references. Static local fragment
-references such as `url(#gradient)` are allowed. Accepted icons are rendered as
-images, not injected into the main DOM.
+### Runtime limits
 
-Actions may preview, copy, paste, save a new clip, open a declared URL, notify,
-or open a declared dialog. They cannot update/delete clips, inspect arbitrary
-history, or access filesystem, shell, database, host clipboard APIs, or native
-URI handlers.
-Only an action output with the `preview` disposition opens a temporary result
-tab. Copy, paste, save, navigation, notification, and dialog effects keep the
-currently selected clip view active; failures are reported without creating an
-empty result tab. Renderer detail views and declared dialogs are likewise never
-listed as transforms. UTF-8 results use native text/code models; supported
-raster results use a host-owned no-store URL into the expiring transform cache.
-This is generic output presentation and does not transfer parsing or detection
-ownership from the package to core.
+Limits apply at different boundaries; a larger input allowance does not override
+output, memory, or timeout limits.
+
+| Boundary                       | Limit                                                                 |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Input representation           | 1 MiB default; manifest `inputLimitBytes` may opt into at most 10 MiB |
+| WASM transformer/action output | 1–8 representations, at most 14 MiB combined                          |
+| Guest-to-host lifting budget   | 16 MiB per lift/hostcall, including transferred structure             |
+| Guest linear memory            | 64 MiB                                                                |
+| Custom UI `submitText`         | 10 MiB and declared effect                                            |
+| Custom UI generation prompt    | 1 MiB                                                                 |
+| Archive / expanded archive     | 16 MiB / 32 MiB; at most 256 entries                                  |
+| Component / UI asset           | 8 MiB / 4 MiB                                                         |
+| Catalog icon                   | 256 KiB                                                               |
+
+The 14 MiB output allowance accommodates Base64 expansion of a 10 MiB input.
+The contribution must still declare a sufficient input limit.
+
+Each invocation gets a fresh Wasmtime store with memory, stack, table, instance,
+and execution bounds. No WASI or ambient host imports are available.
+Local work uses epoch interruption and an input-aware capped timeout.
+Capability-backed actions/transformers retain instruction fuel and a longer
+broker-aware timeout. Renderer/detector execution stays offline.
+
+## Icons
+
+| Icon                      | Owner and use                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| Package `iconAssets`      | Complete light/dark SVG pair under `icons/`; installed package identity                     |
+| Contribution `iconAssets` | Light/dark SVG pair for a view/action                                                       |
+| Contribution `iconAsset`  | Single theme-neutral fallback                                                               |
+| Catalog icon              | Registry-owned PNG/WebP, signed descriptor `{ url, sha256 }`; shown before package download |
+
+`iconScale` accepts 0.75–2 for assets with intentional viewBox padding.
+The host scales without cropping or rewriting. Renderer icons appear on tabs;
+only the resolved primary renderer can supply the history glyph.
+
+Installation rejects SVG scripts, entities, handlers, CSS URLs, foreignObject,
+animation, embedded HTML, and external references. Static local fragments such
+as `url(#gradient)` are allowed. Icons render as images, not injected DOM.
+
+## Settings
+
+Settings are bounded `boolean`, `string`, or `number` values. Rust validates
+overrides, persists them by package/setting ID, and exposes nonsecret values as
+`ClipsX.context.settings`. Settings survive uninstall; credentials and grants
+are removed by default. UI must not keep a competing settings store in
+localStorage, IndexedDB, or package files.
+
+Portability defaults to false. Only reviewed boolean/number declarations in
+signed registry schema v4 may sync; installation checks them against the manifest.
+After catalog publication, the registry dispatches its commit and index digest
+to `clipsx-web`. That repository verifies both, selects latest stable unrevoked
+packages, and transactionally reconciles the private approval catalog.
+The signed registry is authoritative; the server catalog enforces sync eligibility.
 
 ## Custom UI and broker
 
-`uiEntry = "ui/index.html"` with `uiSurfaces = ["detail", "dialog"]` enables
-locally bundled React, Vue, Svelte, or vanilla-JS UI. It runs in a dedicated
-Tauri child webview with package-scoped assets, restrictive CSP, blocked
-navigation/popups/downloads/direct network access, no inherited Tauri
-capabilities, and teardown on deselection/close. Compact rows, toolbar chrome,
-and permission prompts remain host-rendered.
+`uiEntry = "ui/index.html"` and `uiSurfaces = ["detail", "dialog"]` enable bundled
+UI in a dedicated Tauri child webview. Compact rows, toolbar chrome, and consent
+prompts remain host-rendered. Prefer host render models for ordinary content;
+use custom UI for interactions such as diagram navigation.
 
-The host injects the scoped bridge at document start, before package scripts
-run; packages do not load or bundle privileged SDK code. It exposes selected representation/facet, theme/locale/nonsecret
-settings, `ready`, `https`, `openExternal`, `generateText`, `submitText`, and
-`close`. A child view remains hidden behind host-rendered loading UI until it
-calls `ready`; bootstrap/resource failures and loading timeouts produce a
-recoverable host error instead of an empty native surface. Detail views do not
-take focus merely by loading. When users intentionally focus a child view, its
-unmodified keyboard input—including Arrow Up/Down and Home/End—belongs to that
-view. Explicit dialogs receive focus after `ready` and return focus to the main
-webview when closed.
-`theme` is the currently applied `light` or `dark` theme (never an unresolved
-`system` value), and `locale` is the active host locale. An open detail session
-is recreated when either context value changes.
+```text
+Main webview: application commands and host controls
+Extension child: package assets + session-authenticated extension_bridge
+  └── no inherited app IPC, direct network, filesystem, shell, clipboard,
+      database, popups, downloads, or arbitrary navigation
+```
 
-Custom detail renderers may declare `effects = ["copy"]`. Their UI can then
-call `submitText("text/plain", value, "copy")`; ClipsX validates the declared
-effect and performs the clipboard write through the host output boundary.
-Renderers cannot request paste, save, navigation, provider, or other effects.
-Without the declaration, output submission is rejected.
+The package protocol is app-local. Windows may represent it as
+`http(s)://<protocol>.localhost`; navigation accepts that form or the native
+protocol only with the correct session path. Normal commands are `main`-only;
+only `extension-*` labels receive the bridge.
 
-Settings are manifest-declared bounded `boolean`, `string`, or `number` values.
-The host validates overrides, persists them in SQLite by stable package and
-setting ID, and supplies the resolved object as `ClipsX.context.settings`.
-Custom UI must not create a second source of truth in `localStorage`, IndexedDB,
-or package files. Settings survive uninstall so a later reinstall restores
-preferences; secrets instead use declared credential permissions and the OS
-credential store.
+| UI contract         | Behaviour                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Bridge injection    | At document start, before package scripts; do not bundle privileged SDK code                               |
+| Context             | Selected representation/facet, applied light/dark theme, locale, nonsecret settings                        |
+| Methods             | `ready`, `https`, `openExternal`, `generateText`, `submitText`, `close`; session permissions govern access |
+| Loading             | Child hidden until `ready`; bootstrap/resource/timeout failure becomes recoverable host error              |
+| Readiness           | Signal first useful frame or actionable error, not just HTML bootstrap                                     |
+| Detail focus        | No focus theft on load; intentional focus gives ordinary keys, including arrows/Home/End, to the child     |
+| Dialog focus        | Focus after ready; restore main-webview focus on close                                                     |
+| Theme/locale change | Recreate open detail session                                                                               |
+| Teardown            | Deselect/close removes the surface                                                                         |
+| Accessibility       | Host theme/locale, keyboard focus, reduced motion                                                          |
+| Heavy work          | Parse/render in child view or WASM, away from main UI                                                      |
 
-Custom views must be fully offline, use the injected theme and locale, support
-keyboard focus and reduced motion, and avoid shipping a framework where host
-render models or small DOM code are sufficient. They call `ready` after the
-first useful frame or an actionable error, not merely after HTML bootstrap.
-Expensive parsing and rendering run in the isolated child view or WASM runtime,
-away from the main ClipsX UI thread.
+Custom detail renderers may declare only the supported `copy` effect and call
+`submitText("text/plain", value, "copy")`. They cannot request paste, save,
+navigation, generation, or privileged dialog authorization.
 
-Only a host-rendered action can create a privileged dialog session; detail views
-cannot invoke capabilities or mint dialog authorization. Navigation, HTTPS,
-credentials, provider generation, settings, and outputs all pass through the
-same Rust broker. HTTPS is exact-origin HTTPS only; redirects and
-private/loopback/link-local/metadata destinations are denied. Secrets remain in
-the OS credential store and may be injected only into a declared header for one
-declared HTTP origin; secret values are never returned to UI or WASM.
-`generation.text` is an abstract provider capability backed initially by the
-host-owned Ollama adapter. Users configure endpoint and model in ClipsX;
-extensions receive generated text but never localhost access or provider
-configuration.
+Only an explicit host-rendered action creates a privileged dialog session.
+Package scripts/assets remain offline; declared external operations go through
+the broker.
 
-The broker requires both a remembered checksum-bound grant and a short-lived
-host-issued invocation token before selected clip data can leave ClipsX.
+```text
+Declared permission + checksum-bound grant + host-issued invocation
+  -> session bound to package/checksum/contribution/clip/source/child/token
+  -> broker validation -> bounded operation
+```
 
-The implementation registers normal application IPC behind explicit ACLs for the
-primary webview. Tauri treats the app-registered package protocol as a local
-origin; on Windows it exposes that protocol through an `http(s)://<protocol>.localhost`
-URL. Only `extension-*` child labels receive the session-authenticated bridge
-command, while package navigation remains locked to its unguessable session URL
-in either URL representation.
-Dialog-lifetime sessions are bound to package checksum, contribution, selected
-clip/source, child label, and an unguessable token. HTTPS, external navigation,
-credential injection, nonsecret settings, and bounded output submission are
-implemented for explicit dialog actions and capability-backed WASM actions and
-transformers. Output is cached through the normal
-transform boundary before preview, copy, paste, or save-as-new-clip. The
-`generation.text` contract reports an unavailable reason until a local provider
-is configured. Parameter schemas generate host controls for bounded primitive
-fields and are validated again before guest execution.
+| Broker operation    | Rule                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| HTTPS               | Exact declared HTTPS origin; no redirects or private/loopback/link-local/metadata destinations                             |
+| Credential header   | Host injects secret into one declared header/origin; UI/WASM never receives the value; reflected-secret responses rejected |
+| External navigation | Declared HTTPS origins only                                                                                                |
+| `generation.text`   | Configured host provider; unavailable reason until configured; no provider endpoint/model access                           |
+| Output              | Validate effect, MIME, and size; cache before preview/copy/paste/save                                                      |
+| Parameters          | Host controls for bounded primitive JSON-schema fields; validate again in Rust                                             |
+
+Capability-backed WASM actions/transformers receive invocation-scoped WIT
+imports. Local Ollama is the shipped generation adapter; extensions get output,
+not localhost access.
 
 ## Security and threat model
 
-Registry review decides what may appear in Discover; it does not make extension
-code trusted. Archives, WASM, package assets, custom UI, remote responses, and
-extension outputs remain untrusted after publication. The protected assets are
-canonical clips, managed files, the database, credentials, provider
-configuration, network identity, privileged host IPC, package identity, and
-catalog integrity.
+Protected assets: canonical clips, managed files, database, credentials, provider
+configuration, network identity, privileged IPC, package identity, and catalog
+integrity. Archives, code, UI, remote responses, and outputs remain untrusted.
+
+### Catalog and archive validation
 
 ```text
-extension source -> GitHub release -> reviewed metadata -> signed catalog
-                                    signed hash  -> host package validator
-validated package -> bounded WASM / isolated UI -> scoped host broker -> output
+Compiled registry URL + trusted Ed25519 key IDs
+  -> bounded index/signature download, no redirects
+  -> verify signature over exact bytes before parsing/caching
+  -> verify again on offline-cache load
+  -> download signed release URL
+  -> verify archive size/hash, paths/count/expansion, identity,
+     permission fingerprint, portable declarations, assets, WASM component
+  -> activate
 ```
 
-The production registry endpoints and trusted Ed25519 public keys are compiled
-into ClipsX; environment variables cannot replace them. The host downloads the
-index and detached signatures without redirects, bounds both bodies, verifies a
-signature over the exact index bytes, and rechecks the same signature when
-loading the offline cache. Catalog icons are origin-restricted, bounded,
-format-sniffed, hash-pinned, and cached by checksum.
+Environment variables cannot replace registry trust roots.
+Release downloads use HTTPS, a small GitHub host allowlist, at most five
+redirects, and streamed size bounds. Catalog icons use only the official
+registry raw-content origin, format checks, signed hashes, and reverified cache.
 
-Release URLs come from the signed catalog. Downloads remain HTTPS-only across a
-small GitHub host allowlist, permit at most five redirects, and are streamed
-under the 16 MiB archive ceiling. Installation then checks the signed size and
-SHA-256, archive paths/counts/expanded size, manifest identity, permission
-fingerprint, declared assets, and Component Model validity before activating a
-package. Signed revocations bind the exact package, version, and checksum.
+| Threat                                      | Boundary                                                         | Remaining risk / response                                                                      |
+| ------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Hostile package                             | Bounded WASM, isolated UI, scoped broker/output                  | Test platform isolation and resource exhaustion on installed builds                            |
+| Compromised package repository              | Signed catalog pins exact archive                                | Deletion can deny installs; changed bytes fail validation                                      |
+| Compromised registry repository without key | Signature verification; retain verified cache                    | Refresh can be denied                                                                          |
+| Redirect outside release hosts              | HTTPS allowlist, redirect/size bounds, final hash                | Reject download                                                                                |
+| Modified local cache                        | Reverify signatures and icon hashes                              | Fail closed; refresh                                                                           |
+| Compromised signing key                     | Protected signer and offline backup are operational requirements | Stop publication; ship replacement trust key; sole compromised key cannot safely revoke itself |
 
-| Attacker story | Existing boundary | Residual risk or response |
-| --- | --- | --- |
-| A malicious author publishes hostile WASM or UI | No ambient WASI, bounded runtime, isolated child webview, scoped tokens and broker, host-owned output | Platform webview isolation and denial-of-service behavior require installed-build certification |
-| The extension repository is compromised | An accepted archive must still match signed registry metadata | Existing assets can be deleted; new trusted bytes still require the registry signer |
-| The registry repository is compromised without its private key | Clients reject unsigned or altered index bytes and retain the last verified cache | Catalog refresh can be denied, but attacker-selected code is not trusted |
-| A release redirect targets another service | HTTPS GitHub allowlist, redirect ceiling, streamed size limit, final signed checksum | Keep allowed hosts centralized and covered by regression tests |
-| Local cache files are modified | Signatures and icon hashes are verified again when read | The cache fails closed and must be refreshed |
-| The registry signing key is compromised | Private key exists only in the protected signing environment and encrypted offline backup | Stop publication, ship a client trusting a replacement key, publish overlapping signatures, then retire the old key; the sole key cannot revoke itself |
+Multiple signatures allow key overlap: ship the new trusted public key before
+switching catalog signatures. New releases must be GitHub-immutable. Five exact
+initial releases are checksum-pinned exceptions; deletion/replacement can still
+deny installation. Revoke bad releases and publish a higher version; never
+overwrite published bytes.
 
-The first five Infiniti releases predate GitHub's immutable-release setting.
-Their signed hashes prevent substituted bytes from executing, while deletion or
-replacement can still deny installation. They are explicit legacy exceptions;
-every later release must be GitHub-immutable. A bad release is revoked and
-replaced by a higher SemVer, never overwritten.
+Protected signing environments, reviewed pinned signing actions, branch
+protection, required CI, and app signing are operational release controls.
+Their deployment must be verified. Sole-maintainer approval prevents accidental
+publication but is not independent review.
 
-The current publication environments use explicit approval by the sole
-maintainer. This prevents accidental workflow publication but is not independent
-separation of duties. Repository branch protection, required CI, pinned actions,
-the protected signing environment, and application signing are therefore part
-of the release boundary.
+| Severity | Capability gained                                                         |
+| -------- | ------------------------------------------------------------------------- |
+| Critical | Registry signing key or released host compromise                          |
+| High     | Sandbox escape, privileged IPC, credentials, unauthorized clip disclosure |
+| Medium   | Reachable transport/parser/resource-boundary failure                      |
+| Low      | Fail-closed corruption or bounded self-only disruption                    |
 
-Severity follows capability gain: signing-key or released-host compromise is
-critical; sandbox escape, privileged IPC, credential disclosure, or
-unauthorized clip exfiltration is high; reachable transport/parser/resource
-boundary failures are medium; fail-closed local corruption or bounded self-only
-disruption is low. An authorized extension performing its consented operation
-is not a security failure.
+An authorized operation within its consent is not a security failure.
 
 ## First-party packages and acceptance examples
 
-First-party package sources live in
-[`azure06/clipsx-extensions`](https://github.com/azure06/clipsx-extensions).
-The host repository owns the API, runtime, package tooling, and conformance
-tests; it does not vendor extension source or generated package archives.
+| Package       | Owns / verify                                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| JWT Inspector | JWT detection, unverified claims/timestamps, payload extraction; never imply signature verification                        |
+| Base64        | Detection, metadata, UTF-8/binary-aware encoding/decoding                                                                  |
+| Data Tools    | Tables, JSON/YAML/TOML, TypeScript shapes, URL conversions; uses native host views                                         |
+| Mermaid       | Standalone and Markdown diagrams, offline navigation, theme-aware detail/dialog, accessible source fallback, host settings |
+| Ask AI        | Selected text -> ChatGPT/Claude URL; Unicode/size bounds, icons, declared origin, first-use consent                        |
 
-`extensions/ask-ai` demonstrates clip-wide plain-text matching,
-Unicode-safe URL encoding, size-limited actions, SVG icons, declared navigation,
-and first-use consent.
-`extensions/mermaid-viewer` is the first-party Mermaid package. It
-demonstrates offline standalone Mermaid and Mermaid-in-Markdown detection, a
-theme-native React/GFM detail and dialog UI, per-diagram navigation, accessible
-source fallback, host-owned settings, and no network permission.
-An enabled compatible renderer that claims an otherwise unknown facet on an
-exact source representation suppresses the host's generic key/value details
-tab. That generic tab returns automatically when the renderer is unavailable;
-known built-in semantic renderers remain additive.
+Core owns common Markdown/JSON/URL/table views and secret detection. Without
+Mermaid, diagram fences remain code. No optional package is installed by default.
+Unknown-facet fallback follows the [view-selection rules](ARCHITECTURE.md#views-and-output).
 
-The extension repository keeps package source and a pinned copy of the WIT
-contract. Generated `component.wasm`, `.clipsx`, `target/`, and `dist/` outputs
-are ignored. Versioned archives are checksum-pinned GitHub Release assets;
-future releases are also GitHub-immutable. The separate registry contains their
-signed metadata and checksums.
+| Repository                                                                  | Owns                                                |
+| --------------------------------------------------------------------------- | --------------------------------------------------- |
+| `azure06/clipsx`                                                            | Host, WIT contract, package CLI, conformance tests  |
+| [`azure06/clipsx-extensions`](https://github.com/azure06/clipsx-extensions) | Source, pinned WIT copy, immutable release archives |
+| `azure06/clipsx-registry`                                                   | Reviewed signed metadata, icons, revocations        |
+
+Official IDs use `infiniti.<package>` and verified publisher `infiniti`
+(display name Infiniti). Repository owner, publisher, package ID, and signature
+are separate identity checks. Generated WASM, archives, target, and dist outputs
+are not vendored into the host.
