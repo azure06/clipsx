@@ -32,8 +32,10 @@ The remaining work is:
       disable, re-enable, and remove each package.
 
 The live registry now contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The
-approval catalog is not yet confirmed because the sync job currently fails
-before connecting to Supabase when `SUPABASE_DB_URL` is absent.
+approval catalog is not yet confirmed because the configured direct Supabase
+endpoint is IPv6-only and unreachable from the GitHub-hosted runner. Replace it
+with the Session pooler URI, then rerun and verify the transactional readback
+before checking off the synchronization items.
 
 ### 2. Configure production desktop signing
 

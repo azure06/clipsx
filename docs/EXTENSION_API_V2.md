@@ -171,7 +171,11 @@ Portability defaults to false. Only reviewed boolean/number declarations in
 signed registry schema v4 may sync; installation checks them against the manifest.
 After catalog publication, the registry dispatches its commit and index digest
 to `clipsx-web`. That repository verifies both, selects latest stable unrevoked
-packages, and transactionally reconciles the private approval catalog.
+packages, and transactionally reconciles the private approval catalog. The
+registry publication workflow waits for the correlated downstream run and fails
+if reconciliation or its post-commit readback fails. The cross-repository token
+and production database URI are one-time operational secrets, not per-release
+inputs.
 The signed registry is authoritative; the server catalog enforces sync eligibility.
 
 ## Custom UI and broker
