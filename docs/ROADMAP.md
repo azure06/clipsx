@@ -10,24 +10,30 @@ release is produced, and what waits until afterward.
 
 ## Before the first release
 
-### 1. Publish the prepared extension updates
+### 1. Complete extension catalog sync and smoke test
 
 The extension repository, signed registry, validation workflows, signing flow,
-revocation process, and website approval-catalog sync are already implemented.
-They do not need another redesign.
+and revocation process are implemented. JWT Inspector 1.2.2 and Mermaid 1.0.1
+are published, and their reviewed entries are present in the signed registry.
+The remaining work is operational sync configuration and one production smoke
+test; no redesign is needed.
 
-The remaining work is publication and one production smoke test:
+The remaining work is:
 
-- [ ] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from
+- [x] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from
       `clipsx-extensions`.
-- [ ] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
+- [x] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
       registry**, and merge the generated publication PR.
+- [ ] Configure the registry-to-`clipsx-web` dispatch credential and the
+      `clipsx-web` `SUPABASE_DB_URL`, rerun the sync, and verify the transactional
+      approval-catalog reconciliation succeeds.
 - [ ] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
 - [ ] In a production ClipsX build, refresh Discover and install, exercise,
       disable, re-enable, and remove each package.
 
-The live registry currently contains JWT Inspector 1.2.1 and Mermaid 1.0.0;
-that version difference is why this item is still open.
+The live registry now contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The
+approval catalog is not yet confirmed because the sync job currently fails
+before connecting to Supabase when `SUPABASE_DB_URL` is absent.
 
 ### 2. Configure production desktop signing
 
