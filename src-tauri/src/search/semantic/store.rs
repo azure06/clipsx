@@ -223,6 +223,10 @@ impl BuildingSidecar {
                     .await?;
                 }
             }
+            sqlx::query("DELETE FROM semantic_chunks WHERE clip_ordinal = ?")
+                .bind(ordinal)
+                .execute(&mut *transaction)
+                .await?;
             sqlx::query("DELETE FROM semantic_clips WHERE clip_ordinal = ?")
                 .bind(ordinal)
                 .execute(&mut *transaction)

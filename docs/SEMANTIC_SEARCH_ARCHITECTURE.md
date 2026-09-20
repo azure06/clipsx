@@ -141,6 +141,18 @@ checkpoints protect active sidecars. Resetting job state before replacing a brok
 building file prevents a second crash from activating an empty index with stale
 "completed" jobs.
 
+Deletion cleanup is durable and idempotent. The single search worker removes a
+deleted clip from every retained active, building, or failed sidecar, deleting
+chunks before their clip row and then collecting unreferenced vector inputs.
+Superseded sidecars are disposable and are not cleanup targets. Cleanup failures
+remain visible as degraded status, but do not prevent independent pending clips
+from being indexed; cleanup also continues while embedding is disabled.
+
+Embedding-space rows own vector dimensions. Generation rows explicitly record
+the sidecar backend, vector encoding, and candidate policy used to create them;
+these values have no schema defaults, so runtime creation cannot silently inherit
+an obsolete storage format.
+
 ## Storage and trade-offs
 
 Each sidecar contains clean snippets/provenance, stable clip/chunk ordinals,

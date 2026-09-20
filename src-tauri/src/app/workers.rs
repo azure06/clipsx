@@ -37,8 +37,16 @@ impl SingleWorker {
             let mut retry = 0_usize;
             let mut validated = false;
             loop {
-                match embeddings::process_cleanup(&history).await {
-                    Ok(_) => {}
+                let cleanup_result = embeddings::process_cleanup(&history).await;
+                let cleanup_count = match &cleanup_result {
+                    Ok(count) => *count,
+                    Err(error) => {
+                        let _ = app.emit("embedding-index-failed", error.to_string());
+                        0
+                    }
+                };
+                let status = match embeddings::status(&history).await {
+                    Ok(status) => status,
                     Err(error) => {
                         let _ = app.emit("embedding-index-failed", error.to_string());
                         let delay = delays[retry.min(delays.len() - 1)];
@@ -46,6 +54,19 @@ impl SingleWorker {
                         tokio::time::sleep(Duration::from_secs(delay)).await;
                         continue;
                     }
+                };
+                if !status.enabled {
+                    if cleanup_result.is_err() {
+                        let delay = delays[retry.min(delays.len() - 1)];
+                        retry = (retry + 1).min(delays.len() - 1);
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                    if cleanup_count > 0 {
+                        retry = 0;
+                        continue;
+                    }
+                    break;
                 }
                 if !validated {
                     match embeddings::validate_configured_provider(&history).await {
@@ -57,12 +78,6 @@ impl SingleWorker {
                             );
                         }
                         Err(error) => {
-                            if !embeddings::status(&history)
-                                .await
-                                .is_ok_and(|status| status.enabled)
-                            {
-                                break;
-                            }
                             let _ = app.emit("embedding-index-failed", error.to_string());
                             let delay = delays[retry.min(delays.len() - 1)];
                             retry = (retry + 1).min(delays.len() - 1);
@@ -72,10 +87,25 @@ impl SingleWorker {
                     }
                 }
                 match embeddings::index_pending(&history).await {
-                    Ok(0) => break,
+                    Ok(0) if cleanup_result.is_ok() && cleanup_count == 0 => break,
+                    Ok(0) => {
+                        if cleanup_result.is_err() {
+                            let delay = delays[retry.min(delays.len() - 1)];
+                            retry = (retry + 1).min(delays.len() - 1);
+                            tokio::time::sleep(Duration::from_secs(delay)).await;
+                        } else {
+                            retry = 0;
+                        }
+                    }
                     Ok(_) => {
-                        retry = 0;
                         let _ = app.emit("search-index-progress", search::SEMANTIC_TEXT_SOURCE_ID);
+                        if cleanup_result.is_err() {
+                            let delay = delays[retry.min(delays.len() - 1)];
+                            retry = (retry + 1).min(delays.len() - 1);
+                            tokio::time::sleep(Duration::from_secs(delay)).await;
+                        } else {
+                            retry = 0;
+                        }
                     }
                     Err(error) => {
                         validated = false;
@@ -93,10 +123,11 @@ impl SingleWorker {
                 }
             }
             guard.running.store(false, Ordering::SeqCst);
-            if embeddings::status(&history)
+            let indexing_pending = embeddings::status(&history)
                 .await
-                .is_ok_and(|status| status.pending_jobs > 0)
-            {
+                .is_ok_and(|status| status.enabled && status.pending_jobs > 0);
+            let cleanup_pending = embeddings::cleanup_pending(&history).await.unwrap_or(false);
+            if indexing_pending || cleanup_pending {
                 guard.wake_text_index(app.clone(), history.clone());
             }
             let _ = app.emit(

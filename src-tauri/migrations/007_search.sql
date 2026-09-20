@@ -49,10 +49,10 @@ CREATE TABLE search_index_generations (
     space_id TEXT NOT NULL REFERENCES search_embedding_spaces(id) ON DELETE CASCADE,
     generation INTEGER NOT NULL CHECK (generation > 0),
     pipeline_version TEXT NOT NULL,
-    backend_id TEXT NOT NULL DEFAULT 'builtin.quantized-flat.v1',
-    vector_encoding TEXT NOT NULL DEFAULT 'int8_scan_float32_rerank'
-        CHECK (vector_encoding = 'int8_scan_float32_rerank'),
-    candidate_limit INTEGER NOT NULL DEFAULT 100 CHECK (candidate_limit BETWEEN 10 AND 1000),
+    backend_id TEXT NOT NULL CHECK (backend_id = 'builtin.binary-flat.v1'),
+    vector_encoding TEXT NOT NULL
+        CHECK (vector_encoding = 'binary_sign_scan_float32_rerank'),
+    candidate_limit INTEGER NOT NULL CHECK (candidate_limit BETWEEN 10 AND 1000),
     sidecar_relative_path TEXT NOT NULL,
     sidecar_byte_length INTEGER CHECK (sidecar_byte_length IS NULL OR sidecar_byte_length >= 0),
     sidecar_sha256 TEXT CHECK (sidecar_sha256 IS NULL OR length(sidecar_sha256) = 64),
