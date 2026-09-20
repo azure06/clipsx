@@ -24,18 +24,18 @@ The remaining work is:
       `clipsx-extensions`.
 - [x] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
       registry**, and merge the generated publication PR.
-- [ ] Configure the registry-to-`clipsx-web` dispatch credential and the
+- [x] Configure the registry-to-`clipsx-web` dispatch credential and the
       `clipsx-web` `SUPABASE_DB_URL`, rerun the sync, and verify the transactional
       approval-catalog reconciliation succeeds.
-- [ ] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
+- [x] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
 - [ ] In a production ClipsX build, refresh Discover and install, exercise,
       disable, re-enable, and remove each package.
 
-The live registry now contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The
-approval catalog is not yet confirmed because the configured direct Supabase
-endpoint is IPv6-only and unreachable from the GitHub-hosted runner. Replace it
-with the Session pooler URI, then rerun and verify the transactional readback
-before checking off the synchronization items.
+The live registry contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The correlated
+registry and web workflows have successfully dispatched and transactionally
+reconciled the three expected portable-setting approvals through the Supabase
+Session pooler, including post-commit readback. The production desktop smoke test
+remains before this milestone is complete.
 
 ### 2. Configure production desktop signing
 
