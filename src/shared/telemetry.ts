@@ -14,7 +14,11 @@ const sentryEnabled =
   Boolean(import.meta.env['VITE_SENTRY_DSN']) &&
   (import.meta.env.PROD || import.meta.env['VITE_SENTRY_ENABLED'] === 'true')
 
-const sanitizeEvent = <T extends Parameters<NonNullable<Parameters<typeof Sentry.init>[0]['beforeSend']>>[0]>(event: T): T => {
+const sanitizeEvent = <
+  T extends Parameters<NonNullable<Parameters<typeof Sentry.init>[0]['beforeSend']>>[0],
+>(
+  event: T
+): T => {
   delete event.request
   delete event.extra
   if (event.message) event.message = 'A desktop webview failure occurred'
@@ -48,8 +52,7 @@ Sentry.init({
     frameContextLines: 5,
   },
   beforeSend: event => (reportingEnabled ? sanitizeEvent(event) : null),
-  beforeBreadcrumb: breadcrumb =>
-    breadcrumb.category?.startsWith('clipsx.') ? breadcrumb : null,
+  beforeBreadcrumb: breadcrumb => (breadcrumb.category?.startsWith('clipsx.') ? breadcrumb : null),
   initialScope: {
     tags: { layer: 'webview' },
   },

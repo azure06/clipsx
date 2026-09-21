@@ -110,7 +110,10 @@ describe('useSettingsStore', () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
     mockInvoke
       .mockRejectedValueOnce(new Error('disk full'))
-      .mockResolvedValueOnce({ settings: v2Settings({ verboseLoggingEnabled: true }), failedEffects: [] })
+      .mockResolvedValueOnce({
+        settings: v2Settings({ verboseLoggingEnabled: true }),
+        failedEffects: [],
+      })
     const first = useSettingsStore.getState().updateSettings({ theme: 'dark' })
     const second = useSettingsStore.getState().updateSettings({ verbose_logging_enabled: true })
     await expect(first).rejects.toThrow('disk full')

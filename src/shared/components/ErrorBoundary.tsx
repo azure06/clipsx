@@ -39,7 +39,9 @@ export class ErrorBoundary extends Component<Props, State> {
                 <h1>{t('errors.genericTitle')}</h1>
                 <p>{t('errors.genericDescription')}</p>
                 {this.state.eventId && <p className="text-xs">Reference: {this.state.eventId}</p>}
-                <button onClick={() => this.setState({ hasError: false, error: null, eventId: null })}>
+                <button
+                  onClick={() => this.setState({ hasError: false, error: null, eventId: null })}
+                >
                   {t('common.retry')}
                 </button>
               </div>
