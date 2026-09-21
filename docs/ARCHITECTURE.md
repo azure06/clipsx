@@ -153,6 +153,9 @@ no-store URL into the expiring cache; unsaved results are not canonical data.
 At clipboard write time, typed source text without a portable native format may
 gain an identical plain-text companion. Cached and saved representations remain
 unchanged.
+On Windows, a canonical PNG is reconstructed as both registered `PNG` and
+standard `CF_DIBV5` clipboard formats so native applications and browsers can
+consume the same image without changing the stored representation.
 
 Sharing receives only a clip ID. Rust resolves a URL, exact plain text, live file
 references, or a checksum-verified export in `share-staging`. Notes, tags,

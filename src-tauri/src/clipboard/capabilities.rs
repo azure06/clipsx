@@ -114,7 +114,7 @@ pub enum WriterCodec {
     WindowsHtml,
     WindowsRtf,
     WindowsHdrop,
-    WindowsPng,
+    WindowsImage,
     WindowsRegisteredBytes,
     MacosData,
     MacosFileUrls,

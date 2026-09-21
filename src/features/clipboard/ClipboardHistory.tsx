@@ -73,6 +73,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
   const settings = useSettingsStore(state => state.settings)
   const { toast } = useToast()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const previousResultsStaleRef = useRef(resultsStale)
   // Derived index — used only for display highlighting and scroll anchoring.
   // Computing it each render is intentional: the ID is the stable identity;
   // the index is a display artefact that changes whenever the list reorders.
@@ -220,11 +221,18 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     [handleExplicitCopy]
   )
 
-  // Auto-select first clip on initial load; re-anchor if selected clip was deleted
+  // Keep typing focus in Search while selecting the first completed result so
+  // Enter acts on the highest-ranked match immediately.
   useEffect(() => {
+    const searchCompleted = previousResultsStaleRef.current && !resultsStale
+    previousResultsStaleRef.current = resultsStale
     if (resultsStale) return
     if (clips.length === 0) {
       setSelectedId(null)
+      return
+    }
+    if (searchCompleted) {
+      setSelectedId(clips[0]?.id ?? null)
       return
     }
     if (selectedId == null || !clips.some(c => c.id === selectedId)) {

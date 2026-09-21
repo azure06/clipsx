@@ -178,7 +178,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
     input.remove()
   })
 
-  it('keeps the selected ID while replacing results and clears it on an empty page', async () => {
+  it('selects the first completed search result and clears it on an empty page', async () => {
     const onPreviewItem = vi.fn()
     useClipboardStore.setState({ clips: [makeClip('selected')] })
     render(<ClipboardHistory onPreviewItem={onPreviewItem} />)
@@ -191,7 +191,7 @@ describe('ClipboardHistory keyboard shortcuts', () => {
         resultsStale: false,
       })
     )
-    expect(onPreviewItem).toHaveBeenLastCalledWith('selected')
+    await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('other'))
     act(() => useClipboardStore.setState({ clips: [makeClip('replacement')] }))
     await waitFor(() => expect(onPreviewItem).toHaveBeenLastCalledWith('replacement'))
     act(() => useClipboardStore.setState({ clips: [] }))

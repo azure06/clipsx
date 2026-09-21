@@ -1554,7 +1554,7 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                     .filter(|name| writeback_allowed(name))
                     .and_then(|name| capabilities::resolve("windows", None, name));
                 let target = match capability.and_then(|value| value.write_back.writer) {
-                    Some(WriterCodec::WindowsPng) => Some("PNG"),
+                    Some(WriterCodec::WindowsImage) => Some("PNG"),
                     Some(WriterCodec::WindowsRegisteredBytes) => native,
                     _ => match rep.canonical_mime_type.as_deref() {
                         Some("image/png") => Some("PNG"),
@@ -1568,6 +1568,13 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                     if set_windows_format(format, bytes) {
                         written += 1
                     }
+                    if native == "PNG" {
+                        if let Some(dib_v5) = windows_png_to_dib_v5(bytes) {
+                            if set_windows_format(17, &dib_v5) {
+                                written += 1
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1577,6 +1584,36 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
         bail!("no supported representation remained for reconstruction")
     }
     Ok(())
+}
+#[cfg(target_os = "windows")]
+fn windows_png_to_dib_v5(png: &[u8]) -> Option<Vec<u8>> {
+    use image::ImageFormat;
+
+    let image = image::load_from_memory_with_format(png, ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+        return None;
+    }
+    let pixel_bytes = width.checked_mul(height)?.checked_mul(4)?;
+    let mut dib = vec![0u8; 124usize.checked_add(pixel_bytes as usize)?];
+    dib[0..4].copy_from_slice(&124u32.to_le_bytes());
+    dib[4..8].copy_from_slice(&(width as i32).to_le_bytes());
+    dib[8..12].copy_from_slice(&(-(height as i32)).to_le_bytes());
+    dib[12..14].copy_from_slice(&1u16.to_le_bytes());
+    dib[14..16].copy_from_slice(&32u16.to_le_bytes());
+    dib[16..20].copy_from_slice(&3u32.to_le_bytes());
+    dib[20..24].copy_from_slice(&pixel_bytes.to_le_bytes());
+    dib[40..44].copy_from_slice(&0x00ff_0000u32.to_le_bytes());
+    dib[44..48].copy_from_slice(&0x0000_ff00u32.to_le_bytes());
+    dib[48..52].copy_from_slice(&0x0000_00ffu32.to_le_bytes());
+    dib[52..56].copy_from_slice(&0xff00_0000u32.to_le_bytes());
+    dib[56..60].copy_from_slice(&0x7352_4742u32.to_le_bytes());
+    for (source, target) in image.pixels().zip(dib[124..].chunks_exact_mut(4)) {
+        target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
+    }
+    Some(dib)
 }
 #[cfg(target_os = "windows")]
 fn windows_unicode_text_bytes(value: &str) -> Vec<u8> {
@@ -1866,6 +1903,28 @@ mod tests {
             windows_normalized_image_identity_for(false, false, false),
             ("windows:normalized:image/png".into(), None)
         );
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn png_writeback_builds_a_top_down_dib_v5_companion() {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            1,
+            1,
+            Rgba([0x11, 0x22, 0x33, 0x44]),
+        ));
+        let mut png = Cursor::new(Vec::new());
+        image.write_to(&mut png, ImageFormat::Png).unwrap();
+
+        let dib = windows_png_to_dib_v5(png.get_ref()).unwrap();
+        assert_eq!(u32::from_le_bytes(dib[0..4].try_into().unwrap()), 124);
+        assert_eq!(i32::from_le_bytes(dib[4..8].try_into().unwrap()), 1);
+        assert_eq!(i32::from_le_bytes(dib[8..12].try_into().unwrap()), -1);
+        assert_eq!(u16::from_le_bytes(dib[14..16].try_into().unwrap()), 32);
+        assert_eq!(u32::from_le_bytes(dib[16..20].try_into().unwrap()), 3);
+        assert_eq!(&dib[124..128], &[0x33, 0x22, 0x11, 0x44]);
     }
     #[cfg(target_os = "windows")]
     #[test]
