@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/types'
 import { PROFILE_MUTATED_EVENT, SYNC_APPLIED_EVENT } from '../shared/sync/configSync'
+import { setDesktopErrorReportingEnabled } from '../shared/telemetry'
 
 type V2Settings = {
   theme: string
@@ -19,7 +20,8 @@ type V2Settings = {
   autoClearMinutes: number | null
   clearOnExit: boolean
   autoStart: boolean
-  loggingEnabled: boolean
+  verboseLoggingEnabled: boolean
+  errorReportingEnabled: boolean
   captureFilters: {
     images: boolean
     files: boolean
@@ -60,7 +62,8 @@ const fromV2 = (settings: V2Settings): AppSettings => ({
   auto_clear_minutes: settings.autoClearMinutes ?? 0,
   clear_on_exit: settings.clearOnExit,
   auto_start: settings.autoStart,
-  logging_enabled: settings.loggingEnabled,
+  verbose_logging_enabled: settings.verboseLoggingEnabled,
+  error_reporting_enabled: settings.errorReportingEnabled,
 })
 const toV2 = (settings: AppSettings): V2Settings => ({
   theme: settings.theme === 'auto' ? 'system' : settings.theme,
@@ -77,7 +80,8 @@ const toV2 = (settings: AppSettings): V2Settings => ({
   autoClearMinutes: settings.auto_clear_minutes || null,
   clearOnExit: settings.clear_on_exit,
   autoStart: settings.auto_start,
-  loggingEnabled: settings.logging_enabled,
+  verboseLoggingEnabled: settings.verbose_logging_enabled,
+  errorReportingEnabled: settings.error_reporting_enabled,
   excludedApps: settings.excluded_apps,
   captureFilters: {
     images: settings.enable_images,
@@ -136,7 +140,9 @@ interface SettingsState {
 }
 export const useSettingsStore = create<SettingsState>((set, get) => {
   const accept = (result: SettingsResult) => {
-    set({ settings: fromV2(result.settings), failedEffects: result.failedEffects, saveError: null })
+    const settings = fromV2(result.settings)
+    setDesktopErrorReportingEnabled(settings.error_reporting_enabled)
+    set({ settings, failedEffects: result.failedEffects, saveError: null })
     window.dispatchEvent(new Event(PROFILE_MUTATED_EVENT))
   }
   const mutate = async (command: string, args?: Record<string, unknown>) => {
@@ -162,7 +168,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
             invoke<V2Settings>('get_app_settings'),
             invoke<string[]>('get_settings_effects'),
           ])
-          set({ settings: fromV2(settings), failedEffects, isLoading: false })
+          const mapped = fromV2(settings)
+          setDesktopErrorReportingEnabled(mapped.error_reporting_enabled)
+          set({ settings: mapped, failedEffects, isLoading: false })
         } catch (error) {
           set({ error: String(error), isLoading: false })
         }

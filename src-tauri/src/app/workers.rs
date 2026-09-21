@@ -36,11 +36,21 @@ impl SingleWorker {
             let delays = [5_u64, 15, 30, 60];
             let mut retry = 0_usize;
             let mut validated = false;
+            let mut cleanup_reported = false;
+            let mut indexing_reported = false;
             loop {
                 let cleanup_result = embeddings::process_cleanup(&history).await;
                 let cleanup_count = match &cleanup_result {
-                    Ok(count) => *count,
+                    Ok(count) => {
+                        cleanup_reported = false;
+                        *count
+                    }
                     Err(error) => {
+                        crate::diagnostic!("search.cleanup.failed");
+                        if retry == delays.len() - 1 && !cleanup_reported {
+                            crate::app::diagnostics::report_error("search_cleanup_terminal");
+                            cleanup_reported = true;
+                        }
                         let _ = app.emit("embedding-index-failed", error.to_string());
                         0
                     }
@@ -98,6 +108,7 @@ impl SingleWorker {
                         }
                     }
                     Ok(_) => {
+                        indexing_reported = false;
                         let _ = app.emit("search-index-progress", search::SEMANTIC_TEXT_SOURCE_ID);
                         if cleanup_result.is_err() {
                             let delay = delays[retry.min(delays.len() - 1)];
@@ -108,6 +119,11 @@ impl SingleWorker {
                         }
                     }
                     Err(error) => {
+                        crate::diagnostic!("search.index.batch.failed");
+                        if retry == delays.len() - 1 && !indexing_reported {
+                            crate::app::diagnostics::report_error("search_index_terminal");
+                            indexing_reported = true;
+                        }
                         validated = false;
                         let _ = app.emit("embedding-index-failed", error.to_string());
                         if !embeddings::status(&history)

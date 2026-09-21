@@ -2117,7 +2117,49 @@ async fn record_sync_error(message: String, state: State<'_, AppState>) -> Resul
 fn write_diagnostic(event: String) {
     if let Some(message) = crate::app::diagnostics::frontend_message(&event) {
         crate::diagnostic!("{message}");
+        crate::app::diagnostics::breadcrumb(message);
     }
+}
+
+#[tauri::command]
+async fn get_diagnostics_summary(
+    state: State<'_, AppState>,
+) -> Result<crate::app::diagnostics::DiagnosticsSummary, String> {
+    crate::app::diagnostics::summary(&state.history)
+        .await
+        .map_err(|_| "Unable to read diagnostics summary".into())
+}
+
+#[tauri::command]
+async fn export_diagnostic_bundle(
+    path: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::app::diagnostics::export_bundle(&app, &state.history, std::path::Path::new(&path))
+        .await
+        .map_err(|_| "Unable to export diagnostic bundle".into())
+}
+
+#[tauri::command]
+fn open_diagnostics_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    crate::app::diagnostics::open_log_directory(&app)
+        .map_err(|_| "Unable to open diagnostic log folder".into())
+}
+
+#[tauri::command]
+fn set_telemetry_identity(identity: Option<crate::app::diagnostics::TelemetryIdentity>) {
+    crate::app::diagnostics::set_identity(identity);
+}
+
+#[tauri::command]
+fn set_error_reporting_enabled(enabled: bool) {
+    crate::app::diagnostics::set_error_reporting_enabled(enabled);
+}
+
+#[tauri::command]
+fn set_verbose_logging_enabled(enabled: bool) {
+    crate::app::diagnostics::set_verbose_enabled(enabled);
 }
 
 #[tauri::command]
@@ -2806,6 +2848,7 @@ fn quit_app(app: &tauri::AppHandle) {
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
+        .plugin(crate::app::diagnostics::log_plugin())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = host::show_main_window(app);
         }))
@@ -2820,6 +2863,7 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
 }
 
 pub(crate) fn run() {
+    let _sentry_guard = crate::app::diagnostics::initialize_sentry();
     app_builder()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -3032,6 +3076,7 @@ pub(crate) fn run() {
             if schema_state == foundation::SchemaState::Ready {
                 let _ = tauri::async_runtime::block_on(crate::app::diagnostics::initialize(&roots.database()));
             }
+            crate::diagnostic!("app.started");
             if cfg!(debug_assertions) || foundation_elapsed.as_millis() >= 250 {
                 crate::diagnostic!(
                     "[PERF] foundation-prepare count=0 duration_ms={}",
@@ -3327,6 +3372,12 @@ pub(crate) fn run() {
             get_settings_effects,
             retry_settings_effects,
             write_diagnostic,
+            get_diagnostics_summary,
+            export_diagnostic_bundle,
+            open_diagnostics_log_folder,
+            set_telemetry_identity,
+            set_error_reporting_enabled,
+            set_verbose_logging_enabled,
             export_portable_settings,
             import_portable_settings,
             get_sync_status,

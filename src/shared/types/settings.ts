@@ -34,7 +34,8 @@ export interface AppSettings {
   hide_on_copy: boolean
   clear_on_exit: boolean
   auto_start: boolean
-  logging_enabled: boolean
+  verbose_logging_enabled: boolean
+  error_reporting_enabled: boolean
 
   // Paste behavior
   default_paste_format: PasteFormat
@@ -66,7 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hide_on_copy: false,
   clear_on_exit: false,
   auto_start: false,
-  logging_enabled: true,
+  verbose_logging_enabled: false,
+  error_reporting_enabled: true,
   default_paste_format: 'auto',
   paste_on_enter: false,
   item_activation_mode: 'double_click_primary',

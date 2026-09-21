@@ -1151,7 +1151,7 @@ impl HistoryRepository {
             }
         }
         for (key, value) in sqlx::query(
-            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut','diagnostics.logging_enabled')",
+            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut','diagnostics.verbose_logging_enabled','diagnostics.error_reporting_enabled')",
         )
         .fetch_all(&mut **transaction)
         .await?
@@ -1162,7 +1162,8 @@ impl HistoryRepository {
                 "capture.filters" => settings.capture_filters = serde_json::from_str(&value)?,
                 "capture.excluded_apps" => settings.excluded_apps = serde_json::from_str(&value)?,
                 "window.global_shortcut" => settings.global_shortcut = serde_json::from_str(&value)?,
-                "diagnostics.logging_enabled" => settings.logging_enabled = serde_json::from_str(&value)?,
+                "diagnostics.verbose_logging_enabled" => settings.verbose_logging_enabled = serde_json::from_str(&value)?,
+                "diagnostics.error_reporting_enabled" => settings.error_reporting_enabled = serde_json::from_str(&value)?,
                 _ => {}
             }
         }
@@ -1314,8 +1315,12 @@ impl HistoryRepository {
         }
         for (key, value) in [
             (
-                "diagnostics.logging_enabled",
-                serde_json::to_string(&settings.logging_enabled)?,
+                "diagnostics.verbose_logging_enabled",
+                serde_json::to_string(&settings.verbose_logging_enabled)?,
+            ),
+            (
+                "diagnostics.error_reporting_enabled",
+                serde_json::to_string(&settings.error_reporting_enabled)?,
             ),
             (
                 "capture.filters",

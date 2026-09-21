@@ -84,7 +84,8 @@ impl SettingsLifecycle {
         repo: &HistoryRepository,
         settings: AppSettings,
     ) -> SettingsResult {
-        super::diagnostics::set_enabled(settings.logging_enabled);
+        super::diagnostics::set_verbose_enabled(settings.verbose_logging_enabled);
+        super::diagnostics::set_error_reporting_enabled(settings.error_reporting_enabled);
         let host = app.state::<super::state::HostState>();
         let mut failed = native_effects(
             || {
@@ -140,7 +141,7 @@ mod tests {
         let current = AppSettings::default();
         let next = merge_settings(
             current.clone(),
-            json!({"captureFilters":{"images":false},"loggingEnabled":false}),
+            json!({"captureFilters":{"images":false},"verboseLoggingEnabled":true}),
         )
         .unwrap();
         assert!(!next.capture_filters.images);
@@ -152,7 +153,7 @@ mod tests {
         for patch in [
             json!({"theme":"invalid"}),
             json!({"language":"fr"}),
-            json!({"loggingEnabled":"true"}),
+            json!({"verboseLoggingEnabled":"true"}),
             json!({"unknown":true}),
             json!({"capture":{"maxAgeDays":-1}}),
             json!({"capture":{"maxAgeDays":0}}),
@@ -195,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn saved_settings_restart_reset_and_database_failure() {
         let (_temp, repo) = crate::sync::tests::repo().await;
-        let changed = merge_settings(AppSettings::default(), json!({"theme":"dark","loggingEnabled":false,"autoStart":true,"capture":{"maxOrdinaryClips":12}})).unwrap();
+        let changed = merge_settings(AppSettings::default(), json!({"theme":"dark","verboseLoggingEnabled":true,"errorReportingEnabled":false,"autoStart":true,"capture":{"maxOrdinaryClips":12}})).unwrap();
         repo.save_app_settings(&changed, false).await.unwrap();
         sqlx::query("INSERT INTO config_command_shortcuts VALUES('core.copy','Primary+J',0)")
             .execute(&repo.pool)
@@ -208,7 +209,8 @@ mod tests {
         .await
         .unwrap();
         let restarted = repo.app_settings().await.unwrap();
-        assert!(!restarted.logging_enabled);
+        assert!(restarted.verbose_logging_enabled);
+        assert!(!restarted.error_reporting_enabled);
         assert!(restarted.auto_start);
         sqlx::query("CREATE TRIGGER fail_settings BEFORE UPDATE ON config_profile_values WHEN NEW.key='ui.theme' BEGIN SELECT RAISE(ABORT,'injected disk failure'); END").execute(&repo.pool).await.unwrap();
         assert!(repo
@@ -235,7 +237,8 @@ mod tests {
             .await
             .unwrap();
         let reset = repo.app_settings().await.unwrap();
-        assert!(reset.logging_enabled);
+        assert!(!reset.verbose_logging_enabled);
+        assert!(reset.error_reporting_enabled);
         assert!(!reset.auto_start);
         assert!(crate::sync::command_shortcuts(&repo)
             .await

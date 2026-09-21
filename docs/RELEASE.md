@@ -67,6 +67,9 @@ settings, or release artifacts are configured correctly.
 | `VITE_SUPABASE_URL`                                               | Production Auth/API origin                          |
 | `VITE_SUPABASE_PUBLISHABLE_KEY`                                   | Public client key; never a secret/service-role key  |
 | `VITE_NEXT_PUBLIC_SITE_URL`                                       | Production site and hosted callback origin          |
+| `SENTRY_AUTH_TOKEN`                                               | Private release/source-map upload token              |
+| `SENTRY_DSN`, `VITE_SENTRY_DSN`                                  | Public desktop ingestion DSN                         |
+| `SENTRY_RELEASE`, `VITE_SENTRY_RELEASE`                          | Identical `clipsx-desktop@<version>+<sha>` identity  |
 | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater signing secrets                             |
 | Embedded updater `pubkey` and endpoint                            | Installed client's trust root and metadata location |
 
@@ -79,6 +82,14 @@ code signing, Tauri updater signing, and extension catalog signing are separate.
 Before release, verify the updater private key matches the embedded public key.
 Future clients must continue to trust updates; key rotation needs an explicit
 transition, not an arbitrary replacement.
+
+Sentry releases use `clipsx-desktop@<app-version>+<full-git-sha>`. Generate this
+once per build and use it for both native and webview SDKs, source maps, commit
+association, and deployment records. Release checkout requires full Git history.
+Keep `SENTRY_AUTH_TOKEN` in GitHub secrets and public DSNs in repository or
+environment variables. Development, tests, forks, and ordinary manual candidate
+builds do not transmit unless `CLIPSX_SENTRY_ENABLED`/`VITE_SENTRY_ENABLED` is
+explicitly set for a controlled verification build.
 
 ### Production smoke build
 

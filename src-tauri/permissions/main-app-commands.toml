@@ -6,6 +6,12 @@ permissions = [
   "allow-get-settings-effects",
   "allow-retry-settings-effects",
   "allow-write-diagnostic",
+  "allow-get-diagnostics-summary",
+  "allow-export-diagnostic-bundle",
+  "allow-open-diagnostics-log-folder",
+  "allow-set-telemetry-identity",
+  "allow-set-error-reporting-enabled",
+  "allow-set-verbose-logging-enabled",
   "allow-export-portable-settings",
   "allow-import-portable-settings",
 

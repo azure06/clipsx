@@ -42,6 +42,29 @@ flowchart LR
 Rust owns every clipboard write; the webview never uses the browser clipboard.
 Extensions receive only approved input and broker capabilities.
 
+## Diagnostics and error reporting
+
+The desktop has two independent diagnostic paths. A local Rust logger always
+writes curated `info`, `warn`, and `error` events to Tauri's application log
+directory. Verbose diagnostics adds allowlisted `debug` events until the user
+turns it off. Files rotate at 2 MB and retain five generations. The webview can
+emit only reviewed event names through typed IPC; arbitrary JavaScript logging
+and `console.*` forwarding are outside the boundary.
+
+Sentry receives actionable production failures when **Send error reports** is
+enabled. The Rust host and React webview share the `clipsx-desktop` project and
+use `layer=native|webview`. Signed-in events identify the Supabase account by
+UUID, verified email, bounded display name, and controlled auth-provider tag.
+Signed-out desktop events use a random installation ID and short support code.
+Disabling reporting takes effect in both layers without disabling local logs.
+
+Neither path admits clipboard or OCR content, search queries, notes, tags,
+Vault data, arbitrary URLs, query strings, file paths, window titles, secrets,
+tokens, request bodies, screenshots, databases, or indexes. Manual diagnostic
+exports contain only rotated logs, an allowlisted machine summary, and a README;
+they are never uploaded automatically. The native SDK reports panics and errors
+that reach its hooks, but cannot guarantee capture of every hard process crash.
+
 ## What a clip contains
 
 **Canonical** means saved source data. **Derived** means data that can be rebuilt.

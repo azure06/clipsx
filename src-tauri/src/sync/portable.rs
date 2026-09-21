@@ -140,7 +140,8 @@ mod tests {
         assert!(parse(&document(json!([theme.clone(), theme]))).is_err());
         for key in [
             "ui.auto_start",
-            "diagnostics.logging_enabled",
+            "diagnostics.verbose_logging_enabled",
+            "diagnostics.error_reporting_enabled",
             "auth.token",
             "window.global_shortcut",
         ] {
@@ -160,7 +161,8 @@ mod tests {
         let (_temp, repo) = super::super::tests::repo().await;
         let mut settings = repo.app_settings().await.unwrap();
         settings.auto_start = true;
-        settings.logging_enabled = false;
+        settings.verbose_logging_enabled = true;
+        settings.error_reporting_enabled = false;
         repo.save_app_settings(&settings, false).await.unwrap();
         let text = document(json!([
             {"kind":"profile_setting","key":"ui.theme","payload":"dark","tombstone":false},
@@ -174,7 +176,8 @@ mod tests {
         let actual = repo.app_settings().await.unwrap();
         assert_eq!(actual.theme, "dark");
         assert!(actual.auto_start);
-        assert!(!actual.logging_enabled);
+        assert!(actual.verbose_logging_enabled);
+        assert!(!actual.error_reporting_enabled);
         let exported = export(&repo).await.unwrap();
         assert!(!exported.contains("auto_start"));
         assert!(!exported.contains("logging"));
