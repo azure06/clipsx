@@ -437,9 +437,11 @@ const DiscoverView = ({
     ) : !catalogAvailable ? (
       <EmptyState
         title="Extension catalog unavailable"
-        text={refreshFailed
-          ? 'Could not load the signed registry. Check your connection and try again.'
-          : 'The signed registry has not been loaded yet.'}
+        text={
+          refreshFailed
+            ? 'Could not load the signed registry. Check your connection and try again.'
+            : 'The signed registry has not been loaded yet.'
+        }
         action="Retry catalog"
         onAction={onRetry}
       />
