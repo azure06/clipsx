@@ -51,5 +51,5 @@ generate the Tauri content-security policy.
 ## Extensions
 
 Extensions are sandboxed WebAssembly packages. Their public contract is the
-[Extension API v2](docs/EXTENSION_API_V2.md); review its security model before
+[Extension API v3](docs/EXTENSION_API_V3.md); review its security model before
 designing a package or adding a host capability.

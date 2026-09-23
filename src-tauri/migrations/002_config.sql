@@ -23,6 +23,8 @@ CREATE TABLE provider_runtime_diagnostics (
 );
 
 INSERT INTO config_device_values (key, value_json, created_at, updated_at) VALUES
+    ('diagnostics.verbose_logging_enabled', 'false', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+    ('diagnostics.error_reporting_enabled', 'true', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('capture.max_ordinary_clips', '1000', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('capture.max_age_days', 'null', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     ('capture.max_managed_bytes', '1073741824', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000),

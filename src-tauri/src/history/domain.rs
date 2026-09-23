@@ -68,7 +68,8 @@ pub struct AppSettings {
     pub auto_clear_minutes: Option<u32>,
     pub clear_on_exit: bool,
     pub auto_start: bool,
-    pub logging_enabled: bool,
+    pub verbose_logging_enabled: bool,
+    pub error_reporting_enabled: bool,
     pub global_shortcut: String,
     pub excluded_apps: Vec<String>,
     pub capture_filters: CaptureFilters,
@@ -91,7 +92,8 @@ impl Default for AppSettings {
             auto_clear_minutes: None,
             clear_on_exit: false,
             auto_start: false,
-            logging_enabled: true,
+            verbose_logging_enabled: false,
+            error_reporting_enabled: true,
             global_shortcut: if cfg!(target_os = "macos") {
                 "Cmd+Shift+V".into()
             } else {
@@ -202,6 +204,7 @@ pub struct ClipSummary {
     pub id: String,
     pub source_app_name: Option<String>,
     pub source_app_id: Option<String>,
+    pub source_app_platform: Option<String>,
     pub captured_at: i64,
     pub updated_at: i64,
     pub is_pinned: bool,

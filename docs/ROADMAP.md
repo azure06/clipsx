@@ -1,119 +1,127 @@
-# ClipsX production roadmap
+# ClipsX roadmap
 
-This roadmap contains only unfinished work for the first production release.
-Stable behavior and design decisions belong in [ARCHITECTURE.md](ARCHITECTURE.md);
-the executable certification matrix and recorded evidence belong in
-[RELEASE.md](RELEASE.md). Completed items are removed instead of retained as a
-historical checklist.
+The Extension API v3 and durable result implementation requires installed-host
+certification and coordinated package publication before release. Work that can
+wait belongs under **After the first release**.
 
-## 1. Implementation remaining
+The detailed cross-platform test matrix remains in [RELEASE.md](RELEASE.md).
+This roadmap answers only three questions: what blocks the release, how the
+release is produced, and what waits until afterward.
 
-Only work that changes product code, backend behavior, build infrastructure, or
-release configuration belongs in this section. Testing an already implemented
-behavior belongs in Section 2.
+## Before the first release
 
-### Desktop product
+### Extension API v3 certification
 
-- [ ] Complete the settings lifecycle contract: host-side validation, atomic
-  persistence, restart-safe effects, reset behavior, import/export for portable
-  settings, and actionable recovery for failed native effects such as autostart.
-- [ ] Remove or redact clipboard content, notes, credentials, tokens, and
-  unnecessary filesystem paths from production logging.
+Test facet-constrained activation against current detection results before
+certifying the release. Durable text and binary outputs use artifact storage;
+package-state writes are staged with job completion, provider failures use
+bounded retry categories, and unsuccessful or temporary jobs have bounded
+retention.
 
-### Account and backend (`clipsx-web`)
+Validate Rewrite and the rebuilt first-party packages in installed Windows,
+macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
+deduplication, restart recovery, source deletion, and retained results after
+disablement and uninstall. Publish reviewed immutable v3 package archives and
+signed registry metadata only after these tests pass. The v3 host requires a
+fresh database baseline and shows only v3 releases in Discover.
 
-- [ ] Add verified account deletion through a JWT-protected backend operation,
-  explicitly handling billing, organization ownership, and shared vault data.
-- [ ] Publish signed extension packages with reviewed portable-setting
-  declarations and populate the matching server approval catalog through the
-  release process.
-- [ ] Deploy the reviewed fresh Supabase baseline and hosted desktop PKCE callback
-  bridge from the authoritative `clipsx-web` repository.
+### 1. Complete extension catalog sync and smoke test
 
-### Release engineering
+The extension repository, signed registry, validation workflows, signing flow,
+and revocation process are implemented. JWT Inspector 1.2.2 and Mermaid 1.0.1
+are published, and their reviewed entries are present in the signed registry.
+The remaining work is operational sync configuration and one production smoke
+test; no redesign is needed.
 
-- [ ] Add dependency and license auditing, SBOM generation, secret scanning,
-  release-artifact inspection, and enforceable bundle-size budgets to CI.
-- [ ] Configure reproducible Windows x64, Linux x64 `.deb`/AppImage, and macOS
-  arm64/x64 builds from one revision.
-- [ ] Configure Developer ID signing, hardened runtime, notarization, and
-  stapling for macOS arm64/x64 artifacts.
-- [ ] Configure signing for Windows installers and executables.
-- [ ] Configure signed updater metadata and a documented rollback/recovery path.
-- [ ] Update website, download, and release messaging after certification so it
-  advertises only supported platforms and capabilities.
+The remaining work is:
 
-## 2. QA and release certification
+- [x] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from
+      `clipsx-extensions`.
+- [x] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
+      registry**, and merge the generated publication PR.
+- [x] Configure the registry-to-`clipsx-web` dispatch credential and the
+      `clipsx-web` `SUPABASE_DB_URL`, rerun the sync, and verify the transactional
+      approval-catalog reconciliation succeeds.
+- [x] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
+- [ ] In a production ClipsX build, refresh Discover and install, exercise,
+      disable, re-enable, and remove each package.
 
-This section contains verification specifications. Failures may create new
-implementation work, but passing checks are recorded in [RELEASE.md](RELEASE.md)
-rather than being converted into product features.
+The live registry contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The correlated
+registry and web workflows have successfully dispatched and transactionally
+reconciled the three expected portable-setting approvals through the Supabase
+Session pooler, including post-commit readback. The production desktop smoke test
+remains before this milestone is complete.
 
-### Automated and review gates
+### 2. Configure production desktop signing
 
-- [ ] Exercise every user-facing setting across validation, persistence,
-  restart, reset, applicable import/export, and recoverable failure paths.
-- [ ] Complete mutation-level cascade and invalidation coverage for clips, tags,
-  notes, OCR, search projections, artifacts, extension-derived data, and managed
-  files.
-- [ ] Audit production logs and built artifacts for sensitive content, secrets,
-  credentials, tokens, and unnecessary filesystem paths.
-- [ ] Run dependency, license, SBOM, secret-scanning, bundle-budget, and artifact
-  inspection gates against the release revision.
-- [ ] Complete the production security review with no unresolved high-severity
-  findings.
-- [ ] Run an LLM-assisted review of feature completeness, architecture,
-  concurrency/persistence boundaries, and the threat model; validate every
-  actionable finding against source or tests before accepting it.
+The GitHub Actions release workflow already builds Windows x64, Linux x64,
+macOS arm64, and macOS x64 from one revision and creates signed Tauri updater
+artifacts. The remaining release-engineering work is platform trust signing:
 
-### Hosted account and sync
+- [ ] Configure Windows Authenticode credentials and sign the executable and
+      NSIS installer.
+- [ ] Configure the Apple Developer ID certificate and notarization credentials;
+      enable hardened runtime, notarize, and staple both macOS builds instead of
+      using the current ad-hoc signature.
+- [ ] Store and back up the Tauri updater private key securely. Keep the public
+      key already embedded in the app stable so future updates remain compatible.
+- [ ] Run a manual release candidate build and inspect the produced installers,
+      updater artifacts, `latest.json`, hashes, and release contents.
 
-- [ ] Audit hosted Supabase Auth, redirect URLs, deployed migrations, grants, and
-  security/performance advisors against the `clipsx-web` source of truth.
-- [ ] Certify the Google OAuth, hosted PKCE callback, `clipsx://` deep-link, and
-  desktop session round trip.
-- [ ] Certify two-device restore across advertised platforms, including
-  concurrent/offline edits, skew, tombstones, interrupted restore, sign-out,
-  revocation, unavailable packages, quarantine recovery, and remote reset.
-- [ ] Confirm that sync transfers only supported configuration and extension
-  intent—never clipboard content, secrets, device-local settings, permission
-  grants, or old consent.
+GitHub-hosted Windows, Linux, and macOS runners can build all platforms. A
+personal Mac is not required to produce the macOS artifacts, although testing
+the installed app on real Macs is still required. Apple signing still requires
+an Apple Developer account, Developer ID credentials, and notarization access.
 
-### Installed platforms
+### 3. Certify the release candidate
 
-- [ ] Run the complete OCR lifecycle on Windows x64, macOS arm64/x64, and
-  Linux/X11 x64: success, empty output, failure, unsupported input, cancellation,
-  retry, deletion, language changes, FTS refresh, and semantic reindexing in
-  English and Japanese.
-- [ ] On macOS, verify Vision language selection and bounded execution in both
-  architectures. On Linux, verify Tesseract discovery, language/version
-  reporting, `.deb` dependencies, and actionable AppImage recovery.
-- [ ] Certify native sharing for text, URLs, files, images, documents,
-  cancellation, missing sources, and corrupt managed assets on every advertised
-  platform.
-- [ ] Certify English/Japanese keyboard and screen-reader behavior with NVDA,
-  VoiceOver, and Orca for Settings, Intelligence, Extensions, and recovery.
-- [ ] Verify Windows clean install, update, downgrade rejection, and uninstall;
-  macOS notarization/stapling; and Linux desktop integration, X11 claims,
-  dependencies, AppImage behavior, and updater support.
-- [ ] Run and record the complete installed-build matrix from one signed revision:
-  clipboard fidelity, focus/paste, tray and shortcuts, autostart, deep links,
-  OAuth/sync, extensions, OCR, search/Recall quality, accessibility, latency,
-  memory, disk, and recovery. Recall includes the versioned synthetic corpus,
-  exact-identifier recovery, citation support, cancellation, and clipboard
-  self-write checks.
-- [ ] Verify signed updater metadata and rollback/recovery behavior.
-- [ ] Verify the public GitHub Sponsor button after the `azure06` Sponsors profile
-  is approved and enabled.
+- [ ] Choose one candidate revision and let its automated CI and release
+      preflight pass.
+- [ ] Test the installed artifacts on Windows, macOS, and Linux/X11 using the
+      applicable checklist in [RELEASE.md](RELEASE.md). Record failures and fix
+      release blockers; rerun only the affected checks after a change.
+- [ ] Verify clean installation, clipboard capture/copy/paste, shortcuts and
+      tray behavior, OCR, search, extensions, OAuth/sync, native sharing,
+      uninstall, and update from a previous signed build.
+- [ ] Confirm there are no unresolved high-severity security findings or secrets
+      in the repository, logs, or distributable artifacts.
 
-The production release gate is one reviewed revision with signed artifacts, a
-signed extension catalog, deployed Auth/configuration sync, no unresolved
-high-severity security findings, and complete evidence in `RELEASE.md`.
+There is no separate "pre-certification product freeze." The candidate revision
+and its draft artifacts are the boundary. If that revision changes, rebuild the
+draft and repeat the affected certification checks.
 
-## Post-release candidates
+### 4. Publish
 
-- [ ] Add bounded host-rendered tabs, code blocks, tables, key/value lists, and
-  comparison layouts to the extension render-model contract. Packages provide
-  structured data and approved primitives; the host owns interaction,
-  accessibility, theme, and styling. Keep isolated custom UI for genuinely
-  bespoke interactions until then.
+- [ ] Publish the certified draft GitHub Release with Windows, macOS, Linux, and
+      updater artifacts attached.
+- [ ] Update `clipsx-web` download URLs and final release documentation to point
+      to the published artifacts, then deploy and smoke-test the final site.
+- [ ] Verify a previously installed signed build discovers and installs the
+      published update.
+
+## How the automated release works
+
+- Merging to `main` runs CI. It does **not** publish an application release.
+- A manual workflow run builds inspectable candidates but does not publish.
+- After the version in `src-tauri/tauri.conf.json` is set, pushing the matching
+  `v<version>` tag runs the release matrix and creates a **draft** GitHub Release.
+- Platform signing/notarization happens in those jobs once the required GitHub
+  secrets and Tauri configuration are present.
+- The draft is published only after the same artifacts pass installed-platform
+  testing. The website is finalized afterward so its URLs refer to real public
+  release assets.
+
+Do not rotate or lose the Tauri updater signing key after release. New releases
+must use the same key expected by installed clients unless a deliberate key
+rotation mechanism is shipped first.
+
+## After the first release
+
+- Add release-artifact content inspection, enforceable bundle-size budgets,
+  stronger reproducibility checks, and automated updater rollback drills.
+- Add bounded host-rendered tabs, code blocks, tables, key/value lists, and
+  comparison layouts to the extension render-model contract.
+- Continue UI polish, copy improvements, performance work, additional platform
+  coverage, and feedback-driven features as normal versioned releases.
+- Add capabilities currently outside the first-release contract only after they
+  have explicit architecture, implementation, and certification scope.

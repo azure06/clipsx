@@ -85,7 +85,7 @@ CREATE TRIGGER sync_extension_insert AFTER INSERT ON extension_installs WHEN NEW
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;
 END;
 
-CREATE TRIGGER sync_extension_setting_insert AFTER INSERT ON extension_package_settings_v2
+CREATE TRIGGER sync_extension_setting_insert AFTER INSERT ON extension_package_settings
 WHEN EXISTS(SELECT 1 FROM sync_portable_extension_settings WHERE package_id=NEW.package_id AND setting_id=NEW.setting_id) BEGIN
  INSERT INTO sync_values VALUES('extension_setting',NEW.package_id||'/'||NEW.setting_id,NEW.value_json,0)
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;
@@ -113,7 +113,7 @@ CREATE TRIGGER sync_extension_update AFTER UPDATE ON extension_installs WHEN NEW
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;
 END;
 
-CREATE TRIGGER sync_extension_setting_update AFTER UPDATE ON extension_package_settings_v2
+CREATE TRIGGER sync_extension_setting_update AFTER UPDATE ON extension_package_settings
 WHEN EXISTS(SELECT 1 FROM sync_portable_extension_settings WHERE package_id=NEW.package_id AND setting_id=NEW.setting_id) BEGIN
  INSERT INTO sync_values VALUES('extension_setting',NEW.package_id||'/'||NEW.setting_id,NEW.value_json,0)
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;
@@ -138,7 +138,7 @@ CREATE TRIGGER sync_extension_delete AFTER DELETE ON extension_installs WHEN OLD
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;
 END;
 
-CREATE TRIGGER sync_extension_setting_delete AFTER DELETE ON extension_package_settings_v2
+CREATE TRIGGER sync_extension_setting_delete AFTER DELETE ON extension_package_settings
 WHEN EXISTS(SELECT 1 FROM sync_portable_extension_settings WHERE package_id=OLD.package_id AND setting_id=OLD.setting_id) BEGIN
  INSERT INTO sync_values VALUES('extension_setting',OLD.package_id||'/'||OLD.setting_id,NULL,1)
  ON CONFLICT(record_kind,record_key) DO UPDATE SET payload_json=excluded.payload_json,tombstone=excluded.tombstone;

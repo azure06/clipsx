@@ -22,7 +22,8 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   autoClearMinutes: null,
   clearOnExit: false,
   autoStart: false,
-  loggingEnabled: true,
+  verboseLoggingEnabled: false,
+  errorReportingEnabled: true,
   captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
   capture: {
     maxOrdinaryClips: 1000,

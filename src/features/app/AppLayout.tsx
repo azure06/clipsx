@@ -8,7 +8,6 @@ import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -19,7 +18,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 
-import { SearchBar, type SearchBarHandle } from '../search/SearchBar'
+import { type SearchBarHandle } from '../search/SearchBar'
+import { SearchController } from '../search/SearchController'
+import { ResultInteractionBoundary } from '../clipboard/ResultInteractionBoundary'
 import { UpdateBanner } from './UpdateBanner'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import { Sidebar } from '../../shared/components/Sidebar'
@@ -45,21 +46,18 @@ import {
   SYNC_APPLIED_EVENT,
   configurationSyncScheduler,
 } from '../../shared/sync/configSync'
+import { createCoalescedRefresh } from './coalescedRefresh'
 import { clampHistoryRatio, SPLITTER_WIDTH_PX } from './splitLayout'
 
 export const AppLayout = () => {
   const { t } = useTranslation()
-  const {
-    activeView,
-    setActiveView,
-    searchQuery,
-    setSearchQuery,
-    previewClipId,
-    setPreviewClipId,
-    resetSearch,
-    isSemanticActive,
-    setSemanticActive,
-  } = useUIStore()
+  const activeView = useUIStore(state => state.activeView)
+  const setActiveView = useUIStore(state => state.setActiveView)
+  const previewClipId = useUIStore(state => state.previewClipId)
+  const setPreviewClipId = useUIStore(state => state.setPreviewClipId)
+  const resetSearch = useUIStore(state => state.resetSearch)
+  const isSemanticActive = useUIStore(state => state.isSemanticActive)
+  const setSemanticActive = useUIStore(state => state.setSemanticActive)
   const settings = useSettingsStore(state => state.settings)
   const clips = useClipboardStore(state => state.clips)
   const activeTab = useClipboardStore(state => state.activeTab)
@@ -116,28 +114,28 @@ export const AppLayout = () => {
       })}
     </div>
   )
-  const parsedRecallQuery = parseSearch(searchQuery)
-  const recallScope = useMemo(
-    () => ({
-      scope: activeTab,
-      tagId: null,
-      representationFamilies: parsedRecallQuery.representationFamilies,
-      facetIds: parsedRecallQuery.facetIds,
+  const getRecallScope = useCallback(() => {
+    const parsed = parseSearch(useUIStore.getState().searchQuery)
+    const { activeTab: scope, tagFilter } = useClipboardStore.getState()
+    return {
+      scope,
+      tagId: tagFilter,
+      representationFamilies: parsed.representationFamilies,
+      facetIds: parsed.facetIds,
       enabledSourceIds: searchSources.filter(source => source.enabled).map(source => source.id),
-      label:
-        activeTab === 'all' ? 'All history' : activeTab === 'favorites' ? 'Favorites' : 'Pinned',
-    }),
-    [activeTab, parsedRecallQuery.facetIds, parsedRecallQuery.representationFamilies, searchSources]
-  )
+      label: scope === 'all' ? 'All history' : scope === 'favorites' ? 'Favorites' : 'Pinned',
+    }
+  }, [searchSources])
   const runRecall = useCallback(() => {
-    if (!parsedRecallQuery.query || recall.isRunning) return
+    const { query } = parseSearch(useUIStore.getState().searchQuery)
+    if (!query || recall.isRunning) return
     if (!generationStatus?.enabled || !generationStatus.available) {
       setActiveView('intelligence')
       return
     }
     setRightTab('recall')
-    void recall.startRoot(parsedRecallQuery.query, recallScope)
-  }, [generationStatus, parsedRecallQuery.query, recall, recallScope, setActiveView])
+    void recall.startRoot(query, getRecallScope())
+  }, [generationStatus, recall, getRecallScope, setActiveView])
   const handlePreviewItem = useCallback(
     (clipId: string | null) => {
       setPreviewClipId(clipId)
@@ -315,6 +313,7 @@ export const AppLayout = () => {
   }, [settings?.theme, setThemeMode])
 
   useEffect(() => {
+    let disposed = false
     const loadTextSearchStatus = async () => {
       try {
         const [status, sources, generation] = await Promise.all([
@@ -322,40 +321,45 @@ export const AppLayout = () => {
           invoke<SearchSourceDescriptor[]>('list_search_sources'),
           invoke<GenerationProviderStatus>('get_text_generation_status'),
         ])
+        if (disposed) return
         setTextSearchStatus(status)
         setSearchSources(Array.isArray(sources) ? sources : [])
         setGenerationStatus(generation)
         setSemanticActive(
-          sources.some(source => source.id === 'builtin.search.semantic_text' && source.enabled)
+          Array.isArray(sources) &&
+            sources.some(source => source.id === 'builtin.search.semantic_text' && source.enabled)
         )
       } catch {
-        setTextSearchStatus(null)
+        if (!disposed) setTextSearchStatus(null)
       }
     }
 
-    void loadTextSearchStatus()
+    const statusRefresh = createCoalescedRefresh(loadTextSearchStatus)
+    statusRefresh.request()
 
     const unlistenCapabilities = listen('embedding-provider-status-changed', () => {
-      void loadTextSearchStatus()
+      statusRefresh.request()
     })
     const unlistenGeneration = listen('generation-provider-status-changed', () => {
-      void loadTextSearchStatus()
+      statusRefresh.request()
     })
     const unlistenThreshold = listen('meaning-search-threshold-changed', () => {
       void refreshSearch()
     })
 
     const unlistenTextSearchStatus = listen('embedding-space-changed', () => {
-      void loadTextSearchStatus()
+      statusRefresh.request()
     })
     const unlistenSourceStatus = listen('search-source-status-changed', () => {
-      void loadTextSearchStatus()
+      statusRefresh.request()
     })
     const unlistenIndexProgress = listen('search-index-progress', () => {
-      void loadTextSearchStatus()
+      statusRefresh.request()
     })
 
     return () => {
+      disposed = true
+      statusRefresh.dispose()
       void unlistenCapabilities.then(fn => fn())
       void unlistenGeneration.then(fn => fn())
       void unlistenThreshold.then(fn => fn())
@@ -378,9 +382,8 @@ export const AppLayout = () => {
       await invoke('update_search_settings', { settings: { ...current, enabledSourceIds } })
       setSemanticActive(enabledSourceIds.includes('builtin.search.semantic_text'))
       setSearchSources(await invoke<SearchSourceDescriptor[]>('list_search_sources'))
-      await refreshSearch()
     },
-    [refreshSearch, setSemanticActive]
+    [setSemanticActive]
   )
 
   // Event Listener for Tray "Settings" click
@@ -411,7 +414,7 @@ export const AppLayout = () => {
         if (editable && !isMainSearch && !isFollowUp) return
         e.preventDefault()
         e.stopImmediatePropagation()
-        if (!searchQuery.trim()) searchBarRef.current?.focus()
+        if (!useUIStore.getState().searchQuery.trim()) searchBarRef.current?.focus()
         else runRecall()
         return
       }
@@ -423,7 +426,7 @@ export const AppLayout = () => {
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [activeView, runRecall, searchQuery])
+  }, [activeView, runRecall])
 
   useEffect(() => {
     const unlisten = listen('main-window-activated', focusSearchBar)
@@ -433,10 +436,6 @@ export const AppLayout = () => {
     // Re-register so the handler observes the current page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView])
-
-  const handleClear = () => {
-    resetSearch()
-  }
 
   const persistHistoryRatio = useCallback(async (ratio: number) => {
     try {
@@ -535,11 +534,8 @@ export const AppLayout = () => {
               <div className="flex flex-col h-full p-6 overflow-hidden">
                 {/* Search Bar - Always Top */}
                 <div className="w-full max-w-4xl mx-auto shrink-0 mb-6">
-                  <SearchBar
+                  <SearchController
                     ref={searchBarRef}
-                    value={searchQuery}
-                    onChange={setSearchQuery}
-                    onClear={handleClear}
                     onScopeChange={scope => {
                       void setClipboardTab(scope)
                     }}
@@ -551,7 +547,6 @@ export const AppLayout = () => {
                     onToggleSource={sourceId => void handleToggleSource(sourceId)}
                     sourceOutcomes={searchSourceOutcomes}
                     placeholder="Search clips or ask a question…"
-                    canRecall={parsedRecallQuery.query.length > 0}
                     isRecalling={recall.isRunning}
                     recallShortcut={formatShortcut(
                       commandShortcut('core.recall', { modifiers: ['primary'], key: 'Enter' })
@@ -573,11 +568,7 @@ export const AppLayout = () => {
                       width: `calc((100% - ${SPLITTER_WIDTH_PX}px) * ${effectiveHistoryRatio})`,
                     }}
                   >
-                    <ClipboardHistory
-                      searchQuery={searchQuery}
-                      className="flex-1"
-                      onPreviewItem={handlePreviewItem}
-                    />
+                    <ClipboardHistory className="flex-1" onPreviewItem={handlePreviewItem} />
                   </div>
                   <button
                     type="button"
@@ -610,7 +601,7 @@ export const AppLayout = () => {
                         return (
                           <RecallWorkspace
                             turns={recall.turns}
-                            scopeLabel={recall.scope?.label ?? recallScope.label}
+                            scopeLabel={recall.scope?.label ?? getRecallScope().label}
                             isRunning={recall.isRunning}
                             expired={recall.expired}
                             onCancel={() => void recall.cancel()}
@@ -621,7 +612,7 @@ export const AppLayout = () => {
                             }}
                             onFollowUp={question => void recall.followUp(question)}
                             onRetry={turn =>
-                              void recall.startRoot(turn.question, recall.scope ?? recallScope)
+                              void recall.startRoot(turn.question, recall.scope ?? getRecallScope())
                             }
                             onApplySources={(turn, clipIds) =>
                               void recall.rerunWithSources(turn.question, clipIds)
@@ -650,7 +641,11 @@ export const AppLayout = () => {
                       }
                       const displayedClip = previewClip
                       if (displayedClip) {
-                        return <ClipPreview clip={displayedClip} />
+                        return (
+                          <ResultInteractionBoundary>
+                            <ClipPreview clip={displayedClip} />
+                          </ResultInteractionBoundary>
+                        )
                       }
                       return (
                         <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl border border-dashed border-slate-200/70 bg-slate-100/10 dark:border-white/5 dark:bg-slate-100/5">

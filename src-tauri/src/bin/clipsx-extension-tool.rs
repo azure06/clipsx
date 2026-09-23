@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use wit_component::ComponentEncoder;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const API_VERSION: &str = "2.0.0";
+const API_VERSION: &str = "3.0.0";
 #[allow(dead_code)]
 #[path = "../extensions/manifest.rs"]
 mod manifest;
@@ -51,7 +51,7 @@ fn scaffold(output: &Path, package_id: &str) -> Result<()> {
     fs::write(
         output.join("clipsx-extension.toml"),
         format!(
-            "schemaVersion = 2\ncontractRevision = 2\npackageId = \"{package_id}\"\nversion = \"0.1.0\"\napiVersion = \"^2.0\"\ndisplayName = \"{display_name}\"\ndescription = \"A ClipsX Extension API v2 package.\"\nlicense = \"MIT\"\niconAssets = {{ light = \"icons/package.svg\", dark = \"icons/package.svg\" }}\n\n[[contributions]]\nid = \"text-view\"\nkind = \"renderer\"\ndisplayName = \"Text view\"\npurpose = \"source\"\nsurfaces = [\"detail\"]\nuiEntry = \"ui/index.html\"\nuiSurfaces = [\"detail\"]\n\n[[contributions.matchers]]\nmimeTypes = [\"text/plain\"]\n"
+            "schemaVersion = 3\ncontractRevision = 1\npackageId = \"{package_id}\"\nversion = \"0.1.0\"\napiVersion = \"^3.0\"\ndisplayName = \"{display_name}\"\ndescription = \"A ClipsX Extension API v3 package.\"\nlicense = \"MIT\"\niconAssets = {{ light = \"icons/package.svg\", dark = \"icons/package.svg\" }}\n\n[[contributions]]\nid = \"text-view\"\nkind = \"renderer\"\ndisplayName = \"Text view\"\npurpose = \"source\"\nsurfaces = [\"detail\"]\nuiEntry = \"ui/index.html\"\nuiSurfaces = [\"detail\"]\n\n[[contributions.matchers]]\nmimeTypes = [\"text/plain\"]\n"
         ),
     )?;
     fs::write(output.join("README.md"), format!("# {display_name}\n"))?;
@@ -115,7 +115,7 @@ fn is_core_module(bytes: &[u8]) -> bool {
 fn validate(path: &Path) -> Result<()> {
     let files = archive_files(path)?;
     validate_contents(&files)?;
-    println!("valid Extension API v2 package: {}", path.display());
+    println!("valid Extension API v3 package: {}", path.display());
     Ok(())
 }
 
@@ -157,7 +157,7 @@ fn inspect(path: &Path) -> Result<()> {
             "packageId": manifest.package_id,
             "version": manifest.version,
             "apiVersion": manifest.api_version,
-            "compatible": manifest.api_version == API_VERSION || manifest.api_version == "^2.0",
+            "compatible": manifest.api_version == "^3.0",
             "archiveSizeBytes": archive.len(),
             "sha256": hex_digest(&archive),
             "contributions": manifest.contributions.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
@@ -193,6 +193,14 @@ fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
     let manifest = manifest::ExtensionManifest::parse(&files["clipsx-extension.toml"])?;
     let archive = fs::read(path)?;
     let permissions = serde_json::to_vec(&manifest.permissions)?;
+    let mut portable_settings = manifest
+        .settings
+        .iter()
+        .filter(|setting| setting.portable)
+        .map(|setting| json!({ "settingId": setting.id, "valueKind": setting.kind }))
+        .collect::<Vec<_>>();
+    portable_settings
+        .sort_by(|left, right| left["settingId"].as_str().cmp(&right["settingId"].as_str()));
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -206,6 +214,7 @@ fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
             "archiveSizeBytes": archive.len(),
             "permissionFingerprint": hex_digest(&permissions),
             "permissionReport": manifest.permissions,
+            "portableSettings": portable_settings,
         }))?
     );
     Ok(())

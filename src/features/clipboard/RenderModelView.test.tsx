@@ -59,6 +59,37 @@ afterEach(() => {
 })
 
 describe('RenderModelView', () => {
+  it('does not serialize an unchanged JSON preview again on parent updates', () => {
+    const serialize = vi.fn(() => ({ text: 'large preview'.repeat(10_000) }))
+    const value = { toJSON: serialize }
+    const clip = presentation({ kind: 'tree', value }, 'json')
+    const { rerender } = render(<RenderModelView presentation={clip} />)
+    expect(serialize).toHaveBeenCalledTimes(1)
+    rerender(<RenderModelView presentation={clip} />)
+    rerender(<RenderModelView presentation={{ ...clip, isPinned: true }} />)
+    expect(serialize).toHaveBeenCalledTimes(1)
+    rerender(
+      <RenderModelView
+        presentation={presentation({ kind: 'tree', value: { updated: true } }, 'json')}
+      />
+    )
+    expect(screen.getByText(/"updated": true/)).toBeInTheDocument()
+  })
+
+  it('updates a memoized HTML preview when the applied theme changes', () => {
+    const clip = presentation({ kind: 'html', sanitizedHtml: '<p>Hello</p>' })
+    const { rerender } = render(<RenderModelView presentation={clip} appliedTheme="light" />)
+    expect(screen.getByTitle('HTML preview')).toHaveAttribute(
+      'srcdoc',
+      expect.stringContaining('color-scheme:light')
+    )
+    rerender(<RenderModelView presentation={clip} appliedTheme="dark" />)
+    expect(screen.getByTitle('HTML preview')).toHaveAttribute(
+      'srcdoc',
+      expect.stringContaining('color-scheme:dark')
+    )
+  })
+
   const fixtures: Array<[RenderModel, string]> = [
     [{ kind: 'text', text: 'plain text' }, 'plain text'],
     [{ kind: 'code', language: 'rust', text: 'fn main() {}' }, 'fn main() {}'],

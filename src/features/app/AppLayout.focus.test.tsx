@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
 import { useAuthStore, useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
@@ -23,6 +23,7 @@ const {
   focusHandlers: [] as Array<(event: { payload: boolean }) => void>,
   eventHandlers: new Map<string, Array<(event: { payload: unknown }) => void>>(),
   testRefs: {
+    historyRenders: 0,
     sidebarProps: null as {
       onAccountClick: () => void
       onSettingsClick: () => void
@@ -75,6 +76,7 @@ vi.mock('../../shared/components/Sidebar', () => ({
 
 vi.mock('../clipboard/ClipboardHistory', () => ({
   ClipboardHistory: (props: { onPreviewItem?: (clipId: string | null) => void }) => {
+    testRefs.historyRenders += 1
     testRefs.clipboardHistoryProps = props
     return <div data-testid="clipboard-history" />
   },
@@ -160,6 +162,8 @@ describe('AppLayout search focus ownership', () => {
       clips: [],
       availableTags: [],
       loading: false,
+      resultsStale: false,
+      searchScheduled: false,
       error: null,
       hasMore: false,
       currentOffset: 0,
@@ -188,6 +192,18 @@ describe('AppLayout search focus ownership', () => {
       performCopy: vi.fn(),
       resetPagination: vi.fn(),
     })
+  })
+
+  it('does not rerender the layout/history subtree for raw search keystrokes', async () => {
+    render(<AppLayout />)
+    await act(async () => {})
+    const renders = testRefs.historyRenders
+    const input = screen.getByRole('combobox')
+    for (const value of ['d', 'do', 'doc']) {
+      fireEvent.change(input, { target: { value } })
+      expect(input).toHaveValue(value)
+    }
+    expect(testRefs.historyRenders).toBe(renders)
   })
 
   it('keeps the preview-selection callback stable across renders', () => {

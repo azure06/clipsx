@@ -1,12 +1,7 @@
 import type { SyncStatus } from './configSync'
 
 export type ConfigurationSyncReason =
-  | 'startup'
-  | 'activation'
-  | 'reconnect'
-  | 'mutation'
-  | 'retry'
-  | 'manual'
+  'startup' | 'activation' | 'reconnect' | 'mutation' | 'retry' | 'manual'
 
 const MUTATION_DEBOUNCE_MS = 5_000
 const MUTATION_MAX_WAIT_MS = 30_000

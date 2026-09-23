@@ -33,6 +33,9 @@ pub enum ClipboardOutputSource {
     Transformed {
         result_id: String,
     },
+    Derived {
+        job_id: String,
+    },
     LiteralText {
         text: String,
         source_clip_id: Option<String>,
@@ -64,6 +67,15 @@ async fn resolve_source(
             let (_, source_clip_id, _) = transforms.saved_metadata(result_id)?;
             (transforms.transformed(result_id)?, Some(source_clip_id))
         }
+        ClipboardOutputSource::Derived { job_id } => (
+            crate::extensions::jobs::output(history, job_id).await?,
+            sqlx::query_scalar(
+                "SELECT source_clip_id FROM extension_jobs WHERE id=? AND status='completed'",
+            )
+            .bind(job_id)
+            .fetch_optional(&history.pool)
+            .await?,
+        ),
         ClipboardOutputSource::LiteralText {
             text,
             source_clip_id,

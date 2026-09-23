@@ -1,3 +1,4 @@
+import { useClipboardStore } from '../../stores/clipboardStore'
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +18,7 @@ export type Transformer = {
   consentRequired?: boolean
   httpOrigins?: string[]
   providers?: string[]
+  resultLifetime?: 'temporary' | 'source_clip'
 }
 export type TransformPreview = {
   resultId: string
@@ -67,6 +69,7 @@ export type ContextAction = {
 type ActionInvocation = { token: string; expiresAt: number }
 
 type ContextActionRunResponse =
+  | { kind: 'queued'; jobId: string; clipId: string }
   | {
       kind: 'output'
       preview: TransformPreview
@@ -165,6 +168,19 @@ export const useTransformState = ({
           )
           invocationToken = invocation.token
         }
+        if (item.resultLifetime === 'source_clip') {
+          await invoke('enqueue_extension_transform', {
+            request: {
+              clipId,
+              sourceId,
+              transformerId: item.id,
+              parameters: parameters ?? {},
+              requestId: crypto.randomUUID(),
+              invocationToken,
+            },
+          })
+          return
+        }
         const result = await invoke<TransformPreview>('create_transform_preview', {
           clipId,
           transformerId: item.id,
@@ -245,6 +261,7 @@ export const useTransformState = ({
           parameters: parameters ?? {},
           invocationToken,
         })
+        if (result.kind === 'queued') return
         if (result.kind === 'notification') {
           window.dispatchEvent(
             new CustomEvent('clipsx-extension-action-notification', { detail: result })
@@ -367,7 +384,7 @@ export const useTransformState = ({
   useEffect(() => {
     const platform = getPlatform()
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) return
+      if (event.repeat || useClipboardStore.getState().resultsStale) return
       const action = actions.find(item => {
         if (!item.available || !item.shortcut) return false
         const shortcut = parseAccelerator(item.shortcut, platform)

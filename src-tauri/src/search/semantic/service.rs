@@ -1,7 +1,10 @@
 use super::chunking::{
     self, deduplicate_inputs, SemanticChunk, SemanticFacet, SemanticInput, PIPELINE_VERSION,
 };
-use super::store::{BuildingSidecar, SemanticIndexStore, SidecarChunk};
+use super::store::{
+    BuildingSidecar, SemanticIndexStore, SidecarChunk, BACKEND_ID, DEFAULT_CANDIDATE_LIMIT,
+    VECTOR_ENCODING,
+};
 use crate::{
     history::{new_id, now_ms, sha256, ClipSummary, HistoryRepository},
     providers::{
@@ -215,7 +218,8 @@ pub async fn status(repo: &HistoryRepository) -> Result<ProviderStatus> {
     };
     let diagnostic = provider_diagnostic(repo, &config.provider_id)
         .await?
-        .or(job_diagnostic);
+        .or(job_diagnostic)
+        .or(cleanup_diagnostic(repo).await?);
     let phase = if !config.enabled {
         ProviderPhase::Disabled
     } else if diagnostic.is_some() || failed > 0 || (active.is_none() && building.is_none()) {
@@ -478,31 +482,44 @@ pub async fn process_cleanup(repo: &HistoryRepository) -> Result<u64> {
     if clips.is_empty() {
         return Ok(0);
     }
-    let generations = sqlx::query(
-        "SELECT id,dimensions,sidecar_relative_path,status FROM search_index_generations WHERE status IN ('building','active','superseded') ORDER BY generation",
-    )
-    .fetch_all(&repo.pool)
-    .await?;
-    let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
-    for clip_id in &clips {
-        let result: Result<()> = async {
+    let result: Result<u64> = async {
+        let generations = sqlx::query(
+            "SELECT g.id,s.dimensions,g.sidecar_relative_path,g.status
+             FROM search_index_generations g
+             JOIN search_embedding_spaces s ON s.id=g.space_id
+             WHERE g.source_id=? AND g.status IN ('building','active','failed')
+             ORDER BY g.generation",
+        )
+        .bind(SEMANTIC_TEXT_SOURCE_ID)
+        .fetch_all(&repo.pool)
+        .await?;
+        let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
+        for clip_id in &clips {
             for row in &generations {
                 let generation_id: String = row.get(0);
                 let dimensions = usize::try_from(row.get::<i64, _>(1))?;
                 let relative_path: String = row.get(2);
                 let status: String = row.get(3);
-                let mut writer = if status == "building" {
+                sqlx::query(
+                    "UPDATE search_index_generations
+                     SET sidecar_byte_length=NULL,sidecar_sha256=NULL,updated_at=? WHERE id=?",
+                )
+                .bind(now_ms())
+                .bind(&generation_id)
+                .execute(&repo.pool)
+                .await?;
+                let mut writer = if status == "active" {
                     store
-                        .open_building(&relative_path, &generation_id, dimensions)
+                        .open_active(&relative_path, &generation_id, dimensions)
                         .await?
                 } else {
                     store
-                        .open_active(&relative_path, &generation_id, dimensions)
+                        .open_building(&relative_path, &generation_id, dimensions)
                         .await?
                 };
                 writer.remove_clip(clip_id).await?;
                 writer.close().await?;
-                if status != "building" {
+                if status == "active" {
                     let identity = store.checkpoint_identity(&relative_path)?;
                     sqlx::query("UPDATE search_index_generations SET sidecar_byte_length=?,sidecar_sha256=?,updated_at=? WHERE id=?")
                         .bind(i64::try_from(identity.byte_length)?)
@@ -513,27 +530,46 @@ pub async fn process_cleanup(repo: &HistoryRepository) -> Result<u64> {
                         .await?;
                 }
             }
-            Ok(())
+            sqlx::query("DELETE FROM search_semantic_cleanup WHERE clip_id=?")
+                .bind(clip_id)
+                .execute(&repo.pool)
+                .await?;
         }
-        .await;
-        match result {
-            Ok(()) => {
-                sqlx::query("DELETE FROM search_semantic_cleanup WHERE clip_id=?")
-                    .bind(clip_id)
-                    .execute(&repo.pool)
-                    .await?;
-            }
-            Err(error) => {
-                sqlx::query("UPDATE search_semantic_cleanup SET attempt_count=attempt_count+1,last_error=? WHERE clip_id=?")
-                    .bind(error.to_string().chars().take(512).collect::<String>())
-                    .bind(clip_id)
-                    .execute(&repo.pool)
-                    .await?;
-                return Err(error);
-            }
+        Ok(clips.len() as u64)
+    }
+    .await;
+    if let Err(error) = &result {
+        let message = error.to_string().chars().take(512).collect::<String>();
+        for clip_id in &clips {
+            sqlx::query(
+                "UPDATE search_semantic_cleanup
+                 SET attempt_count=attempt_count+1,last_error=? WHERE clip_id=?",
+            )
+            .bind(&message)
+            .bind(clip_id)
+            .execute(&repo.pool)
+            .await?;
         }
     }
-    Ok(clips.len() as u64)
+    result
+}
+
+pub async fn cleanup_pending(repo: &HistoryRepository) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM search_semantic_cleanup")
+            .fetch_one(&repo.pool)
+            .await?
+            > 0,
+    )
+}
+
+async fn cleanup_diagnostic(repo: &HistoryRepository) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT last_error FROM search_semantic_cleanup
+         WHERE last_error IS NOT NULL ORDER BY requested_at,clip_id LIMIT 1",
+    )
+    .fetch_optional(&repo.pool)
+    .await?)
 }
 
 async fn settle_generation(repo: &HistoryRepository, generation: &Generation) -> Result<()> {
@@ -885,15 +921,18 @@ async fn create_building_generation(
     let now = now_ms();
     let inserted = sqlx::query(
         "INSERT INTO search_index_generations(
-            id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
-            created_at,updated_at
-         ) VALUES(?,?,?,?,?,'building',?,?,?)",
+            id,source_id,space_id,generation,pipeline_version,backend_id,vector_encoding,
+            candidate_limit,status,sidecar_relative_path,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?,?,'building',?,?,?)",
     )
     .bind(&id)
     .bind(SEMANTIC_TEXT_SOURCE_ID)
     .bind(space_id)
     .bind(generation)
     .bind(PIPELINE_VERSION)
+    .bind(BACKEND_ID)
+    .bind(VECTOR_ENCODING)
+    .bind(DEFAULT_CANDIDATE_LIMIT)
     .bind(&sidecar_relative_path)
     .bind(now)
     .bind(now)
@@ -988,11 +1027,7 @@ pub async fn reindex(repo: &HistoryRepository) -> Result<()> {
             available
         );
     }
-    let target = generation_by_status(repo, "active")
-        .await?
-        .or(generation_by_status(repo, "failed").await?)
-        .context("no embedding space")?;
-    create_building_generation(repo, &target.space_id).await?;
+    reset_configured_text_index(repo).await?;
     Ok(())
 }
 
@@ -1032,13 +1067,76 @@ pub async fn enqueue_clip(repo: &HistoryRepository, clip_id: &str) -> Result<()>
     Ok(())
 }
 
-pub async fn clear_space(repo: &HistoryRepository, space: &str) -> Result<()> {
-    sqlx::query("DELETE FROM search_embedding_spaces WHERE id=?")
-        .bind(space)
-        .execute(&repo.pool)
-        .await?;
-    remove_disposable_generation_sidecars(repo).await?;
+pub async fn clear_space(repo: &HistoryRepository, _space: &str) -> Result<()> {
+    reset_configured_text_index(repo).await?;
     Ok(())
+}
+
+async fn reset_configured_text_index(repo: &HistoryRepository) -> Result<Generation> {
+    let config = enabled_config(repo).await?;
+    let endpoint = model_catalog::endpoint(repo).await?;
+    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
+    let descriptor = match provider.describe().await {
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            record_provider_failure(repo, &config.provider_id, &error).await?;
+            return Err(error.into());
+        }
+    };
+
+    // Semantic spaces, generations, jobs, and sidecars are disposable derived
+    // data. Clear all text spaces so stale metadata cannot strand a rebuild.
+    // Validate the provider first so a temporary outage does not destroy a
+    // usable index.
+    let generation = reset_text_index(repo, &descriptor).await?;
+    record_provider_success(repo, &config.provider_id).await?;
+    Ok(generation)
+}
+
+async fn reset_text_index(
+    repo: &HistoryRepository,
+    descriptor: &TextEmbeddingSpace,
+) -> Result<Generation> {
+    let mut tx = repo.pool.begin().await?;
+    sqlx::query("DELETE FROM search_embedding_spaces WHERE modality='text'")
+        .execute(&mut *tx)
+        .await?;
+    // No retained sidecar can contain a deleted clip after the reset, so all
+    // prior deletion intents are already satisfied. Leaving them behind makes
+    // the worker perform stale cleanup before it can start the fresh build.
+    sqlx::query("DELETE FROM search_semantic_cleanup")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    remove_disposable_generation_sidecars(repo).await?;
+    create_space_from_descriptor(repo, descriptor).await
+}
+
+async fn create_space_from_descriptor(
+    repo: &HistoryRepository,
+    descriptor: &TextEmbeddingSpace,
+) -> Result<Generation> {
+    let compatibility = compatibility_sha256(descriptor)?;
+    let space_id = new_id();
+    sqlx::query(
+        "INSERT INTO search_embedding_spaces(
+            id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,
+            modality,dimensions,normalization,distance_metric,created_at
+         ) VALUES(?,?,?,?,?,?,'text',?,?,?,?)",
+    )
+    .bind(&space_id)
+    .bind(&descriptor.provider.provider_id)
+    .bind(&descriptor.provider.provider_version)
+    .bind(&descriptor.provider.model_id)
+    .bind(&descriptor.provider.model_revision)
+    .bind(compatibility)
+    .bind(i64::try_from(descriptor.dimensions)?)
+    .bind(&descriptor.normalization)
+    .bind(&descriptor.distance_metric)
+    .bind(now_ms())
+    .execute(&repo.pool)
+    .await?;
+    create_building_generation(repo, &space_id).await
 }
 
 pub async fn recover_interrupted(repo: &HistoryRepository) -> Result<()> {
@@ -1136,25 +1234,30 @@ pub async fn ensure_current_chunker(repo: &HistoryRepository) -> Result<bool> {
 }
 
 pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
-    enabled_config(repo).await?;
-    cancel_building(repo).await?;
-    let failed = generation_by_status(repo, "failed")
+    let generation = generation_by_status(repo, "building")
         .await?
-        .context("no failed embedding generation")?;
+        .or(generation_by_status(repo, "active").await?)
+        .or(generation_by_status(repo, "failed").await?);
+    let Some(generation) = generation else {
+        return Ok(());
+    };
     let mut tx = repo.pool.begin().await?;
-    sqlx::query(
-        "UPDATE search_index_generations SET status='building',completed_at=NULL,updated_at=? WHERE id=?",
-    )
-    .bind(now_ms())
-    .bind(&failed.id)
-    .execute(&mut *tx)
-    .await?;
+    if generation.status == "failed" {
+        sqlx::query(
+            "UPDATE search_index_generations
+             SET status='building',completed_at=NULL,updated_at=? WHERE id=?",
+        )
+        .bind(now_ms())
+        .bind(&generation.id)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query(
         "UPDATE search_index_jobs SET status='pending',attempt_count=0,last_error=NULL,
          completed_at=NULL,updated_at=? WHERE generation_id=? AND status='failed'",
     )
     .bind(now_ms())
-    .bind(&failed.id)
+    .bind(&generation.id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1649,12 +1752,16 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO search_index_generations(
-              id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
-              sidecar_byte_length,sidecar_sha256,created_at,updated_at,activated_at)
-             VALUES('generation',?,'space',1,?,'active',?,?,?,?,?,?)",
+              id,source_id,space_id,generation,pipeline_version,backend_id,vector_encoding,
+              candidate_limit,status,sidecar_relative_path,sidecar_byte_length,sidecar_sha256,
+              created_at,updated_at,activated_at)
+             VALUES('generation',?,'space',1,?,?,?,?,'active',?,?,?,?,?,?)",
         )
         .bind(SEMANTIC_TEXT_SOURCE_ID)
         .bind(PIPELINE_VERSION)
+        .bind(BACKEND_ID)
+        .bind(VECTOR_ENCODING)
+        .bind(DEFAULT_CANDIDATE_LIMIT)
         .bind(&finalized.relative_path)
         .bind(finalized.byte_length as i64)
         .bind(&finalized.sha256)
@@ -1993,18 +2100,278 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn semantic_reset_recreates_space_generation_and_jobs() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "rebuild this content").await;
+        let (old_generation, writer) = insert_generation(&repo).await;
+        writer.close().await.unwrap();
+        let old_sidecar = repo
+            .semantic_index_root
+            .join(&old_generation.sidecar_relative_path);
+        assert!(old_sidecar.exists());
+        sqlx::query(
+            "INSERT INTO search_semantic_cleanup(clip_id,requested_at)
+             VALUES('deleted-before-reset',?)",
+        )
+        .bind(now_ms())
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        let rebuilt = reset_text_index(&repo, &test_space()).await.unwrap();
+
+        assert!(!old_sidecar.exists());
+        assert_eq!(rebuilt.status, "building");
+        assert!(repo
+            .semantic_index_root
+            .join(&rebuilt.sidecar_relative_path)
+            .exists());
+        let spaces: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM search_embedding_spaces WHERE modality='text'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(spaces, 1);
+        let cleanup: i64 = sqlx::query_scalar("SELECT count(*) FROM search_semantic_cleanup")
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(cleanup, 0);
+        let job: (String, i64) = sqlx::query_as(
+            "SELECT status,attempt_count FROM search_index_jobs
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&rebuilt.id)
+        .bind(&clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(job, ("pending".into(), 0));
+    }
+
+    #[tokio::test]
+    async fn deletion_cleanup_removes_sidecar_rows_and_is_idempotent() {
+        let (_temp, repo) = repository().await;
+        let deleted = insert_text_clip(&repo, "delete this semantic content").await;
+        let retained = insert_text_clip(&repo, "retain this semantic content").await;
+        let (generation, mut writer) = insert_generation(&repo).await;
+        index_clip(&repo, &mut writer, &FakeProvider, &deleted)
+            .await
+            .unwrap();
+        index_clip(&repo, &mut writer, &FakeProvider, &retained)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+
+        repo.delete(&deleted).await.unwrap();
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 1);
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 0);
+        assert!(!cleanup_pending(&repo).await.unwrap());
+
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(
+                repo.semantic_index_root
+                    .join(&generation.sidecar_relative_path),
+            )
+            .read_only(true);
+        let mut sidecar = SqliteConnection::connect_with(&options).await.unwrap();
+        let clips: Vec<String> =
+            sqlx::query_scalar("SELECT clip_id FROM semantic_clips ORDER BY clip_id")
+                .fetch_all(&mut sidecar)
+                .await
+                .unwrap();
+        assert_eq!(clips, vec![retained]);
+        let chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM semantic_chunks")
+            .fetch_one(&mut sidecar)
+            .await
+            .unwrap();
+        let inputs: i64 = sqlx::query_scalar("SELECT count(*) FROM semantic_inputs")
+            .fetch_one(&mut sidecar)
+            .await
+            .unwrap();
+        assert_eq!(chunks, 1);
+        assert_eq!(inputs, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_handles_failed_builds_and_ignores_retired_generations() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "cleanup retained generations").await;
+        let (active, active_writer) = insert_generation(&repo).await;
+        active_writer.close().await.unwrap();
+        let failed = create_building_generation(&repo, "space").await.unwrap();
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let mut failed_writer = store
+            .open_building(&failed.sidecar_relative_path, &failed.id, failed.dimensions)
+            .await
+            .unwrap();
+        index_clip(&repo, &mut failed_writer, &FakeProvider, &clip_id)
+            .await
+            .unwrap();
+        failed_writer.close().await.unwrap();
+        sqlx::query("UPDATE search_index_generations SET status='failed' WHERE id=?")
+            .bind(&failed.id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE search_index_generations SET status='superseded' WHERE id=?")
+            .bind(&active.id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        store.remove(&active.sidecar_relative_path).unwrap();
+
+        repo.delete(&clip_id).await.unwrap();
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 1);
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(repo.semantic_index_root.join(&failed.sidecar_relative_path))
+            .read_only(true);
+        let mut sidecar = SqliteConnection::connect_with(&options).await.unwrap();
+        let clips: i64 = sqlx::query_scalar("SELECT count(*) FROM semantic_clips")
+            .fetch_one(&mut sidecar)
+            .await
+            .unwrap();
+        assert_eq!(clips, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_failure_is_retained_as_a_diagnostic() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "cleanup failure").await;
+        let (generation, writer) = insert_generation(&repo).await;
+        writer.close().await.unwrap();
+        SemanticIndexStore::new(&repo.semantic_index_root)
+            .unwrap()
+            .remove(&generation.sidecar_relative_path)
+            .unwrap();
+        repo.delete(&clip_id).await.unwrap();
+
+        let error = process_cleanup(&repo).await.unwrap_err().to_string();
+        assert!(error.contains("missing"));
+        assert!(cleanup_pending(&repo).await.unwrap());
+        let diagnostic = cleanup_diagnostic(&repo).await.unwrap().unwrap();
+        assert!(diagnostic.contains("missing"));
+        put_device_config(
+            &repo.pool,
+            &TextEmbeddingProviderConfig {
+                provider_id: "test.embedding".into(),
+                model: "test".into(),
+                enabled: true,
+                minimum_similarity_percent: None,
+            },
+        )
+        .await
+        .unwrap();
+        let provider_status = status(&repo).await.unwrap();
+        assert_eq!(provider_status.phase, ProviderPhase::Degraded);
+        assert_eq!(
+            provider_status.diagnostic.as_deref(),
+            Some(diagnostic.as_str())
+        );
+        let attempts: i64 =
+            sqlx::query_scalar("SELECT attempt_count FROM search_semantic_cleanup WHERE clip_id=?")
+                .bind(&clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_drains_multiple_bounded_batches_without_an_index() {
+        let (_temp, repo) = repository().await;
+        for index in 0..33 {
+            sqlx::query("INSERT INTO search_semantic_cleanup(clip_id,requested_at) VALUES(?,?)")
+                .bind(format!("deleted-{index}"))
+                .bind(index)
+                .execute(&repo.pool)
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 32);
+        assert!(cleanup_pending(&repo).await.unwrap());
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 1);
+        assert!(!cleanup_pending(&repo).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn retry_requeues_failed_jobs_in_the_active_generation() {
+        let (_temp, repo) = repository().await;
+        let clip_id = insert_text_clip(&repo, "retry active generation").await;
+        let (generation, writer) = insert_generation(&repo).await;
+        writer.close().await.unwrap();
+        enqueue_job(&repo, &generation.id, &clip_id).await.unwrap();
+        sqlx::query(
+            "UPDATE search_index_jobs SET status='failed',attempt_count=3,last_error='failed'
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&generation.id)
+        .bind(&clip_id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+
+        retry_failed(&repo).await.unwrap();
+
+        let generation_status: String =
+            sqlx::query_scalar("SELECT status FROM search_index_generations WHERE id=?")
+                .bind(&generation.id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        let job: (String, i64, Option<String>) = sqlx::query_as(
+            "SELECT status,attempt_count,last_error FROM search_index_jobs
+             WHERE generation_id=? AND clip_id=?",
+        )
+        .bind(&generation.id)
+        .bind(&clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(generation_status, "active");
+        assert_eq!(job, ("pending".into(), 0, None));
+    }
+
+    #[tokio::test]
+    async fn generations_store_the_current_sidecar_format_explicitly() {
+        let (_temp, repo) = repository().await;
+        let (_, writer) = insert_generation(&repo).await;
+        writer.close().await.unwrap();
+        let format: (String, String, i64) = sqlx::query_as(
+            "SELECT backend_id,vector_encoding,candidate_limit
+             FROM search_index_generations WHERE id='generation'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            format,
+            (
+                BACKEND_ID.into(),
+                VECTOR_ENCODING.into(),
+                DEFAULT_CANDIDATE_LIMIT
+            )
+        );
+    }
+
+    #[tokio::test]
     async fn schema_rejects_two_active_generations() {
         let (_temp, repo) = repository().await;
         let (_, writer) = insert_generation(&repo).await;
         writer.close().await.unwrap();
         let result = sqlx::query(
             "INSERT INTO search_index_generations(
-             id,source_id,space_id,generation,pipeline_version,status,sidecar_relative_path,
-             created_at,updated_at)
-             VALUES('other',?,'space',2,?,'active','generation-other.sqlite',?,?)",
+             id,source_id,space_id,generation,pipeline_version,backend_id,vector_encoding,
+             candidate_limit,status,sidecar_relative_path,created_at,updated_at)
+             VALUES('other',?,'space',2,?,?,?,?,'active','generation-other.sqlite',?,?)",
         )
         .bind(SEMANTIC_TEXT_SOURCE_ID)
         .bind(PIPELINE_VERSION)
+        .bind(BACKEND_ID)
+        .bind(VECTOR_ENCODING)
+        .bind(DEFAULT_CANDIDATE_LIMIT)
         .bind(now_ms())
         .bind(now_ms())
         .execute(&repo.pool)

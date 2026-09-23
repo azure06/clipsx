@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { addTelemetryBreadcrumb } from './telemetry'
 
 // No arbitrary strings or error objects cross the diagnostic boundary.
 export type DiagnosticEvent =
@@ -20,6 +21,7 @@ export type DiagnosticEvent =
   | 'window_unable_to_show_snap_layout'
 
 export const diagnostic = (event: DiagnosticEvent): void => {
+  addTelemetryBreadcrumb(event)
   void invoke('write_diagnostic', { event }).catch(() => {
     // Logging must never interrupt the operation being diagnosed.
   })

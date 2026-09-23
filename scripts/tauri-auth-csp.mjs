@@ -1,4 +1,9 @@
-const BASE_CONNECT_SOURCES = ["'self'", 'http://localhost:5173', 'ipc://localhost']
+const BASE_CONNECT_SOURCES = [
+  "'self'",
+  'http://localhost:5173',
+  'ipc://localhost',
+  'https://o350725.ingest.us.sentry.io',
+]
 
 const BASE_CSP = [
   "default-src 'self' http://localhost:5173",

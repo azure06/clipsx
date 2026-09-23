@@ -53,6 +53,7 @@ export type RegistryPackage = {
     dark: { url: string; sha256: string; dataUrl?: string | null }
   } | null
   permissionFingerprint?: string | null
+  portableSettings: Array<{ settingId: string; valueKind: 'boolean' | 'number' }>
 }
 
 export type CatalogEntry = {

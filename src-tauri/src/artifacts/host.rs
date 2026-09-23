@@ -435,8 +435,9 @@ pub async fn artifact_binary(
     artifact_file_id: &str,
 ) -> Result<(Vec<u8>, String)> {
     let row = sqlx::query(
-        "SELECT ab.sha256, ab.relative_path \
+        "SELECT ab.sha256, ab.relative_path, COALESCE(o.mime_type, 'image/png') \
          FROM artifact_binary_files ab \
+         LEFT JOIN extension_result_outputs o ON o.artifact_id = ab.artifact_id \
          WHERE ab.id = ? AND ab.lifecycle_state = 'ready'",
     )
     .bind(artifact_file_id)
@@ -453,7 +454,7 @@ pub async fn artifact_binary(
     if sha256(&bytes) != expected {
         bail!("artifact binary hash mismatch");
     }
-    Ok((bytes, "image/png".into()))
+    Ok((bytes, row.get(2)))
 }
 
 // ─── Thumbnail ───────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import { SearchBar } from './SearchBar'
 
 const ScopeHarness = ({
   initialValue = '',
-  initialScope = 'all' as 'all' | 'favorites' | 'pinned',
+  initialScope = 'all',
   onScopeChange = vi.fn(),
 }: {
   initialValue?: string

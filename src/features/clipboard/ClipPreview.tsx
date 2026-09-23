@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ChevronLeft, ChevronRight, ScanText, Sparkles } from 'lucide-react'
@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../shared/components/ui'
+import { ExtensionResults } from './ExtensionResults'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -179,7 +180,7 @@ export const ViewTabIcon = ({
   )
 }
 
-export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
+export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSummary }) {
   const { t, i18n } = useTranslation()
   const [previewEl, setPreviewEl] = useState<HTMLDivElement | null>(null)
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
@@ -190,7 +191,9 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const [presentation, setPresentation] = useState<ClipPresentation | null>(null)
   const [tabControls, setTabControls] = useState<ViewTabControls | null>(null)
   const [transformControls, setTransformControls] = useState<TransformControls | null>(null)
-  const { deleteClip, togglePin, toggleFavorite } = useClipboardStore()
+  const deleteClip = useClipboardStore(state => state.deleteClip)
+  const togglePin = useClipboardStore(state => state.togglePin)
+  const toggleFavorite = useClipboardStore(state => state.toggleFavorite)
   const currentPresentation = useMemo(
     () =>
       presentation
@@ -245,7 +248,10 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
   const typeLabel = currentPresentation?.activeView.presentationKind ?? clip.primaryPresentationKind
   const typeDotColor = KIND_COLOR[typeLabel] ?? 'bg-blue-500'
   const sourceLabel = currentPresentation?.sourceAppName ?? clip.sourceAppName
-  const stats = currentPresentation ? presentationTextStats(currentPresentation) : null
+  const stats = useMemo(
+    () => (presentation ? presentationTextStats(presentation) : null),
+    [presentation]
+  )
   const ocr = currentPresentation?.model.kind === 'image' ? currentPresentation.model.ocr : null
   const visibleTabs = tabControls && tabControls.views.length > 1 ? tabControls : null
 
@@ -399,6 +405,8 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
         />
       </div>
 
+      <ExtensionResults clipId={clip.id} />
+
       <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/45 dark:bg-black/10 border-t border-slate-200/70 dark:border-slate-100/5">
         <TagChips clipId={clip.id} tags={clip.tags ?? []} />
         <NoteField clipId={clip.id} />
@@ -432,4 +440,4 @@ export const ClipPreview = ({ clip }: { clip: ClipSummary }) => {
       </div>
     </div>
   )
-}
+})

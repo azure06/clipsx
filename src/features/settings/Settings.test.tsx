@@ -22,7 +22,8 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   autoClearMinutes: null,
   clearOnExit: false,
   autoStart: false,
-  loggingEnabled: true,
+  verboseLoggingEnabled: false,
+  errorReportingEnabled: true,
   captureFilters: { images: true, files: true, richText: true, officeAndDocuments: true },
   capture: {
     maxOrdinaryClips: 1000,
@@ -107,18 +108,19 @@ describe('useSettingsStore', () => {
   })
   it('serializes rapid edits without losing successful changes after a failure', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
-    mockInvoke
-      .mockRejectedValueOnce(new Error('disk full'))
-      .mockResolvedValueOnce({ settings: v2Settings({ loggingEnabled: false }), failedEffects: [] })
+    mockInvoke.mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce({
+      settings: v2Settings({ verboseLoggingEnabled: true }),
+      failedEffects: [],
+    })
     const first = useSettingsStore.getState().updateSettings({ theme: 'dark' })
-    const second = useSettingsStore.getState().updateSettings({ logging_enabled: false })
+    const second = useSettingsStore.getState().updateSettings({ verbose_logging_enabled: true })
     await expect(first).rejects.toThrow('disk full')
     await second
     expect(mockInvoke).toHaveBeenNthCalledWith(2, 'update_app_settings', {
-      settings: { loggingEnabled: false },
+      settings: { verboseLoggingEnabled: true },
     })
     expect(useSettingsStore.getState().settings?.theme).toBe('auto')
-    expect(useSettingsStore.getState().settings?.logging_enabled).toBe(false)
+    expect(useSettingsStore.getState().settings?.verbose_logging_enabled).toBe(true)
   })
 
   it('keeps saved values when native effects fail and exposes retry', async () => {

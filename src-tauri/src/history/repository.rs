@@ -14,9 +14,49 @@ use std::{
 };
 use uuid::Uuid;
 
+fn source_platform(source_app_id: Option<&str>) -> Option<&'static str> {
+    match source_app_id {
+        Some(value) if value.starts_with("exe:") => Some("windows"),
+        Some(value) if value.starts_with("bundle:") => Some("macos"),
+        Some(value) if value.starts_with("wmclass:") => Some("linux_x11"),
+        _ => None,
+    }
+}
+
+async fn enqueue_capture_intents(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    clip_id: &str,
+    snapshot: &CapturedSnapshot,
+    is_new_clip: bool,
+    captured_at: i64,
+) -> Result<()> {
+    let (Some(platform), Some(app_id)) = (
+        source_platform(snapshot.source_app_id.as_deref()),
+        snapshot.source_app_id.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    let event_id = new_id();
+    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND r.app_platform=? AND r.app_id=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+        .bind(event_id)
+        .bind(clip_id)
+        .bind(captured_at)
+        .bind(is_new_clip)
+        .bind(platform)
+        .bind(app_id)
+        .bind(snapshot.source_app_name.as_deref())
+        .bind(captured_at)
+        .bind(captured_at)
+        .bind(platform)
+        .bind(app_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
 
-const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')) FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
+const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
 
 #[derive(Clone)]
 pub struct HistoryRepository {
@@ -151,6 +191,89 @@ impl HistoryRepository {
             .await?;
         Ok(id)
     }
+
+    /// Promote a completed, clip-owned result and its provenance in one transaction.
+    pub async fn promote_extension_result(&self, job_id: &str, request_id: &str) -> Result<String> {
+        if request_id.is_empty() || request_id.len() > 120 {
+            bail!("promotion request ID is invalid");
+        }
+        let mut tx = self.pool.begin().await?;
+        if let Some(existing) = sqlx::query_scalar::<_, String>("SELECT promoted_clip_id FROM extension_result_promotions WHERE job_id=? AND request_id=?")
+            .bind(job_id).bind(request_id).fetch_optional(&mut *tx).await? {
+            tx.commit().await?;
+            return Ok(existing);
+        }
+        let job = sqlx::query("SELECT j.source_clip_id,j.source_representation_id,j.package_id,j.package_sha256,j.contribution_id,j.contribution_version,j.parameter_sha256,c.capture_sha256,r.format_key,r.canonical_mime_type FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id WHERE j.id=? AND j.status='completed' AND c.lifecycle_state='ready' AND r.lifecycle_state='ready'")
+            .bind(job_id).fetch_optional(&mut *tx).await?.context("extension result is unavailable")?;
+        let outputs = sqlx::query("SELECT o.format_key,o.mime_type,t.text_value,b.relative_path,b.sha256 FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id AND b.lifecycle_state='ready' WHERE o.job_id=? ORDER BY o.ordinal")
+            .bind(job_id).fetch_all(&mut *tx).await?;
+        if outputs.is_empty() || outputs.len() > 8 {
+            bail!("extension result has no promotable output");
+        }
+        let mut representations = Vec::with_capacity(outputs.len());
+        for row in outputs {
+            let payload = if let Some(text) = row.get::<Option<String>, _>(2) {
+                CapturedPayload::Text(text)
+            } else {
+                let relative: String = row
+                    .get::<Option<String>, _>(3)
+                    .context("extension binary output is unavailable")?;
+                if !safe_relative(&relative) {
+                    bail!("extension binary output path is invalid");
+                }
+                let bytes = fs::read(self.managed_root.join(&relative))?;
+                let expected: String = row.get(4);
+                if sha256(&bytes) != expected {
+                    bail!("extension binary output hash mismatch");
+                }
+                CapturedPayload::Binary(bytes)
+            };
+            representations.push(CapturedRepresentation {
+                format_key: row.get(0),
+                canonical_mime_type: Some(row.get(1)),
+                native_type: None,
+                platform: if cfg!(target_os = "windows") {
+                    "windows"
+                } else if cfg!(target_os = "macos") {
+                    "macos"
+                } else {
+                    "linux_x11"
+                }
+                .into(),
+                capture_priority: 10,
+                payload,
+            });
+        }
+        let id = new_id();
+        let now = now_ms();
+        let bytes: usize = representations
+            .iter()
+            .map(payload_len)
+            .map(|size| size as usize)
+            .sum();
+        let fingerprint = capture_fingerprint(&representations);
+        sqlx::query("INSERT INTO clip_items(id,source_app_name,source_app_id,captured_at,updated_at,lifecycle_state,capture_sha256,total_payload_bytes) VALUES(?,'ClipsX','clipsx.transform',?,?,'pending',?,?)")
+            .bind(&id).bind(now).bind(now).bind(fingerprint).bind(bytes as i64).execute(&mut *tx).await?;
+        for (ordinal, output) in representations.iter().enumerate() {
+            self.insert_representation(&mut tx, &id, ordinal as i64, output, now)
+                .await?;
+        }
+        sqlx::query("UPDATE clip_items SET lifecycle_state='ready' WHERE id=?")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,source_capture_sha256,source_format_key,source_mime_type,transformer_id,transformer_version,parameter_sha256,package_id,package_sha256,extension_job_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(&id).bind(job.get::<String,_>(0)).bind(job.get::<String,_>(1))
+            .bind(job.get::<String,_>(7)).bind(job.get::<String,_>(8)).bind(job.get::<Option<String>,_>(9))
+            .bind(job.get::<String,_>(4)).bind(job.get::<String,_>(5)).bind(job.get::<String,_>(6))
+            .bind(job.get::<String,_>(2)).bind(job.get::<String,_>(3)).bind(job_id).bind(now)
+            .execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO extension_result_promotions(job_id,request_id,promoted_clip_id,created_at) VALUES(?,?,?,?)")
+            .bind(job_id).bind(request_id).bind(&id).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        self.enforce_retention(&self.settings().await?).await?;
+        Ok(id)
+    }
     async fn capture_inner(
         &self,
         snapshot: CapturedSnapshot,
@@ -184,14 +307,17 @@ impl HistoryRepository {
             .await?
             {
                 let id: String = row.get(0);
-                sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=? WHERE id=?").bind(now).bind(now).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(&id).execute(&mut *tx).await?;
+                let source_platform = source_platform(snapshot.source_app_id.as_deref());
+                sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=?, source_app_platform=? WHERE id=?").bind(now).bind(now).bind(&snapshot.source_app_name).bind(&snapshot.source_app_id).bind(source_platform).bind(&id).execute(&mut *tx).await?;
                 replace_format_observations(&mut tx, &id, &snapshot.format_observations).await?;
+                enqueue_capture_intents(&mut tx, &id, &snapshot, false, now).await?;
                 tx.commit().await?;
                 return Ok((id, true));
             }
         }
         let id = new_id();
-        sqlx::query("INSERT INTO clip_items(id,source_app_name,source_app_id,captured_at,updated_at,lifecycle_state,capture_sha256,total_payload_bytes) VALUES(?,?,?,?,?,'pending',?,?)").bind(&id).bind(snapshot.source_app_name).bind(snapshot.source_app_id).bind(now).bind(now).bind(&fingerprint).bind(total as i64).execute(&mut *tx).await?;
+        let source_platform = source_platform(snapshot.source_app_id.as_deref());
+        sqlx::query("INSERT INTO clip_items(id,source_app_name,source_app_id,source_app_platform,captured_at,updated_at,lifecycle_state,capture_sha256,total_payload_bytes) VALUES(?,?,?,?,?,?,'pending',?,?)").bind(&id).bind(&snapshot.source_app_name).bind(&snapshot.source_app_id).bind(source_platform).bind(now).bind(now).bind(&fingerprint).bind(total as i64).execute(&mut *tx).await?;
         for (ordinal, rep) in snapshot.representations.iter().enumerate() {
             self.insert_representation(&mut tx, &id, ordinal as i64, rep, now)
                 .await?;
@@ -201,6 +327,9 @@ impl HistoryRepository {
             .bind(&id)
             .execute(&mut *tx)
             .await?;
+        if !force_new {
+            enqueue_capture_intents(&mut tx, &id, &snapshot, true, now).await?;
+        }
         tx.commit().await?;
         self.enforce_retention(settings).await?;
         Ok((id, false))
@@ -475,6 +604,7 @@ impl HistoryRepository {
             id,
             source_app_name: row.get(1),
             source_app_id: row.get(2),
+            source_app_platform: row.get(20),
             captured_at: row.get(3),
             updated_at: row.get(4),
             is_pinned: row.get::<i64, _>(5) != 0,
@@ -1151,7 +1281,7 @@ impl HistoryRepository {
             }
         }
         for (key, value) in sqlx::query(
-            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut','diagnostics.logging_enabled')",
+            "SELECT key,value_json FROM config_device_values WHERE key IN ('capture.filters','capture.excluded_apps','window.global_shortcut','diagnostics.verbose_logging_enabled','diagnostics.error_reporting_enabled')",
         )
         .fetch_all(&mut **transaction)
         .await?
@@ -1162,7 +1292,8 @@ impl HistoryRepository {
                 "capture.filters" => settings.capture_filters = serde_json::from_str(&value)?,
                 "capture.excluded_apps" => settings.excluded_apps = serde_json::from_str(&value)?,
                 "window.global_shortcut" => settings.global_shortcut = serde_json::from_str(&value)?,
-                "diagnostics.logging_enabled" => settings.logging_enabled = serde_json::from_str(&value)?,
+                "diagnostics.verbose_logging_enabled" => settings.verbose_logging_enabled = serde_json::from_str(&value)?,
+                "diagnostics.error_reporting_enabled" => settings.error_reporting_enabled = serde_json::from_str(&value)?,
                 _ => {}
             }
         }
@@ -1314,8 +1445,12 @@ impl HistoryRepository {
         }
         for (key, value) in [
             (
-                "diagnostics.logging_enabled",
-                serde_json::to_string(&settings.logging_enabled)?,
+                "diagnostics.verbose_logging_enabled",
+                serde_json::to_string(&settings.verbose_logging_enabled)?,
+            ),
+            (
+                "diagnostics.error_reporting_enabled",
+                serde_json::to_string(&settings.error_reporting_enabled)?,
             ),
             (
                 "capture.filters",
@@ -2393,5 +2528,66 @@ mod tests {
         );
         assert!(repo.detail(&secret_id).await.is_err());
         assert!(repo.detail(&ordinary_id).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn repeated_capture_commits_immutable_application_intents() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let now = now_ms();
+        let checksum = "a".repeat(64);
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.0','developer',?,'packages/rewrite',1,?,?)")
+            .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
+            .execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES('extension-1',?,'background_clip_created','clip.created',?)")
+            .bind(&checksum).bind(now).execute(&repo.pool).await.unwrap();
+        for (rule, app) in [("outlook", "exe:outlook.exe"), ("slack", "exe:slack.exe")] {
+            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite',?,'rewrite-on-capture','windows',?,?,1,'{}',0,?)")
+                .bind(rule).bind(app).bind(rule).bind(now).execute(&repo.pool).await.unwrap();
+        }
+        let snapshot = |name: &str, app: &str| CapturedSnapshot {
+            token: 1,
+            source_app_name: Some(name.into()),
+            source_app_id: Some(app.into()),
+            format_observations: vec![],
+            representations: vec![CapturedRepresentation {
+                format_key: "mime:text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("same text".into()),
+            }],
+        };
+        let (clip_id, duplicate) = repo
+            .capture(
+                snapshot("Outlook", "exe:outlook.exe"),
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        assert!(!duplicate);
+        let (again, duplicate) = repo
+            .capture(
+                snapshot("Slack", "exe:slack.exe"),
+                &CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again, clip_id);
+        assert!(duplicate);
+        let events: Vec<(String, i64)> = sqlx::query_as("SELECT app_id,is_new_clip FROM extension_activation_events WHERE source_clip_id=? ORDER BY created_at,event_id")
+            .bind(&clip_id).fetch_all(&repo.pool).await.unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events.contains(&("exe:outlook.exe".into(), 1)));
+        assert!(events.contains(&("exe:slack.exe".into(), 0)));
     }
 }

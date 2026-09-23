@@ -20,13 +20,7 @@ export interface AiCapabilityStatus {
 // ── Text search status (drives the search bar toggle) ────────────────────────
 
 export type TextSearchState =
-  | 'disabled'
-  | 'missing_model'
-  | 'idle'
-  | 'loading'
-  | 'indexing'
-  | 'ready'
-  | 'error'
+  'disabled' | 'missing_model' | 'idle' | 'loading' | 'indexing' | 'ready' | 'error'
 
 export interface TextSearchProgress {
   done: number

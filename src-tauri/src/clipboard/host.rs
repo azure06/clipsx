@@ -112,7 +112,7 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
         let mut reps = Vec::new();
         let mut observations = Vec::new();
-        let source_app_name = active_app_name();
+        let source_application_before = active_application();
         if let Ok(text) = clipboard.get_text() {
             if !text.is_empty() {
                 #[cfg(target_os = "linux")]
@@ -151,7 +151,13 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         }
         #[cfg(target_os = "windows")]
         unsafe {
-            capture_windows_formats(&mut reps, &mut observations, source_app_name.as_deref())?;
+            capture_windows_formats(
+                &mut reps,
+                &mut observations,
+                source_application_before
+                    .as_ref()
+                    .map(|value| value.0.as_str()),
+            )?;
         }
         #[cfg(target_os = "macos")]
         unsafe {
@@ -196,10 +202,12 @@ impl ClipboardAdapter for SystemClipboardAdapter {
             bail!("clipboard has no supported representations")
         }
         self.fallback_token = self.fallback_token.wrapping_add(1);
+        let source_application = source_application_before
+            .filter(|observed| active_application().as_ref() == Some(observed));
         Ok(CapturedSnapshot {
             token,
-            source_app_name,
-            source_app_id: None,
+            source_app_name: source_application.as_ref().map(|value| value.0.clone()),
+            source_app_id: source_application.map(|value| value.1),
             format_observations: observations,
             representations: reps,
         })
@@ -223,7 +231,7 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         {
             // arboard can only own one payload at a time on X11. Own the
             // CLIPBOARD selection ourselves so TARGETS can expose the complete
-            // v2 representation set to the receiving application.
+            // representation set to the receiving application.
             x11_own_selection(reps.to_vec())?;
             let token = self.snapshot_token()?;
             remember_self_write(token, reps);
@@ -394,7 +402,7 @@ fn encode_png(image: ImageData<'_>) -> Result<Vec<u8>> {
     Ok(out)
 }
 #[cfg(target_os = "windows")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use windows::core::PWSTR;
     use windows::Win32::{
         Foundation::CloseHandle,
@@ -422,13 +430,19 @@ fn active_app_name() -> Option<String> {
         );
         let _ = CloseHandle(process);
         result.ok()?;
-        std::path::Path::new(&String::from_utf16_lossy(&buffer[..length as usize]))
-            .file_stem()
-            .map(|value| value.to_string_lossy().into_owned())
+        let executable =
+            std::path::Path::new(&String::from_utf16_lossy(&buffer[..length as usize]))
+                .file_name()?
+                .to_string_lossy()
+                .into_owned();
+        safe_application(
+            executable.clone(),
+            format!("exe:{}", executable.to_ascii_lowercase()),
+        )
     }
 }
 #[cfg(target_os = "macos")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
     unsafe {
@@ -438,15 +452,29 @@ fn active_app_name() -> Option<String> {
             return None;
         }
         let name: id = msg_send![app, localizedName];
-        if name == nil {
+        let bundle: id = msg_send![app, bundleIdentifier];
+        if name == nil || bundle == nil {
             return None;
         }
-        let ptr: *const std::ffi::c_char = msg_send![name, UTF8String];
-        (!ptr.is_null()).then(|| std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned())
+        let name_ptr: *const std::ffi::c_char = msg_send![name, UTF8String];
+        let bundle_ptr: *const std::ffi::c_char = msg_send![bundle, UTF8String];
+        if name_ptr.is_null() || bundle_ptr.is_null() {
+            return None;
+        }
+        let display = std::ffi::CStr::from_ptr(name_ptr)
+            .to_string_lossy()
+            .into_owned();
+        let identifier = std::ffi::CStr::from_ptr(bundle_ptr)
+            .to_string_lossy()
+            .into_owned();
+        safe_application(
+            display,
+            format!("bundle:{}", identifier.to_ascii_lowercase()),
+        )
     }
 }
 #[cfg(target_os = "linux")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use x11rb::{
         connection::Connection,
         protocol::xproto::{AtomEnum, ConnectionExt},
@@ -466,27 +494,38 @@ fn active_app_name() -> Option<String> {
         .ok()?
         .value32()?
         .next()?;
-    let name_atom = conn
-        .intern_atom(false, b"_NET_WM_NAME")
+    let class_atom = conn
+        .intern_atom(false, b"WM_CLASS")
         .ok()?
         .reply()
         .ok()?
         .atom;
-    let utf8 = conn
-        .intern_atom(false, b"UTF8_STRING")
-        .ok()?
-        .reply()
-        .ok()?
-        .atom;
-    let name = conn
-        .get_property(false, active, name_atom, utf8, 0, 1024)
+    let value = conn
+        .get_property(false, active, class_atom, AtomEnum::STRING, 0, 1024)
         .ok()?
         .reply()
         .ok()?
         .value;
-    String::from_utf8(name)
-        .ok()
-        .filter(|value| !value.is_empty())
+    let class = value
+        .split(|byte| *byte == 0)
+        .filter_map(|part| std::str::from_utf8(part).ok())
+        .filter(|part| !part.is_empty())
+        .next_back()?
+        .to_owned();
+    safe_application(
+        class.clone(),
+        format!("wmclass:{}", class.to_ascii_lowercase()),
+    )
+}
+
+fn safe_application(display_name: String, id: String) -> Option<(String, String)> {
+    let valid = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && !value.chars().any(char::is_control)
+            && !value.contains(['/', '\\'])
+    };
+    (valid(&display_name) && valid(&id)).then_some((display_name, id))
 }
 
 #[cfg(target_os = "macos")]
@@ -1554,7 +1593,7 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                     .filter(|name| writeback_allowed(name))
                     .and_then(|name| capabilities::resolve("windows", None, name));
                 let target = match capability.and_then(|value| value.write_back.writer) {
-                    Some(WriterCodec::WindowsPng) => Some("PNG"),
+                    Some(WriterCodec::WindowsImage) => Some("PNG"),
                     Some(WriterCodec::WindowsRegisteredBytes) => native,
                     _ => match rep.canonical_mime_type.as_deref() {
                         Some("image/png") => Some("PNG"),
@@ -1568,6 +1607,13 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
                     if set_windows_format(format, bytes) {
                         written += 1
                     }
+                    if native == "PNG" {
+                        if let Some(dib_v5) = windows_png_to_dib_v5(bytes) {
+                            if set_windows_format(17, &dib_v5) {
+                                written += 1
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1577,6 +1623,36 @@ unsafe fn write_windows_formats(reps: &[CapturedRepresentation]) -> Result<()> {
         bail!("no supported representation remained for reconstruction")
     }
     Ok(())
+}
+#[cfg(target_os = "windows")]
+fn windows_png_to_dib_v5(png: &[u8]) -> Option<Vec<u8>> {
+    use image::ImageFormat;
+
+    let image = image::load_from_memory_with_format(png, ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+        return None;
+    }
+    let pixel_bytes = width.checked_mul(height)?.checked_mul(4)?;
+    let mut dib = vec![0u8; 124usize.checked_add(pixel_bytes as usize)?];
+    dib[0..4].copy_from_slice(&124u32.to_le_bytes());
+    dib[4..8].copy_from_slice(&(width as i32).to_le_bytes());
+    dib[8..12].copy_from_slice(&(-(height as i32)).to_le_bytes());
+    dib[12..14].copy_from_slice(&1u16.to_le_bytes());
+    dib[14..16].copy_from_slice(&32u16.to_le_bytes());
+    dib[16..20].copy_from_slice(&3u32.to_le_bytes());
+    dib[20..24].copy_from_slice(&pixel_bytes.to_le_bytes());
+    dib[40..44].copy_from_slice(&0x00ff_0000u32.to_le_bytes());
+    dib[44..48].copy_from_slice(&0x0000_ff00u32.to_le_bytes());
+    dib[48..52].copy_from_slice(&0x0000_00ffu32.to_le_bytes());
+    dib[52..56].copy_from_slice(&0xff00_0000u32.to_le_bytes());
+    dib[56..60].copy_from_slice(&0x7352_4742u32.to_le_bytes());
+    for (source, target) in image.pixels().zip(dib[124..].chunks_exact_mut(4)) {
+        target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
+    }
+    Some(dib)
 }
 #[cfg(target_os = "windows")]
 fn windows_unicode_text_bytes(value: &str) -> Vec<u8> {
@@ -1866,6 +1942,28 @@ mod tests {
             windows_normalized_image_identity_for(false, false, false),
             ("windows:normalized:image/png".into(), None)
         );
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn png_writeback_builds_a_top_down_dib_v5_companion() {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            1,
+            1,
+            Rgba([0x11, 0x22, 0x33, 0x44]),
+        ));
+        let mut png = Cursor::new(Vec::new());
+        image.write_to(&mut png, ImageFormat::Png).unwrap();
+
+        let dib = windows_png_to_dib_v5(png.get_ref()).unwrap();
+        assert_eq!(u32::from_le_bytes(dib[0..4].try_into().unwrap()), 124);
+        assert_eq!(i32::from_le_bytes(dib[4..8].try_into().unwrap()), 1);
+        assert_eq!(i32::from_le_bytes(dib[8..12].try_into().unwrap()), -1);
+        assert_eq!(u16::from_le_bytes(dib[14..16].try_into().unwrap()), 32);
+        assert_eq!(u32::from_le_bytes(dib[16..20].try_into().unwrap()), 3);
+        assert_eq!(&dib[124..128], &[0x33, 0x22, 0x11, 0x44]);
     }
     #[cfg(target_os = "windows")]
     #[test]

@@ -18,7 +18,7 @@ export const NoteField = ({ clipId }: NoteFieldProps) => {
   const pendingCommitRef = useRef<string | null | undefined>(undefined)
   const queuedCommitRef = useRef<string | null | undefined>(undefined)
   const storeNoteRef = useRef<string | null>(note ?? null)
-  const { updateClipNote } = useClipboardStore()
+  const updateClipNote = useClipboardStore(state => state.updateClipNote)
 
   useEffect(() => {
     setValue(note ?? '')

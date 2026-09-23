@@ -9,7 +9,6 @@ const { createClientMock, invokeMock, openMock, signInWithOAuthMock } = vi.hoist
 
 const appEnv = import.meta.env as Record<string, string | undefined>
 const initialWebOrigin = appEnv['VITE_NEXT_PUBLIC_SITE_URL']
-const initialLegacyWebOrigin = appEnv['VITE_CLIPSX_WEB_ORIGIN']
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: createClientMock,
@@ -24,7 +23,6 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
 }))
 
 import {
-  DEFAULT_SUPABASE_AUTH_PROVIDER,
   completeSupabaseCallback,
   getDesktopOAuthRedirectUrl,
   parseAuthCallbackUrl,
@@ -69,15 +67,6 @@ describe('startSupabaseLogin', () => {
     } else {
       appEnv['VITE_NEXT_PUBLIC_SITE_URL'] = initialWebOrigin
     }
-    if (initialLegacyWebOrigin === undefined) {
-      delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
-    } else {
-      appEnv['VITE_CLIPSX_WEB_ORIGIN'] = initialLegacyWebOrigin
-    }
-  })
-
-  it('defaults desktop browser sign-in to Google', () => {
-    expect(DEFAULT_SUPABASE_AUTH_PROVIDER).toBe('google')
   })
 
   it('opens the provider authorization URL with a local callback listener when available', async () => {
@@ -111,7 +100,6 @@ describe('startSupabaseLogin', () => {
     vi.stubEnv('DEV', true)
     invokeMock.mockRejectedValue(new Error('listener unavailable'))
     delete appEnv['VITE_NEXT_PUBLIC_SITE_URL']
-    delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
 
     const authClient = {
       auth: {
@@ -156,6 +144,28 @@ describe('startSupabaseLogin', () => {
       },
     })
   })
+
+  it('starts GitHub OAuth through the same PKCE callback flow', async () => {
+    vi.stubEnv('DEV', false)
+    const authClient = {
+      auth: {
+        signInWithOAuth: signInWithOAuthMock.mockResolvedValue({
+          data: { url: 'https://project.supabase.co/auth/v1/authorize?provider=github' },
+          error: null,
+        }),
+      },
+    }
+
+    await startOAuthLogin(authClient as never, 'github')
+
+    expect(signInWithOAuthMock).toHaveBeenCalledWith({
+      provider: 'github',
+      options: {
+        redirectTo: getDesktopOAuthRedirectUrl(import.meta.env.VITE_NEXT_PUBLIC_SITE_URL),
+        skipBrowserRedirect: true,
+      },
+    })
+  })
 })
 
 describe('getDesktopOAuthRedirectUrl', () => {
@@ -168,7 +178,6 @@ describe('getDesktopOAuthRedirectUrl', () => {
   ])('accepts an allowed web origin: %s', (origin, expected) => {
     if (origin === undefined) {
       delete appEnv['VITE_NEXT_PUBLIC_SITE_URL']
-      delete appEnv['VITE_CLIPSX_WEB_ORIGIN']
     }
 
     expect(getDesktopOAuthRedirectUrl(origin)).toBe(expected)

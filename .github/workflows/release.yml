@@ -33,6 +33,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn
           cargo install cargo-audit --locked
           cargo install cargo-cyclonedx --locked
+          cargo install cargo-deny --locked
       - name: Verify application
         run: |
           npm ci
@@ -41,11 +42,30 @@ jobs:
           npm test -- --run
           npm run build
           npm audit --omit=dev
+          node scripts/check-js-licenses.mjs
           cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
           cargo clippy --all-features --manifest-path src-tauri/Cargo.toml -- -D warnings
           cargo test --all-features --manifest-path src-tauri/Cargo.toml
           cargo audit --file src-tauri/Cargo.lock
+          cargo deny check licenses bans sources --manifest-path src-tauri/Cargo.toml
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
+      - name: Require a live signed v3 extension catalog
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 https://github.com/azure06/clipsx-registry.git /tmp/clipsx-registry
+          cd /tmp/clipsx-registry
+          npm ci
+          npm run validate -- --require-current --download-dir .downloads --verify-releases
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs"
+            for (const name of ["index.json", "index.signatures.json"]) {
+              const response = await fetch(`https://raw.githubusercontent.com/azure06/clipsx-registry/main/${name}`, { cache: "no-store" })
+              if (!response.ok || !Buffer.from(await response.arrayBuffer()).equals(readFileSync(name))) process.exit(1)
+            }
+            const index = JSON.parse(readFileSync("index.json", "utf8"))
+            if (index.schemaVersion !== 4 || !index.packages?.length || index.packages.some(item => item.apiVersion !== "^3.0")) process.exit(1)
+          '
       - name: Scan repository for secrets
         uses: gitleaks/gitleaks-action@v2
       - name: Upload dependency evidence
@@ -60,12 +80,15 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      app-version: ${{ steps.version.outputs.app-version }}
       publish: ${{ steps.decision.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - name: Read application version
         id: version
-        run: echo "version=v$(jq -r '.version' src-tauri/tauri.conf.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=v$(jq -r '.version' src-tauri/tauri.conf.json)" >> "$GITHUB_OUTPUT"
+          echo "app-version=$(jq -r '.version' src-tauri/tauri.conf.json)" >> "$GITHUB_OUTPUT"
       - name: Validate tag and publication mode
         id: decision
         run: |
@@ -107,6 +130,8 @@ jobs:
     runs-on: ${{ matrix.settings.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install Linux dependencies
         if: startsWith(matrix.settings.os, 'ubuntu-')
         run: |
@@ -130,6 +155,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: infiniti-next
+          SENTRY_PROJECT: clipsx-desktop
+          SENTRY_RELEASE: clipsx-desktop@${{ needs.release-metadata.outputs.app-version }}+${{ github.sha }}
+          SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+          VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+          VITE_SENTRY_RELEASE: clipsx-desktop@${{ needs.release-metadata.outputs.app-version }}+${{ github.sha }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -145,6 +177,8 @@ jobs:
         if: needs.release-metadata.outputs.publish != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
+          SENTRY_RELEASE: clipsx-desktop@${{ needs.release-metadata.outputs.app-version }}+${{ github.sha }}
+          VITE_SENTRY_RELEASE: clipsx-desktop@${{ needs.release-metadata.outputs.app-version }}+${{ github.sha }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -162,3 +196,28 @@ jobs:
             src-tauri/target/**/release/bundle/**/*
             artifact-inventory.txt
           retention-days: 7
+
+  sentry-release:
+    name: Finalize Sentry release
+    needs: [release-metadata, build]
+    if: needs.release-metadata.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Associate commits and record production deploy
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: infiniti-next
+          SENTRY_PROJECT: clipsx-desktop
+          SENTRY_RELEASE: clipsx-desktop@${{ needs.release-metadata.outputs.app-version }}+${{ github.sha }}
+        run: |
+          npx sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
+          npx sentry-cli releases finalize "$SENTRY_RELEASE"
+          npx sentry-cli releases deploys "$SENTRY_RELEASE" new --env production

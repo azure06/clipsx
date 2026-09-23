@@ -92,6 +92,15 @@ pub struct RegistryPackage {
     pub icon_assets: Option<RegistryIconAssets>,
     #[serde(default)]
     pub permission_fingerprint: Option<String>,
+    #[serde(default)]
+    pub portable_settings: Vec<RegistryPortableSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistryPortableSetting {
+    pub setting_id: String,
+    pub value_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,7 +169,7 @@ impl RegistryIndex {
         }
         let index: Self =
             serde_json::from_slice(bytes).context("registry index is not valid JSON")?;
-        if !(1..=3).contains(&index.schema_version)
+        if index.schema_version != 4
             || index.packages.len() > 10_000
             || index.revocations.len() > 10_000
         {
@@ -169,8 +178,8 @@ impl RegistryIndex {
         let mut entries = BTreeMap::new();
         for package in &index.packages {
             ExtensionManifest::parse(format!(
-                "schemaVersion = 2\ncontractRevision = 2\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
-                package.package_id, package.version, package.api_version, package.display_name
+                "schemaVersion = 3\ncontractRevision = 1\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
+                package.package_id, package.version, "^3.0", package.display_name
             ).as_bytes())?;
             if package.sha256.len() != 64
                 || !package
@@ -181,9 +190,11 @@ impl RegistryIndex {
                 bail!("registry package checksum is invalid");
             }
             validate_release_url(&package.release_url)?;
-            if index.schema_version >= 2 {
-                validate_marketplace_metadata(package)?;
+            if package.api_version != "^3.0" {
+                bail!("registry package uses an unsupported extension API");
             }
+            validate_marketplace_metadata(package)?;
+            validate_portable_settings(package)?;
             if entries
                 .insert((&package.package_id, &package.version), ())
                 .is_some()
@@ -316,11 +327,11 @@ impl ExtensionPackageStore {
     }
 
     pub fn cache_path(&self) -> PathBuf {
-        self.root.join("cache").join("registry-v3.json")
+        self.root.join("cache").join("registry-v4.json")
     }
 
     fn signature_cache_path(&self) -> PathBuf {
-        self.root.join("cache").join("registry-v3.signatures.json")
+        self.root.join("cache").join("registry-v4.signatures.json")
     }
 
     pub(crate) fn root(&self) -> &Path {
@@ -452,6 +463,9 @@ impl ExtensionPackageStore {
                     != Some(permission_fingerprint(&manifest).as_str())
             {
                 bail!("extension permissions do not match the reviewed registry entry");
+            }
+            if entry.portable_settings != portable_settings(&manifest) {
+                bail!("extension portable settings do not match the reviewed registry entry");
             }
         }
         if let Some(component) = contents.get("component.wasm") {
@@ -789,7 +803,7 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
     let publisher = package
         .publisher
         .as_ref()
-        .context("registry v2 package is missing publisher metadata")?;
+        .context("registry package is missing publisher metadata")?;
     if publisher.id.is_empty()
         || publisher.id.len() > 120
         || publisher.display_name.is_empty()
@@ -800,14 +814,14 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
             value.is_empty() || value.len() > 80 || value.chars().any(char::is_control)
         })
     {
-        bail!("registry v2 package metadata exceeds its limits");
+        bail!("registry package metadata exceeds its limits");
     }
     for timestamp in [&package.published_at, &package.updated_at] {
         if timestamp
             .as_deref()
             .is_none_or(|value| value.len() < 10 || value.len() > 40)
         {
-            bail!("registry v2 package timestamp is invalid");
+            bail!("registry package timestamp is invalid");
         }
     }
     if package
@@ -815,12 +829,12 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
         .is_none_or(|size| size == 0 || size > MAX_ARCHIVE_BYTES as u64)
         || package.license.as_deref().is_none_or(str::is_empty)
     {
-        bail!("registry v2 package archive metadata is invalid");
+        bail!("registry package archive metadata is invalid");
     }
     let icons = package
         .icon_assets
         .as_ref()
-        .context("registry v2 package is missing icon assets")?;
+        .context("registry package is missing icon assets")?;
     for asset in [&icons.light, &icons.dark] {
         validate_catalog_icon_descriptor(asset)?;
     }
@@ -831,7 +845,7 @@ fn validate_marketplace_metadata(package: &RegistryPackage) -> Result<()> {
             value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
         })
     {
-        bail!("registry v2 package permission fingerprint is invalid");
+        bail!("registry package permission fingerprint is invalid");
     }
     for link in [
         &package.homepage_url,
@@ -855,6 +869,35 @@ impl RegistryPackage {
     }
 }
 
+fn portable_settings(manifest: &ExtensionManifest) -> Vec<RegistryPortableSetting> {
+    let mut settings = manifest
+        .settings
+        .iter()
+        .filter(|setting| setting.portable)
+        .map(|setting| RegistryPortableSetting {
+            setting_id: setting.id.clone(),
+            value_kind: setting.kind.clone(),
+        })
+        .collect::<Vec<_>>();
+    settings.sort_by(|left, right| left.setting_id.cmp(&right.setting_id));
+    settings
+}
+
+fn validate_portable_settings(package: &RegistryPackage) -> Result<()> {
+    let mut previous = None;
+    for setting in &package.portable_settings {
+        if setting.setting_id.is_empty()
+            || setting.setting_id.len() > 120
+            || !matches!(setting.value_kind.as_str(), "boolean" | "number")
+            || previous.is_some_and(|value: &str| value >= setting.setting_id.as_str())
+        {
+            bail!("registry portable settings are invalid or not canonically sorted");
+        }
+        previous = Some(setting.setting_id.as_str());
+    }
+    Ok(())
+}
+
 pub fn permission_fingerprint(manifest: &ExtensionManifest) -> String {
     hex_digest(&serde_json::to_vec(&manifest.permissions).expect("extension permissions serialize"))
 }
@@ -876,7 +919,7 @@ mod tests {
 
     #[test]
     fn registry_verification_binds_exact_bytes_and_accepts_key_overlap() {
-        let index = br#"{"schemaVersion":2,"packages":[]}"#;
+        let index = br#"{"schemaVersion":4,"packages":[],"revocations":[]}"#;
         let old_key = SigningKey::from_bytes(&[7; 32]);
         let next_key = SigningKey::from_bytes(&[9; 32]);
         let signatures = serde_json::json!({
@@ -901,18 +944,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_v1_remains_a_limited_cached_catalog() {
-        let index = RegistryIndex::parse(
-            br#"{"schemaVersion":1,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(index.schema_version, 1);
-        assert!(index.packages[0].publisher.is_none());
-    }
-
-    #[test]
-    fn registry_v3_requires_reviewed_marketplace_metadata_and_hashed_icons() {
-        let valid = r#"{"schemaVersion":3,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"2.0.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-light.png","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"dark":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-dark.png","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"revocations":[]}"#;
+    fn registry_requires_reviewed_marketplace_metadata_and_hashed_icons() {
+        let valid = r#"{"schemaVersion":4,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"^3.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-light.png","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"dark":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-dark.png","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"portableSettings":[],"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"revocations":[]}"#;
         assert!(RegistryIndex::parse(valid.as_bytes()).is_ok());
         let missing_publisher = valid.replacen(
             "\"publisher\":{\"id\":\"clipsx\",\"displayName\":\"ClipsX\",\"verified\":true},",
@@ -920,12 +953,22 @@ mod tests {
             1,
         );
         assert!(RegistryIndex::parse(missing_publisher.as_bytes()).is_err());
+
+        let portable = valid.replacen(
+            "\"portableSettings\":[]",
+            "\"portableSettings\":[{\"settingId\":\"fit-diagram\",\"valueKind\":\"boolean\"}]",
+            1,
+        );
+        assert!(RegistryIndex::parse(portable.as_bytes()).is_ok());
+        assert!(
+            RegistryIndex::parse(portable.replace("\"boolean\"", "\"string\"").as_bytes()).is_err()
+        );
     }
 
     #[test]
     fn registry_revocations_bind_package_version_and_checksum() {
         let index = RegistryIndex::parse(
-            br#"{"schemaVersion":3,"packages":[],"revocations":[{"packageId":"example.tools","version":"1.2.3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"compromised release"}]}"#,
+            br#"{"schemaVersion":4,"packages":[],"revocations":[{"packageId":"example.tools","version":"1.2.3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"compromised release"}]}"#,
         )
         .unwrap();
         assert!(index

@@ -2,20 +2,16 @@ import { diagnostic } from '../diagnostics'
 import type { Database, Json } from './database.types'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
-import { createClient, type Provider, type SupportedStorage } from '@supabase/supabase-js'
+import { createClient, type SupportedStorage } from '@supabase/supabase-js'
 
 const CALLBACK_URL = new URL('clipsx://auth/callback')
 const CALLBACK_BRIDGE_PATH = '/auth/desktop/callback'
 const AUTH_STORAGE_KEY = 'sb-clipsx-auth-token'
 const getDefaultWebOrigin = () =>
-  import.meta.env.VITE_NEXT_PUBLIC_SITE_URL?.trim() ||
-  import.meta.env.VITE_CLIPSX_WEB_ORIGIN?.trim() ||
-  'https://clipsx.app'
+  import.meta.env.VITE_NEXT_PUBLIC_SITE_URL?.trim() || 'https://clipsx.app'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim()
-export const DEFAULT_SUPABASE_AUTH_PROVIDER: Provider = 'google'
-const configuredProvider = (import.meta.env.VITE_SUPABASE_AUTH_PROVIDER?.trim() ||
-  DEFAULT_SUPABASE_AUTH_PROVIDER) as Provider
+export type DesktopAuthProvider = 'google' | 'github'
 
 let client: ReturnType<typeof createClient<Database>> | undefined
 let rejectPendingCallback = false
@@ -136,7 +132,7 @@ export const parseAuthCallbackUrl = (rawUrl: string): ParsedAuthCallback => {
 
 export const startOAuthLogin = async (
   authClient: ReturnType<typeof createClient<Database>>,
-  provider: Provider
+  provider: DesktopAuthProvider
 ) => {
   let redirectTo = getDesktopOAuthRedirectUrl(import.meta.env.VITE_NEXT_PUBLIC_SITE_URL)
 
@@ -172,9 +168,9 @@ export const startOAuthLogin = async (
   await open(data.url)
 }
 
-export const startSupabaseLogin = async () => {
+export const startSupabaseLogin = async (provider: DesktopAuthProvider) => {
   rejectPendingCallback = false
-  await startOAuthLogin(getClient(), configuredProvider)
+  await startOAuthLogin(getClient(), provider)
 }
 
 export const completeSupabaseCallback = async (rawUrl: string) => {

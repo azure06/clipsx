@@ -400,13 +400,12 @@ export const IntelligencePage = () => {
   const handleRetry = () => startIndexAction('retry', 'retry_text_embedding_provider')
 
   const handleClearIndex = async () => {
-    if (!status?.activeSpaceId) return
-    if (!window.confirm('Clear the current meaning-search index? It can be rebuilt later.')) return
+    if (!window.confirm('Reset the meaning-search index and rebuild it from your clips?')) return
     setClearingIndex(true)
     try {
-      await invoke('clear_text_embedding_space', { spaceId: status.activeSpaceId })
+      await invoke('clear_text_embedding_space', { spaceId: status?.activeSpaceId ?? '' })
       await loadStatus()
-      toast({ title: 'Index cleared', type: 'success' })
+      toast({ title: 'Index reset', description: 'Rebuilding from your clips', type: 'success' })
     } catch (e) {
       toast({ title: 'Clear index failed', description: toErrorMessage(e), type: 'error' })
     } finally {
@@ -778,7 +777,7 @@ export const IntelligencePage = () => {
                     size="sm"
                     leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
                     isLoading={activeIndexAction?.kind === 'reindex'}
-                    disabled={activeIndexAction !== null}
+                    disabled={activeIndexAction !== null || clearingIndex}
                     onClick={() => void handleReindex()}
                   >
                     Reindex all
@@ -788,7 +787,7 @@ export const IntelligencePage = () => {
                     size="sm"
                     leftIcon={<Plus className="h-3.5 w-3.5" />}
                     isLoading={activeIndexAction?.kind === 'index_missing'}
-                    disabled={activeIndexAction !== null}
+                    disabled={activeIndexAction !== null || clearingIndex}
                     onClick={() => void handleIndexMissing()}
                   >
                     Index missing
@@ -798,15 +797,15 @@ export const IntelligencePage = () => {
                     size="sm"
                     leftIcon={<Trash2 className="h-3.5 w-3.5" />}
                     isLoading={clearingIndex}
-                    disabled={clearingIndex}
+                    disabled={clearingIndex || activeIndexAction !== null}
                     onClick={() => void handleClearIndex()}
                   >
-                    Clear index
+                    Reset index
                   </Button>
                 </div>
                 <p className="text-[10px] leading-4 text-gray-500">
                   Keyword Search always stays on. If Meaning Search is unavailable, searches keep
-                  working with exact words. Rebuilding or clearing this derived index never deletes
+                  working with exact words. Rebuilding or resetting this derived index never deletes
                   clipboard items.
                 </p>
               </div>

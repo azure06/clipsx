@@ -4,6 +4,7 @@ export type ClipboardOutputSource =
   | { kind: 'original'; clipId: string }
   | { kind: 'plain_text'; clipId: string }
   | { kind: 'transformed'; resultId: string }
+  | { kind: 'derived'; jobId: string }
   | { kind: 'literal_text'; text: string; sourceClipId?: string }
 
 export type ClipboardOutputRequest = {
@@ -107,6 +108,7 @@ export type RecallEvent =
 export type ClipSummary = {
   id: string
   sourceAppName: string | null
+  sourceAppPlatform?: string | null
   sourceAppId: string | null
   capturedAt: number
   updatedAt: number

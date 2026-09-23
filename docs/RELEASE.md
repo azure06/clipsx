@@ -1,325 +1,290 @@
 # Release and platform validation
 
-This document is the release gate for ClipsX. A release is ready only when the
-automated preflight, native clipboard matrix, installed-desktop workflows, and
-packaging requirements below pass for every advertised platform.
+A release is ready when its exact artifacts pass automated checks and installed
+tests on every advertised platform. This checklist is not a record of a passed
+release. Open shipping work belongs in [ROADMAP.md](ROADMAP.md).
 
-The normative capture and reconstruction contract is the executable
-[platform-format-matrix.json](platform-format-matrix.json), validated by its
-[JSON Schema](platform-format-matrix.schema.json) and the compiled Rust codec
-registry. Update the policy and installed-build fixtures together whenever an
-adapter's supported-format contract changes.
+```mermaid
+flowchart LR
+    Revision[Reviewed revision] --> CI[Automated checks]
+    CI --> Build[Build and sign]
+    Build --> Draft[Draft artifacts]
+    Draft --> Test[Install and test each platform]
+    Test --> Publish[Publish GitHub Release]
+    Publish --> Website[Set website download URLs]
+    Publish --> Update[Verify installed-client update]
+```
 
-## Release scope
+## Scope
 
-- Build Windows, macOS, and Linux/X11 artifacts from one reviewed revision.
-- Preserve the fresh V2 schema and explicit reset flow; do not add V1 migrations
-  or compatibility reads for release convenience.
-- Advertise only capabilities demonstrated in installed builds.
-- Treat Windows OCR as release-blocking until its real installed lifecycle is validated; the WinRT provider implementation and generated-image recognition test are automated prerequisites, not substitutes for installed evidence.
-- Do not imply Wayland, hosted providers, visual search, additional generation
-  providers, Vault, or clipboard-content sync support unless a later roadmap
-  milestone explicitly delivers it. The narrow configuration-sync contract and
-  local Ollama text generation are implemented, but may be advertised only
-  after this checklist validates them in installed builds.
+| Target                 | Required coverage                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Windows x64            | Installer, Authenticode, native behaviour                                                                     |
+| macOS arm64 and x64    | Developer ID, notarization, stapling, native behaviour on both architectures                                  |
+| Linux/X11 x64          | .deb and AppImage, dependencies, desktop integration                                                          |
+| Outside current claims | Wayland, hosted/visual model runtimes, additional generation providers, desktop Vault, clipboard-content sync |
 
-## Desktop settings certification
+Advertise only demonstrated capabilities. Configuration sync and local Ollama
+generation require installed tests like other features. Windows OCR is
+release-blocking until its real lifecycle passes.
 
-The settings lifecycle and redacted diagnostic logging are implemented. Automated
-coverage includes host patch validation, atomic save/reset failure, portable
-round trips and exclusions, local outbox publication, offline pending recovery,
-cloud-echo protection against automatic installation, and frontend edit ordering.
+Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
+Release notes must explain incompatible-schema resets; packaging is not a reason
+to add compatibility reads.
 
-Installed-build certification remains required on Windows, macOS, and Linux/X11:
+Extension API v3 releases must certify durable Rewrite jobs across restart, exact source-application attribution, source deletion, package update/uninstall, and explicit promotion. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
 
-- Toggle logging off/on and restart in each state; exercise capture, rendering,
-  sign-in failures, and native failures with sensitive sentinel values. Confirm
-  diagnostics honor the toggle and never contain the sentinel content or secrets.
-- Change autostart and always-on-top, restart, induce an OS refusal, and recover
-  using Retry. Test conflicting shortcut registration and rollback failure.
-- Export/import while signed out and with sync enabled, resolve missing packages
-  and conflicting commands, and verify no automatic installation or copied grants.
-- Reset settings and verify native defaults, logging enabled, app shortcut defaults,
-  and preserved clipboard history, account, Intelligence, and extension configuration.
-- Verify new Settings controls and recovery messages in English and Japanese with
-  keyboard navigation and the platform screen reader.
+## Build and publication
 
-Schema version 9 uses the documented pre-release reset flow for older databases.
-No installed cross-platform certification or release-artifact log audit is implied
-by the automated checks above.
+Source: [CI](../.github/workflows/ci.yml),
+[release workflow](../.github/workflows/release.yml),
+[Tauri configuration](../src-tauri/tauri.conf.json).
 
-## Required configuration and secrets
+| Trigger                    | Current workflow behaviour                                 |
+| -------------------------- | ---------------------------------------------------------- |
+| Push/PR to main or develop | CI; no release publication                                 |
+| Manual release workflow    | Build candidate artifacts; no GitHub Release publication   |
+| Matching `v<version>` tag  | Preflight and four build jobs; create/upload draft release |
+| Publish draft              | Separate release decision after certification              |
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
-- `VITE_NEXT_PUBLIC_SITE_URL`
-- `TAURI_UPDATER_PUBLIC_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-- Release-time CSP and updater endpoint values required by Tauri configuration
+The matrix uses hosted Windows, Linux, and macOS runners; macOS arm64/x64 are
+separate build targets. Local hardware is still needed for installed testing.
 
-Registry verification keys are public trust roots compiled into ClipsX, not
-release secrets. Key rotation must ship an overlapping trusted key set before
-the registry starts signing with the replacement key.
+### Configuration that must be verified before shipping
 
-Secrets belong in CI or the platform signing environment. Never commit them,
-print them in logs, or store them in application SQLite.
+| Area                     | Current source / required action                                                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production account build | Supply public Auth/site values below; generate and pass production CSP/config. Current release jobs do not explicitly wire these values or the production config overlay                            |
+| Windows signing          | No Authenticode signing configuration in the checked-in workflow/base config; configure and verify signed executable/installer                                                                      |
+| macOS signing            | Base config has `signingIdentity: "-"`, `hardenedRuntime: false`; configure Developer ID, hardened runtime, notarization, stapling                                                                  |
+| Updater                  | `createUpdaterArtifacts: true`, embedded public key, GitHub `latest.json` endpoint; jobs reference private-key secrets. Verify actual key availability, matching signatures, and published metadata |
+| Artifact checks          | Workflow records file inventory and hashes; this does not prove expected packages, content safety, or size budgets                                                                                  |
+| Rust application tests   | CI uses `--bin clipsx`; release jobs currently use unqualified `cargo test`. Confirm the intended tests execute on every runner, including Windows                                                  |
+
+Repository source cannot prove that signing secrets, certificates, server
+settings, or release artifacts are configured correctly.
+
+| Build value                                                       | Purpose                                             |
+| ----------------------------------------------------------------- | --------------------------------------------------- |
+| `VITE_SUPABASE_URL`                                               | Production Auth/API origin                          |
+| `VITE_SUPABASE_PUBLISHABLE_KEY`                                   | Public client key; never a secret/service-role key  |
+| `VITE_NEXT_PUBLIC_SITE_URL`                                       | Production site and hosted callback origin          |
+| `SENTRY_AUTH_TOKEN`                                               | Private release/source-map upload token              |
+| `SENTRY_DSN`, `VITE_SENTRY_DSN`                                  | Public desktop ingestion DSN                         |
+| `SENTRY_RELEASE`, `VITE_SENTRY_RELEASE`                          | Identical `clipsx-desktop@<version>+<sha>` identity  |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater signing secrets                             |
+| Embedded updater `pubkey` and endpoint                            | Installed client's trust root and metadata location |
+
+The workflow also passes `TAURI_UPDATER_PUBLIC_KEY`; verify the final Tauri
+configuration rather than assuming that environment variable replaces the
+embedded key. Registry keys are separate compiled public trust roots.
+
+Keep private keys in the signing environment and secure backup. Windows/Apple
+code signing, Tauri updater signing, and extension catalog signing are separate.
+Before release, verify the updater private key matches the embedded public key.
+Future clients must continue to trust updates; key rotation needs an explicit
+transition, not an arbitrary replacement.
+
+Sentry releases use `clipsx-desktop@<app-version>+<full-git-sha>`. Generate this
+once per build and use it for both native and webview SDKs, source maps, commit
+association, and deployment records. Release checkout requires full Git history.
+Keep `SENTRY_AUTH_TOKEN` in GitHub secrets and public DSNs in repository or
+environment variables. Development, tests, forks, and ordinary manual candidate
+builds do not transmit unless `CLIPSX_SENTRY_ENABLED`/`VITE_SENTRY_ENABLED` is
+explicitly set for a controlled verification build.
+
+### Production smoke build
+
+With production values in the ignored `.env`:
+
+```sh
+npm run tauri:build:production:smoke
+```
+
+This validates HTTPS non-loopback origins/public keys, generates matching CSP,
+uses the hosted PKCE production path, and builds a release executable without
+installers or a development server. On Windows, run
+`src-tauri/target/release/clipsx.exe`. Use isolated test data.
+
+`tauri:dev:production` still uses Vite and does not certify the hosted callback.
+`tauri:build:production` requests bundles, but bundles still need signing and
+installed certification.
 
 ## Automated preflight
 
-Run from a clean checkout of the release revision:
+Run against a clean checkout of the candidate revision:
 
-```bash
+```sh
 npm ci
 npm run type-check
 npm run lint
+npm run format:check
 npm test -- --run
 npm run build
 cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
 cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
-# In a sibling azure06/clipsx-extensions checkout:
-npm ci
-npm run build:mermaid-ui
-# Build each Rust guest for wasm32-unknown-unknown, copy it to its package as
-# component.wasm, then use `npm run tool -- pack|validate|test` for each release.
-# Release CI, rather than the ClipsX application build, publishes the immutable
-# .clipsx assets and deterministic registry-submission metadata.
 ```
 
-The revision must also pass command-registration drift, schema/reset,
-managed-file recovery, render-model, artifact/OCR, extension-sandbox, and output
-policy tests.
+| Gate                  | Required checks                                                                                                                                                                           |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Application contracts | Command registration, schema/reset, managed-file recovery, render models, artifacts/OCR, extension sandbox, output policy                                                                 |
+| Settings / mutations  | Atomic save/reset/outbox, import round trips/exclusions, pending recovery, cloud-echo no-auto-install, edit ordering; deletion/invalidation of clips, tags, notes, OCR, files and indexes |
+| Clipboard fixtures    | Restart round trip, Unicode/HTML/RTF/file ordering, binary bytes, wrapper offsets, observed native identities, self-write paths, bounded unsupported-format observations                  |
+| UI / native effects   | Splitter geometry/persistence, command save/reset/conflicts, all-or-nothing share preparation                                                                                             |
+| Supply chain          | Dependency audit, licenses, SBOM, secret scan, built-artifact and log inspection                                                                                                          |
+| Security              | Review actionable findings against source/tests; resolve high-severity findings                                                                                                           |
+| Search capacity       | Run [qualification tests](SEMANTIC_SEARCH_ARCHITECTURE.md#qualification); retain output                                                                                                   |
 
-## Current automated evidence
+Tests establish only the behaviour they exercise. Old test counts and developer
+timings are not certification of the current release.
 
-The repository includes an executable capture → SQLite/managed files → process
-restart → reconstruction harness. It currently proves:
+Extension build/publication belongs to `clipsx-extensions`; reviewed signed
+catalog publication belongs to `clipsx-registry`. Use their package-validation
+workflows and confirm the production catalog/approval sync. App CI does not
+publish extension releases.
+The desktop release preflight requires a nonempty, signed v3 registry whose
+published raw index and signatures match the reviewed registry revision. Merge
+the six immutable package releases, reviewed metadata, and protected signed
+publication before creating a desktop release candidate. A source merge alone
+does not make a package visible in Discover.
 
-- ordered Windows `CF_UNICODETEXT`, HTML Format, Rich Text Format, and
-  `CF_HDROP` representations survive restart with their contract identities;
-- PNG, PDF, SVG, and supported opaque Office/native bytes survive managed-file
-  storage and restart byte for byte;
-- CF_HTML fragment offsets, UTF-16 text, registered-text termination, and
-  ordered Unicode `CF_HDROP` encoding are correct;
-- Original and Plain Text output do not change when renderer preferences do;
-- Copy plain text appears only for a captured `text/plain` representation and
-  preserves its exact Unicode and whitespace;
-- reconstructed self-writes are suppressed only when token and fingerprint
-  both match; and
-- normalized Windows images retain an observed PNG/`CF_DIBV5`/`CF_DIB`
-  identity, while an unavailable identity is not guessed.
-- unknown, disabled, redundant, diagnostic-only, unreadable, and oversized
-  advertisements produce bounded observations without retaining payload bytes;
-- schema-version reset enforcement and restart reconciliation preserve both
-  canonical and derived managed-file references.
+## Native clipboard sequence
 
-This evidence does not replace the installed native sequence below. A Windows
-development host cannot certify macOS pasteboard APIs, Linux/X11 ownership,
-real target focus/paste behavior, permissions, packaging, or signing.
+The [platform-format matrix](platform-format-matrix.json), its
+[schema](platform-format-matrix.schema.json), and compiled codecs define support.
+Change policy and fixtures together; never infer native identifiers.
 
-### Section 1 implementation evidence (2026-09-10)
+```text
+Place fixture with alternates -> capture -> inspect identity/order/storage/source
+  -> restart -> Original reconstruction -> inspect native formats/bytes/references
+  -> Plain Text independently of renderer -> verify no self-write duplicate
+  -> paste into real application -> verify content, focus, permissions, diagnostics
+```
 
-The in-repository product-completion work has automated evidence for:
+Run this sequence for every supported format. Unsupported formats must follow
+the declared skip/reject policy.
 
-- device-local splitter validation/persistence and separator-aware wide and
-  narrow geometry; keyboard and pointer behavior remain installed-UI checks;
-- atomic capture/profile/device setting writes that retain host-only storage
-  limits and run retention after commit;
-- durable semantic cleanup intent recorded with clip deletion and retained after
-  clip-owned indexing jobs cascade;
-- a host-owned configurable command catalog with recorded-key editing, explicit
-  save/cancel/reset states, and effective bindings for search, clip actions,
-  sharing, and quick slots;
-- all-or-nothing multi-file share preparation plus exclusive, fsynced staging
-  exports.
+| Platform  | Required fixtures                                                                                                                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows   | CF_UNICODETEXT; HTML Format; Rich Text Format; ordered CF_HDROP; PNG/normalized CF_DIB; registered PDF/SVG; supported Office/native formats and alternates; private Office noise retained only as observations |
+| macOS     | public.utf8-plain-text, public.html, public.rtf, ordered public.file-url; PNG/JPEG/TIFF; PDF/SVG; supported Microsoft/native UTIs and alternates                                                               |
+| Linux/X11 | UTF8_STRING; text/html; text/rtf and application/rtf; image/png; text/uri-list                                                                                                                                 |
 
-The verification commands completed with 232 frontend tests and 215 passing
-Rust application tests (7 intentionally ignored qualification tests), plus
-TypeScript, ESLint, and Clippy with warnings denied. Installed NVDA, VoiceOver,
-Orca, native sharing, security-review disposition, artifact inspection, and
-signed-out Sponsors checks remain external release gates; this automated record
-does not mark them complete.
+### Platform-specific checks
 
-## Shared native clipboard sequence
+| Platform               | Verify in installed artifacts                                                                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows clipboard      | Registered writeback/wrappers; screenshot PNG preview/reconstruction after restart; PNG/SVG custom-protocol origins and format tabs; editable Word selections/tables, Excel formulas/formatting, PowerPoint shapes and single/multiple slides |
+| Windows window         | Foreground restoration/synthetic paste; minimize, maximize, close, snap                                                                                                                                                                       |
+| Windows account        | Session larger than Credential Manager limit; restart/refresh/sign-out; corrupted DPAPI and unwritable auth directory recover through Reset local sign-in without deleting history/settings/other credentials                                 |
+| Windows OCR / share    | WinRT availability/language discovery; Share Sheet receives URL links, exact text, existing/exported file items without closing preview                                                                                                       |
+| macOS clipboard/window | Ordered multifile reconstruction; supported UTIs only; frontmost-app restoration and Accessibility permission recovery                                                                                                                        |
+| macOS OCR / share      | Vision language selection/bounded execution on both architectures; native picker handles URL, text, single/ordered multiple files without closing preview                                                                                     |
+| Linux clipboard/window | X11 selection ownership lasts through consumer read; XTest quick paste/focus on advertised desktops                                                                                                                                           |
+| Linux OCR              | Tesseract discovery/version/languages; missing-runtime recovery; .deb recommends tesseract-ocr, tesseract-ocr-eng, tesseract-ocr-jpn                                                                                                          |
+| Linux packages/share   | Test .deb and AppImage integration; portal application choice for each explicit share; harmless cancellation                                                                                                                                  |
 
-Before platform clipboard certification, verify account storage in an installed
-Windows build: complete browser sign-in with a session larger than the Windows
-Credential Manager limit, restart and restore it, refresh the token and restart
-again, then sign out and confirm it remains signed out. Corrupt the DPAPI file
-in an isolated test profile and verify **Reset local sign-in** recovers the
-account UI without removing clipboard history, settings, or unrelated
-credentials. Repeat with an unwritable authentication directory and record the
-recoverable error.
+AppImage uses host Tesseract. Without it, the app stays usable and explains
+installation; on Debian/Ubuntu:
+`sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn`.
+Refresh/restart must restore OCR without reinstalling ClipsX. Use the equivalent
+packages elsewhere. Wayland is not covered.
 
-Run this sequence for every supported format on every advertised platform:
+## Shared installed checks
 
-1. Place a fixture on the native clipboard with all expected alternates.
-2. Capture one coherent snapshot and inspect representation identity, order,
-   storage kind, byte contract, and source application.
-3. Restart ClipsX and reload the clip from SQLite and managed files.
-4. Reconstruct with Original and inspect native clipboard types and bytes or
-   ordered references.
-5. Exercise Plain Text independently of the selected renderer.
-6. Verify self-write suppression prevents an accidental duplicate.
-7. Paste into a real target application and verify focus restoration,
-   permissions, diagnostics, and content fidelity.
+Run on every advertised platform using isolated test profiles. A checkbox is
+complete only when linked evidence identifies the artifact and result.
 
-Unsupported fixtures must follow the matrix's declared skip/reject behavior.
-Tests must never infer native identifiers.
+- [ ] **Desktop:** tray, global shortcut/toggle, focus, close-to-tray, explicit
+      quit, second launch, autostart, deep links, file dialogs; shortcut conflicts,
+      OS refusal, save/rollback failure, Retry.
+- [ ] **Capture/output:** exclusions, deduplication, retention, self-write
+      suppression; Original/Plain Text with alternate renderer selected; periodic
+      clear and explicit-quit clear.
+- [ ] **Reset:** first launch, incompatible schema, incorrect confirmation,
+      partial failure without automatic restart.
+- [ ] **Settings:** validate/change/restart every setting; splitter pointer and
+      keyboard behaviour in wide/narrow windows; reset restores native defaults,
+      logging, built-in shortcuts while preserving the documented data.
+- [ ] **Import/export:** signed out and sync enabled; invalid documents,
+      exclusions, pending packages/commands, recovery, no automatic installs or
+      copied credentials/grants.
+- [ ] **Logging:** toggle/restart; exercise capture/render/auth/native failures
+      with sensitive sentinels; verify no contents, secrets, tokens, auth URLs, or
+      unnecessary paths in development/production output and artifacts.
+- [ ] **Auth:** Google and GitHub, hosted PKCE, clipsx:// callback, refresh,
+      restart/sign-out; reject invalid callbacks; development loopback listener
+      stays path-bounded and expires.
+- [ ] **Two-device sync:** advertised platforms; restore, concurrent/offline
+      edits, clock skew, tombstones, interruption, sign-out, revocation, remote reset,
+      unavailable/quarantined packages; only allowlisted configuration travels.
+- [ ] **Hosted account:** verify deployed Auth origins/redirects, migrations,
+      grants/advisors and account-deletion behaviour against clipsx-web evidence.
+- [ ] **OCR:** disabled/queued/running/empty/success/unsupported/failure/retry;
+      cancellation, deletion, restart recovery; Automatic/English/Japanese and
+      language changes; exactly-once search refresh with unchanged image bytes.
+- [ ] **Search/Recall:** configuration, provider failure/recovery, exact
+      identifiers, filters, citation support, cancellation, self-write checks;
+      [capacity qualification](SEMANTIC_SEARCH_ARCHITECTURE.md#qualification) before
+      capacity claims.
+- [ ] **Sharing:** Unicode, URLs, existing/missing files, images, PDFs, typed
+      documents, unsupported native data; duplicate clicks, corrupt assets,
+      cancellation; exports exclude notes/tags/source metadata/OCR/extension views.
+- [ ] **Extensions:** incompatible API rejection and manifest validation;
+      registry and Developer Mode install/use/disable/re-enable/update/quarantine/
+      recovery/uninstall; disclosed permissions, fresh consent, offline catalog.
+- [ ] **Extension UI:** bounds, focus, keyboard/screen-reader labels, theme/locale,
+      teardown, loading/error recovery; no inherited main-webview commands.
+- [ ] **Package behaviour:** Ask AI Unicode URL bounds; Mermaid standalone/pie/
+      comments/init/front matter and Markdown, one themed Mermaid tab, hostile input
+      offline, source fallback and restored generic details on disable; other
+      catalog packages' declared operations.
+- [ ] **Derived failures:** renderer/transform/provider/extension/OCR failures
+      preserve originals; compact cache survives restart/scroll without WASM;
+      malformed compact output falls back.
+- [ ] **Accessibility:** English/Japanese and keyboard-only history, previews,
+      actions, settings, Intelligence, Extensions, transforms, recovery; NVDA,
+      VoiceOver, Orca on their respective platforms.
+- [ ] **Public links:** website/downloads/docs and Sponsors button once enabled.
 
-## Windows matrix
+## Packaging and updates
 
-Required fixtures:
+| Platform | Required result                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| Windows  | Valid executable/installer signatures; clean install, upgrade, downgrade rejection, uninstall, metadata |
+| macOS    | Developer ID, hardened runtime, notarization/stapling; clean-machine install on each architecture       |
+| Linux    | Correct dependencies and desktop integration per package; verify supported update path per format       |
 
-- `CF_UNICODETEXT`
-- HTML Format wrapper and fragment offsets
-- Rich Text Format
-- ordered `CF_HDROP`
-- PNG and normalized `CF_DIB`
-- registered PDF and SVG
-- supported Office/native registered formats with useful alternates
-- private/control Office noise present alongside the fixture but retained only
-  as observations
+- [ ] Inspect actual package contents/hashes and confirm expected platform assets.
+- [ ] Verify updater signatures and `latest.json` match the distributed bytes.
+- [ ] Test an older installed candidate -> newer candidate with the retained
+      updater trust key; then test the published endpoint.
+- [ ] Missing updater configuration reports unavailable without breaking startup.
+- [ ] Exercise failed/interrupted update and document a working recovery path;
+      do not assume automatic downgrade or rollback exists.
+- [ ] Retain installed data across the supported update; document any schema
+      reset requirement explicitly.
 
-Installed-build checks:
+A manual candidate build does not establish that release `latest.json` was
+published. Check metadata and every platform URL on the draft/tag publication
+path, then on the public release.
 
-- exact registered-format writeback and wrapper regeneration;
-- screenshot capture/PNG preview and reconstruction after process restart;
-- PNG and SVG preview requests use the platform-correct custom-protocol origin,
-  and separate tabs identify the captured format;
-- editable same-application Word selections/tables, Excel formulas and
-  formatting, and PowerPoint shapes plus single/multiple slides after restart;
-- target focus and synthetic paste in representative applications;
-- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
-  updater, deep links, OAuth callback, and file dialogs;
-- minimize, maximize, close, and snap behavior for the frameless window;
-- WinRT OCR availability, installed-language discovery, automatic and explicit
-  language selection, recognition, retry, cancellation, and restart recovery.
-- Windows Share Sheet receives URLs as links, exact plain text as text, and
-  existing/exported files as storage items without closing the preview.
+## Evidence and sign-off
 
-## macOS matrix
+Store evidence with the candidate/release and link it here. No installed
+cross-platform sign-off is recorded by this checklist.
 
-Required fixtures:
+| Field       | Record                                                             |
+| ----------- | ------------------------------------------------------------------ |
+| Identity    | Source revision, package version, artifact hash                    |
+| Environment | OS version, CPU architecture, desktop/session type                 |
+| Test        | Fixture/action, expected result, actual result                     |
+| Evidence    | CI/test output, signing/notarization results, redacted diagnostics |
+| Decision    | Pass/fail, remaining blocker, evidence URL/path                    |
 
-- `public.utf8-plain-text`
-- `public.html`
-- `public.rtf`
-- ordered `public.file-url`
-- PNG, JPEG, and TIFF
-- PDF and SVG
-- supported Microsoft/native UTIs with useful alternates
-
-Installed-build checks:
-
-- ordered multi-file capture and reconstruction;
-- writeback only for explicitly supported captured UTIs;
-- frontmost-application restoration and Accessibility permission
-  diagnosis/recovery;
-- native OCR lifecycle and retry;
-- the native sharing picker receives URLs, exact text, single files, and ordered
-  multiple files without closing the preview;
-- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
-  updater, installed deep links, OAuth callback, and file dialogs.
-
-## Linux/X11 matrix
-
-Required fixtures:
-
-- `UTF8_STRING`
-- `text/html`
-- `text/rtf` and `application/rtf`
-- `image/png`
-- `text/uri-list`
-
-Installed-build checks:
-
-- reconstructed X11 selection ownership for the consumer read window;
-- XTest quick paste and focus restoration on supported desktop environments;
-- OCR runtime detection and recovery when Tesseract is absent;
-- the `.deb` recommends `tesseract-ocr`, `tesseract-ocr-eng`, and
-  `tesseract-ocr-jpn`; verify those recommendations are present in package
-  metadata and that English/Japanese appear in Intelligence after installation;
-- AppImage intentionally uses the host runtime. When Tesseract is absent,
-  Intelligence must keep ClipsX usable and show the recovery command
-  `sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn` on
-  Debian/Ubuntu (or the equivalent packages for the distribution); after
-  installation, refresh/restart and retry without reinstalling ClipsX;
-- tray, shortcut, close-to-tray, explicit quit, second launch, autostart,
-  updater, deep links, and file dialogs in published `.deb` and AppImage builds.
-- the desktop portal asks which application should open each explicitly shared
-  exported item; cancellation leaves ClipsX and the clip unchanged.
-
-Wayland is not covered by this matrix.
-
-## Shared desktop and recovery checks
-
-- First launch and incompatible-schema reset.
-- Incorrect reset confirmation changes nothing.
-- Partial reset failure remains visible and does not restart automatically.
-- Missing updater configuration produces an unavailable state, not a startup
-  failure.
-- Invalid OAuth callbacks are rejected; the development loopback listener is
-  path-bounded and expires.
-- Capture exclusions, deduplication, retention, and self-write suppression.
-- Original and Plain Text Copy/Paste with alternate renderers selected.
-- Share Unicode text, URLs, existing and missing file references, images, PDFs,
-  typed documents, and unsupported native data. Verify duplicate clicks are
-  blocked, corrupt managed assets are rejected, cancellation is harmless, and
-  share staging never includes notes, tags, source metadata, OCR, or rendered
-  extension output.
-- Search configuration and degraded-state recovery.
-- OCR disabled, queued, running, empty-success, success, unsupported, failure,
-  and retry states.
-- OCR Automatic selection, an explicit English selection, an explicit Japanese
-  selection, language-change reprocessing, cancellation while recognition is
-  running, and restart recovery. Confirm OCR text reaches keyword and enabled
-  semantic search exactly once while canonical image bytes/checksum remain
-  unchanged.
-- Settings restart behavior, import/export, autostart, periodic auto-clear, and
-  explicit-quit clear-on-exit.
-- Extension API v1 rejection; v2 manifest/matcher/purpose/surface/action/permission validation.
-- Developer installation selects `.clipsx`, discloses declared permissions, and
-  covers install/use/disable/failure/quarantine/recovery/uninstall.
-- Cached compact presentation survives restart and history scrolling invokes no
-  WASM; malformed output falls back to the core row.
-- Ask AI enforces Unicode-safe URL limits; Mermaid detects supported
-  declarations (including `pie` and declarations after comments, init directives,
-  or front matter), produces one **Mermaid** tab with its package icon, and renders
-  hostile input offline in themed isolated detail/dialog views with source fallback;
-  disabling its renderer restores the generic facet-details tab.
-- On Windows, macOS, and Linux/X11, verify extension child-view bounds, focus,
-  keyboard traversal, screen-reader labels, theme synchronization, teardown,
-  unresponsive-view recovery, and absence of inherited primary-webview Tauri
-  commands using the same signed revision.
-- A renderer, transformer, provider, extension, or OCR failure leaves canonical
-  representations usable.
-- Accessibility and keyboard-only operation for history, previews, actions,
-  settings, transforms, and extensions.
-
-## Packaging and signing
-
-- **Windows:** sign installers and executables with the approved certificate;
-  verify install, upgrade, uninstall, metadata, and updater behavior.
-- **macOS:** sign with the release Developer ID, notarize, staple, and verify on
-  a clean machine. Ad-hoc signing is not a release gate.
-- **Linux:** verify dependencies and desktop integration for each published
-  package format.
-
-Record artifact hashes, signing/notarization results, source revision, OS
-version, desktop/session type, package version, fixture, expected result, actual
-result, and retained diagnostics.
-
-## Publication sign-off
-
-- Every milestone required by [ROADMAP.md](ROADMAP.md) has met its exit gate.
-- Automated preflight ran against the exact release revision.
-- Installed artifacts passed the applicable matrices above.
-- Release notes state verified behavior, known limitations, fresh-schema/reset
-  implications, and updater compatibility.
-- Platform capability claims match `platform-format-matrix.json` and recorded
-  evidence.
-- No secrets, credentials, private clipboard contents, or sensitive logs are
-  present in the repository or release artifacts.
+Publish only when the applicable checks pass, required
+[roadmap work](ROADMAP.md) is complete, and no high-severity finding remains.
+Release notes state verified platforms/features, limitations, reset implications,
+and updater compatibility. Finalize website URLs after assets are public.

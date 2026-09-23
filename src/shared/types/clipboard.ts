@@ -10,13 +10,7 @@ export type ClipContent =
   | { type: 'files'; paths: string[] }
 
 export type PrimaryTextSource =
-  | 'clipboard'
-  | 'office'
-  | 'pdf_extract'
-  | 'svg_extract'
-  | 'ocr'
-  | 'note'
-  | 'none'
+  'clipboard' | 'office' | 'pdf_extract' | 'svg_extract' | 'ocr' | 'note' | 'none'
 export type OcrStatus = 'not_needed' | 'pending' | 'running' | 'done' | 'failed'
 
 export type ClipItem = {

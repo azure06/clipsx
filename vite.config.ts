@@ -1,10 +1,23 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { sentryVitePlugin } from '@sentry/vite-plugin'
 
 // https://vitejs.dev/config/
+const sentryPlugin =
+  process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_RELEASE
+    ? sentryVitePlugin({
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        org: 'infiniti-next',
+        project: 'clipsx-desktop',
+        release: { name: process.env.SENTRY_RELEASE },
+        sourcemaps: { filesToDeleteAfterUpload: ['./dist/**/*.map'] },
+        telemetry: false,
+      })
+    : null
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), sentryPlugin].filter(Boolean),
   clearScreen: false,
   server: {
     port: 5173,
@@ -15,18 +28,18 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   build: {
     target: 'esnext',
-    minify: 'esbuild',
     sourcemap: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          tauri: ['@tauri-apps/api'],
+        manualChunks(id) {
+          if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/'))
+            return 'react'
+          if (id.includes('/node_modules/@tauri-apps/api/')) return 'tauri'
         },
       },
     },

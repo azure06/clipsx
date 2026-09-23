@@ -1,278 +1,244 @@
 # Meaning Search and Recall
 
-This document explains the semantic-search architecture that ClipsX implements,
-why it was chosen, its trade-offs, and the evidence behind it. The system-wide
-invariants remain in [ARCHITECTURE.md](ARCHITECTURE.md), database ownership is
-defined in [MODELS.md](MODELS.md), and installed-build certification belongs in
-[RELEASE.md](RELEASE.md).
+| Tool           | What it does                                                        | Needs a model?         |
+| -------------- | ------------------------------------------------------------------- | ---------------------- |
+| Keyword search | Finds words, prefixes, identifiers, paths, and code using FTS5      | No                     |
+| Meaning Search | Finds related wording using text embeddings                         | Local embedding model  |
+| Recall         | Answers an explicit question using retrieved passages and citations | Local generation model |
 
-## Purpose and constraints
+An **embedding** is a list of numbers representing text meaning. Similar vectors
+suggest related text. A **generation model** writes an answer. An **index
+generation** is a version of the search index, not an AI-written answer.
+A **sidecar** is a separate, rebuildable database file beside the main database.
 
-ClipsX must preserve exact clipboard lookup while also finding related wording.
-For example, keyword search can find `database password`, while Meaning Search
-can connect it with `invalid credentials caused connection failure`.
+Original clips remain usable if models or indexes fail. Capture never waits for
+embeddings. The 60,000-clip capacity target still requires installed-platform
+qualification; it is not a certified product claim.
 
-The design has six constraints:
-
-- canonical clipboard history must not depend on an AI model or search index;
-- exact keyword search must remain available when Meaning Search is disabled or
-  broken;
-- capture and the UI must not wait for embedding work;
-- one unusually large clip must not create unbounded provider, storage, or query
-  work;
-- rebuilding an index must never replace a working index with a partial one; and
-- the implementation must remain local, cross-platform, and maintainable at the
-  conservative 60,000-clip capacity target.
-
-The 60,000-clip target is a capacity qualification target, not yet a release
-claim. Installed builds still need labelled recall, latency, recovery, memory,
-and full-storage certification on every advertised platform.
-
-## Mental model
-
-An embedding model converts text into a fixed-length vector. Nearby vectors are
-expected to represent related meanings; the individual numbers have no useful
-human-readable interpretation. A generation model, or LLM, does something
-different: it reads a prompt and writes new text.
-
-ClipsX therefore separates three operations:
-
-1. FTS5 finds exact words and prefixes.
-2. Meaning Search embeds the query and retrieves semantically related clips.
-3. Recall optionally gives a bounded set of retrieved passages to a configured
-   local generation model.
-
-The word *generation* also appears in *index generation*. That means one
-complete version of the derived semantic index, not generated prose. Exactly
-one validated index generation is active for a semantic source.
-
-## Architecture
+## Data flow
 
 ```mermaid
 flowchart LR
-    Capture[Clipboard capture] --> Canonical[(clips.db<br/>clips and lifecycle)]
-    Canonical --> FTS[(FTS5 projection)]
-    Canonical --> Chunk[Bounded structure-aware chunks]
-    Chunk --> Embed[Configured local embedding model]
-    Embed --> Sidecar[(generation sidecar)]
-    Query[User query] --> FTS
-    Query --> QueryEmbedding[Query embedding]
-    QueryEmbedding --> Route[Binary clip-routing scan]
-    Sidecar --> Route
-    Route -->|100 clips| Rerank[Exact float32 chunk rerank]
-    FTS --> Fuse[Deterministic rank fusion]
-    Rerank --> Fuse
-    Fuse --> Results[Ranked clips]
-    Results -. explicit Recall .-> LLM[Configured local generation model]
+    Clips[(Saved clips)] --> FTS[(FTS5)]
+    Clips --> Chunk[Bounded text chunks]
+    Chunk --> Embed[Local embedding model]
+    Embed --> Index[(Index sidecar)]
+    Query[Query] --> FTS
+    Query --> QE[Query embedding]
+    QE --> Route[Scan clip signatures]
+    Index --> Route
+    Route -->|100 clips| Rerank[Score their full chunk vectors]
+    FTS --> Merge[Merge rankings]
+    Rerank --> Merge
+    Merge --> Results[Clips and matching passages]
+    Results -. explicit question .-> Recall[Local answer with citations]
 ```
 
-`clips.db` stores canonical clips, FTS documents, embedding-space identity, and
-index lifecycle records. Large semantic chunks and vectors live in one
-generation-owned SQLite sidecar under `search-index/`. Sidecars are derived:
-deleting all of them loses no clipboard content and leaves FTS usable.
+| Storage                               | Owns                                                         | Why                                             |
+| ------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------- |
+| `clips.db`                            | Clips, FTS, model-space identity, jobs, active-index pointer | Canonical eligibility and durable coordination  |
+| `search-index/generation-{id}.sqlite` | Chunks, snippets, provenance, vectors, routing signatures    | Disposable search payload; independent recovery |
 
-## Key decisions
-
-| Decision | Rationale | Cost or limitation |
-| --- | --- | --- |
-| Keep FTS mandatory and Meaning Search optional | Clipboard lookup depends heavily on exact identifiers, paths, URLs, code, and error text. Search still works without a provider or sidecar. | Two candidate lists require deterministic fusion. |
-| Store semantic payloads in one sidecar per index generation | A replacement can be built and validated beside the active index. Canonical storage stays independent and sidecars are safely disposable. | Rebuilds temporarily require space for both generations. |
-| Route by one binary signature per clip, then rerank full chunk vectors | The compact first stage narrows the search without a graph, trained index, server, or native dependency. Exact float32 reranking supplies the final semantic score. | Approximate routing can miss a clip, so recall must be measured and the candidate count tuned from evidence. |
-| Chunk by content structure | Headings, JSON paths, table headers, code declarations, and paragraph boundaries retain meaning better than arbitrary fixed windows. | The pipeline is more complex and its version becomes part of index compatibility. |
-| Limit every clip to 64 chunks | A pasted book cannot monopolize disk or provider work. Sampling covers the document and a routing summary represents omitted regions. | Some detail may be absent from the semantic index; canonical content remains complete and FTS remains independent. |
-| Activate one explicit generation | Queries never guess which model, dimensions, or sidecar belong together. A failed rebuild cannot silently become live. | Generation state and recovery must be coordinated across the main database and sidecar. |
-| Keep Recall explicit and separate from retrieval | Search remains deterministic, while LLM cost, privacy, and fallibility are visible to the user. | The user must request Recall and verify generated answers against their sources. |
-| Exclude secret-faceted clips from Recall | A broad query must not silently aggregate detected passwords or tokens into a prompt, even for a local provider. | There is no override in the current design. |
+A model space fixes provider/model revision, dimensions, normalization, distance
+metric, and chunking compatibility. Vectors from different spaces never mix.
 
 ## Index construction
 
-Semantic inputs come independently from notes, tags, every ready text
-representation, and completed OCR artifacts. Equivalent visible text is
-embedded once, preferring the richest source that parses safely; genuinely
-different representations remain searchable.
+Inputs: notes, tags, every ready text representation, and completed OCR.
+Equivalent visible text is embedded once, preferring the richest safely parsed
+source; distinct representations remain searchable.
 
-| Input | Boundaries and embedding-only context |
-| --- | --- |
-| HTML and Markdown | headings, paragraphs, lists, quotes, code, and table rows; heading ancestry and table headers |
-| JSON | object subtrees and array ranges; JSON Pointer paths |
-| CSV/TSV | complete rows packed with repeated headers |
-| RTF | safely extracted visible paragraphs; unsafe control content is rejected |
-| Code | declaration and blank-line boundaries with inferred language |
-| OCR and plain text | paragraphs, lines, and whitespace-aware fallback windows |
-| Notes and tags | separate labelled metadata chunks |
+| Format           | Chunk boundaries / extra context used only for embedding                            |
+| ---------------- | ----------------------------------------------------------------------------------- |
+| HTML / Markdown  | Headings, paragraphs, lists, quotes, code, table rows; heading ancestry and headers |
+| JSON             | Object subtrees, array ranges; JSON Pointer paths                                   |
+| CSV / TSV        | Whole rows with repeated headers                                                    |
+| RTF              | Safely extracted paragraphs; reject unsafe control content                          |
+| Code             | Declarations and blank lines; inferred language                                     |
+| OCR / plain text | Paragraphs, lines, Unicode-safe windows                                             |
+| Notes / tags     | Separate labelled chunks                                                            |
 
-Blocks with the same structural context pack toward 1,536 UTF-8 bytes. A final
-embedding input never exceeds 2,048 bytes, structural context is limited to 384
-bytes, and an oversized atom uses Unicode-safe windows with at most 256 bytes of
-overlap. If a provider still reports overflow, only that chunk is recursively
-subdivided under a bounded retry budget.
+| Budget                    | Limit                                                                 |
+| ------------------------- | --------------------------------------------------------------------- |
+| Packing target            | 1,536 UTF-8 bytes                                                     |
+| Final embedding input     | 2,048 bytes                                                           |
+| Structural context        | 384 bytes                                                             |
+| Oversized-atom overlap    | At most 256 bytes                                                     |
+| Chunks per clip           | 64                                                                    |
+| Reserved note/tag chunks  | Up to 8                                                               |
+| Truncated clip            | Sample across content; reserve final slot for bounded routing summary |
+| Provider context overflow | Subdivide only that chunk; bounded retries                            |
 
-After all inputs are chunked, the clip-level budget keeps up to eight note/tag
-chunks, samples the remaining content across the document, and reserves the
-last of 64 slots for a bounded routing summary when truncation occurred.
-Complete enriched embedding inputs are hashed and sent to the provider once per
-generation. Model identity, revision, dimensions, normalization, distance
-metric, and the chunking pipeline version define compatibility; vectors from
-different spaces are never mixed.
-
-## Sidecar ownership and scale
-
-Each `generation-{id}.sqlite` sidecar owns:
-
-- clean display snippets and bounded provenance;
-- stable clip and chunk ordinals;
-- deduplicated normalized float32 embedding vectors;
-- one binary routing signature per clip; and
-- routing pages containing at most 256 clips.
-
-The main database owns the generation status, safe relative filename, model
-space, backend/encoding identity, candidate policy, size, and optional
-checkpoint checksum. A sidecar contains no canonical clipboard truth.
-
-Storage is driven by content and model dimensions, not merely clip count. At
-1,024 dimensions, one float32 vector is 4,096 bytes. The conservative capacity
-fixture of 540,000 vectors therefore implies about 2.06 GiB of raw float32
-values before snippets, mappings, and SQLite overhead. One 1,024-bit routing
-signature for each of 60,000 clips is only about 7.3 MiB before page overhead.
-Images and other binary clipboard payloads live separately in managed storage.
-
-The deterministic mixed corpus produced 77,900 chunks for 60,000 synthetic
-clips, but release qualification deliberately also exercises the much larger
-540,000-vector capacity case. Neither number predicts a particular user's disk
-usage: average clip length, duplication, model dimensions, OCR, and binary
-payloads dominate that estimate. The Intelligence UI therefore reports actual
-active bytes and estimates rebuild space from the user's existing index when
-possible.
+Hash complete enriched inputs and embed duplicates once per generation.
+Display snippets remain clean; structural embedding context does not become
+canonical content.
 
 ## Retrieval and ranking
 
-Canonical SQL first resolves the eligible clip IDs and update times for the
-current scope, tags, representation families, and facets. This transient map
-bridges the canonical database and the independently rebuildable sidecar. The
-sidecar maps those IDs to stable ordinals, then the scan uses only a compact
-eligibility bitset.
-
-Meaning Search then:
-
-1. embeds the query in the active generation's vector space;
-2. scans the eligible clips' binary routing signatures in parallel;
-3. retains the best 100 candidate clips;
-4. loads every float32 chunk vector belonging to those clips;
-5. computes the exact normalized-vector score and keeps each clip's best chunk;
-6. applies the optional model-local minimum similarity; and
-7. returns bounded candidates to the common search planner.
-
-The binary signature is the bitwise majority of a clip's normalized chunk-vector
-signs. It only selects candidates; it never supplies the displayed or final
-score. The displayed percentage is rounded cosine similarity, not a calibrated
-confidence probability. Because model score ranges differ, the optional
-device-local minimum resets when the embedding space changes and never filters
-FTS matches.
-
-FTS and semantic candidates are merged by clip ID and combined with equal-weight
-reciprocal-rank fusion (`k = 60`). Exact lexical evidence remains available
-independently, source failures are reported without discarding successful FTS
-results, and stable score/time/ID ordering supports deterministic cursor pages.
-
-## Generation lifecycle and recovery
-
-```mermaid
-stateDiagram-v2
-    [*] --> Building
-    Building --> Building: bounded jobs update sidecar first
-    Building --> Finalized: validate counts, identity, integrity, checkpoint
-    Finalized --> Active: commit active pointer in clips.db
-    Active --> Superseded: replacement activates
-    Building --> Failed: provider or validation failure
-    Failed --> Building: explicit retry or rebuild
-    Superseded --> [*]: remove disposable files
+```text
+Scope/tags/format/facet filters in canonical SQLite
+  -> eligible IDs + update times -> sidecar ordinals -> compact eligibility bitset
+  -> embed query in active space
+  -> parallel scan of eligible clip signatures
+  -> best 100 clips
+  -> exact float32 scoring of every chunk in those clips
+  -> best chunk per clip
+  -> optional semantic similarity floor
+  -> combine with keyword results -> stable cursor pages
 ```
 
-The active sidecar remains searchable during a rebuild. Each job writes its
-clip to the sidecar before marking the durable main-database job complete.
-Per-clip replacement is idempotent, so startup can requeue an interrupted
-`running` job without discarding a valid sidecar write.
+Each clip signature is the bitwise majority of its normalized chunk-vector signs.
+It selects candidates only; exact vector scoring supplies final similarity.
+This keeps routing small and maintainable, but can miss relevant clips outside
+the shortlist. Measure retrieval quality before changing the candidate budget.
 
-A finalized sidecar left immediately before activation is validated and can be
-activated without rebuilding. If an incomplete building sidecar is missing or
-corrupt, recovery first resets its jobs to `pending` in `clips.db`, then replaces
-the disposable file. This ordering prevents a second crash from activating an
-empty index using stale completed-job state.
+Keyword and semantic ranks merge by clip ID using equal-weight reciprocal-rank
+fusion, `k = 60`. Stable score/time/ID ordering makes pagination deterministic.
+A semantic failure leaves keyword results available with diagnostics.
 
-Ordinary clip changes update only that clip in the active generation. Before a
-write, the coordinator clears the previous checkpoint checksum; SQLite
-transactions, WAL recovery, schema identity, and integrity checks protect the
-live file between bounded checkpoints.
+The displayed percentage is rounded cosine similarity, not confidence or a
+probability. The optional device-local minimum applies only to semantic
+candidates, defaults off, needs no reindex, and resets when model space changes.
+FTS matches are never filtered by it.
 
-A rebuild keeps the current generation, so the service requires its estimated
-replacement bytes plus a 64 MiB reserve before starting. Clearing Meaning
-Search removes sidecars and generation/job state without touching clips or FTS.
-Canonical deletion succeeds independently; query eligibility prevents stale
-derived rows from making a deleted clip visible, and reconciliation repairs
-missed cleanup.
+## Index lifecycle and recovery
+
+```mermaid
+flowchart LR
+    Jobs[Pending jobs] --> Write[Write clip to sidecar]
+    Write --> Done[Mark durable job complete]
+    Done --> Validate[Validate finished index]
+    Validate --> Activate[Commit active pointer]
+    Activate --> Cleanup[Retire superseded files]
+    Write -. interrupted .-> Retry[Requeue and repeat safely]
+    Retry --> Write
+```
+
+Exactly one validated generation is active per semantic source. Sidecar writes
+precede job completion; per-clip replacement is safe to repeat.
+
+| Operation / failure                            | Behaviour                                                                                                                    |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Replacement generation built beside active one | Existing generation can serve searches until validated replacement activates                                                 |
+| Reindex All                                    | Check disk and provider, then discard text spaces/indexes/jobs and build fresh; old semantic index does not remain available |
+| Clear-space command                            | Same provider-validated full reset; enqueues fresh work                                                                      |
+| Provider validation fails before reset         | Preserve existing index                                                                                                      |
+| Interrupted running job                        | Requeue; existing valid sidecar write may be repeated                                                                        |
+| Finished sidecar, activation interrupted       | Validate and activate without rebuilding                                                                                     |
+| Missing/corrupt building sidecar               | Reset durable jobs to pending before replacing file                                                                          |
+| Ordinary clip edit                             | Update only that clip; clear old checkpoint checksum before write                                                            |
+| Clip deletion                                  | Canonical deletion succeeds; eligibility hides stale rows; durable cleanup removes retained-index references                 |
+| Factory reset                                  | Remove the owned search-index directory with other reset data                                                                |
+
+**Replacement and explicit reset differ.** The reset clears text embedding
+spaces, generations, jobs, cleanup intents, and sidecars; preserves clips, FTS,
+and provider configuration; recreates the model space; and queues eligible clips.
+Meaning Search waits for the new index. Reindex checks estimated replacement
+space plus a 64 MiB reserve before starting.
+
+SQLite transactions, WAL recovery, schema identity, integrity checks, and bounded
+checkpoints protect active sidecars. Resetting job state before replacing a broken
+building file prevents a second crash from activating an empty index with stale
+"completed" jobs.
+
+Deletion cleanup is durable and idempotent. The single search worker removes a
+deleted clip from every retained active, building, or failed sidecar, deleting
+chunks before their clip row and then collecting unreferenced vector inputs.
+Superseded sidecars are disposable and are not cleanup targets. Cleanup failures
+remain visible as degraded status, but do not prevent independent pending clips
+from being indexed; cleanup also continues while embedding is disabled.
+
+Embedding-space rows own vector dimensions. Generation rows explicitly record
+the sidecar backend, vector encoding, and candidate policy used to create them;
+these values have no schema defaults, so runtime creation cannot silently inherit
+an obsolete storage format.
+
+## Storage and trade-offs
+
+Each sidecar contains clean snippets/provenance, stable clip/chunk ordinals,
+deduplicated normalized float32 vectors, one binary signature per clip, and
+routing pages of at most 256 clips. The main database records its safe relative
+path, state, space, backend/encoding, candidate policy, size, and optional checksum.
+
+| Design                                  | Benefit                                                     | Cost                                                       |
+| --------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------- |
+| Mandatory FTS + optional Meaning Search | Exact lookup survives model failure                         | Merge two rankings                                         |
+| Generation sidecars                     | Validate before activation; disposable derived files        | Parallel replacement may need two indexes on disk          |
+| Binary routing + exact rerank           | Compact first scan; no graph/server/native index dependency | Shortlist can miss a relevant clip                         |
+| Structured chunks + per-clip budget     | Preserve context and bound work                             | Long clips lose semantic detail; original remains complete |
+| Explicit Recall                         | User controls when generation runs                          | Answers need source verification                           |
+
+At 1,024 dimensions:
+
+```text
+One float32 vector       = 1,024 × 4 bytes = 4 KiB
+540,000 vectors          ≈ 2.06 GiB before snippets/mappings/SQLite overhead
+60,000 binary signatures ≈ 7.3 MiB before page overhead
+```
+
+The mixed 60,000-clip fixture yields 77,900 chunks, with 71,901 unique inputs
+(319,078,400 raw vector bytes at 1,024 dimensions; chunk-count p50 1,
+p95/p99/max 3). It is synthetic, not a prediction of user storage. The larger
+540,000-vector case tests capacity. Model dimensions, text lengths, duplication,
+OCR, and separate binary payloads determine real disk use. Intelligence reports
+actual active bytes and estimates replacement space from the existing index.
 
 ## Recall
 
-Recall runs only after the user explicitly submits a question. It owns a scoped
-retrieval request over eligible history and shortlists at most 100 candidates independently
-of visible results or UI pagination. It deduplicates and eligibility-checks
-them, and excludes every clip carrying `core.security.secret`. For each retained
-clip, Meaning Search selects the best matching passage; if embeddings are
-unavailable, Recall falls back to keyword-centered passages from current bounded derived text.
+Recall starts only when the user submits a question. It searches eligible
+history independently of visible rows or pagination.
 
-Each turn snapshots its citation mapping and evidence fingerprints before dispatch. The
-temporary host session retains at most ten completed turns or 1 MiB for 30 minutes, accepts
-one active generation, and streams ordered stages, evidence, text deltas, and one terminal
-event through a typed channel. Provider adapters receive only prepared bounded messages and
-declare streaming, cancellation, execution location, and context-budget capabilities.
-
-Each source passage is limited to 2 KiB, for at most 20 KiB of source material.
-The question is limited to 2 KiB and the generated answer to 32 KiB. Clipboard
-text is delimited as untrusted prompt data. The configured local generation
-provider receives the question and numbered passages, while the UI labels the
-answer as generated and fallible. Prompts and answers do not become canonical
-clip metadata.
-
-## Qualification evidence
-
-The ignored Rust qualification tests are deterministic and must run in release
-mode so debug timings are not presented as product measurements:
-
-```powershell
-cargo test --release --manifest-path src-tauri/Cargo.toml \
-  semantic_scale_qualification -- --ignored --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml \
-  packed_sqlite_scale_qualification -- --ignored --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml \
-  history_search_scale_qualification -- --ignored --nocapture
+```text
+Question + fixed search scope
+  -> up to 100 candidates
+  -> deduplicate and exclude core.security.secret clips
+  -> select matching passages; keyword-centred fallback without embeddings
+  -> snapshot citations/fingerprints and recheck eligibility
+  -> fit provider context budget with room for answer
+  -> stream stages, evidence, text, and one terminal event
 ```
 
-| Evidence | Result | Interpretation |
-| --- | --- | --- |
-| Mixed chunking corpus | 60,000 clips; 77,900 chunks; p50 1, p95/p99/max 3; 71,901 unique inputs; 319,078,400 raw vector bytes at 1,024 dimensions | Deterministic scale foundation, not a real-user distribution |
-| Full float32 scan | 540,000 × 1,024 vectors; p95 about 506 ms | Rejected for target latency |
-| SQLite `vec1` ANN plus rerank | p95 2.242 ms, but recall@10 only 10%; sweep reached 20%; committed reopen reported a stored-PQ integrity mismatch | Rejected for recall and integrity |
-| USearch HNSW | Basic persistence worked; default SIMD dependency failed under MSVC; 540,000-vector build exceeded 90 minutes at about 951 MiB | Rejected for packaging and rebuild cost |
-| Parallel int8 flat scan | 540,000 × 1,024 vectors; p95 18.399 ms; 552,960,000 vector bytes | Fast, but the first SQLite physical layout was too slow and too large |
-| Initial packed SQLite route | 60,000 clips / 540,000 chunks; p95 460.886 ms; 576,106,496-byte fixture | Rejected physical layout |
-| Selected paged binary routing | Same capacity; 10,358,784-byte routing fixture; repeated 21-run Windows results about 83–97 ms p50 and 105–122 ms p95 | Passed the enforced local 125 ms p95 physical gate |
-| History and FTS pipeline | 60,000 clips; first/deep 50-item pages plus selective/common FTS and batch summary hydration | Enforced at 100 ms history p95 and 250 ms keyword-search p95 on the qualification host |
+| Bound                    | Maximum                                          |
+| ------------------------ | ------------------------------------------------ |
+| Question                 | 2 KiB                                            |
+| Evidence                 | 10 passages; 2 KiB each; 20 KiB total            |
+| Answer                   | 32 KiB; provider request also caps output tokens |
+| Temporary session        | 10 completed turns / 1 MiB retention budget      |
+| Inactivity expiry        | 30 minutes                                       |
+| Active answer generation | One across the app's Recall runtime              |
 
-The selected design has one production retrieval implementation. Rejected
-backends, the exact full-scan oracle, and synthetic fixtures do not become
-fallback production paths.
+Secret-faceted clips cannot be included by override. Clipboard text is delimited
+as untrusted prompt data; answers are labelled generated and fallible.
+Host state owns citations, turns, cancellation, and ordered events. Adapters
+receive prepared bounded messages and declare streaming, cancellation, execution
+location, and context-budget capabilities.
 
-## Remaining release validation
+Ollama is the only shipped generation adapter. Prompts and answers are not logged,
+persistently cached, or stored as canonical metadata. Hosted adapters require an
+explicit authorization and data-handling policy.
 
-The architecture and local performance gate are complete. A 60,000-item product
-claim still requires installed-package evidence for:
+## Qualification
 
-- labelled clipboard recall at 10 and 50, including filters and long documents;
-- query and rebuild latency, peak memory, steady disk, and rebuild-peak disk;
-- capture responsiveness during indexing;
-- missing/corrupt sidecar and interrupted-build recovery; and
-- Windows x64, Linux x64, macOS x64, and macOS arm64 packages.
+Run ignored scale tests in release mode using the application binary target:
 
-Measurements may justify changing the candidate count or another bounded policy.
-They must not introduce a second production backend or duplicate the generation
-state machine.
+```sh
+cargo test --release --manifest-path src-tauri/Cargo.toml --bin clipsx semantic_scale_qualification -- --ignored --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml --bin clipsx packed_sqlite_scale_qualification -- --ignored --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml --bin clipsx history_search_scale_qualification -- --ignored --nocapture
+```
+
+| Test                 | Scope / gate                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| Semantic corpus      | Structure, bounded chunks, deduplication, 60,000 synthetic clips                                          |
+| Paged binary routing | 60,000 clips / 540,000 chunks; 21 runs; p95 at most 125 ms on qualification host                          |
+| History / FTS        | First/deep 50-item pages, selective/common search, batched hydration; p95 100 ms history / 250 ms keyword |
+
+These are test gates, not current release measurements. Retain actual output with
+the tested revision and machine in [release evidence](RELEASE.md#evidence-and-sign-off).
+There is one production retrieval backend; full-scan oracles and fixtures are
+test tools.
+
+Before advertising 60,000 clips, certify labelled recall@10/@50 with filters and
+long documents, query/rebuild latency, peak memory, steady/rebuild disk,
+capture responsiveness during indexing, and interrupted/missing/corrupt-index
+recovery on each advertised platform.

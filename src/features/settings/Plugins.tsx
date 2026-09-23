@@ -38,6 +38,7 @@ export const Plugins = () => {
   const [detail, setDetail] = useState<PackageDetail | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [registryRefreshFailed, setRegistryRefreshFailed] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
 
   const load = useCallback(async () => {
@@ -85,16 +86,20 @@ export const Plugins = () => {
   }, [load])
   useEffect(() => {
     void invoke('check_extension_updates', { force: false })
-      .then(load)
-      .catch(() => undefined)
+      .then(async () => {
+        setRegistryRefreshFailed(false)
+        await load()
+      })
+      .catch(() => setRegistryRefreshFailed(true))
   }, [load])
   const refresh = async () => {
     setBusy(true)
     try {
       setCatalog(await invoke<ExtensionCatalog>('check_extension_updates', { force: true }))
+      setRegistryRefreshFailed(false)
       await load()
-    } catch (value) {
-      setError(String(value))
+    } catch {
+      setRegistryRefreshFailed(true)
     } finally {
       setBusy(false)
     }
@@ -247,6 +252,10 @@ export const Plugins = () => {
             {destination === 'discover' && (
               <DiscoverView
                 packages={visible}
+                catalogAvailable={catalog?.registry.cached ?? false}
+                catalogEmpty={catalog?.packages.length === 0}
+                refreshFailed={registryRefreshFailed}
+                onRetry={() => void refresh()}
                 categories={categories}
                 category={category}
                 query={query}
@@ -348,6 +357,10 @@ const InstalledView = ({
 )
 const DiscoverView = ({
   packages,
+  catalogAvailable,
+  catalogEmpty,
+  refreshFailed,
+  onRetry,
   categories,
   category,
   query,
@@ -358,6 +371,10 @@ const DiscoverView = ({
   onSelect,
 }: {
   packages: CatalogEntry[]
+  catalogAvailable: boolean
+  catalogEmpty: boolean
+  refreshFailed: boolean
+  onRetry: () => void
   categories: string[]
   category: string
   query: string
@@ -406,12 +423,33 @@ const DiscoverView = ({
         <option value="name">Name</option>
       </select>
     </div>
+    {refreshFailed && catalogAvailable && (
+      <p className="mb-4 text-xs text-amber-700 dark:text-amber-300">
+        Could not refresh the registry. Showing the last verified catalog.
+      </p>
+    )}
     {packages.length ? (
       <div className="grid gap-2">
         {packages.map(item => (
           <PackageRow key={item.package.packageId} item={item} onSelect={onSelect} />
         ))}
       </div>
+    ) : !catalogAvailable ? (
+      <EmptyState
+        title="Extension catalog unavailable"
+        text={
+          refreshFailed
+            ? 'Could not load the signed registry. Check your connection and try again.'
+            : 'The signed registry has not been loaded yet.'
+        }
+        action="Retry catalog"
+        onAction={onRetry}
+      />
+    ) : catalogEmpty ? (
+      <EmptyState
+        title="No extensions published"
+        text="The verified registry contains no available packages."
+      />
     ) : (
       <EmptyState
         title="Nothing matches this search"

@@ -1,6 +1,8 @@
 use crate::history::{now_ms, HistoryRepository};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+use tokio::sync::Semaphore;
 
 use super::{
     contracts::generation::{
@@ -13,6 +15,20 @@ use super::{
 
 const CONFIG_KEY: &str = "providers.generation.text.active";
 const PROVIDER_ID: &str = "builtin.generation.ollama";
+
+fn generation_admission() -> &'static Semaphore {
+    static ADMISSION: OnceLock<Semaphore> = OnceLock::new();
+    ADMISSION.get_or_init(|| Semaphore::new(1))
+}
+
+pub async fn acquire_generation_admission(
+    cancellation: &GenerationCancellation,
+) -> Result<tokio::sync::SemaphorePermit<'static>> {
+    tokio::select! {
+        permit = generation_admission().acquire() => Ok(permit.context("generation admission closed")?),
+        _ = cancellation.cancelled() => Err(super::error::ProviderError::Cancelled.into()),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +159,7 @@ pub async fn generate_stream(
     cancellation: &GenerationCancellation,
     on_delta: &(dyn Fn(String) -> super::error::ProviderResult<()> + Send + Sync),
 ) -> Result<GenerationResponse> {
+    let _permit = acquire_generation_admission(cancellation).await?;
     let (config, provider) = resolve(repo).await?;
     let result = provider
         .generate_stream(

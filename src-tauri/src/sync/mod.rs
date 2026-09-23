@@ -409,7 +409,7 @@ pub async fn apply(repo: &HistoryRepository, response: SyncServerResponse) -> Re
         sqlx::query("DELETE FROM extension_action_shortcuts")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM extension_package_settings_v2 WHERE EXISTS(SELECT 1 FROM sync_portable_extension_settings p WHERE p.package_id=extension_package_settings_v2.package_id AND p.setting_id=extension_package_settings_v2.setting_id)").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM extension_package_settings WHERE EXISTS(SELECT 1 FROM sync_portable_extension_settings p WHERE p.package_id=extension_package_settings.package_id AND p.setting_id=extension_package_settings.setting_id)").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM sync_values")
             .execute(&mut *tx)
             .await?;

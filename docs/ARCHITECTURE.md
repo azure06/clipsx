@@ -1,381 +1,448 @@
-# ClipsX Architecture
+# ClipsX architecture
 
-ClipsX is a local-first programmable clipboard:
+ClipsX captures clipboard content, offers useful views and transformations, and
+copies or pastes the chosen result. Original content stays local.
+
+```mermaid
+flowchart LR
+    Clipboard[Native clipboard] --> Adapter[Platform adapter]
+    Adapter --> Saved[(Saved clips)]
+    Saved --> Work[Detectors, OCR, search indexing]
+    Work --> Derived[(Rebuildable data)]
+    Saved --> Views[Views and transforms]
+    Derived --> Views
+    Views --> UI[React interface]
+    Saved --> Output[Rust output service]
+    UI --> Output
+    Output --> Clipboard
+```
+
+| Read this for                          | Document                                          |
+| -------------------------------------- | ------------------------------------------------- |
+| System ownership and invariants        | This document                                     |
+| Tables, relationships, storage         | [Data model](MODELS.md)                           |
+| Package format, isolation, permissions | [Extension API](EXTENSION_API_V3.md)              |
+| Semantic indexing and Recall           | [Meaning Search](SEMANTIC_SEARCH_ARCHITECTURE.md) |
+| Shipping work / installed tests        | [Roadmap](ROADMAP.md) / [Release](RELEASE.md)     |
+
+## Ownership
+
+| Owner                | Responsibility                                                | Code                         |
+| -------------------- | ------------------------------------------------------------- | ---------------------------- |
+| React                | Interaction and typed presentation                            | `src/`                       |
+| Rust app / IPC       | Startup, commands, windows, tray, worker coordination         | `src-tauri/src/app/`, `ipc/` |
+| Clipboard adapter    | Native formats, capture, reconstruction, self-write detection | `clipboard/`                 |
+| History / foundation | Canonical records, SQLite, managed files, settings, reset     | `history/`, `foundation/`    |
+| Contributions        | Built-in detectors, view selection, transform cache           | `contributions/`             |
+| Artifacts            | Thumbnails and OCR jobs                                       | `artifacts/`                 |
+| Search               | FTS, ranking, chunks, vectors, index lifecycle                | `search/`                    |
+| Extensions           | Packages, registry, isolation, permission broker              | `extensions/`, `wit/`        |
+| Providers            | Host-owned OCR, embedding, generation contracts and adapters  | `providers/`                 |
+
+Rust owns every clipboard write; the webview never uses the browser clipboard.
+Extensions receive only approved input and broker capabilities. Extension API v3 routes manual and capture-triggered transformations through a host-owned durable queue. Automatic results remain derived data attached to their source clip; only explicit promotion creates a canonical clip.
+
+## Diagnostics and error reporting
+
+The desktop has two independent diagnostic paths. A local Rust logger always
+writes curated `info`, `warn`, and `error` events to Tauri's application log
+directory. Verbose diagnostics adds allowlisted `debug` events until the user
+turns it off. Files rotate at 2 MB and retain five generations. The webview can
+emit only reviewed event names through typed IPC; arbitrary JavaScript logging
+and `console.*` forwarding are outside the boundary.
+
+Sentry receives actionable production failures when **Send error reports** is
+enabled. The Rust host and React webview share the `clipsx-desktop` project and
+use `layer=native|webview`. Signed-in events identify the Supabase account by
+UUID, verified email, bounded display name, and controlled auth-provider tag.
+Signed-out desktop events use a random installation ID and short support code.
+Disabling reporting takes effect in both layers without disabling local logs.
+
+Neither path admits clipboard or OCR content, search queries, notes, tags,
+Vault data, arbitrary URLs, query strings, file paths, window titles, secrets,
+tokens, request bodies, screenshots, databases, or indexes. Manual diagnostic
+exports contain only rotated logs, an allowlisted machine summary, and a README;
+they are never uploaded automatically. The native SDK reports panics and errors
+that reach its hooks, but cannot guarantee capture of every hard process crash.
+
+## What a clip contains
+
+**Canonical** means saved source data. **Derived** means data that can be rebuilt.
 
 ```text
-Capture -> Understand -> Render / Transform -> Copy or Paste
+One capture
+├── Independent representations: text, HTML, image, files, ...
+├── User data: notes, tags, pin/favourite state
+└── Derived data: facets, previews, OCR, search documents, vectors
 ```
 
-This is the stable reference for the system that exists today. [MODELS.md](MODELS.md) explains the complete SQLite model and its trade-offs, [ROADMAP.md](ROADMAP.md) tracks release work and evidence, and [RELEASE.md](RELEASE.md) contains the installed-build certification matrix.
+A facet adds an interpretation, such as "URL"; it does not replace a
+representation. There is no single persisted clip content type.
 
-## System at a glance
+| Representation | Storage                                                      | Byte contract                              |
+| -------------- | ------------------------------------------------------------ | ------------------------------------------ |
+| `text`         | UTF-8 in SQLite                                              | Adapter-normalized text preserving content |
+| `binary_asset` | Immutable managed file; relative path and metadata in SQLite | Adapter's supported byte contract          |
+| `file_list`    | Ordered external file references                             | Order and references preserved             |
 
-```mermaid
-flowchart LR
-    Native[Native clipboard] --> Capture[Platform adapter]
-    Capture --> Canonical[(SQLite metadata + managed files)]
-    Canonical --> Understand[Detectors and artifact jobs]
-    Understand --> Derived[(Facets, OCR, FTS, chunks, embeddings)]
-    Canonical --> Resolver[View resolver]
-    Understand --> Resolver
-    Extensions[Built-ins + sandboxed WASM extensions] --> Resolver
-    Resolver --> React[React detail and history UI]
-    Canonical --> Output[Host-owned output]
-    Output --> Native
-    Derived --> Search[FTS + optional candidate sources]
-    Search --> React
+The executable [platform-format matrix](platform-format-matrix.json) defines
+native selectors, codecs, priorities, limits, settings gates, and write support.
+Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
+SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
+
+The local schema is `clipsx-local-v3`, version 10. Incompatible pre-release
+databases require explicit reset; there are no compatibility reads or dual schemas.
+
+### Capture, recovery, deletion
+
+```text
+Stable native snapshot (bounded retries)
+  -> deduplicate a ready capture, or create new records
+  -> stage binary files -> hash + fsync -> atomic move -> mark ready
+  -> schedule derived work
 ```
 
-React owns interaction and renders typed presentation models. Rust owns native clipboard access, canonical storage, derived work, search, providers, extension isolation, and every clipboard write. The webview never writes to the browser clipboard.
+| Event                            | Behaviour                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| Startup                          | Recover staging and incomplete records; do not rehash all ready files      |
+| Access to ready binary           | Verify SHA-256                                                             |
+| Background maintenance           | Recheck references, remove orphans/empty directories, retry failed cleanup |
+| Delete, clear history, retention | One transactional cascade                                                  |
+| Final file reference removed     | Managed file becomes eligible for deletion                                 |
+| Derived job fails                | Preserve the captured clip; expose retry/rebuild                           |
 
-## Core rules
+Artifacts belong to a clip; their input references stay within that clip.
+A saved transform survives deletion of its source through nullable live links
+and a bounded provenance snapshot.
 
-- A clip is one coherent capture with independent raw representations, not one persisted content type.
-- Raw representations are canonical. Facets, artifacts, FTS documents, chunks, embeddings, history previews, and transform previews are derived or versioned data.
-- Platform adapters alone interpret native clipboard identifiers. ClipsX never guesses UTI, OLE, or equivalent native types.
-- Renderer selection is ephemeral UI policy. It never changes canonical data or Original/Plain Text clipboard output.
-- Binary payloads live in managed application files; SQLite stores metadata and relative references, never a generic clipboard BLOB.
-- The schema is fresh and currently version 9. Older pre-release databases use the explicit reset flow; there are no V1 migrations, compatibility reads, or dual schemas.
-- Community extensions are untrusted WebAssembly Components. Providers are host-owned because credentials, consent, scheduling, and vector-space integrity are privileged concerns.
+Clip deletion also writes semantic cleanup intent in the same transaction.
+That intent survives the clip cascade and restart. The single semantic writer
+removes the clip, chunks, routing entries, and unused vectors from retained
+indexes, checkpoints complete indexes, then acknowledges cleanup. This runs
+before provider validation, including when Meaning Search is unavailable.
 
-## Capture and persistence
+Notes, tags, and OCR changes refresh search projections. Extension lifecycle
+changes invalidate its derived facets, views, sessions, and grants.
+`clip-facets-updated` refreshes the matching preview; `clipId: null` refreshes
+loaded summaries and the open preview.
 
-The platform-format matrix is executable capture and reconstruction policy. It defines supported selectors, format families, storage contracts, capture/write priorities, codecs, limits, and settings gates for Windows, macOS, and X11.
+## Views and output
 
-On a clipboard change, the adapter reads a stable snapshot with bounded retries. The repository either deduplicates a ready capture or creates canonical rows. Binary bytes are staged, hashed, fsynced, atomically moved to managed storage, and marked ready in transaction order. Synchronous startup recovery handles staging and incomplete `pending` records only; it never rehashes every ready file. Ready bytes are SHA-256 verified when accessed, while background maintenance rechecks deletion references, removes orphaned files and empty directories, and retries failures after mutations and startup. Clip deletion, clear-history, and retention share one transactional cascade.
+Renderer choice is UI policy, never canonical clip state. Saved preferences
+influence presentation without changing Original or Plain Text output.
 
-| Storage kind   | Canonical storage                    | Typical examples                 |
-| -------------- | ------------------------------------ | -------------------------------- |
-| `text`         | normalized UTF-8 in SQLite           | plain text, HTML, RTF            |
-| `binary_asset` | immutable managed file plus metadata | images, PDF, Office/native bytes |
-| `file_list`    | ordered external references          | copied files                     |
-
-Text normalization preserves semantic content, while adapter-supported binary formats preserve their bytes. Original output reconstructs every explicitly supported captured format; Plain Text chooses only a supported text representation. Self-writes are suppressed using the platform change token with a representation-fingerprint fallback.
-
-Preview output actions remain representation-aware. **Copy** reconstructs the
-supported original formats, while **Copy plain text** appears only when the
-capture contains a ready `text/plain` representation and copies those exact
-stored characters. It never substitutes OCR, rendered content, or an extension
-result.
-
-Sharing is a separate, explicit host-owned disclosure boundary. The webview
-sends only a clip ID; the host resolves a supported URL, exact plain text, live
-file references, or a checksum-verified representation exported beneath the
-app-owned `share-staging` directory. Notes, tags, source metadata, extension
-renderings, and derived OCR are never included. Windows uses its per-window
-Share Sheet, macOS uses `NSSharingServicePicker`, and Linux/X11 exports an item
-and requests an application through the desktop portal. ClipsX never uploads
-shared content. Random export names prevent replacement, and startup removes
-files older than 24 hours without descending into directories.
-
-## Understanding and derived work
-
-After canonical capture, bounded background work may add facets from built-in or extension detectors, artifacts such as thumbnails and local OCR text, FTS/search projections, semantic chunks and embeddings, and compact presentation caches. Every item records bounded producer/input/version provenance where it matters. Startup resumes only missing, failed, or version-stale extension detection in keyset batches; complete detector results are not rerun and compact presentations are not globally rewritten on an ordinary launch. Explicit extension lifecycle and renderer-preference changes may request a full derived refresh, also in bounded batches.
-
-Derived failures never roll back a canonical capture. They are retryable or rebuildable and must leave the clip usable.
-
-OCR provenance version 3 uses one host-owned provider contract and a persistent single-flight artifact queue. Capture commits canonical images before enqueueing OCR; restart recovers interrupted jobs, configuration changes cancel stale work, and results are accepted only while their job and configuration remain current. Inputs are bounded by encoded bytes, dimensions, decoded allocation, and pixel count. Windows image decoding and `Windows.Media.Ocr` recognition run on a dedicated WinRT MTA executor, macOS uses Vision off the UI thread, and Linux invokes system Tesseract directly without a shell. Each provider reports its runtime version, installed languages, availability, and recovery guidance. OCR defaults to automatic language selection, with one optional installed-language override; changing enablement or language invalidates and rebuilds only derived OCR/search data. Canonical images never change when OCR is disabled, unavailable, cancelled, or fails.
-
-Every `ClipSummary` carries one `historyPreview`: a bounded, always-useful leading icon/thumbnail, title, optional subtitle/badge, and accessibility label for the history row. History and search pages hydrate tags, compact presentations, OCR text, leading file information, and leading facets with category-level batch queries; query count is bounded by preview categories rather than page length. Single-clip summary/detail reads reuse the same resolver with direct lookups. The title is resolved safely from the clip's leading representation (visible text for HTML/RTF, never markup; OCR text or a format label for images; meaningful labels for files, PDFs, Office captures, and unsupported content — never a generic "binary" placeholder). Office-native bytes are preserved for reconstruction but are not presented as a renderable document; when Office supplies a faithful HTML, RTF, image, or PDF alternate, that alternate owns the preview. The leading visual describes the same primary view that opens for the clip: images use their thumbnail, the core color facet uses its validated swatch, built-in semantic views use catalogued host icons, and a primary extension view may use that contribution's validated themed glyph. Thus saved renderer preferences and deterministic facet precedence affect the detail view and history icon together instead of running separate selectors. A cached extension compact-render result with a non-empty title may replace the built-in result wholesale; otherwise built-in text remains. Per-clip compact JSON remains content-only and bounded to 2 KiB; the stored renderer ID is resolved against enabled package metadata when history results cross the IPC presentation boundary, so package SVG assets stay in the extension store and never enter clip rows. Resolving this icon never compiles or instantiates extension WASM. Icon-only reuse never exposes decoded semantic content. History previews refresh automatically as OCR and other artifacts complete, and after renderer-preference or extension lifecycle changes.
-
-The history list virtualizes measured rows with bounded overscan, so intentionally loaded pages do not create an equally large DOM. Selection remains ID-based; the virtualizer scrolls keyboard selection into view even when its row was not mounted. `End` advances by at most one older 50-item cursor window per keypress instead of draining the repository, keeping network/IPC work and frontend memory growth under explicit user control.
-
-## Views, previews, transforms, and output
-
-The host creates a `ClipViewSet` from ready representations, facets, installed extension contributions, and saved renderer preferences. The selected clip opens its `primaryViewId`; other compatible views appear as tabs. A view names a source representation, renderer, optional facet, purpose, and placement.
-
-Saved renderer preference is resolved facet first, then capability, then MIME. Without a preference, image/file/document content and renderable Office alternates prefer faithful renderers; text-centric content prefers structured, semantic, faithful, source, then diagnostic renderers. Opaque Office-native bytes remain available through Original details and reconstruction, not a fake preview. Matcher specificity, the host's explicit facet-presentation priority, capture priority, native ordinal, and stable renderer ID make the result deterministic. Known built-in semantic views remain additive. For an otherwise unknown facet, the generic key/value view is a recovery fallback: an enabled compatible extension renderer claiming that exact source/facet suppresses it, and disabling, removing, quarantining, or making that renderer incompatible restores it automatically. A failing extension renderer falls back to a compatible built-in view.
-
-Renderers return the bounded `RenderModel` union, which React renders directly: text, code, Markdown, HTML/rich text in a sanitized sandboxed iframe, tables, trees, compact key/value data, images, files, documents, semantic views, and explicit errors. View descriptors may carry validated light/dark package SVG data and a bounded icon scale for preview tabs and, when that descriptor is the resolved primary view, its history-row glyph. Extension package detail/dialog UI is the exception: it runs in a dedicated child webview with package-scoped assets and no inherited main-webview capability, generic IPC, direct network, filesystem, shell, clipboard, database, popup, or download access. Tauri registers app-command ACLs explicitly: its app-registered package protocol is local, only an `extension-*` child label receives `extension_bridge`, and all normal application commands remain `main`-only. On Windows, Tauri represents registered custom protocols as `http(s)://<protocol>.localhost`; the host navigation guard accepts only that translated form or the native form, with the session token still required in the path. The host injects the scoped bridge at document start before package scripts run, rather than serving privileged SDK code as a package resource. A child remains hidden behind a host loading state until that bridge reports ready; bootstrap failures close it and expose a recoverable host error. Detail views are created without focus so selecting a clip preserves host history navigation; once intentionally focused, their ordinary keyboard input remains local to the view. Explicit dialogs receive focus after readiness and return it to the main webview on close. Its session context receives the currently applied `light` or `dark` theme and active locale, and an open detail view is recreated when either changes.
-
-Transforms are explicit byte-producing operations. The host validates parameters, caches an exact short-lived result, and uses those exact result bytes for preview, Copy, Paste, and Save as New Clip. Declared known text MIME types select their native host renderer directly, so saved typed text and expiring transform previews share one rendering policy without depending on heuristic facets. Raster outputs may be served from that expiring cache through a no-store, opaque transform-result image source; they are not inserted into canonical or artifact storage unless the user saves the result as a new clip. Saving creates a linked canonical clip with transform provenance; it never overwrites the source. At clipboard write time only, a typed source-text representation without a portable native format may receive an identical platform plain-text companion; this does not alter the cached result or canonical saved representation. The output boundary is the only clipboard-write owner.
-
-## Extensions
-
-Built-ins and community packages use one contribution model: detector, renderer, transformer, and contextual action. The public package contract and its [security model](EXTENSION_API_V2.md#security-and-threat-model) are defined together in Extension API v2; V1 and the obsolete pre-release v2 draft are rejected. Releases are checksum-pinned and lifecycle-managed independently from canonical clip data. External navigation, HTTPS, credentials, provider generation, settings, and clip output use one host-owned broker; grants bind to a checksum and are revoked on update, disablement, replacement, or removal. Package manifests may declare a complete light/dark identity-icon pair independently from contribution icons.
-
-Repository ownership follows the same boundary. `azure06/clipsx` owns the host,
-WIT contract, package CLI, and conformance tests. `azure06/clipsx-extensions`
-owns first-party package source and a pinned WIT copy. Compiled `.clipsx`
-archives are checksum-pinned extension-repository release assets, while
-`azure06/clipsx-registry` owns reviewed signed catalog metadata and catalog
-icons. GitHub release immutability is required after the initial five
-checksum-pinned catalog entries. Extension build outputs are never vendored
-into the host repository.
-Official packages use the permanent `infiniti.<package>` identity namespace and
-the verified registry publisher `{ id: "infiniti", displayName: "Infiniti" }`.
-GitHub repository ownership, publisher identity, package identity, and the
-registry signature are separate trust claims. Contribution IDs are package-local
-and host-qualified with `/`; emitted facet IDs are host-qualified with `.`.
-
-Core owns clipboard fidelity, faithful MIME views, Markdown/JSON/URL/table structure, secret detection, local-path activation, generic fallback, and every privileged host boundary. Byte-producing content converters are optional extension contributions; core supplies their bounded execution, exact-result cache, native MIME-aware preview, and output boundary but does not ship converter implementations. Niche semantic behavior is optional and no package is installed by default. JWT recognition, claim inspection, and payload extraction belong exclusively to JWT Inspector and do not imply signature verification; core has no JWT detector, renderer, or decoder. Base64 recognition, metadata, encoding, and decoding likewise belong exclusively to the Base64 package. Data Tools owns table, structured-data, TypeScript-shape, and URL conversions while reusing core JSON, Markdown, table, code, and text renderers. First-party packages are focused by task, except for cohesive Data Tools. In particular, core Markdown renders Mermaid fences as code; the Mermaid package supplies the offline specific renderer for standalone Mermaid and Mermaid-in-Markdown without placing Mermaid's runtime in the main application bundle.
-
-The initial signed Infiniti catalog contains Mermaid, JWT Inspector, Base64,
-Data Tools, and Ask AI. Ask AI is an explicit external-navigation action for
-ChatGPT and Claude; it is not a host-internal generation feature and receives no
-provider configuration or clipboard access beyond its selected bounded input.
-
-Package settings are manifest-declared typed values. ClipsX validates and stores overrides in SQLite under stable package and setting IDs, retains them across uninstall/reinstall, and injects resolved non-secret values into custom-view context. Package UI does not own a parallel settings store. Host render models are preferred for compact structured data and lists; isolated custom UI is reserved for interactions such as diagram navigation and must use host theme/locale, remain offline and accessible, and call `ready` only after useful content or a recoverable error is visible.
-
-Packages are checksum-pinned registry or Developer Mode `.clipsx` archives. Registry-owned marketplace metadata is validated and snapshot with installed registry releases, so package identity remains useful offline without trusting the archive. Installed bytes live in app-owned storage; enablement, runtime state, contribution failure streaks, quarantine, compact caches, update preferences, and app-local action shortcuts are profile data. The Extensions UI separates Installed, Discover, Built-ins, and Developer destinations, with Overview, Settings, Permissions, Actions, and Diagnostics on each package detail page. Global automatic updates default off; an opted-in package auto-installs only a newer stable compatible registry release with an unchanged complete permission set, then revokes grants and sessions exactly like a manual update.
-
-The official registry is a signed-byte trust root. ClipsX verifies a detached Ed25519 signature against embedded key IDs before parsing or replacing its cache; overlapping valid signatures permit key rotation. Registry schema v3 pins release archives and light/dark raster catalog icons independently by SHA-256. Catalog icons are bounded, format-sniffed, fetched only from the official registry repository, cached by hash, and reverified before being exposed as data URLs. Signed revocations bind package ID, version, and archive checksum. A matching installed registry release is quarantined and cannot be installed, updated, or manually recovered. Unsigned local archives never enter this path and require Developer Mode.
-
-The main webview has no generic filesystem asset protocol and does not permit inline scripts. Managed binaries are served by opaque database IDs through app-owned protocols. A local file-list image preview crosses a separate core-only IPC boundary: Rust verifies that the exact path belongs to the requested clip, bounds the read to 4 MiB, sniffs an allowed raster format, and returns a data URL. Extensions receive neither this command nor generic file activation.
-
-The v2 runtime has no WASI or ambient host imports. A guest receives only one host-approved representation and optional facet. Contextual actions are discovered across every ready representation in the selected clip: the active view source wins when compatible, otherwise the host binds the action to the highest-priority matching source and preserves that exact scope through state evaluation, consent, invocation, and execution. Renderer choice therefore does not hide an action that can operate on another canonical representation. Fresh Wasmtime stores enforce memory, stack, transfer, wall-clock, output-size, and failure limits. Offline local work uses epoch interruption plus a bounded, input-aware outer timeout; capability-backed work retains deterministic fuel because it may legitimately wait on a broker. A failed action-state discovery probe records a typed diagnostic and disables only that action for the request. Repeated detector, renderer, transform, or action execution failures may quarantine the package; canonical clip data is unaffected.
-
-Local-path opening remains core-only. Extensions receive no generic filesystem activation or native URI-handler capability.
-
-Renderers and detectors are permanently offline. Local transformers and actions are offline and reproducible. Explicit host actions may open isolated, checksum/session-bound dialogs whose only IPC is the extension bridge. That bridge enforces declared HTTPS/navigation origins, checksum grants, scoped credential-header injection, and bounded output through the transform/output boundary. Capability-backed WASM transformers and actions receive only invocation-scoped WIT broker imports for declared HTTPS and `generation.text` capabilities. Configured credential values are injected by the host and reflected-secret responses are rejected. JSON-schema parameter controls are host-rendered and values are validated again in Rust before guest execution.
-
-## Search
-
-Search is derived from preserved clips, not a replacement for them.
-
-```mermaid
-flowchart LR
-    Q[Typed text query] --> F[Resolve eligible clips and filters]
-    F --> FTS[Mandatory FTS5]
-    F --> Semantic[Optional text-semantic source]
-    F -.-> Future[Future trusted visual or other source]
-    FTS --> Union[Union candidate clip IDs]
-    Semantic --> Union
-    Future -.-> Union
-    Union --> Fusion[Equal-weight RRF, k = 60]
-    Fusion --> Page[Deterministic cursor pagination]
-    Page --> Result[Hydrate results]
+```text
+Ready representations + facets + enabled renderers + preferences
+  -> ClipViewSet
+     ├── primaryViewId: opened first and used for history identity
+     └── other compatible views: tabs
 ```
 
-`builtin.search.fts` is always enabled. It builds one derived FTS projection per clip from notes, tags, ready textual representations, and completed OCR. HTML and RTF contribute only safely extracted visible text; raw markup/control streams never enter FTS. Equivalent normalized visible text from sibling representations or OCR contributes once, while genuinely distinct text remains searchable. Simple syntax turns whitespace tokens into prefix terms with implicit AND, so `doc` matches `document`; advanced mode passes FTS5 syntax through and reports typed query errors.
+Each view identifies its source, renderer, optional facet, purpose, and placement.
 
-Keyword and filter-only search apply eligibility predicates inside SQLite. Because canonical eligibility and rebuildable vectors live in separate databases, semantic search temporarily carries eligible clip IDs and update times across that boundary. The sidecar resolves those IDs to stable ordinals and the vector scan itself uses a compact bitset rather than string lookups. This bounded bridge is part of the 60,000-clip qualification.
+| Selection rule                                         | Order                                                                              |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Saved preference                                       | Facet -> capability -> MIME                                                        |
+| Images, files, documents, renderable Office alternates | Faithful view first                                                                |
+| Text without preference                                | Structured -> semantic -> faithful -> source -> diagnostic                         |
+| Deterministic ties                                     | Matcher specificity, facet priority, capture priority, native ordinal, renderer ID |
 
-Optional sources run independently over the same eligible set. The current optional source, `builtin.search.semantic_text`, can contribute semantic-only clips. Its displayed percentage is the embedding model's rounded cosine similarity, not a calibrated probability. A device-local optional minimum percentage filters only semantic candidates before fusion; it defaults off, requires no reindex, and resets when the embedding space changes because score distributions differ by model. Exact FTS candidates are never filtered by this policy. Source failures retain FTS results with diagnostics. Candidate lists are bounded at 5,000 entries per source; FTS produces bounded snippets inside SQLite instead of transferring complete candidate documents. Results record source ranks, use equal-weight reciprocal-rank fusion, sort deterministically, then paginate and batch-hydrate the selected summaries. FTS and semantic source participation are persisted separately, so disabling Meaning Search never stops indexing.
+Opaque Office data remains reconstructable; an HTML, RTF, image, or PDF
+alternate supplies its preview. Known built-in semantic views are additive.
+An unknown facet gets generic key/value details unless an enabled compatible
+extension claims that exact source/facet. The fallback returns when the
+extension becomes unavailable. Renderer failure falls back to a compatible
+built-in view.
 
-### Structure-aware semantic indexing
+Host `RenderModel` types cover text, code, Markdown, sanitized sandboxed
+HTML/rich text, tables, trees, key/value data, images, files, documents,
+semantic views, and errors. Custom extension UI follows the
+[isolated-view contract](EXTENSION_API_V3.md#custom-ui-and-broker).
 
-Semantic inputs come from notes, tags, ready text representations, and completed
-OCR. Format-aware chunking preserves useful structure, deduplicates equivalent
-visible inputs, bounds each embedding input, and limits one clip to 64 chunks.
+| User action             | Source and result                                                    |
+| ----------------------- | -------------------------------------------------------------------- |
+| Copy / Original         | Reconstruct explicitly supported captured formats                    |
+| Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters  |
+| Transform               | Validate parameters; cache exact result bytes for preview and output |
+| Save transformed result | New canonical clip with provenance; source unchanged                 |
+| Share                   | Explicit host-owned disclosure of supported source content           |
 
-Generation-owned chunks and vectors live in disposable SQLite sidecars. The one
-production retrieval path scans paged binary clip signatures, shortlists 100
-clips, and reranks all of their chunks with exact float32 vectors. `clips.db`
-owns model compatibility, job state, and the explicit active-generation pointer.
-A replacement becomes active only after its sidecar is durable and validated;
-the previous generation remains searchable during the rebuild. Missing or
-corrupt semantic data disables only the optional source, while FTS continues.
+Copy plain text never substitutes OCR or rendered/extension content.
+Self-writes use a consumable native change token before readback; the snapshot
+fallback requires both matching token and fingerprint.
 
-The semantic service owns recovery, disk preflight, retry, rebuild, and clear
-operations. The full mental model, limits, lifecycle, rationale, trade-offs,
-scale math, and qualification evidence are in
-[Meaning Search and Recall](SEMANTIC_SEARCH_ARCHITECTURE.md).
+Transforms use native MIME-aware host previews. Source-clip results are durable artifacts with job provenance; temporary transforms keep the expiring cache. Raster previews use an opaque,
+no-store URL into the expiring cache; unsaved results are not canonical data.
+At clipboard write time, typed source text without a portable native format may
+gain an identical plain-text companion. Cached and saved representations remain
+unchanged.
+On Windows, a canonical PNG is reconstructed as both registered `PNG` and
+standard `CF_DIBV5` clipboard formats so native applications and browsers can
+consume the same image without changing the stored representation.
 
-### Providers
+Sharing receives only a clip ID. Rust resolves a URL, exact plain text, live file
+references, or a checksum-verified export in `share-staging`. Notes, tags,
+source metadata, OCR, and extension renderings are excluded. ClipsX performs no
+upload. Windows uses Share Sheet, macOS uses `NSSharingServicePicker`, and
+Linux/X11 uses the desktop portal. Random export names prevent replacement;
+startup removes files older than 24 hours without descending into directories.
 
-Provider contracts exist under `providers/` for text, visual, OCR, and generation capabilities. Model-provider connections are separate from capability assignments: one device-local Ollama connection owns the endpoint, while text embedding and text generation independently own their selected provider, model, enablement, and capability-specific settings. The model inventory and its exact `embedding` / `completion` classifications are derived by bounded inspection and are not persisted as configuration.
+## Background work and history
 
-Ollama is the only model-provider adapter today. Its endpoint validation, discovery, bounded HTTP transport, wire types, and typed errors support both `TextEmbeddingProvider` and `GenerationProvider`. The provider-neutral connection and catalog boundary permits a future hosted adapter to supply different discovery, authentication, consent, and capability rules without changing the Intelligence UI contract. Hosted providers remain out of scope until their credential storage, consent, and clipboard-data threat model are defined.
+Detectors, thumbnails, OCR, search projections, and compact previews record
+bounded producer/input/version provenance. Startup resumes missing, failed, or
+version-stale extension detection in cursor batches. Completed detection and
+compact previews are not globally regenerated at each launch. Extension or
+renderer-preference changes can request a full, batched refresh.
 
-Search owns chunking, embedding spaces, generations, jobs, indexing, and retrieval; application state owns its background worker. The Intelligence **Models** surface owns the shared connection and independent capability assignments. **Indexing** exclusively owns progress, failures, reindex, retry, disk use, and index removal. Extensions see only provider availability and generated output, never provider configuration.
+### OCR
 
-Recall is an explicit bounded search action, not an automatic search source. The host receives a question plus an immutable filter/source scope and searches up to 100 eligible history candidates independently of UI pagination. It excludes secret-faceted clips, selects at most ten cited evidence passages (2 KiB each and 20 KiB total), and uses keyword-centered current derived text when Meaning Search is unavailable. Evidence fingerprints and lifecycle eligibility are checked again before provider dispatch. The final prompt is reduced to the selected model adapter's declared context budget while reserving answer capacity.
+```text
+Commit image -> persistent single-flight queue -> bounded native OCR
+             -> accept only current job/configuration -> OCR artifact -> search
+```
 
-Recall sessions, turns, evidence snapshots, cancellation, and ordered stream events are host-owned temporary state: one active generation, at most ten completed turns or 1 MiB, and a 30-minute inactivity expiry. Providers implement a neutral streaming/cancellation contract and declare execution location and budgeting capabilities; Recall never receives provider credentials. Ollama is the only shipped adapter. Hosted adapters require a separate authorization boundary and explicit data-handling policy. Prompts and answers are not logged, cached persistently, or stored as canonical clip metadata.
+| Platform | Provider                                                               |
+| -------- | ---------------------------------------------------------------------- |
+| Windows  | Image decoding and Windows.Media.Ocr on a dedicated WinRT MTA executor |
+| macOS    | Vision off the UI thread                                               |
+| Linux    | System Tesseract, invoked without a shell                              |
 
-Configuration sync v1 is opt-in and account-protected, independently of the browser vault and billing. SQLite owns the local configuration, per-account/generation outbox and acknowledged revisions, hybrid-logical clock, server cursor, staged first restore, invalid-record quarantine, and pending domain effects. SQLite triggers commit supported mutations and outbox records together. The event-driven coordinator synchronizes once at startup, after eligible mutations settle for 5 seconds (with a 30-second maximum wait), on an active network reconnect, after a stable window activation when the last automatic pull is at least 15 minutes old, and manually. It never polls periodically while the app is idle or hidden. Automatic activation waits 2 seconds and is cancelled if focus is lost. Exact revision acknowledgements and deterministic `(physical time, logical counter, source device)` ordering resolve conflicts. Received clocks are observed; excessive future clocks are corrected using server time.
+OCR provenance is version 3. Input limits cover encoded bytes, dimensions,
+decoded allocation, and pixels. Providers report runtime version, installed
+languages, availability, and recovery instructions. Automatic language is the
+default; an installed-language override is optional.
 
-Supabase stores `sync_profiles`, `sync_devices`, and `sync_records`. Public invoker RPCs call closed, non-exposed operations running as a NOLOGIN/NOBYPASSRLS role with owner-scoped policies. Clients have no raw sync-table access. Enrollment is bound to a live Auth session; revoked sessions cannot create replacement device identities. Reset/replacement increment a profile generation, preventing offline devices from restoring deliberately cleared state. Late responses are rejected by account, generation, and local session epoch.
+Restart recovers interrupted jobs. Configuration changes cancel stale work;
+enablement/language changes rebuild only OCR and related search data. Image
+bytes remain unchanged on failure, cancellation, or disablement.
 
-The authoritative Supabase project, migrations, database tests, and local
-development stack are owned by the sibling `clipsx-web` repository. This
-desktop repository owns the client contract, generated database types, secure
-session storage, coordinator, and local SQLite state only. Backend migrations
-must not be duplicated here; contract changes are made and tested in
-`clipsx-web`, then its generated database types are copied into the desktop.
+### History presentation
 
-First connection defaults to cloud restore; empty-cloud initialization and explicit replacement are atomic server snapshots. Multi-page cloud restores stage before replacing portable local values. Sync carries explicitly allowlisted preferences, renderer selections, OCR preferences, signed-registry extension intent, approved portable boolean/number settings, and app-command shortcuts. Clips, notes, tags, files, archives, credentials, grants, endpoints/models, jobs, diagnostics, device capture/window configuration, and derived data remain local. Signing out disables sync and preserves local data. Sync does not upgrade installed extensions or copy capability consent. Unavailable packages and conflicting/unknown commands remain pending with recovery controls.
+Every `ClipSummary.historyPreview` contains a leading visual, title, optional
+subtitle/badge, and accessibility label.
 
-The backend protocol, domain migrations, limits, and deployment/recovery procedures are maintained in the sibling `clipsx-web/docs/backend/configuration-sync.md`. Hosted deployment and installed two-device certification are distinct from local automated verification.
+| Concern                  | Rule                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Title                    | Visible HTML/RTF text; image OCR or format label; meaningful file/document labels                      |
+| Icon                     | Same resolved primary view as detail; thumbnail, color swatch, host icon, or validated extension glyph |
+| Extension compact result | Nonempty title may replace the built-in preview; otherwise retain built-in text                        |
+| Compact cache            | Content-only JSON, at most 2 KiB; resolve SVGs from enabled package metadata                           |
+| Reading cached icons     | No WASM compilation/execution; no decoded-content disclosure                                           |
+| Hydration                | Batch by category: tags, compact previews, OCR, file info, facets                                      |
+| Refresh                  | Artifact completion, renderer preferences, extension lifecycle                                         |
 
-Hosted providers and visual embedding runtimes are not implemented. They require explicit consent and must never be auto-downloaded or silently receive clipboard data. Ollama remains restricted to loopback endpoints until a separate LAN-provider policy exists.
+Single-item reads use the same resolver. Rows are measured and virtualized with
+bounded overscan. Selection uses clip IDs, and keyboard selection scrolls
+unmounted rows into view. Each `End` keypress loads at most one older 50-item page.
 
-## Product surfaces and settings ownership
+Search input updates immediately; requests wait 300 ms after typing stops and
+until IME composition ends. Its subscription is separate from history/layout
+rendering. Unchanged preview models and statistics are reused with the applied
+theme.
 
-Navigation follows the question a person is trying to answer. Clips owns
-history and preview. Intelligence owns provider health, search behavior, models,
-indexing, and OCR. Extensions owns Installed, Discover, Built-ins, Developer,
-and each package's Overview, Settings, Permissions, Actions, and Diagnostics.
-Settings owns General, Clipboard, Keyboard, Storage, Privacy, Sync, Account, and
-Advanced configuration.
+## Search and providers
 
-Main list pages show identity, health, and the next action. Configuration and
-diagnostics belong on detail pages. Package configuration never moves into
-global Settings; provider and indexing health never moves into Extensions.
-Unavailable future capabilities appear only where they affect a current
-decision rather than occupying permanent empty sections.
+| Capability                        | Current implementation                                                   |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| Keyword search                    | Always-available FTS5; exact words/prefixes                              |
+| Meaning Search                    | Optional local Ollama embeddings                                         |
+| Recall                            | Explicit question answered by a configured local Ollama generation model |
+| OCR                               | Native platform providers above                                          |
+| Hosted models / visual embeddings | No shipped runtime                                                       |
+| Ollama network                    | Loopback endpoints only                                                  |
 
-SQLite is the live settings store. JSON is only the validated value and
-import/export format.
+One derived FTS document per clip combines notes, tags, ready text, and completed
+OCR. HTML/RTF contribute safe visible text; equivalent normalized inputs
+contribute once. Simple queries use whitespace-separated prefix terms with
+implicit AND; advanced queries use FTS5 syntax with typed errors.
 
-| Setting class | Examples | Storage and synchronization |
-| --- | --- | --- |
-| Profile, syncable | theme, language, output format, copy toast, search behavior, OCR preferences, renderer choices | Typed SQLite records; versioned closed server/client contract |
-| Portable extension and command intent | signed-registry packages, enablement, approved boolean/number settings, app shortcuts | Per-record sync; local validation, fresh capability consent, and pending recovery |
-| Device-local | window bounds, history/preview ratio, autostart, capture limits, local provider endpoint/model and similarity floor, local package path | Device-owned SQLite records; never copied automatically |
-| Secret | Provider/API credentials and account sessions | OS-protected storage only; never ordinary export or sync data |
-| Consent | Checksum-bound grants and invocation tokens | Local security state; never synchronized and renewed after package updates |
-| Operational | Quarantine, health, pending jobs, sync cursor | Local relational state; reconciled rather than treated as preferences |
-| Derived | OCR, FTS, chunks, embeddings, previews | Rebuildable local data; neither settings nor sync payload |
+Keyword/filter eligibility runs in SQLite. Optional sources use the same
+eligible clips and may add semantic-only matches. Each source returns at most
+5,000 candidates; FTS snippets are bounded in SQLite. Source failures preserve
+successful results. Ranking, semantic limits, index recovery, and Recall are
+defined in [Meaning Search](SEMANTIC_SEARCH_ARCHITECTURE.md).
 
-Extension settings use stable package and setting IDs, are host-validated, and
-survive package removal unless the user explicitly deletes them. Credentials
-and grants are removed by default. The remote contract uses an explicit versioned allowlist. Extension declarations default to `portable: false`; only reviewed signed-package boolean/number declarations with matching server approval can sync. Clips, managed files, local endpoints/models, credentials, grants, caches, indexes, jobs, and diagnostics remain local.
+Search participation and embedding/indexing enablement are separate settings:
+excluding Meaning Search from a query does not itself stop indexing.
 
-Account authentication remains owned by the Supabase client, including PKCE,
-session serialization, refresh, and local sign-out. The host exposes only an
-allowlisted opaque key/value storage adapter. On Windows, values are stored in
-one versioned map encrypted and integrity-protected with current-user DPAPI
-under the private local application-data directory; macOS and Linux use their native
-credential stores. Authentication data is excluded from settings export and
-sync. This protects persisted sessions from other ordinary OS users, but it
-does not protect them from malicious code already running as the signed-in user
-or from a compromised ClipsX process.
+```text
+Query/filter change -> invalidate old responses immediately
+  -> retain old rows + preview with "updating" state
+  -> pause result actions/pagination; hide native extension detail surface
+  -> current success: atomically replace rows, outcomes, cursor
+     failure: keep stale rows and offer retry
+```
 
-One command registry describes built-in and extension actions. Every command
-has a stable ID, context predicate, default shortcut, user override, conflict
-result, and discoverable label. UI handlers consume that registry instead of
-owning unrelated hard-coded keys. Context-only commands must be classified
-explicitly as configurable, menu-only, or intentionally unbound.
+Only pages from the current request may append. Selection survives by ID where
+possible and clears on empty results. Input remains editable; operations already
+started, including note saves, may finish. Status events are coalesced to one
+start per 500 ms, one active refresh, and one trailing refresh; unmounted
+consumers ignore late responses.
 
-The Rust host is authoritative for the configurable built-in catalog and
-effective bindings. Built-in overrides use portable `Primary` accelerators in
-`config_command_shortcuts`; SQLite triggers publish those changes through the
-configuration-sync outbox in the same transaction. The Keyboard settings UI
-records key combinations rather than accepting accelerator text, requires an
-explicit Save, and restores defaults by deleting the override. Fixed contextual
-navigation remains outside this catalog. Extension action shortcuts retain
-their separate contribution-owned table and lifecycle.
+The Models screen owns the shared Ollama connection and independent embedding
+and generation assignments. Bounded model inspection derives `embedding` /
+`completion` capabilities. Indexing owns progress, failures, retry, reindex,
+disk use, and reset. Extensions receive provider availability and output, never
+endpoint/model configuration or credentials.
 
-Canonical and derived ownership determines invalidation: clip deletion cascades
-clip-owned database records and records semantic-sidecar cleanup intent in the
-same canonical SQLite transaction. That intent is not clip-owned, survives the
-cascade and restart, and is processed through the single semantic writer before
-provider validation, even when Meaning Search is disabled or unavailable. The
-writer removes clip chunks, routing entries, clip rows, and unreferenced vectors
-from every retained generation, checkpoints changed complete sidecars, and only
-then acknowledges the cleanup record. Note,
-tag, and OCR changes refresh lexical and semantic projections; extension update
-or removal invalidates its facets, views, sessions, and grants without changing
-canonical clip content. The host emits `clip-facets-updated` with
-`{ clipId: string | null }`: a matching open preview reloads its views and
-renderer immediately, while `null` invalidates all loaded summaries and the
-open preview after package lifecycle or bulk-redetection work. Mutation-level
-tests enforce these boundaries.
+## Settings, account, and sync
 
-### Native activation and global shortcuts
+| Screen       | Owns                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| Clips        | History and preview                                                                         |
+| Intelligence | Models, provider health, indexing, search, OCR                                              |
+| Extensions   | Installed, Discover, Built-ins, Developer; package settings/permissions/actions/diagnostics |
+| Settings     | General, Clipboard, Keyboard, Storage, Privacy, Sync, Account, Advanced                     |
 
-The Rust host exclusively owns operating-system window activation and global
-shortcut registration. The global shortcut toggles: it hides only an already
-visible, focused, non-minimized window; otherwise it cancels pending blur hiding,
-restores, shows, and requests foreground activation. Tray-icon left click always
-opens and focuses the Clipboard History page; it does not toggle or hide the app.
-On Windows, active means that ClipsX is the operating system foreground window;
-moving keyboard focus into the WebView must not make the next toggle reopen it.
-The tray menu **Open**, second-instance launches, and deep links use the same open
-path and never hide the window. Windows verifies that foreground activation
-succeeded after raising the restored window in normal Z-order; refusal by the
-operating system is reported rather than silently ignored. The host then gives
-keyboard focus to the embedded webview explicitly; foregrounding only the native
-window is not sufficient for WebView keyboard input.
+List pages show identity, health, and next action; detail pages hold configuration
+and diagnostics. SQLite is the live settings store; JSON is the validated value
+and export format.
 
-Successful explicit activation emits a host event. The Clipboard History page
-responds by focusing Search, while Settings and Extensions preserve their
-current control. Ordinary Alt+Tab and taskbar focus do not emit this event and
-therefore preserve the previously focused editor.
+| Data class            | Examples                                                                                                  | Travels through configuration sync?                |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Portable preferences  | Theme, language, output/copy UI, search, OCR, renderer preference                                         | Explicit allowlist only                            |
+| Portable intent       | Signed-registry extensions, approved boolean/number settings, app shortcuts                               | Yes, subject to local validation and fresh consent |
+| Device settings       | Window geometry, autostart, capture limits, provider endpoint/model, similarity floor, local package path | No                                                 |
+| Secrets               | Account sessions, API credentials                                                                         | No; OS-protected storage                           |
+| Consent / operations  | Grants, tokens, quarantine, jobs, health, cursor                                                          | No                                                 |
+| Clip and derived data | Clips, notes, tags, files, OCR, caches, indexes                                                           | No                                                 |
 
-Shortcut changes are native settings transactions. The host registers a
-replacement before removing the current shortcut and persists it only after
-registration succeeds. A conflict therefore leaves both the saved setting and
-the working registration unchanged and returns a visible error. Frontend
-components edit the setting; they do not register OS shortcuts themselves.
+Extension setting portability and approval rules live in the
+[Extension API](EXTENSION_API_V3.md#settings).
 
-Application setting changes are host-validated patches merged against the latest
-committed values under one lifecycle lock. Reads use a coherent SQLite snapshot;
-writes commit capture, profile, device-owned values, and trigger-generated sync
-outbox records together. Unedited values, including exact byte limits without UI
-controls, are preserved. The frontend serializes edits and reloads and displays
-committed values rather than rolling back a later edit after an earlier failure.
+### Account storage
 
-Saved intent and native effects have separate results. Autostart, global shortcut,
-window behavior, logging, and retention reconcile at startup; failed effects have
-visible, localized recovery instructions and Retry. Shortcut edits register before
-commit and restore the previous registration on a failed save; failed rollback is
-reported. Retention failure after commit never reports the setting as unsaved.
-Reset settings uses host defaults and atomically clears built-in app shortcut
-overrides and pending built-in shortcut intent. It preserves clips, accounts,
-Intelligence configuration, renderer preferences, extension settings, and grants.
-Changing the app language invalidates automatic-language OCR in the settings
-transaction; interrupted derived work is recovered after restart.
+The Supabase client owns Google/GitHub sign-in choice, PKCE, session serialization,
+refresh, and local sign-out. Provider choice is per attempt, not a preference.
+Rust exposes an allowlisted opaque key/value adapter.
 
-Portable export/import is account-independent and host-owned. Version 1 JSON uses
-`format: "clipsx-portable-settings"`, `version: 1`, and records containing only
-`kind`, `key`, `payload`, and `tombstone`. The closed configuration-sync allowlist
-and signed extension declarations define eligibility. Imports merge supplied
-records, including explicit tombstones, while preserving omitted records and all
-device-local settings. The entire document is validated before commit (4 MiB,
-1,000 records, existing per-record bounds, no duplicate kind/key pairs or unknown
-fields); installed signed-package settings also pass declaration validation.
-Normal local triggers publish imported mutations when sync is enabled. OCR
-invalidation is atomic with imported settings, and affected workers/UI refresh
-after commit. No legacy settings-file import or compatibility path exists.
+| Platform      | Session storage                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| Windows       | Versioned map in private app data, encrypted and integrity-protected by current-user DPAPI |
+| macOS / Linux | Native credential store                                                                    |
 
-Unavailable packages, unapproved declarations, and conflicting/unknown commands
-remain in relational pending effects with recovery available without sign-in.
-Local-import origin survives matching cloud echoes: imports and their retries
-never install packages automatically. Users install packages through Extensions
-and review fresh permissions; credentials and grants never travel in a settings
-file. The same validated domain application path serves sync and local imports.
+This protects against other ordinary OS users, not malicious code running as
+the signed-in user or a compromised ClipsX process.
 
-Diagnostic logging is enabled by default and controlled immediately by the
-device-local `diagnostics.logging_enabled` value in Settings ? Advanced. Startup
-loads this policy before ordinary diagnostic output; it remains quiet if the
-policy cannot be read. Rust diagnostics retain reviewed operational messages,
-counts, and timings. Frontend diagnostics send only allowlisted event identifiers
-to the host, never arbitrary error objects or payloads. Clipboard contents, notes,
-authentication URLs, credentials, tokens, and unnecessary paths are excluded in
-both development and production. Disabling logs suppresses new application
-diagnostic output without hiding user-facing errors. Reset enables logging;
-portable export and configuration sync exclude the logging preference.
+### Configuration sync v1
 
-The history/preview splitter stores a device-local ratio under
-`window.history_split_ratio`. Its canonical default is 0.50 and accepted range
-is 0.20 through 0.80. Rendering subtracts the separator before applying the
-ratio, preserves 280-pixel history and 420-pixel preview minimums when possible,
-and proportionally scales those minimums in narrower windows without rewriting
-the saved preference. Pointer gestures persist once on successful completion;
-keyboard adjustments persist per action. The value is excluded from profile
-sync and portable configuration.
+Sync is opt-in and account-protected, independent of browser vault and billing.
 
-## Code and data ownership
+```text
+Local settings transaction + outbox
+  -> event-driven coordinator -> owner-scoped server RPC
+  -> staged cloud records -> validated local application -> pending effects/recovery
+```
 
-| Area              | Main location                | Responsibility                                                              |
-| ----------------- | ---------------------------- | --------------------------------------------------------------------------- |
-| Desktop/UI        | `src/`                       | React interaction, typed presentation, settings, search and plugin screens  |
-| App and IPC       | `src-tauri/src/ipc/`, `app/` | Tauri composition, commands, windows, tray, startup orchestration           |
-| Clipboard         | `clipboard/`                 | platform capture, reconstruction, capability matrix, self-write suppression |
-| Canonical history | `history/`, `foundation/`    | domain records, SQLite, managed-file lifecycle, settings, reset             |
-| Contributions     | `contributions/`             | built-in detectors, renderer resolution, transforms                         |
-| Artifacts         | `artifacts/`                 | thumbnails, OCR, artifact lifecycle                                         |
-| Search            | `search/`                    | FTS, source planner, semantic generation coordinator and sidecar store      |
-| Extensions        | `extensions/`, `wit/`        | manifests, packages, WASM runtime, registry and quarantine                  |
-| Providers         | `providers/`                 | host-owned capability contracts and future adapters                         |
+SQLite owns the clock, cursor, per-account/generation outbox, exact-revision
+acknowledgements, staged first restore, invalid-record quarantine, and pending
+effects. Triggers commit settings and outbox together.
 
-SQLite keeps canonical clip tables separate from derived `artifact_*`, `search_*`, and extension runtime/cache tables. Artifacts have an explicit owning clip; input edges are same-clip provenance. Saved transformed clips survive source deletion because live links are nullable and bounded provenance snapshots remain. Managed files are removed only after their final canonical or derived reference disappears. Do not persist renderer trees, JSON ASTs, decoded tokens, parsed URLs, generic metadata blobs, or unsaved transform output as canonical clip metadata.
+| Trigger                  | Schedule                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| Startup / manual request | Synchronize                                                                                 |
+| Eligible local mutations | 5-second debounce; 30-second maximum wait                                                   |
+| Active reconnect         | Synchronize                                                                                 |
+| Window activation        | Wait 2 seconds; cancel on blur; pull only if last automatic pull is at least 15 minutes old |
+| Idle/hidden app          | No periodic polling                                                                         |
 
-Semantic sidecars are derived data, not canonical databases. Factory reset
-removes `search-index/`; “Delete Meaning Search index” removes sidecars and
-generation/job state without touching clips or FTS. Capacity measurements and
-the remaining installed-build gates are recorded in
-[Meaning Search and Recall](SEMANTIC_SEARCH_ARCHITECTURE.md).
+Conflicts use deterministic `(physical time, logical counter, source device)`
+ordering. Received clocks are observed; excessive future clocks use server-time
+correction. Reset/replacement increments profile generation so offline devices
+cannot resurrect cleared state. Late responses must match account, generation,
+and local session epoch.
+
+First connection defaults to cloud restore. Empty-cloud initialization and
+explicit replacement are atomic snapshots; paged restores stage before replacing
+local portable values. Sign-out disables sync and preserves local data. Sync
+does not upgrade installed extensions or transfer grants. Unavailable packages
+and unknown/conflicting commands remain pending.
+
+The sibling `clipsx-web` repository owns Supabase migrations, tests, deployment,
+and [backend protocol](../../clipsx-web/docs/backend/configuration-sync.md).
+Desktop owns the client, generated types, secure session storage, and local
+coordinator. Backend RPCs enforce ownership over `sync_profiles`,
+`sync_devices`, and `sync_records`; clients have no raw table access.
+Internal operations use a NOLOGIN/NOBYPASSRLS role. Enrollment requires a live
+Auth session; revoked sessions cannot replace their device identity.
+
+### Settings changes and recovery
+
+| Operation                    | Guarantee                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read                         | Coherent SQLite snapshot                                                                                                                                      |
+| Save                         | Host validates patch against latest values under one lifecycle lock; commits capture/profile/device values and outbox together                                |
+| Frontend edits               | Serialized; display committed values; preserve unedited fields, including exact byte limits                                                                   |
+| Native effects               | Startup reconciles autostart, shortcuts, window behaviour, logging, retention; failures have Retry                                                            |
+| Shortcut edit                | Register replacement before removing old binding; persist after success; restore old registration if save fails and report failed rollback                    |
+| Retention failure after save | Report failed effect, not an unsaved setting                                                                                                                  |
+| Reset settings               | Restore defaults and logging; clear built-in shortcut overrides/pending intent; preserve clips, account, Intelligence, renderer/extension settings and grants |
+| App language change          | Atomically invalidate automatic-language OCR; recover interrupted jobs after restart                                                                          |
+
+The command registry defines stable IDs, contexts, defaults, overrides,
+conflicts, and labels. Rust owns configurable built-in bindings; portable
+`Primary` overrides live in `config_command_shortcuts`. UI records keys and
+requires Save; restoring a default deletes its override. Fixed navigation is
+separate. Extension shortcuts use their contribution-owned table/lifecycle.
+Context-only commands are explicitly configurable, menu-only, or unbound.
+
+Portable import/export works without an account:
+
+| Contract   | Value                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| Envelope   | `format: "clipsx-portable-settings"`, `version: 1`                                                   |
+| Records    | Only `kind`, `key`, `payload`, `tombstone`                                                           |
+| Limits     | 4 MiB, 1,000 records, existing per-record bounds                                                     |
+| Validation | Whole document before commit; reject duplicates/unknown fields; validate signed-package declarations |
+| Merge      | Apply supplied records/tombstones; preserve omitted records and device settings                      |
+
+Import uses the same domain application as sync; local triggers publish eligible
+changes when sync is enabled. OCR invalidation is atomic; workers/UI refresh
+after commit. Pending imports remain recoverable while signed out. Their origin
+survives matching cloud echoes: import and retry never auto-install packages.
+Users install through Extensions and review fresh permissions. No legacy
+settings-file import exists.
+
+### Window activation, layout, and logging
+
+| Entry point                         | Behaviour                                                                                          |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Global shortcut                     | Hide only if visible, focused, and not minimized; otherwise cancel blur-hide, restore, show, focus |
+| Tray left-click                     | Open/focus Clipboard History                                                                       |
+| Tray Open, second launch, deep link | Open; never toggle closed                                                                          |
+| Explicit activation                 | Focus Search on History; preserve control on Settings/Extensions                                   |
+| Alt+Tab / taskbar                   | Preserve previous editor focus                                                                     |
+
+Windows uses actual OS foreground state. Native callbacks enqueue work and
+return. One coordinator coalesces requests; a dedicated worker restores normal
+Z-order, confirms foreground within a bound, then focuses the embedded webview.
+OS refusal is visible. Stage/timing diagnostics and a watchdog report stalls
+without releasing the single-flight guard or starting competing workers.
+
+The device-local `window.history_split_ratio` defaults to 0.50; valid range is
+0.20–0.80. Layout subtracts the separator and preserves 280 px history / 420 px
+preview minimums where possible; narrow windows scale minima without rewriting
+the saved ratio. Pointer gestures save on completion; keyboard changes save
+per action.
+
+Logging defaults on and changes immediately through
+`diagnostics.logging_enabled` in Settings > Advanced. Startup reads policy
+before diagnostics and stays quiet if reading fails. Rust logs reviewed
+operational messages/counts/timings; frontend sends allowlisted event IDs.
+Content, notes, auth URLs, credentials, tokens, and unnecessary paths are
+excluded. Disabling logs does not hide user-facing errors. Logging preference
+is device-local; reset enables it.
+
+## Extension boundary
+
+Core owns clipboard fidelity, common views and structure detection, secret
+detection, local-file activation, fallbacks, and privileged operations.
+Optional packages own specialized interpretation and conversion; none are
+installed by default. Package capabilities, lifecycle, limits, and security
+rules are centralized in [Extension API v3](EXTENSION_API_V3.md).
+
+The main webview has no generic filesystem asset protocol or inline scripts.
+Managed binaries use opaque database IDs. Core file-list image preview checks
+clip membership, bounds reads to 4 MiB, sniffs an allowed raster, and returns a
+data URL. Extensions cannot invoke this or generic local-path activation.

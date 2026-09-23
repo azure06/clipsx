@@ -1,9 +1,11 @@
 import { diagnostic } from '../../shared/diagnostics'
+import { invoke } from '@tauri-apps/api/core'
 import { PortableRecovery } from './components/PortableRecovery'
 import { CommandShortcuts } from './components/CommandShortcuts'
 import { useEffect, useState, useRef } from 'react'
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog'
 import { writeTextFile, readTextFile, stat } from '@tauri-apps/plugin-fs'
+import { executeClipboardOutput } from '../../shared/clipboardOutput'
 
 import { useAuthStore, useSettingsStore } from '../../stores'
 import { useClipboardStore } from '../../stores'
@@ -37,25 +39,27 @@ import {
   UserRound,
   LogOut,
   Cloud,
+  FolderOpen,
+  FileArchive,
+  Copy as CopyIcon,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 import { ConfigurationSync } from './components/ConfigurationSync'
+import { AccountSignInOptions } from './components/AccountSignInOptions'
 import { SettingsNavigation, type SettingsNavigationItem } from './components/SettingsNavigation'
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
 export type SettingsTab =
-  | 'general'
-  | 'clipboard'
-  | 'keyboard'
-  | 'storage'
-  | 'privacy'
-  | 'sync'
-  | 'account'
-  | 'advanced'
+  'general' | 'clipboard' | 'keyboard' | 'storage' | 'privacy' | 'sync' | 'account' | 'advanced'
 
 type SettingsProps = {
   initialTab?: SettingsTab
+}
+
+type DiagnosticsSummary = {
+  supportCode: string
+  release: string
 }
 
 // --- ShortcutRecorder: visual key-combination recorder widget ---
@@ -194,11 +198,13 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   const authEmail = useAuthStore(state => state.email)
   const authUserId = useAuthStore(state => state.userId)
   const authError = useAuthStore(state => state.error)
+  const signingInProvider = useAuthStore(state => state.signingInProvider)
   const signIn = useAuthStore(state => state.signIn)
   const signOut = useAuthStore(state => state.signOut)
   const resetLocalSignIn = useAuthStore(state => state.resetLocalSignIn)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [shortcutError, setShortcutError] = useState<string | null>(null)
+  const [diagnosticsSummary, setDiagnosticsSummary] = useState<DiagnosticsSummary | null>(null)
 
   useEffect(() => {
     setActiveTab(initialTab)
@@ -213,6 +219,13 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       setThemeMode(settings.theme)
     }
   }, [settings?.theme, setThemeMode])
+
+  useEffect(() => {
+    if (activeTab !== 'advanced') return
+    void invoke<DiagnosticsSummary>('get_diagnostics_summary')
+      .then(setDiagnosticsSummary)
+      .catch(() => setDiagnosticsSummary(null))
+  }, [activeTab])
 
   const handleClearAllData = async () => {
     if (confirm(t('settings.deleteAllConfirm'))) {
@@ -262,6 +275,17 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       await resetSettings()
       setFeedback(t('settings.resetSuccess'))
     }, t('errors.settingsReset'))
+
+  const handleDiagnosticsExport = () =>
+    manage(async () => {
+      const path = await save({
+        defaultPath: `clipsx-diagnostics-${new Date().toISOString().split('T')[0]}.zip`,
+        filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+      })
+      if (!path) return
+      await invoke('export_diagnostic_bundle', { path })
+      setFeedback(t('settings.diagnosticsExportSuccess'))
+    }, t('settings.diagnosticsExportFailed'))
 
   // --- Loading / Error states ---
 
@@ -768,7 +792,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                       <Button
                         size="sm"
                         onClick={e => {
-                          const btn = e.currentTarget as HTMLButtonElement
+                          const btn = e.currentTarget
                           const input = btn.previousElementSibling as HTMLInputElement
                           const appName = input?.value.trim()
                           if (appName && !settings.excluded_apps.includes(appName)) {
@@ -865,7 +889,11 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                           {import.meta.env.DEV ? authError : t('errors.genericDescription')}
                         </p>
                       )}
-                      <Button onClick={() => void signIn()}>{t('settings.signIn')}</Button>
+                      <AccountSignInOptions
+                        status={authStatus}
+                        signingInProvider={signingInProvider}
+                        onSignIn={provider => void signIn(provider)}
+                      />
                       {authStatus === 'error' && (
                         <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
                           <p className="text-xs text-gray-600 dark:text-gray-300">
@@ -890,9 +918,11 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   )}
 
                   {authStatus === 'signing_in' && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                      <Loader2 className="h-4 w-4 animate-spin" /> {t('settings.continueSignIn')}
-                    </div>
+                    <AccountSignInOptions
+                      status={authStatus}
+                      signingInProvider={signingInProvider}
+                      onSignIn={provider => void signIn(provider)}
+                    />
                   )}
                 </div>
 
@@ -1086,14 +1116,70 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                 </SettingRow>
 
                 <SettingRow
-                  label={t('settings.loggingEnabled')}
-                  description={t('settings.loggingDescription')}
+                  label={t('settings.errorReportingEnabled')}
+                  description={t('settings.errorReportingDescription')}
                 >
                   <Switch
-                    checked={settings.logging_enabled}
-                    onChange={value => void updateSettings({ logging_enabled: value })}
+                    checked={settings.error_reporting_enabled}
+                    onChange={value => void updateSettings({ error_reporting_enabled: value })}
                   />
                 </SettingRow>
+
+                <SettingRow
+                  label={t('settings.verboseLoggingEnabled')}
+                  description={t('settings.verboseLoggingDescription')}
+                >
+                  <Switch
+                    checked={settings.verbose_logging_enabled}
+                    onChange={value => void updateSettings({ verbose_logging_enabled: value })}
+                  />
+                </SettingRow>
+
+                <div className="rounded-xl border border-gray-200/70 bg-slate-100/40 p-4 dark:border-white/10 dark:bg-slate-100/5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {t('settings.supportCode')}
+                      </p>
+                      <p className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">
+                        {diagnosticsSummary?.supportCode ?? '...'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!diagnosticsSummary}
+                        leftIcon={<CopyIcon className="h-3.5 w-3.5" />}
+                        onClick={() =>
+                          void executeClipboardOutput('copy', {
+                            kind: 'literal_text',
+                            text: diagnosticsSummary?.supportCode ?? '',
+                          })
+                        }
+                      >
+                        {t('common.copy')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        leftIcon={<FolderOpen className="h-3.5 w-3.5" />}
+                        onClick={() => void invoke('open_diagnostics_log_folder')}
+                      >
+                        {t('settings.openLogFolder')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isManaging}
+                        leftIcon={<FileArchive className="h-3.5 w-3.5" />}
+                        onClick={() => void handleDiagnosticsExport()}
+                      >
+                        {t('settings.exportDiagnostics')}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
 
                 <SettingRow
                   label={t('settings.copyToast')}

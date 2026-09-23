@@ -44,6 +44,19 @@ export default tseslint.config(
     extends: tseslint.configs.recommended,
   },
 
+  // Repository scripts execute in Node rather than the browser.
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        URL: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+  },
+
   // React-specific rules
   {
     files: ['src/**/*.{ts,tsx}'],
@@ -54,6 +67,11 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+
+      // Existing effects synchronize local UI state with Tauri events, external
+      // stores, and async host data. Migrate those flows deliberately instead of
+      // allowing a plugin upgrade to force broad behavior changes in CI.
+      'react-hooks/set-state-in-effect': 'off',
 
       // TypeScript recommended overrides
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
