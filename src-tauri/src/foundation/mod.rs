@@ -13,8 +13,8 @@ use std::{
 };
 use tauri::Manager;
 
-pub const SCHEMA_ID: &str = "clipsx-local-v2";
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_ID: &str = "clipsx-local-v3";
+pub const SCHEMA_VERSION: i64 = 10;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,9 +210,9 @@ async fn inspect_database(path: &Path) -> Result<SchemaState> {
 
 pub fn startup_status(state: SchemaState) -> StartupStatus {
     match state {
-        SchemaState::Ready => StartupStatus { state: "ready".into(), message: "ClipsX v2 storage is ready.".into(), reset_available: false },
+        SchemaState::Ready => StartupStatus { state: "ready".into(), message: "ClipsX storage is ready.".into(), reset_available: false },
         SchemaState::LegacyResetRequired => StartupStatus { state: "legacy_reset_required".into(), message: "This ClipsX database uses the retired schema. Factory reset is required; data is not migrated.".into(), reset_available: true },
-        SchemaState::UnsupportedSchema => StartupStatus { state: "unsupported_schema".into(), message: "The local database is not a supported ClipsX v2 schema. Factory reset is required.".into(), reset_available: true },
+        SchemaState::UnsupportedSchema => StartupStatus { state: "unsupported_schema".into(), message: "The local database schema is unsupported. Factory reset is required.".into(), reset_available: true },
     }
 }
 
@@ -348,7 +348,7 @@ mod tests {
         let mut conn = SqliteConnection::connect_with(&options).await.unwrap();
         sqlx::query("CREATE TABLE system_schema_meta(schema_id TEXT,schema_version INTEGER,created_at INTEGER)")
             .execute(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO system_schema_meta VALUES('clipsx-local-v2',1,0)")
+        sqlx::query("INSERT INTO system_schema_meta VALUES('clipsx-local-v3',1,0)")
             .execute(&mut conn)
             .await
             .unwrap();

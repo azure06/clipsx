@@ -2,6 +2,8 @@ CREATE TABLE clip_items (
     id TEXT PRIMARY KEY NOT NULL,
     source_app_name TEXT,
     source_app_id TEXT,
+    source_app_platform TEXT
+        CHECK (source_app_platform IS NULL OR source_app_platform IN ('windows', 'macos', 'linux_x11')),
     note TEXT,
     is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),
     is_favorite INTEGER NOT NULL DEFAULT 0 CHECK (is_favorite IN (0, 1)),
@@ -96,6 +98,9 @@ CREATE TABLE clip_transform_provenance (
     transformer_id TEXT NOT NULL,
     transformer_version TEXT NOT NULL,
     parameter_sha256 TEXT NOT NULL CHECK (length(parameter_sha256) = 64),
+    package_id TEXT,
+    package_sha256 TEXT CHECK (package_sha256 IS NULL OR length(package_sha256) = 64),
+    extension_job_id TEXT,
     created_at INTEGER NOT NULL
 );
 

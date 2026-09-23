@@ -24,6 +24,7 @@ use crate::{
 use anyhow::Context;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::time::{Duration, Instant};
 use tauri::{ipc::Channel, AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -106,6 +107,10 @@ struct CoreUtility {
     rename_all_fields = "camelCase"
 )]
 enum ContextActionRunResponse {
+    Queued {
+        job_id: String,
+        clip_id: String,
+    },
     Output {
         preview: Box<transformers::TransformPreview>,
         disposition: String,
@@ -1109,6 +1114,184 @@ async fn create_transform_preview(
 }
 
 #[tauri::command]
+async fn enqueue_extension_transform(
+    request: crate::extensions::EnqueueExtensionJob,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionJobResult, String> {
+    let result = state
+        .extensions
+        .enqueue_durable_transform(&state.history, request, false)
+        .await
+        .map_err(|error| error.to_string())?;
+    let clip_id: Option<String> =
+        sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
+            .bind(&result.job_id)
+            .fetch_optional(&state.history.pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    if let Some(clip_id) = clip_id {
+        let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":result.job_id,"clipId":clip_id,"status":"pending","reasonCode":null}));
+    }
+    crate::app::workers::wake_extensions(&app, state.history.clone(), state.extensions.clone());
+    Ok(result)
+}
+
+#[tauri::command]
+async fn list_clip_extension_results(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::ExtensionJobSummary>, String> {
+    state
+        .extensions
+        .list_durable_results(&state.history, &clip_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_extension_result(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionJobSummary, String> {
+    let clip_id: String =
+        sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
+            .bind(&job_id)
+            .fetch_optional(&state.history.pool)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "extension result is unavailable".to_string())?;
+    state
+        .extensions
+        .list_durable_results(&state.history, &clip_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|item| item.job_id == job_id)
+        .ok_or_else(|| "extension result is unavailable".to_string())
+}
+
+async fn enqueue_existing_extension_job(
+    job_id: String,
+    request_id: String,
+    invocation_token: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionJobResult, String> {
+    let row = sqlx::query("SELECT source_clip_id,source_representation_id,contribution_id,parameters_json FROM extension_jobs WHERE id=?")
+        .bind(&job_id).fetch_optional(&state.history.pool).await.map_err(|error| error.to_string())?
+        .ok_or_else(|| "extension result is unavailable".to_string())?;
+    let request = crate::extensions::EnqueueExtensionJob {
+        clip_id: row.get(0),
+        source_id: row.get(1),
+        transformer_id: row.get(2),
+        parameters: serde_json::from_str(&row.get::<String, _>(3))
+            .map_err(|error| error.to_string())?,
+        request_id: Some(request_id),
+        regenerate: true,
+        invocation_token: Some(invocation_token),
+        capture_application: None,
+    };
+    enqueue_extension_transform(request, app, state).await
+}
+
+#[tauri::command]
+async fn retry_extension_job(
+    job_id: String,
+    request_id: String,
+    invocation_token: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionJobResult, String> {
+    enqueue_existing_extension_job(job_id, request_id, invocation_token, app, state).await
+}
+
+#[tauri::command]
+async fn regenerate_extension_result(
+    job_id: String,
+    request_id: String,
+    invocation_token: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::ExtensionJobResult, String> {
+    enqueue_existing_extension_job(job_id, request_id, invocation_token, app, state).await
+}
+
+#[tauri::command]
+async fn cancel_extension_job(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .extensions
+        .cancel_durable_job(&state.history, &job_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn delete_extension_result(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .extensions
+        .delete_durable_result(&state.history, &job_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn promote_extension_result(
+    job_id: String,
+    request_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state
+        .extensions
+        .promote_durable_result(&state.history, &job_id, &request_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_source_applications(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::SourceApplication>, String> {
+    let rows = sqlx::query("SELECT source_app_platform,source_app_id,max(source_app_name) FROM clip_items WHERE lifecycle_state='ready' AND source_app_platform IS NOT NULL AND source_app_id IS NOT NULL AND source_app_name IS NOT NULL GROUP BY source_app_platform,source_app_id ORDER BY lower(max(source_app_name)),source_app_id LIMIT 256")
+        .fetch_all(&state.history.pool).await.map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|row| crate::extensions::SourceApplication {
+            platform: row.get(0),
+            id: row.get(1),
+            display_name: row.get(2),
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn get_extension_automation(
+    package_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let (revision, rules) = state
+        .extensions
+        .automation_rules(&state.history, &package_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({"revision":revision,"rules":rules}))
+}
+
+#[tauri::command]
+async fn set_extension_automation(
+    package_id: String,
+    expected_revision: i64,
+    rules: Vec<crate::extensions::ApplicationRule>,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    state
+        .extensions
+        .set_automation_rules(&state.history, &package_id, expected_revision, rules)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn list_context_actions(
     clip_id: String,
     source_id: String,
@@ -1159,6 +1342,15 @@ async fn run_context_action(
         .await
         .map_err(|error| error.to_string())?
     {
+        crate::extensions::ActionOutcome::Queued { job_id, clip_id } => {
+            let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":job_id,"clipId":clip_id,"status":"pending","reasonCode":null}));
+            crate::app::workers::wake_extensions(
+                &app,
+                state.history.clone(),
+                state.extensions.clone(),
+            );
+            Ok(ContextActionRunResponse::Queued { job_id, clip_id })
+        }
         crate::extensions::ActionOutcome::Output {
             outputs,
             disposition,
@@ -3071,7 +3263,7 @@ pub(crate) fn run() {
                 .context("embedded clipboard capability policy is invalid")?;
             let foundation_started = Instant::now();
             let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
-                .expect("Failed to prepare the ClipsX v2 foundation");
+                .expect("Failed to prepare the ClipsX database");
             let foundation_elapsed = foundation_started.elapsed();
             if schema_state == foundation::SchemaState::Ready {
                 let _ = tauri::async_runtime::block_on(crate::app::diagnostics::initialize(&roots.database()));
@@ -3114,12 +3306,15 @@ pub(crate) fn run() {
                 // Rebuild any stale FTS projections from previous sessions.
                 let fts_history = history.clone();
                 let fts_app = app.handle().clone();
+                let fts_extensions = extensions.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = search::rebuild_stale_projections(&fts_history).await;
                     let _ = embeddings::recover_interrupted(&fts_history).await;
                     let _ = embeddings::ensure_current_chunker(&fts_history).await;
                     let _ = artifacts::recover_ocr_queue(&fts_history).await;
+                    let _ = crate::extensions::jobs::recover(&fts_history).await;
                     crate::app::workers::wake_ocr(&fts_app, fts_history.clone());
+                    crate::app::workers::wake_extensions(&fts_app, fts_history.clone(), fts_extensions);
                     wake_embedding_worker(fts_app.clone(), fts_history.clone());
                     crate::app::workers::wake_managed_files(&fts_app, fts_history);
                 });
@@ -3269,6 +3464,9 @@ pub(crate) fn run() {
                                         &id,
                                     )
                                     .await;
+                                    if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
+                                        crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
+                                    }
                                     let _ =
                                         search::upsert_projection(&detection_history, &id).await;
                                     let _ = embeddings::enqueue_clip(&detection_history, &id).await;
@@ -3332,6 +3530,17 @@ pub(crate) fn run() {
             capture_clipboard,
             list_transformer_contributions,
             create_transform_preview,
+            enqueue_extension_transform,
+            list_clip_extension_results,
+            get_extension_result,
+            retry_extension_job,
+            regenerate_extension_result,
+            cancel_extension_job,
+            delete_extension_result,
+            promote_extension_result,
+            list_source_applications,
+            get_extension_automation,
+            set_extension_automation,
             list_context_actions,
             list_extension_actions,
             run_context_action,

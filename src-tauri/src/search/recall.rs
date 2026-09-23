@@ -340,6 +340,7 @@ pub async fn start_turn(
     stage(&channel, &request.request_id, "generating")?;
     let event_request_id = request.request_id.clone();
     let event_channel = channel.clone();
+    let _generation_permit = generation::acquire_generation_admission(&cancellation).await?;
     let output = provider
         .generate_stream(
             &GenerationRequest {

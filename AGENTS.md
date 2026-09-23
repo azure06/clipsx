@@ -9,7 +9,7 @@ Read the docs relevant to the task:
 
 - [Architecture](docs/ARCHITECTURE.md): boundaries and invariants.
 - [Roadmap](docs/ROADMAP.md): current and planned scope.
-- [Extension API](docs/EXTENSION_API_V2.md): extension contract.
+- [Extension API](docs/EXTENSION_API_V3.md): extension contract.
 - [Semantic search](docs/SEMANTIC_SEARCH_ARCHITECTURE.md): meaning search and Recall.
 - [Release](docs/RELEASE.md): release and platform validation.
 

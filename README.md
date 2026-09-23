@@ -102,7 +102,7 @@ derived data. The maintained documentation describes those boundaries:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Data model](docs/MODELS.md)
 - [Semantic search architecture](docs/SEMANTIC_SEARCH_ARCHITECTURE.md)
-- [Extension API v2](docs/EXTENSION_API_V2.md)
+- [Extension API v3](docs/EXTENSION_API_V3.md)
 - [Roadmap](docs/ROADMAP.md)
 
 ## Organization

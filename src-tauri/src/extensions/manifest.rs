@@ -61,6 +61,39 @@ pub enum ExecutionClass {
     CapabilityBacked,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultLifetime {
+    #[default]
+    Temporary,
+    SourceClip,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivationEvent {
+    ClipCreated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplicationSelector {
+    pub platform: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionActivation {
+    pub id: String,
+    pub event: ActivationEvent,
+    pub transformer_id: String,
+    #[serde(default)]
+    pub matchers: Vec<ContributionMatcher>,
+    #[serde(default)]
+    pub applications: Vec<ApplicationSelector>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionEffect {
@@ -208,6 +241,8 @@ pub struct ManifestContribution {
     /// full parameter space, so the operation isn't offered twice.
     #[serde(default = "default_true")]
     pub expose_in_menu: bool,
+    #[serde(default)]
+    pub result_lifetime: ResultLifetime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,6 +260,10 @@ pub struct ExtensionPermissions {
     pub credentials: Vec<CredentialPermission>,
     #[serde(default)]
     pub providers: Vec<String>,
+    pub selected_input: bool,
+    pub background_clip_created: bool,
+    pub source_application: bool,
+    pub package_state: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +306,27 @@ pub struct ExtensionSetting {
     pub kind: String,
     #[serde(default = "empty_object")]
     pub default: Value,
+    #[serde(default)]
+    pub schema: Option<Value>,
+    #[serde(default)]
+    pub scope: SettingScope,
+    #[serde(default)]
+    pub ui_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingScope {
+    #[default]
+    Device,
+    Portable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionStateKey {
+    pub id: String,
+    pub schema: Value,
 }
 
 fn default_version() -> String {
@@ -289,8 +349,7 @@ fn empty_object() -> Value {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionManifest {
     pub schema_version: u32,
-    /// The old pre-release v2 draft did not carry this field. Requiring it is
-    /// the deliberate clean break that prevents a second compatibility runtime.
+    /// Required for the current extension contract.
     pub contract_revision: u32,
     pub package_id: String,
     pub version: String,
@@ -309,6 +368,10 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub settings: Vec<ExtensionSetting>,
     #[serde(default)]
+    pub state: Vec<ExtensionStateKey>,
+    #[serde(default)]
+    pub activations: Vec<ExtensionActivation>,
+    #[serde(default)]
     pub contributions: Vec<ManifestContribution>,
 }
 
@@ -320,27 +383,27 @@ impl ExtensionManifest {
         let source = std::str::from_utf8(bytes)?;
         let value: toml::Value =
             toml::from_str(source).context("extension manifest is not valid TOML")?;
-        if value.get("schemaVersion").and_then(toml::Value::as_integer) == Some(1) {
-            bail!("Extension API v1 packages are incompatible; rebuild this package for API v2");
+        if value.get("schemaVersion").and_then(toml::Value::as_integer) != Some(3) {
+            bail!("unsupported extension schema; build this package for Extension API v3");
         }
         if value.get("contractRevision").is_none() {
-            bail!("obsolete Extension API v2 draft package; rebuild with contractRevision = 2");
+            bail!("obsolete extension package; rebuild with Extension API v3 contractRevision = 1");
         }
         let manifest: Self = toml::from_str(source)
-            .context("extension manifest is not valid Extension API v2 TOML")?;
+            .context("extension manifest is not valid Extension API v3 TOML")?;
         manifest.validate()?;
         Ok(manifest)
     }
 
     pub fn validate(&self) -> Result<()> {
         if self.schema_version == 1 {
-            bail!("Extension API v1 packages are incompatible; rebuild this package for API v2");
+            bail!("Extension API v1 packages are incompatible; rebuild this package for API v3");
         }
-        if self.schema_version != 2 {
-            bail!("unsupported extension manifest schema; expected schemaVersion = 2");
+        if self.schema_version != 3 {
+            bail!("unsupported extension manifest schema; expected schemaVersion = 3");
         }
-        if self.contract_revision != 2 {
-            bail!("unsupported Extension API v2 contract revision; expected contractRevision = 2");
+        if self.contract_revision != 1 {
+            bail!("unsupported Extension API v3 contract revision; expected contractRevision = 1");
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -390,6 +453,69 @@ impl ExtensionManifest {
             }
             validate_parameter_schema(&contribution.parameter_schema)?;
             self.validate_contribution(contribution)?;
+        }
+        self.validate_activations()?;
+        Ok(())
+    }
+
+    fn validate_activations(&self) -> Result<()> {
+        if self.activations.len() > 32 {
+            bail!("extension activation declaration exceeds its limits");
+        }
+        let mut ids = BTreeSet::new();
+        for activation in &self.activations {
+            valid_id(&activation.id, "activation")?;
+            if !ids.insert(&activation.id)
+                || activation.matchers.is_empty()
+                || activation.matchers.len() > 16
+            {
+                bail!("extension activations require unique IDs and bounded matchers");
+            }
+            for matcher in &activation.matchers {
+                matcher.validate()?;
+            }
+            let transformer = self
+                .contributions
+                .iter()
+                .find(|item| {
+                    item.id == activation.transformer_id
+                        && item.kind == ContributionKind::Transformer
+                })
+                .context("activation references an unknown transformer")?;
+            if transformer.result_lifetime != ResultLifetime::SourceClip {
+                bail!("automatic activations require a source_clip transformer");
+            }
+            if !self.permissions.background_clip_created || !self.permissions.selected_input {
+                bail!("automatic activations require selected_input and background_clip_created permissions");
+            }
+            if activation.applications.len() > 32 {
+                bail!("activation application filter exceeds its limit");
+            }
+            for application in &activation.applications {
+                if !matches!(
+                    application.platform.as_str(),
+                    "windows" | "macos" | "linux_x11"
+                ) || application.id.is_empty()
+                    || application.id.len() > 256
+                    || application.id.chars().any(char::is_control)
+                {
+                    bail!("activation application selector is invalid");
+                }
+            }
+        }
+        if self.state.len() > 64 {
+            bail!("extension state declaration exceeds 64 keys");
+        }
+        let mut state_ids = BTreeSet::new();
+        for declaration in &self.state {
+            valid_id(&declaration.id, "state")?;
+            if !state_ids.insert(&declaration.id) {
+                bail!("extension state keys must be unique");
+            }
+            validate_schema_node(&declaration.schema, 0)?;
+        }
+        if !self.state.is_empty() && !self.permissions.package_state {
+            bail!("declared package state requires package_state permission");
         }
         Ok(())
     }
@@ -653,18 +779,33 @@ impl ExtensionManifest {
         let mut settings = BTreeSet::new();
         for setting in &self.settings {
             valid_id(&setting.id, "setting")?;
-            let valid_default = match setting.kind.as_str() {
-                "boolean" => setting.default.is_boolean(),
-                "string" => setting
-                    .default
-                    .as_str()
-                    .is_some_and(|value| value.len() <= 4096),
-                "number" => setting.default.is_number(),
-                _ => false,
-            };
+            if let Some(schema) = &setting.schema {
+                validate_schema_node(schema, 0)?;
+                if schema
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("object")
+                    != setting.kind
+                {
+                    bail!("extension setting schema type does not match kind");
+                }
+            }
+            let valid_default = validate_setting_value(setting, &setting.default).is_ok();
             if setting.label.trim().is_empty()
                 || setting.label.len() > 120
-                || (setting.portable && !matches!(setting.kind.as_str(), "boolean" | "number"))
+                || ((setting.portable || setting.scope == SettingScope::Portable)
+                    && !matches!(setting.kind.as_str(), "boolean" | "number"))
+                || setting.ui_hint.as_ref().is_some_and(|hint| {
+                    !matches!(
+                        hint.as_str(),
+                        "checkbox"
+                            | "number"
+                            | "select"
+                            | "textarea"
+                            | "language_picker"
+                            | "application_picker"
+                    )
+                })
                 || !valid_default
                 || !settings.insert(&setting.id)
             {
@@ -724,10 +865,7 @@ fn valid_icon_asset(value: &str, label: &str) -> Result<()> {
 }
 
 pub fn validate_parameter_schema(schema: &Value) -> Result<()> {
-    let object = schema
-        .as_object()
-        .context("extension parameter schema must be an object")?;
-    if object
+    if schema
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("object")
@@ -735,121 +873,286 @@ pub fn validate_parameter_schema(schema: &Value) -> Result<()> {
     {
         bail!("extension parameter schema root type must be object");
     }
-    let properties = object
-        .get("properties")
-        .map(|value| {
-            value
-                .as_object()
-                .context("parameter schema properties must be an object")
-        })
-        .transpose()?
-        .cloned()
-        .unwrap_or_default();
-    if properties.len() > 32 {
-        bail!("extension parameter schema has too many properties");
+    validate_schema_node(schema, 0)
+}
+
+pub fn validate_parameters(schema: &Value, parameters: &Value) -> Result<()> {
+    if serde_json::to_vec(parameters)?.len() > 64 * 1024 {
+        bail!("extension parameters exceed 64 KiB");
     }
-    for (name, property) in &properties {
-        valid_id(name, "parameter")?;
-        let property = property
-            .as_object()
-            .context("parameter property schema must be an object")?;
-        let kind = property
-            .get("type")
-            .and_then(Value::as_str)
-            .context("parameter property type is required")?;
-        if !matches!(kind, "string" | "number" | "integer" | "boolean") {
-            bail!("unsupported parameter property type");
-        }
-        if property.get("enum").is_some_and(|value| {
-            value
-                .as_array()
-                .is_none_or(|values| values.is_empty() || values.len() > 64)
-        }) {
-            bail!("parameter enum must contain between 1 and 64 values");
-        }
+    validate_schema_value(schema, parameters)
+}
+
+pub fn normalized_parameters(schema: &Value, parameters: &Value) -> Result<Value> {
+    validate_parameter_schema(schema)?;
+    let mut normalized = parameters.clone();
+    apply_schema_defaults(schema, &mut normalized);
+    validate_parameters(schema, &normalized)?;
+    Ok(normalized)
+}
+
+pub fn validate_setting_value(setting: &ExtensionSetting, value: &Value) -> Result<()> {
+    if serde_json::to_vec(value)?.len() > 16 * 1024 {
+        bail!("extension setting exceeds 16 KiB");
     }
-    if let Some(required) = object.get("required") {
-        let required = required
-            .as_array()
-            .context("parameter schema required must be an array")?;
-        if required.iter().any(|name| {
-            name.as_str()
-                .is_none_or(|name| !properties.contains_key(name))
-        }) {
-            bail!("parameter schema requires an undeclared property");
-        }
+    if let Some(schema) = &setting.schema {
+        return validate_schema_value(schema, value);
+    }
+    let valid = match setting.kind.as_str() {
+        "boolean" => value.is_boolean(),
+        "string" => value.as_str().is_some_and(|text| text.len() <= 4096),
+        "number" => value.as_f64().is_some_and(f64::is_finite),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        _ => false,
+    };
+    if !valid {
+        bail!("extension setting value does not match its declaration");
     }
     Ok(())
 }
 
-pub fn validate_parameters(schema: &Value, parameters: &Value) -> Result<()> {
-    let schema = schema.as_object().context("parameter schema is invalid")?;
-    let values = parameters
+pub fn validate_state_value(schema: &Value, value: &Value) -> Result<()> {
+    validate_schema_value(schema, value)
+}
+
+fn apply_schema_defaults(schema: &Value, value: &mut Value) {
+    if let (Some(properties), Some(values)) = (
+        schema.get("properties").and_then(Value::as_object),
+        value.as_object_mut(),
+    ) {
+        for (key, property) in properties {
+            if !values.contains_key(key) {
+                if let Some(default) = property.get("default") {
+                    values.insert(key.clone(), default.clone());
+                }
+            }
+            if let Some(value) = values.get_mut(key) {
+                apply_schema_defaults(property, value);
+            }
+        }
+    }
+    if let (Some(items), Some(values)) = (schema.get("items"), value.as_array_mut()) {
+        for value in values {
+            apply_schema_defaults(items, value);
+        }
+    }
+}
+
+fn validate_schema_node(schema: &Value, depth: usize) -> Result<()> {
+    if depth > 4 {
+        bail!("extension schema nesting exceeds four levels");
+    }
+    let object = schema
         .as_object()
-        .context("extension parameters must be an object")?;
-    let properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    if schema.get("additionalProperties") == Some(&Value::Bool(false))
-        && values.keys().any(|name| !properties.contains_key(name))
+        .context("extension schema must be an object")?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "type"
+                | "properties"
+                | "required"
+                | "additionalProperties"
+                | "items"
+                | "maxItems"
+                | "minItems"
+                | "enum"
+                | "minLength"
+                | "maxLength"
+                | "minimum"
+                | "maximum"
+                | "default"
+                | "title"
+                | "description"
+        ) {
+            bail!("unsupported extension schema keyword");
+        }
+    }
+    match object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("object")
     {
-        bail!("extension parameters contain an undeclared property");
-    }
-    if let Some(required) = schema.get("required").and_then(Value::as_array) {
-        for name in required.iter().filter_map(Value::as_str) {
-            if !values.contains_key(name) {
-                bail!("required extension parameter is missing: {name}");
+        "object" => {
+            if object.get("additionalProperties") == Some(&Value::Bool(true)) {
+                bail!("extension schema cannot allow undeclared properties");
+            }
+            let properties = object
+                .get("properties")
+                .map(|value| {
+                    value
+                        .as_object()
+                        .context("schema properties must be an object")
+                })
+                .transpose()?
+                .cloned()
+                .unwrap_or_default();
+            if properties.len() > 32 {
+                bail!("extension schema object exceeds 32 properties");
+            }
+            for (key, value) in &properties {
+                valid_id(key, "parameter")?;
+                validate_schema_node(value, depth + 1)?;
+            }
+            if let Some(required) = object.get("required") {
+                let required = required
+                    .as_array()
+                    .context("schema required must be an array")?;
+                if required.len() > 32
+                    || required
+                        .iter()
+                        .any(|key| key.as_str().is_none_or(|key| !properties.contains_key(key)))
+                {
+                    bail!("schema requires an undeclared property");
+                }
             }
         }
-    }
-    for (name, value) in values {
-        let Some(property) = properties.get(name).and_then(Value::as_object) else {
-            continue;
-        };
-        let valid_type = match property.get("type").and_then(Value::as_str) {
-            Some("string") => value.is_string(),
-            Some("number") => value.is_number(),
-            Some("integer") => value.as_i64().is_some() || value.as_u64().is_some(),
-            Some("boolean") => value.is_boolean(),
-            _ => false,
-        };
-        if !valid_type {
-            bail!("extension parameter has the wrong type: {name}");
-        }
-        if let Some(allowed) = property.get("enum").and_then(Value::as_array) {
-            if !allowed.contains(value) {
-                bail!("extension parameter is outside its declared enum: {name}");
-            }
-        }
-        if let Some(text) = value.as_str() {
-            let length = text.chars().count() as u64;
-            if property
-                .get("minLength")
+        "array" => {
+            let max = object
+                .get("maxItems")
                 .and_then(Value::as_u64)
-                .is_some_and(|min| length < min)
-                || property
+                .context("array schema requires maxItems")?;
+            if max > 64 {
+                bail!("array schema exceeds 64 items");
+            }
+            validate_schema_node(
+                object.get("items").context("array schema requires items")?,
+                depth + 1,
+            )?;
+        }
+        "string" => {
+            let max = object.get("maxLength").and_then(Value::as_u64);
+            if max.is_none() && object.get("enum").is_none() {
+                bail!("string schema requires maxLength or enum");
+            }
+            if max.is_some_and(|max| max > 16 * 1024) {
+                bail!("string schema exceeds 16 KiB");
+            }
+        }
+        "integer" | "number" => {
+            if (object.get("minimum").and_then(Value::as_f64).is_none()
+                || object.get("maximum").and_then(Value::as_f64).is_none())
+                && object.get("enum").is_none()
+            {
+                bail!("number schema requires bounds or enum");
+            }
+        }
+        "boolean" => {}
+        _ => bail!("unsupported extension schema type"),
+    }
+    if let Some(values) = object.get("enum") {
+        let values = values.as_array().context("schema enum must be an array")?;
+        if values.is_empty() || values.len() > 64 {
+            bail!("schema enum exceeds its bounds");
+        }
+        for value in values {
+            validate_schema_value_without_enum(schema, value)?;
+        }
+    }
+    if let Some(default) = object.get("default") {
+        validate_schema_value(schema, default)?;
+    }
+    Ok(())
+}
+
+fn validate_schema_value(schema: &Value, value: &Value) -> Result<()> {
+    validate_schema_value_without_enum(schema, value)?;
+    if schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .is_some_and(|values| !values.contains(value))
+    {
+        bail!("value is outside its declared enum");
+    }
+    Ok(())
+}
+
+fn validate_schema_value_without_enum(schema: &Value, value: &Value) -> Result<()> {
+    match schema
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("object")
+    {
+        "object" => {
+            let values = value
+                .as_object()
+                .context("extension value must be an object")?;
+            let properties = schema.get("properties").and_then(Value::as_object);
+            if values.len() > 32 {
+                bail!("extension object exceeds 32 properties");
+            }
+            for (key, value) in values {
+                let property = properties
+                    .and_then(|properties| properties.get(key))
+                    .context("extension value contains an undeclared property")?;
+                validate_schema_value(property, value)?;
+            }
+            if let Some(required) = schema.get("required").and_then(Value::as_array) {
+                if required
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|key| !values.contains_key(key))
+                {
+                    bail!("required extension parameter is missing");
+                }
+            }
+        }
+        "array" => {
+            let values = value
+                .as_array()
+                .context("extension value must be an array")?;
+            let max = schema
+                .get("maxItems")
+                .and_then(Value::as_u64)
+                .context("array maxItems is missing")?;
+            if values.len() as u64 > max || values.len() > 64 {
+                bail!("extension array exceeds its limit");
+            }
+            let items = schema
+                .get("items")
+                .context("array items schema is missing")?;
+            for value in values {
+                validate_schema_value(items, value)?;
+            }
+        }
+        "string" => {
+            let text = value.as_str().context("extension value must be a string")?;
+            let length = text.chars().count() as u64;
+            if length
+                > schema
                     .get("maxLength")
                     .and_then(Value::as_u64)
-                    .is_some_and(|max| length > max)
+                    .unwrap_or(16 * 1024)
+                || length < schema.get("minLength").and_then(Value::as_u64).unwrap_or(0)
             {
-                bail!("extension parameter length is outside its declared bounds: {name}");
+                bail!("extension string exceeds its bounds");
             }
         }
-        if let Some(number) = value.as_f64() {
-            if property
-                .get("minimum")
-                .and_then(Value::as_f64)
-                .is_some_and(|min| number < min)
-                || property
+        "number" | "integer" => {
+            let number = value.as_f64().context("extension value must be a number")?;
+            if schema.get("type").and_then(Value::as_str) == Some("integer")
+                && !(value.as_i64().is_some() || value.as_u64().is_some())
+            {
+                bail!("extension value must be an integer");
+            }
+            if !number.is_finite()
+                || schema
+                    .get("minimum")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|min| number < min)
+                || schema
                     .get("maximum")
                     .and_then(Value::as_f64)
                     .is_some_and(|max| number > max)
             {
-                bail!("extension parameter is outside its declared bounds: {name}");
+                bail!("extension number exceeds its bounds");
             }
         }
+        "boolean" => {
+            if !value.is_boolean() {
+                bail!("extension value must be a boolean");
+            }
+        }
+        _ => bail!("unsupported extension schema type"),
     }
     Ok(())
 }
@@ -920,17 +1223,19 @@ mod tests {
 
     fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
         ExtensionManifest {
-            schema_version: 2,
-            contract_revision: 2,
+            schema_version: 3,
+            contract_revision: 1,
             package_id: "example.colors".into(),
             version: "1.0.0".into(),
-            api_version: "^2.0".into(),
+            api_version: "^3.0".into(),
             display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
             icon_assets: None,
             permissions: ExtensionPermissions::default(),
             settings: vec![],
+            state: vec![],
+            activations: vec![],
             contributions: vec![contribution],
         }
     }
@@ -969,24 +1274,14 @@ mod tests {
             parameter_schema: empty_object(),
             input_limit_bytes: 1024 * 1024,
             expose_in_menu: true,
+            result_lifetime: ResultLifetime::Temporary,
         }
     }
 
     #[test]
-    fn v1_is_rejected_with_upgrade_message() {
+    fn obsolete_schema_is_rejected_with_upgrade_message() {
         let error = ExtensionManifest::parse(b"schemaVersion = 1").unwrap_err();
-        assert!(error.to_string().contains("API v1"));
-    }
-
-    #[test]
-    fn obsolete_v2_draft_is_rejected_with_migration_message() {
-        let error = ExtensionManifest::parse(
-            b"schemaVersion = 2\npackageId = \"example.old\"\nversion = \"1.0.0\"\napiVersion = \"^2.0\"\ndisplayName = \"Old\"",
-        )
-        .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("obsolete Extension API v2 draft"));
+        assert!(error.to_string().contains("Extension API v3"));
     }
 
     #[test]
@@ -1113,6 +1408,9 @@ mod tests {
             label: "Tone".into(),
             kind: "string".into(),
             default: Value::String("concise".into()),
+            schema: None,
+            scope: SettingScope::Device,
+            ui_hint: None,
         });
         assert!(value.validate().is_ok());
         value.settings[0].default = Value::Bool(true);
@@ -1181,11 +1479,11 @@ mod tests {
     }
 
     #[test]
-    fn parameter_schema_rejects_nested_or_unbounded_shapes() {
+    fn parameter_schema_accepts_bounded_nested_shapes_and_rejects_unbounded_ones() {
         assert!(validate_parameter_schema(&serde_json::json!({
             "type":"object", "properties":{"nested":{"type":"object"}}
         }))
-        .is_err());
+        .is_ok());
         let properties = (0..33)
             .map(|index| (format!("p{index}"), serde_json::json!({"type":"string"})))
             .collect::<serde_json::Map<_, _>>();

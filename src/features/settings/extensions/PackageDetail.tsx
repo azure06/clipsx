@@ -8,6 +8,15 @@ import { ShortcutRecorder } from '../Settings'
 import type { PackageDetail, UpdateMode } from './types'
 
 type DetailTab = 'overview' | 'settings' | 'permissions' | 'actions' | 'diagnostics'
+type SourceApplication = { platform: string; id: string; displayName: string }
+type AutomationRule = {
+  id: string
+  activationId: string
+  application: SourceApplication
+  enabled: boolean
+  parameters: Record<string, unknown>
+  revision: number
+}
 const tabs: Array<{ id: DetailTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'settings', label: 'Settings' },
@@ -43,6 +52,15 @@ export const PackageDetailView = ({
   const [mode, setMode] = useState<UpdateMode>(detail.autoUpdateMode)
   const [operationBusy, setOperationBusy] = useState(false)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [automation, setAutomation] = useState<{ revision: number; rules: AutomationRule[] }>({
+    revision: 0,
+    rules: [],
+  })
+  const [applications, setApplications] = useState<SourceApplication[]>([])
+  const [selectedApplication, setSelectedApplication] = useState('')
+  const [selectedPreset, setSelectedPreset] = useState('business')
+  const [targetLanguage, setTargetLanguage] = useState('')
+  const [customInstruction, setCustomInstruction] = useState('')
   const operationInFlight = useRef(false)
   const registryPackage = detail.package
   const installed = detail.installed
@@ -54,6 +72,19 @@ export const PackageDetailView = ({
   useEffect(() => {
     setOperationError(null)
   }, [packageId])
+  useEffect(() => {
+    if (packageId !== 'infiniti.rewrite' || !installed) return
+    void Promise.all([
+      invoke<{ revision: number; rules: AutomationRule[] }>('get_extension_automation', {
+        packageId,
+      }),
+      invoke<SourceApplication[]>('list_source_applications'),
+    ]).then(([rules, apps]) => {
+      setAutomation(rules)
+      setApplications(apps)
+      setSelectedApplication(apps[0] ? `${apps[0].platform}\u0000${apps[0].id}` : '')
+    })
+  }, [installed, packageId])
 
   if (!registryPackage) return null
   const runOperation = async (operation: () => Promise<unknown>) => {
@@ -110,6 +141,32 @@ export const PackageDetailView = ({
     ['Size', formatBytes(registryPackage.archiveSizeBytes)],
     ['License', registryPackage.license ?? 'Not recorded'],
   ]
+  const saveAutomation = async (rules: AutomationRule[]) => {
+    const newlyEnabled = rules.filter(
+      rule =>
+        rule.enabled &&
+        !automation.rules.some(
+          previous =>
+            previous.enabled &&
+            previous.activationId === rule.activationId &&
+            previous.application.platform === rule.application.platform &&
+            previous.application.id === rule.application.id
+        )
+    )
+    if (newlyEnabled.length > 0) {
+      const names = newlyEnabled.map(rule => rule.application.displayName).join(', ')
+      const approved = window.confirm(
+        `Allow this Rewrite release to read copied plain text and the source application for ${names}, use the configured local generation provider, and store results with each source clip? The clipboard will not change automatically.`
+      )
+      if (!approved) return
+    }
+    const revision = await invoke<number>('set_extension_automation', {
+      packageId,
+      expectedRevision: automation.revision,
+      rules,
+    })
+    setAutomation({ revision, rules: rules.map(rule => ({ ...rule, revision })) })
+  }
 
   return (
     <section className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-200/80 bg-white/45 p-5 shadow-[0_18px_42px_-34px_rgba(30,41,59,.42)] dark:border-white/10 dark:bg-slate-950/20">
@@ -333,6 +390,144 @@ export const PackageDetailView = ({
                 )}
               </label>
             ))
+          )}
+          {installed && packageId === 'infiniti.rewrite' && (
+            <div className="rounded-xl border border-violet-500/15 bg-violet-500/[.035] p-3">
+              <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                Automatic rewrites
+              </h3>
+              <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                A result is stored with the source clip. ClipsX does not replace the clipboard
+                automatically.
+              </p>
+              <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                Examples: Outlook → Business, Slack → Casual, VS Code → Custom (“concise
+                technical”). Select the observed app on this device to bind a rule.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <select
+                  value={selectedApplication}
+                  onChange={event => setSelectedApplication(event.target.value)}
+                  className="min-w-44 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs dark:border-white/15 dark:bg-slate-900"
+                >
+                  {applications.map(app => (
+                    <option
+                      key={`${app.platform}:${app.id}`}
+                      value={`${app.platform}\u0000${app.id}`}
+                    >
+                      {app.displayName}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={selectedPreset}
+                  onChange={event => setSelectedPreset(event.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs dark:border-white/15 dark:bg-slate-900"
+                >
+                  {['business', 'casual', 'concise', 'improve_writing', 'translate', 'custom'].map(
+                    preset => (
+                      <option key={preset} value={preset}>
+                        {preset.replaceAll('_', ' ')}
+                      </option>
+                    )
+                  )}
+                </select>
+                {selectedPreset === 'translate' && (
+                  <input
+                    aria-label="Target language"
+                    value={targetLanguage}
+                    maxLength={64}
+                    onChange={event => setTargetLanguage(event.target.value)}
+                    placeholder="Target language"
+                    className="min-w-40 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs dark:border-white/15 dark:bg-slate-900"
+                  />
+                )}
+                {selectedPreset === 'custom' && (
+                  <input
+                    aria-label="Custom rewrite instruction"
+                    value={customInstruction}
+                    maxLength={4096}
+                    onChange={event => setCustomInstruction(event.target.value)}
+                    placeholder="Custom instruction"
+                    className="min-w-48 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs dark:border-white/15 dark:bg-slate-900"
+                  />
+                )}
+                <Button
+                  size="sm"
+                  disabled={
+                    !selectedApplication ||
+                    (selectedPreset === 'translate' && !targetLanguage.trim()) ||
+                    (selectedPreset === 'custom' && !customInstruction.trim())
+                  }
+                  onClick={() => {
+                    const [platform, id] = selectedApplication.split('\u0000')
+                    const app = applications.find(
+                      item => item.platform === platform && item.id === id
+                    )
+                    if (!app) return
+                    const next = automation.rules.filter(
+                      rule =>
+                        !(rule.application.platform === platform && rule.application.id === id)
+                    )
+                    const parameters: Record<string, unknown> = { preset: selectedPreset }
+                    if (selectedPreset === 'translate')
+                      parameters['target_language'] = targetLanguage.trim()
+                    if (selectedPreset === 'custom')
+                      parameters['custom_instruction'] = customInstruction.trim()
+                    next.push({
+                      id: crypto.randomUUID(),
+                      activationId: 'rewrite-on-capture',
+                      application: app,
+                      enabled: true,
+                      parameters,
+                      revision: automation.revision + 1,
+                    })
+                    void runOperation(() => saveAutomation(next))
+                  }}
+                >
+                  Add rule
+                </Button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {automation.rules.map(rule => (
+                  <div
+                    key={rule.id}
+                    className="flex items-center gap-3 rounded-lg bg-white/65 px-2.5 py-2 text-xs dark:bg-white/[.04]"
+                  >
+                    <Switch
+                      checked={rule.enabled}
+                      size="sm"
+                      onChange={enabled =>
+                        void runOperation(() =>
+                          saveAutomation(
+                            automation.rules.map(item =>
+                              item.id === rule.id ? { ...item, enabled } : item
+                            )
+                          )
+                        )
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate">{rule.application.displayName}</span>
+                    <span className="text-slate-500">
+                      {typeof rule.parameters['preset'] === 'string'
+                        ? rule.parameters['preset'].replaceAll('_', ' ')
+                        : 'rewrite'}
+                    </span>
+                    <button
+                      aria-label="Delete automation rule"
+                      onClick={() =>
+                        void runOperation(() =>
+                          saveAutomation(automation.rules.filter(item => item.id !== rule.id))
+                        )
+                      }
+                      className="rounded p-1 text-slate-400 hover:bg-red-500/10 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

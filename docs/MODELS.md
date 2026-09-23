@@ -230,11 +230,13 @@ flowchart TB
     I --> S[extension_action_shortcuts]
     I --> P[extension_action_pins]
     I --> G[extension_permission_grants]
-    M[package_id] --> V[extension_package_settings_v2]
+    M[package_id] --> V[extension_package_settings]
     M --> U[extension_update_preferences]
     M --> N[extension_registry_snapshots]
     C -. detected output .-> F[Content facets / presentations]
     C -. derived output .-> A[Artifacts]
+    C --> J[extension_jobs]
+    J --> A
 ```
 
 | Table | Class | Purpose | Write authority | Lifecycle / ownership |
@@ -247,8 +249,11 @@ flowchart TB
 | `extension_permission_grants` | Operational security state | Records consent for one exact package checksum and declared navigation, HTTPS, or provider permission. | Extension broker after a host-owned consent flow | Install-owned and checksum-bound. Update, disablement, replacement, or removal revokes it. Never synchronized. |
 | `extension_registry_snapshots` | Infrastructure | Preserves the reviewed registry identity displayed for an installed registry release. | Registry-backed install/update service | Keyed by stable package ID and replaceable from newly verified signed registry metadata. It is not trusted package-authored metadata. |
 | `extension_update_preferences` | Configuration | Stores the package-specific automatic-update override. | Extension update settings | Stable package preference retained independently from installed bytes. |
-| `extension_package_settings_v2` | Configuration | Stores manifest-declared non-secret settings by stable package and setting IDs. | Extension settings service after manifest/type validation | Retained across uninstall/reinstall; package bytes do not own it. |
-| `extension_package_settings` | Migration-only | Earlier install-ID-scoped settings table whose rows are copied into `extension_package_settings_v2`. | No runtime writer | Retired staging table in the current migration sequence; runtime code reads and writes only the stable package-ID table. |
+| `extension_package_settings` | Configuration | Stores manifest-declared non-secret settings by stable package and setting IDs. | Extension settings service after manifest/type validation | Retained across uninstall/reinstall; package bytes do not own it. |
+| `extension_jobs` / `extension_result_outputs` | Operational / derived | Durable manual and automatic transformation work plus ordered links to artifact payloads. | Shared extension coordinator | Owned by the source clip. Completed output remains readable after package removal; unfinished work is cancelled. |
+| `extension_activation_events` | Operational | Durable capture-occurrence intents, including immutable safe application context. | Capture and extension activation dispatcher | Cascades with the source clip and is pruned after terminal processing. |
+| `extension_automation_rules` | Configuration | Device-local exact application rules for declared activations. | Host settings UI | Retained but inactive while a package is absent or unauthorized. |
+| `extension_package_state` | Configuration | Small, declared, quota-limited package key/value state. | Capability broker | Retained across updates and disablement, deleted on uninstall, never synchronized. |
 
 Extension tables store package/runtime infrastructure, not arbitrary extension-owned database schemas. Sandboxed contributions emit host-validated facets, presentations, artifacts, or transformed outputs into the owning host domains.
 

@@ -112,7 +112,7 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         let mut clipboard = Clipboard::new().context("clipboard unavailable")?;
         let mut reps = Vec::new();
         let mut observations = Vec::new();
-        let source_app_name = active_app_name();
+        let source_application_before = active_application();
         if let Ok(text) = clipboard.get_text() {
             if !text.is_empty() {
                 #[cfg(target_os = "linux")]
@@ -151,7 +151,13 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         }
         #[cfg(target_os = "windows")]
         unsafe {
-            capture_windows_formats(&mut reps, &mut observations, source_app_name.as_deref())?;
+            capture_windows_formats(
+                &mut reps,
+                &mut observations,
+                source_application_before
+                    .as_ref()
+                    .map(|value| value.0.as_str()),
+            )?;
         }
         #[cfg(target_os = "macos")]
         unsafe {
@@ -196,10 +202,12 @@ impl ClipboardAdapter for SystemClipboardAdapter {
             bail!("clipboard has no supported representations")
         }
         self.fallback_token = self.fallback_token.wrapping_add(1);
+        let source_application = source_application_before
+            .filter(|observed| active_application().as_ref() == Some(observed));
         Ok(CapturedSnapshot {
             token,
-            source_app_name,
-            source_app_id: None,
+            source_app_name: source_application.as_ref().map(|value| value.0.clone()),
+            source_app_id: source_application.map(|value| value.1),
             format_observations: observations,
             representations: reps,
         })
@@ -223,7 +231,7 @@ impl ClipboardAdapter for SystemClipboardAdapter {
         {
             // arboard can only own one payload at a time on X11. Own the
             // CLIPBOARD selection ourselves so TARGETS can expose the complete
-            // v2 representation set to the receiving application.
+            // representation set to the receiving application.
             x11_own_selection(reps.to_vec())?;
             let token = self.snapshot_token()?;
             remember_self_write(token, reps);
@@ -394,7 +402,7 @@ fn encode_png(image: ImageData<'_>) -> Result<Vec<u8>> {
     Ok(out)
 }
 #[cfg(target_os = "windows")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use windows::core::PWSTR;
     use windows::Win32::{
         Foundation::CloseHandle,
@@ -422,13 +430,19 @@ fn active_app_name() -> Option<String> {
         );
         let _ = CloseHandle(process);
         result.ok()?;
-        std::path::Path::new(&String::from_utf16_lossy(&buffer[..length as usize]))
-            .file_stem()
-            .map(|value| value.to_string_lossy().into_owned())
+        let executable =
+            std::path::Path::new(&String::from_utf16_lossy(&buffer[..length as usize]))
+                .file_name()?
+                .to_string_lossy()
+                .into_owned();
+        safe_application(
+            executable.clone(),
+            format!("exe:{}", executable.to_ascii_lowercase()),
+        )
     }
 }
 #[cfg(target_os = "macos")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use cocoa::base::{id, nil};
     use objc::{class, msg_send, sel, sel_impl};
     unsafe {
@@ -438,15 +452,29 @@ fn active_app_name() -> Option<String> {
             return None;
         }
         let name: id = msg_send![app, localizedName];
-        if name == nil {
+        let bundle: id = msg_send![app, bundleIdentifier];
+        if name == nil || bundle == nil {
             return None;
         }
-        let ptr: *const std::ffi::c_char = msg_send![name, UTF8String];
-        (!ptr.is_null()).then(|| std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned())
+        let name_ptr: *const std::ffi::c_char = msg_send![name, UTF8String];
+        let bundle_ptr: *const std::ffi::c_char = msg_send![bundle, UTF8String];
+        if name_ptr.is_null() || bundle_ptr.is_null() {
+            return None;
+        }
+        let display = std::ffi::CStr::from_ptr(name_ptr)
+            .to_string_lossy()
+            .into_owned();
+        let identifier = std::ffi::CStr::from_ptr(bundle_ptr)
+            .to_string_lossy()
+            .into_owned();
+        safe_application(
+            display,
+            format!("bundle:{}", identifier.to_ascii_lowercase()),
+        )
     }
 }
 #[cfg(target_os = "linux")]
-fn active_app_name() -> Option<String> {
+fn active_application() -> Option<(String, String)> {
     use x11rb::{
         connection::Connection,
         protocol::xproto::{AtomEnum, ConnectionExt},
@@ -466,27 +494,38 @@ fn active_app_name() -> Option<String> {
         .ok()?
         .value32()?
         .next()?;
-    let name_atom = conn
-        .intern_atom(false, b"_NET_WM_NAME")
+    let class_atom = conn
+        .intern_atom(false, b"WM_CLASS")
         .ok()?
         .reply()
         .ok()?
         .atom;
-    let utf8 = conn
-        .intern_atom(false, b"UTF8_STRING")
-        .ok()?
-        .reply()
-        .ok()?
-        .atom;
-    let name = conn
-        .get_property(false, active, name_atom, utf8, 0, 1024)
+    let value = conn
+        .get_property(false, active, class_atom, AtomEnum::STRING, 0, 1024)
         .ok()?
         .reply()
         .ok()?
         .value;
-    String::from_utf8(name)
-        .ok()
-        .filter(|value| !value.is_empty())
+    let class = value
+        .split(|byte| *byte == 0)
+        .filter_map(|part| std::str::from_utf8(part).ok())
+        .filter(|part| !part.is_empty())
+        .next_back()?
+        .to_owned();
+    safe_application(
+        class.clone(),
+        format!("wmclass:{}", class.to_ascii_lowercase()),
+    )
+}
+
+fn safe_application(display_name: String, id: String) -> Option<(String, String)> {
+    let valid = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 256
+            && !value.chars().any(char::is_control)
+            && !value.contains(['/', '\\'])
+    };
+    (valid(&display_name) && valid(&id)).then_some((display_name, id))
 }
 
 #[cfg(target_os = "macos")]

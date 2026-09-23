@@ -12,6 +12,7 @@ pub struct BackgroundWorkers {
     pub text_index: SingleWorker,
     pub managed_files: SingleWorker,
     pub ocr: SingleWorker,
+    pub extensions: SingleWorker,
 }
 
 #[derive(Clone, Serialize)]
@@ -27,6 +28,59 @@ pub struct SingleWorker {
 }
 
 impl SingleWorker {
+    pub fn wake_extensions(
+        &self,
+        app: tauri::AppHandle,
+        history: HistoryRepository,
+        extensions: crate::extensions::ExtensionService,
+    ) {
+        if self.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let guard = self.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let processed = extensions
+                    .enqueue_capture_automations(&history, "")
+                    .await
+                    .unwrap_or(0);
+                match crate::extensions::jobs::run_next(&history, &extensions).await {
+                    Ok(Some((job_id, clip_id))) => {
+                        let status: Option<(String, Option<String>)> = sqlx::query_as(
+                            "SELECT status,reason_code FROM extension_jobs WHERE id=?",
+                        )
+                        .bind(&job_id)
+                        .fetch_optional(&history.pool)
+                        .await
+                        .unwrap_or(None);
+                        if let Some((status, reason_code)) = status {
+                            let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":job_id,"clipId":clip_id,"status":status,"reasonCode":reason_code}));
+                        }
+                    }
+                    Ok(None) if processed > 0 => continue,
+                    Ok(None) => break,
+                    Err(_) => {
+                        crate::diagnostic!("extension.job.worker.failed");
+                        break;
+                    }
+                }
+            }
+            guard.running.store(false, Ordering::SeqCst);
+            let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE (status IN ('pending','waiting_provider') AND (retry_at IS NULL OR retry_at<=?)) OR EXISTS(SELECT 1 FROM extension_activation_events WHERE status='pending')")
+                .bind(crate::history::now_ms()).fetch_one(&history.pool).await.unwrap_or(0);
+            if pending > 0 {
+                guard.wake_extensions(app, history, extensions);
+            } else {
+                let retry_at: Option<i64> = sqlx::query_scalar("SELECT min(retry_at) FROM extension_jobs WHERE status IN ('pending','waiting_provider') AND retry_at IS NOT NULL")
+                    .fetch_one(&history.pool).await.unwrap_or(None);
+                if let Some(retry_at) = retry_at {
+                    let delay = (retry_at - crate::history::now_ms()).clamp(1, 60_000) as u64;
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    guard.wake_extensions(app, history, extensions);
+                }
+            }
+        });
+    }
     pub fn wake_text_index(&self, app: tauri::AppHandle, history: HistoryRepository) {
         if self.running.swap(true, Ordering::SeqCst) {
             return;
@@ -249,5 +303,18 @@ pub fn wake_managed_files(app: &tauri::AppHandle, history: HistoryRepository) {
 pub fn wake_ocr(app: &tauri::AppHandle, history: HistoryRepository) {
     if let Some(state) = app.try_state::<crate::app::state::AppState>() {
         state.workers.ocr.wake_ocr(app.clone(), history);
+    }
+}
+
+pub fn wake_extensions(
+    app: &tauri::AppHandle,
+    history: HistoryRepository,
+    extensions: crate::extensions::ExtensionService,
+) {
+    if let Some(state) = app.try_state::<crate::app::state::AppState>() {
+        state
+            .workers
+            .extensions
+            .wake_extensions(app.clone(), history, extensions);
     }
 }

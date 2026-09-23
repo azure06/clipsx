@@ -33,6 +33,7 @@ pub struct TransformerDescriptor {
     pub http_origins: Vec<String>,
     pub providers: Vec<String>,
     pub expose_in_menu: bool,
+    pub result_lifetime: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

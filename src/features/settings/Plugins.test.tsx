@@ -30,7 +30,7 @@ const installed = {
 const registryPackage = {
   packageId: installed.packageId,
   version: installed.version,
-  apiVersion: '^2.0',
+  apiVersion: '^3.0',
   displayName: installed.displayName,
   description: installed.description,
   releaseUrl: 'https://example.com/example.clipsx',

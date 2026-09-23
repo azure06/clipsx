@@ -204,6 +204,7 @@ pub struct ClipSummary {
     pub id: String,
     pub source_app_name: Option<String>,
     pub source_app_id: Option<String>,
+    pub source_app_platform: Option<String>,
     pub captured_at: i64,
     pub updated_at: i64,
     pub is_pinned: bool,

@@ -1,14 +1,29 @@
 # ClipsX roadmap
 
-ClipsX, `clipsx-web`, and the Extension API/registry infrastructure are feature
-complete for the first public release. Work that would improve the product but
-is not required to ship belongs under **After the first release**.
+The Extension API v3 and durable result implementation requires installed-host
+certification and coordinated package publication before release. Work that can
+wait belongs under **After the first release**.
 
 The detailed cross-platform test matrix remains in [RELEASE.md](RELEASE.md).
 This roadmap answers only three questions: what blocks the release, how the
 release is produced, and what waits until afterward.
 
 ## Before the first release
+
+### Extension API v3 certification
+
+Test facet-constrained activation against current detection results before
+certifying the release. Durable text and binary outputs use artifact storage;
+package-state writes are staged with job completion, provider failures use
+bounded retry categories, and unsuccessful or temporary jobs have bounded
+retention.
+
+Validate Rewrite and the rebuilt first-party packages in installed Windows,
+macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
+deduplication, restart recovery, source deletion, and retained results after
+disablement and uninstall. Publish reviewed immutable v3 package archives and
+signed registry metadata only after these tests pass. The v3 host requires a
+fresh database baseline and shows only v3 releases in Discover.
 
 ### 1. Complete extension catalog sync and smoke test
 

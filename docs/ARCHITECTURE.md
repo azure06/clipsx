@@ -21,7 +21,7 @@ flowchart LR
 | -------------------------------------- | ------------------------------------------------- |
 | System ownership and invariants        | This document                                     |
 | Tables, relationships, storage         | [Data model](MODELS.md)                           |
-| Package format, isolation, permissions | [Extension API](EXTENSION_API_V2.md)              |
+| Package format, isolation, permissions | [Extension API](EXTENSION_API_V3.md)              |
 | Semantic indexing and Recall           | [Meaning Search](SEMANTIC_SEARCH_ARCHITECTURE.md) |
 | Shipping work / installed tests        | [Roadmap](ROADMAP.md) / [Release](RELEASE.md)     |
 
@@ -40,7 +40,7 @@ flowchart LR
 | Providers            | Host-owned OCR, embedding, generation contracts and adapters  | `providers/`                 |
 
 Rust owns every clipboard write; the webview never uses the browser clipboard.
-Extensions receive only approved input and broker capabilities.
+Extensions receive only approved input and broker capabilities. Extension API v3 routes manual and capture-triggered transformations through a host-owned durable queue. Automatic results remain derived data attached to their source clip; only explicit promotion creates a canonical clip.
 
 ## Diagnostics and error reporting
 
@@ -90,7 +90,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v2`, version 9. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 10. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion
@@ -157,7 +157,7 @@ built-in view.
 Host `RenderModel` types cover text, code, Markdown, sanitized sandboxed
 HTML/rich text, tables, trees, key/value data, images, files, documents,
 semantic views, and errors. Custom extension UI follows the
-[isolated-view contract](EXTENSION_API_V2.md#custom-ui-and-broker).
+[isolated-view contract](EXTENSION_API_V3.md#custom-ui-and-broker).
 
 | User action             | Source and result                                                    |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -171,7 +171,7 @@ Copy plain text never substitutes OCR or rendered/extension content.
 Self-writes use a consumable native change token before readback; the snapshot
 fallback requires both matching token and fingerprint.
 
-Transforms use native MIME-aware host previews. Raster previews use an opaque,
+Transforms use native MIME-aware host previews. Source-clip results are durable artifacts with job provenance; temporary transforms keep the expiring cache. Raster previews use an opaque,
 no-store URL into the expiring cache; unsaved results are not canonical data.
 At clipboard write time, typed source text without a portable native format may
 gain an identical plain-text companion. Cached and saved representations remain
@@ -309,7 +309,7 @@ and export format.
 | Clip and derived data | Clips, notes, tags, files, OCR, caches, indexes                                                           | No                                                 |
 
 Extension setting portability and approval rules live in the
-[Extension API](EXTENSION_API_V2.md#settings).
+[Extension API](EXTENSION_API_V3.md#settings).
 
 ### Account storage
 
@@ -440,7 +440,7 @@ Core owns clipboard fidelity, common views and structure detection, secret
 detection, local-file activation, fallbacks, and privileged operations.
 Optional packages own specialized interpretation and conversion; none are
 installed by default. Package capabilities, lifecycle, limits, and security
-rules are centralized in [Extension API v2](EXTENSION_API_V2.md).
+rules are centralized in [Extension API v3](EXTENSION_API_V3.md).
 
 The main webview has no generic filesystem asset protocol or inline scripts.
 Managed binaries use opaque database IDs. Core file-list image preview checks

@@ -1,4 +1,6 @@
-# ClipsX Extension API v2
+# ClipsX Extension API v3
+
+Extension API v3 is the sole extension contract. Packages use schema version 3, contract revision 1, and the v3 WIT.
 
 Extensions add detectors, views, conversions, and actions. Rust validates their
 input, permissions, and output. Registry approval does not make package code trusted.
@@ -26,7 +28,7 @@ flowchart LR
 | Archive                   | `.clipsx` ZIP                                                               |
 | Required file             | `clipsx-extension.toml`                                                     |
 | Optional files            | `component.wasm`, `README.md`, `LICENSE`, bounded `icons/` and `ui/` assets |
-| API                       | `schemaVersion = 2`, `contractRevision = 2`, compatible `apiVersion`        |
+| API                       | `schemaVersion = 3`, `contractRevision = 1`, compatible `apiVersion`        |
 | Release identity          | `(packageId, version, archive SHA-256)`                                     |
 | Package ID                | Permanent `<publisher>.<package>`; lowercase ASCII kebab-case segments      |
 | Contribution / setting ID | Package-local kebab-case                                                    |
@@ -37,11 +39,11 @@ Unsupported schemas/revisions are rejected; there is no compatibility runtime.
 WASM is required when the manifest declares guest logic.
 
 ```toml
-schemaVersion = 2
-contractRevision = 2
+schemaVersion = 3
+contractRevision = 1
 packageId = "example.hello-world"
 version = "1.0.0"
-apiVersion = "^2.0"
+apiVersion = "^3.0"
 displayName = "Hello World"
 iconAssets = { light = "icons/package-light.svg", dark = "icons/package-dark.svg" }
 
@@ -81,7 +83,7 @@ views may be invalidated and rebuilt.
 | --------------------------- | ------------------------------------------- | ---------------------------------------------------- |
 | Detector                    | Add semantic facets                         | Background understanding                             |
 | Renderer                    | Present a representation/facet              | Compatible detail views; cached compact presentation |
-| Transformer                 | Produce new bytes                           | Transform menu and temporary result preview          |
+| Transformer                 | Produce new bytes                           | Transform menu and temporary or durable result       |
 | Action                      | Perform a declared operation                | Toolbar and/or Actions menu                          |
 | `transformer_preset` action | Invoke a transformer with preset parameters | Displayed as a transform                             |
 
@@ -106,15 +108,38 @@ revocation, or repeated execution failures can quarantine a package.
 
 | Result                                   | Behaviour                                   |
 | ---------------------------------------- | ------------------------------------------- |
-| Preview                                  | Open temporary result tab                   |
+| Preview                                  | Open temporary result tab or queued result  |
 | Copy, paste, save new clip               | Host output service; keep current view      |
 | Declared HTTPS URL, notification, dialog | Perform permitted effect; keep current view |
 | Failure                                  | Report error without an empty result tab    |
 
 Packages cannot update/delete existing clips, browse arbitrary history, or
 directly access filesystem, shell, database, host clipboard, or native URI
-handlers. Output enters the normal transform cache; UTF-8 and supported raster
-results use host previews. The host does not take over package parsing/detection.
+handlers. Temporary outputs enter the transform cache. A transformer with
+`resultLifetime = "source_clip"` stores output in host-owned artifact records
+attached to its source clip; completed output survives package disablement,
+updates, and uninstall. Source deletion removes attached output. Promotion
+creates an independent canonical clip with provenance in one transaction.
+
+### Capture activation and durable jobs
+
+`clip.created` means an accepted external capture occurrence, including a copy
+that reuses an existing history row. It excludes ClipsX clipboard writes and
+promoted output. The capture transaction records eligible activation intents
+with an immutable source application snapshot. The coordinator drains these
+intents after commit and again on startup. Automation requires a declared
+representation matcher, `source_clip` transformer, checksum-bound background
+grant, and enabled device-local application rule. Application selectors match
+exact platform and ID pairs. Browser-hosted products retain the browser's ID.
+
+`prepare-transform` runs offline with the selected representation and bounded
+JSON context. It can skip or return normalized parameters. `transform` receives
+the same context with an opaque operation ID, manual/background origin, and
+source application only when permitted. Neither export receives history access.
+The host runs automatic and manual durable work through SQLite-backed jobs;
+matching pending or completed jobs reuse output. Regenerate makes a distinct
+job. Automatic completion only attaches a result. Copy, paste, delete, and
+promotion require later user actions.
 
 ### Runtime limits
 
@@ -161,8 +186,11 @@ as `url(#gradient)` are allowed. Icons render as images, not injected DOM.
 
 ## Settings
 
-Settings are bounded `boolean`, `string`, or `number` values. Rust validates
-overrides, persists them by package/setting ID, and exposes nonsecret values as
+Settings use bounded boolean, finite number/integer, string, primitive enum,
+array, and declared object schemas. Arrays require `maxItems`; objects reject
+undeclared properties. The host limits nesting to four levels, objects to 32
+properties, arrays to 64 items, and effective package settings to 64 KiB.
+Rust validates overrides, persists them by package/setting ID, and exposes nonsecret values as
 `ClipsX.context.settings`. Settings survive uninstall; credentials and grants
 are removed by default. UI must not keep a competing settings store in
 localStorage, IndexedDB, or package files.
@@ -177,6 +205,11 @@ if reconciliation or its post-commit readback fails. The cross-repository token
 and production database URI are one-time operational secrets, not per-release
 inputs.
 The signed registry is authoritative; the server catalog enforces sync eligibility.
+
+Package state is declared by key and remains device-local. The broker exposes
+`state-get`, `state-set`, and `state-delete` only to that package. Each value is
+limited to 8 KiB, with 64 keys and a 128 KiB package limit. State is for small
+operational preferences; generated output belongs in host-owned results.
 
 ## Custom UI and broker
 
@@ -231,7 +264,7 @@ Declared permission + checksum-bound grant + host-issued invocation
 | Credential header   | Host injects secret into one declared header/origin; UI/WASM never receives the value; reflected-secret responses rejected |
 | External navigation | Declared HTTPS origins only                                                                                                |
 | `generation.text`   | Configured host provider; unavailable reason until configured; no provider endpoint/model access                           |
-| Output              | Validate effect, MIME, and size; cache before preview/copy/paste/save                                                      |
+| Output              | Validate effect, MIME, and size; store temporary or source-owned result before host output                                |
 | Parameters          | Host controls for bounded primitive JSON-schema fields; validate again in Rust                                             |
 
 Capability-backed WASM actions/transformers receive invocation-scoped WIT
@@ -300,6 +333,7 @@ An authorized operation within its consent is not a security failure.
 | Data Tools    | Tables, JSON/YAML/TOML, TypeScript shapes, URL conversions; uses native host views                                         |
 | Mermaid       | Standalone and Markdown diagrams, offline navigation, theme-aware detail/dialog, accessible source fallback, host settings |
 | Ask AI        | Selected text -> ChatGPT/Claude URL; Unicode/size bounds, icons, declared origin, first-use consent                        |
+| Rewrite       | Text transformation with Business, Casual, Concise, Improve Writing, Translate, and Custom presets; durable results        |
 
 Core owns common Markdown/JSON/URL/table views and secret detection. Without
 Mermaid, diagram fences remain code. No optional package is installed by default.

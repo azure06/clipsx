@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../shared/components/ui'
+import { ExtensionResults } from './ExtensionResults'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -403,6 +404,8 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
           onTransformControls={handleTransformControls}
         />
       </div>
+
+      <ExtensionResults clipId={clip.id} />
 
       <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/45 dark:bg-black/10 border-t border-slate-200/70 dark:border-slate-100/5">
         <TagChips clipId={clip.id} tags={clip.tags ?? []} />

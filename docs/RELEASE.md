@@ -32,6 +32,8 @@ Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
 Release notes must explain incompatible-schema resets; packaging is not a reason
 to add compatibility reads.
 
+Extension API v3 releases must certify durable Rewrite jobs across restart, exact source-application attribution, source deletion, package update/uninstall, and explicit promotion. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
+
 ## Build and publication
 
 Source: [CI](../.github/workflows/ci.yml),

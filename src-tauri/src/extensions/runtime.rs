@@ -150,6 +150,60 @@ pub struct RuntimeBrokerContext {
     pub injected_headers: BTreeMap<String, BTreeMap<String, String>>,
     pub protected_secrets: Vec<Vec<u8>>,
     pub generation_allowed: bool,
+    pub generation_cancellation: crate::providers::contracts::generation::GenerationCancellation,
+    pub generation_failure: Arc<tokio::sync::Mutex<Option<GenerationFailure>>>,
+    pub package_id: String,
+    pub state_keys: Vec<String>,
+    pub state_schemas: BTreeMap<String, serde_json::Value>,
+    pub state_allowed: bool,
+    pub staged_state: Option<Arc<tokio::sync::Mutex<StagedPackageState>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationFailure {
+    WaitingProvider,
+    Transient,
+    Terminal,
+    Cancelled,
+}
+
+#[derive(Debug)]
+pub struct GenerationFailureError(pub GenerationFailure);
+
+impl std::fmt::Display for GenerationFailureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "generation_{:?}", self.0)
+    }
+}
+
+impl std::error::Error for GenerationFailureError {}
+
+fn classify_generation_error(error: &anyhow::Error) -> GenerationFailure {
+    use crate::providers::error::ProviderError;
+    match error.downcast_ref::<ProviderError>() {
+        Some(ProviderError::Cancelled) => GenerationFailure::Cancelled,
+        Some(ProviderError::Disabled | ProviderError::InvalidConfiguration(_)) => {
+            GenerationFailure::WaitingProvider
+        }
+        Some(ProviderError::Unavailable(_)) => GenerationFailure::Transient,
+        Some(ProviderError::Rejected {
+            status: 429 | 500..=599,
+            ..
+        }) => GenerationFailure::Transient,
+        Some(_) => GenerationFailure::Terminal,
+        None if error.to_string().contains("provider is not configured")
+            || error.to_string().contains("provider is disabled") =>
+        {
+            GenerationFailure::WaitingProvider
+        }
+        None => GenerationFailure::Terminal,
+    }
+}
+
+#[derive(Default)]
+pub struct StagedPackageState {
+    pub snapshot: BTreeMap<String, String>,
+    pub writes: BTreeMap<String, Option<String>>,
 }
 
 impl bindings::clipsx::extension::broker::Host for StoreData {
@@ -203,16 +257,205 @@ impl bindings::clipsx::extension::broker::Host for StoreData {
         })
     }
 
-    async fn generate_text(&mut self, prompt: String) -> std::result::Result<String, String> {
+    async fn generate_text(
+        &mut self,
+        request: bindings::clipsx::extension::broker::GenerationRequest,
+    ) -> std::result::Result<bindings::clipsx::extension::broker::GenerationResponse, String> {
         let context = self
             .broker
             .clone()
             .filter(|context| context.generation_allowed)
             .ok_or_else(|| "generation.text is unavailable for this invocation".to_string())?;
-        crate::providers::generation::generate(&context.repo, &prompt)
-            .await
-            .map_err(|error| bounded_error(&error))
+        if request.messages.is_empty()
+            || request.messages.len() > 16
+            || !(1..=4096).contains(&request.max_output_tokens)
+            || request
+                .messages
+                .iter()
+                .map(|message| message.content.len())
+                .sum::<usize>()
+                > MIB
+        {
+            return Err("generation request exceeds host limits".into());
+        }
+        let messages = request
+            .messages
+            .into_iter()
+            .map(
+                |message| crate::providers::contracts::generation::GenerationMessage {
+                    role: match message.role {
+                        bindings::clipsx::extension::broker::GenerationRole::System => {
+                            crate::providers::contracts::generation::GenerationRole::System
+                        }
+                        bindings::clipsx::extension::broker::GenerationRole::User => {
+                            crate::providers::contracts::generation::GenerationRole::User
+                        }
+                        bindings::clipsx::extension::broker::GenerationRole::Assistant => {
+                            crate::providers::contracts::generation::GenerationRole::Assistant
+                        }
+                    },
+                    content: message.content,
+                },
+            )
+            .collect();
+        let response = crate::providers::generation::generate_stream(
+            &context.repo,
+            messages,
+            request.max_output_tokens,
+            &context.generation_cancellation,
+            &|_| Ok(()),
+        )
+        .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                let failure = classify_generation_error(&error);
+                *context.generation_failure.lock().await = Some(failure);
+                return Err(format!("generation_{failure:?}"));
+            }
+        };
+        Ok(bindings::clipsx::extension::broker::GenerationResponse {
+            text: response.text,
+            completion_reason: match response.completion_reason {
+                crate::providers::contracts::generation::GenerationCompletionReason::Stop => {
+                    bindings::clipsx::extension::broker::CompletionReason::Stop
+                }
+                crate::providers::contracts::generation::GenerationCompletionReason::Length => {
+                    bindings::clipsx::extension::broker::CompletionReason::Length
+                }
+                crate::providers::contracts::generation::GenerationCompletionReason::Other(_) => {
+                    bindings::clipsx::extension::broker::CompletionReason::Other
+                }
+            },
+        })
     }
+
+    async fn state_get(&mut self, key: String) -> std::result::Result<Option<String>, String> {
+        let context = state_context(&self.broker, &key)?;
+        if let Some(stage) = &context.staged_state {
+            let stage = stage.lock().await;
+            return Ok(stage
+                .writes
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| stage.snapshot.get(&key).cloned()));
+        }
+        sqlx::query_scalar(
+            "SELECT value_json FROM extension_package_state WHERE package_id=? AND state_key=?",
+        )
+        .bind(&context.package_id)
+        .bind(key)
+        .fetch_optional(&context.repo.pool)
+        .await
+        .map_err(|error| bounded_error(&error.into()))
+    }
+
+    async fn state_set(
+        &mut self,
+        key: String,
+        value_json: String,
+    ) -> std::result::Result<(), String> {
+        let context = state_context(&self.broker, &key)?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&value_json);
+        if value_json.is_empty() || value_json.len() > 8192 || parsed.is_err() {
+            return Err("extension state value is invalid".into());
+        }
+        let schema = context
+            .state_schemas
+            .get(&key)
+            .ok_or_else(|| "package state key is undeclared".to_string())?;
+        if super::manifest::validate_state_value(schema, &parsed.unwrap()).is_err() {
+            return Err("extension state value does not match its schema".into());
+        }
+        if let Some(stage) = &context.staged_state {
+            let mut stage = stage.lock().await;
+            let mut effective = stage.snapshot.clone();
+            for (state_key, value) in &stage.writes {
+                if let Some(value) = value {
+                    effective.insert(state_key.clone(), value.clone());
+                } else {
+                    effective.remove(state_key);
+                }
+            }
+            effective.insert(key.clone(), value_json.clone());
+            let bytes = effective
+                .iter()
+                .map(|(state_key, value)| state_key.len() + value.len())
+                .sum::<usize>();
+            if effective.len() > 64 || bytes > 128 * 1024 {
+                return Err("extension state quota exceeded".into());
+            }
+            stage.writes.insert(key, Some(value_json));
+            return Ok(());
+        }
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM extension_package_state WHERE package_id=? AND state_key<>?",
+        )
+        .bind(&context.package_id)
+        .bind(&key)
+        .fetch_one(&context.repo.pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        let bytes: i64 = sqlx::query_scalar("SELECT coalesce(sum(byte_length),0) FROM extension_package_state WHERE package_id=? AND state_key<>?")
+            .bind(&context.package_id).bind(&key).fetch_one(&context.repo.pool).await.map_err(|error| error.to_string())?;
+        if count >= 64 || bytes + value_json.len() as i64 > 128 * 1024 {
+            return Err("extension state quota exceeded".into());
+        }
+        let mut tx = context
+            .repo
+            .pool
+            .begin()
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,state_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET state_revision=state_revision+1,updated_at=excluded.updated_at")
+            .bind(&context.package_id).bind(crate::history::now_ms()).execute(&mut *tx).await.map_err(|error| error.to_string())?;
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT state_revision FROM extension_package_revisions WHERE package_id=?",
+        )
+        .bind(&context.package_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+        sqlx::query("INSERT INTO extension_package_state(package_id,state_key,value_json,byte_length,revision,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(package_id,state_key) DO UPDATE SET value_json=excluded.value_json,byte_length=excluded.byte_length,revision=excluded.revision,updated_at=excluded.updated_at")
+            .bind(&context.package_id).bind(key).bind(&value_json).bind(value_json.len() as i64).bind(revision).bind(crate::history::now_ms()).execute(&mut *tx).await.map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(|error| error.to_string())
+    }
+
+    async fn state_delete(&mut self, key: String) -> std::result::Result<(), String> {
+        let context = state_context(&self.broker, &key)?;
+        if let Some(stage) = &context.staged_state {
+            stage.lock().await.writes.insert(key, None);
+            return Ok(());
+        }
+        let mut tx = context
+            .repo
+            .pool
+            .begin()
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("DELETE FROM extension_package_state WHERE package_id=? AND state_key=?")
+            .bind(&context.package_id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,state_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET state_revision=extension_package_revisions.state_revision+1,updated_at=excluded.updated_at")
+            .bind(&context.package_id).bind(crate::history::now_ms()).execute(&mut *tx).await.map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(|error| error.to_string())?;
+        Ok(())
+    }
+}
+
+fn state_context(
+    context: &Option<RuntimeBrokerContext>,
+    key: &str,
+) -> std::result::Result<RuntimeBrokerContext, String> {
+    context
+        .clone()
+        .filter(|context| {
+            context.state_allowed && context.state_keys.iter().any(|item| item == key)
+        })
+        .ok_or_else(|| "package state is unavailable for this key".into())
 }
 
 fn bounded_error(error: &anyhow::Error) -> String {
@@ -376,6 +619,7 @@ impl ExtensionRuntime {
         sha256: &str,
         contribution_id: &str,
         input: ExtensionRepresentation,
+        context_json: String,
         parameters_json: String,
         broker: Option<RuntimeBrokerContext>,
     ) -> Result<Vec<ExtensionOutputRepresentation>> {
@@ -399,6 +643,7 @@ impl ExtensionRuntime {
                 &mut store,
                 contribution_id,
                 &to_wit_representation(input),
+                &context_json,
                 &parameters_json,
             ),
         )
@@ -408,6 +653,39 @@ impl ExtensionRuntime {
         result
             .map(|outputs| outputs.into_iter().map(from_wit_output).collect())
             .map_err(guest_error)
+    }
+
+    pub async fn prepare_transform(
+        &self,
+        sha256: &str,
+        contribution_id: &str,
+        input: ExtensionRepresentation,
+        context_json: String,
+        parameters_json: String,
+    ) -> Result<Option<String>> {
+        let deadline = local_deadline(&input, 100, 500);
+        let (mut store, instance) = self
+            .binding_instance(sha256, LOCAL_FUEL, deadline, None)
+            .await?;
+        let result = timeout(
+            deadline,
+            instance.call_prepare_transform(
+                &mut store,
+                contribution_id,
+                &to_wit_representation(input),
+                &context_json,
+                &parameters_json,
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("extension prepare-transform timed out"))?
+        .map_err(wasmtime_error)?;
+        match result.map_err(guest_error)? {
+            bindings::clipsx::extension::types::PrepareDecision::Skip(_) => Ok(None),
+            bindings::clipsx::extension::types::PrepareDecision::Run(parameters) => {
+                Ok(Some(parameters))
+            }
+        }
     }
 
     pub async fn run_action(
@@ -780,6 +1058,35 @@ mod tests {
         let maximum_input = 10 * MIB;
         let maximum_base64_output = maximum_input.div_ceil(3) * 4;
         assert!(maximum_base64_output <= 14 * MIB);
-        assert!(14 * MIB < HOSTCALL_TRANSFER_LIMIT);
+        const { assert!(14 * MIB < HOSTCALL_TRANSFER_LIMIT) };
+    }
+
+    #[test]
+    fn provider_failures_have_reviewed_retry_categories() {
+        use crate::providers::error::ProviderError;
+        assert_eq!(
+            classify_generation_error(&ProviderError::Disabled.into()),
+            GenerationFailure::WaitingProvider
+        );
+        assert_eq!(
+            classify_generation_error(&ProviderError::Unavailable("offline".into()).into()),
+            GenerationFailure::Transient
+        );
+        assert_eq!(
+            classify_generation_error(
+                &ProviderError::Rejected {
+                    operation: "generate".into(),
+                    status: 429,
+                    detail: None,
+                    context_overflow: false,
+                }
+                .into()
+            ),
+            GenerationFailure::Transient
+        );
+        assert_eq!(
+            classify_generation_error(&ProviderError::InvalidOutput("bad".into()).into()),
+            GenerationFailure::Terminal
+        );
     }
 }
