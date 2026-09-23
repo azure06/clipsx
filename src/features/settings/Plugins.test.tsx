@@ -229,3 +229,44 @@ describe('extension installation feedback', () => {
     await waitFor(() => expect(install).toBeEnabled())
   })
 })
+
+describe('extension catalog availability', () => {
+  beforeEach(() => mockInvoke.mockReset())
+
+  it('explains a failed first registry check and offers retry', async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_extension_catalog') {
+        return Promise.resolve({ packages: [], registry: { schemaVersion: null, cached: false, lastSuccessfulCheckAt: null, error: null } })
+      }
+      if (command === 'check_extension_updates') return Promise.reject(new Error('HTTP 404'))
+      if (command === 'list_core_utilities') return Promise.resolve([])
+      if (command === 'get_extension_developer_mode' || command === 'get_extension_auto_updates_enabled') return Promise.resolve(false)
+      return Promise.resolve()
+    })
+
+    render(<Plugins />)
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
+
+    expect(await screen.findByText('Extension catalog unavailable')).toBeInTheDocument()
+    expect(screen.getByText(/Could not load the signed registry/)).toBeInTheDocument()
+    expect(screen.queryByText('Nothing matches this search')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry catalog' }))
+    await waitFor(() => expect(mockInvoke.mock.calls.filter(([command]) => command === 'check_extension_updates')).toHaveLength(2))
+  })
+
+  it('keeps a verified cached catalog visible when refresh fails', async () => {
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_extension_catalog') return Promise.resolve(catalog)
+      if (command === 'check_extension_updates') return Promise.reject(new Error('offline'))
+      if (command === 'list_core_utilities') return Promise.resolve([])
+      if (command === 'get_extension_developer_mode' || command === 'get_extension_auto_updates_enabled') return Promise.resolve(false)
+      return Promise.resolve()
+    })
+
+    render(<Plugins />)
+    fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
+
+    expect(await screen.findByRole('button', { name: /Example tools/i })).toBeInTheDocument()
+    expect(await screen.findByText(/Showing the last verified catalog/)).toBeInTheDocument()
+  })
+})

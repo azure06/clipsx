@@ -144,6 +144,11 @@ Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Use their package-validation
 workflows and confirm the production catalog/approval sync. App CI does not
 publish extension releases.
+The desktop release preflight requires a nonempty, signed v3 registry whose
+published raw index and signatures match the reviewed registry revision. Merge
+the six immutable package releases, reviewed metadata, and protected signed
+publication before creating a desktop release candidate. A source merge alone
+does not make a package visible in Discover.
 
 ## Native clipboard sequence
 

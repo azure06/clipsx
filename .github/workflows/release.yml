@@ -49,6 +49,23 @@ jobs:
           cargo audit --file src-tauri/Cargo.lock
           cargo deny check licenses bans sources --manifest-path src-tauri/Cargo.toml
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
+      - name: Require a live signed v3 extension catalog
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 https://github.com/azure06/clipsx-registry.git /tmp/clipsx-registry
+          cd /tmp/clipsx-registry
+          npm ci
+          npm run validate -- --require-current --download-dir .downloads --verify-releases
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs"
+            for (const name of ["index.json", "index.signatures.json"]) {
+              const response = await fetch(`https://raw.githubusercontent.com/azure06/clipsx-registry/main/${name}`, { cache: "no-store" })
+              if (!response.ok || !Buffer.from(await response.arrayBuffer()).equals(readFileSync(name))) process.exit(1)
+            }
+            const index = JSON.parse(readFileSync("index.json", "utf8"))
+            if (index.schemaVersion !== 4 || !index.packages?.length || index.packages.some(item => item.apiVersion !== "^3.0")) process.exit(1)
+          '
       - name: Scan repository for secrets
         uses: gitleaks/gitleaks-action@v2
       - name: Upload dependency evidence
