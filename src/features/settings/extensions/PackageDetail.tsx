@@ -586,20 +586,6 @@ export const PackageDetailView = ({
                     {action.unavailableReason ? ` · ${action.unavailableReason}` : ''}
                   </div>
                 </div>
-                <button
-                  className={`rounded-md px-2 py-1 text-[10px] font-semibold ${action.pinned ? 'bg-violet-500/12 text-violet-700 dark:text-violet-300' : 'bg-slate-500/8 text-slate-500'}`}
-                  disabled={operationBusy}
-                  onClick={() =>
-                    void runOperation(() =>
-                      invoke('set_extension_action_pinned', {
-                        actionId: action.id,
-                        pinned: !action.pinned,
-                      })
-                    )
-                  }
-                >
-                  Pin
-                </button>
                 <div className="flex items-center gap-1">
                   <ShortcutRecorder
                     value={action.shortcut ?? ''}

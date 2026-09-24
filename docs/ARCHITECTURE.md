@@ -33,14 +33,14 @@ flowchart LR
 | Rust app / IPC       | Startup, commands, windows, tray, worker coordination         | `src-tauri/src/app/`, `ipc/` |
 | Clipboard adapter    | Native formats, capture, reconstruction, self-write detection | `clipboard/`                 |
 | History / foundation | Canonical records, SQLite, managed files, settings, reset     | `history/`, `foundation/`    |
-| Contributions        | Built-in detectors, view selection, transform cache           | `contributions/`             |
+| Contributions        | Built-in detectors, view selection, transformer metadata      | `contributions/`             |
 | Artifacts            | Thumbnails and OCR jobs                                       | `artifacts/`                 |
 | Search               | FTS, ranking, chunks, vectors, index lifecycle                | `search/`                    |
 | Extensions           | Packages, registry, isolation, permission broker              | `extensions/`, `wit/`        |
 | Providers            | Host-owned OCR, embedding, generation contracts and adapters  | `providers/`                 |
 
 Rust owns every clipboard write; the webview never uses the browser clipboard.
-Extensions receive only approved input and broker capabilities. Extension API v3 routes manual and capture-triggered transformations through a host-owned durable queue. Automatic results remain derived data attached to their source clip; only explicit promotion creates a canonical clip.
+Extensions receive only approved input and broker capabilities. Extension API v3.1 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
 
 ## Diagnostics and error reporting
 
@@ -90,7 +90,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v3`, version 10. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 12. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion
@@ -157,13 +157,13 @@ built-in view.
 Host `RenderModel` types cover text, code, Markdown, sanitized sandboxed
 HTML/rich text, tables, trees, key/value data, images, files, documents,
 semantic views, and errors. Custom extension UI follows the
-[isolated-view contract](EXTENSION_API_V3.md#custom-ui-and-broker).
+[extension contract](EXTENSION_API_V3.md).
 
 | User action             | Source and result                                                    |
 | ----------------------- | -------------------------------------------------------------------- |
 | Copy / Original         | Reconstruct explicitly supported captured formats                    |
 | Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters  |
-| Transform               | Validate parameters; cache exact result bytes for preview and output |
+| Transform               | Validate parameters; enqueue one durable clip-owned result job        |
 | Save transformed result | New canonical clip with provenance; source unchanged                 |
 | Share                   | Explicit host-owned disclosure of supported source content           |
 
@@ -171,10 +171,19 @@ Copy plain text never substitutes OCR or rendered/extension content.
 Self-writes use a consumable native change token before readback; the snapshot
 fallback requires both matching token and fingerprint.
 
-Transforms use native MIME-aware host previews. Source-clip results are durable artifacts with job provenance; temporary transforms keep the expiring cache. Raster previews use an opaque,
-no-store URL into the expiring cache; unsaved results are not canonical data.
+Transforms use native MIME-aware host previews. Result bytes are durable artifacts
+with job provenance, and result tabs reload from SQLite. Raster results use an
+opaque, no-store artifact URL; results are not canonical data until promoted.
+The clip tab strip contains native views and extension jobs. Tools opens inside
+the preview card and is the single entry point for transformer built-in and
+saved setups; a setup stores parameters locally and produces a tab only when
+run. Pins are device-local operation preferences: uninstall removes them, while
+disablement hides them until the package is enabled again. A result adds one
+compact toolbar row for output selection, view selection, and explicit controls.
+The host owns typed previews, Original/Result comparison, retry, cancellation,
+and deletion.
 At clipboard write time, typed source text without a portable native format may
-gain an identical plain-text companion. Cached and saved representations remain
+gain an identical plain-text companion. Stored representations remain
 unchanged.
 On Windows, a canonical PNG is reconstructed as both registered `PNG` and
 standard `CF_DIBV5` clipboard formats so native applications and browsers can

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { managedAssetUrl, transformImageUrl } from './assetUrl'
+import { artifactFileUrl, managedAssetUrl } from './assetUrl'
 
 describe('managedAssetUrl', () => {
   it('uses Wry custom-protocol origins on Windows', () => {
@@ -11,16 +11,14 @@ describe('managedAssetUrl', () => {
   })
 })
 
-describe('transformImageUrl', () => {
-  it('addresses one expiring output on Windows', () => {
-    expect(transformImageUrl('result-id', 2, 'windows')).toBe(
-      'http://clipsx-transform.localhost/result-id/2'
-    )
+describe('artifactFileUrl', () => {
+  it('addresses a durable output on Windows', () => {
+    expect(artifactFileUrl('file-id', 'windows')).toBe('http://clipsx-artifact.localhost/file-id')
   })
 
   it('uses the registered scheme on macOS and Linux', () => {
-    expect(transformImageUrl('result-id', 0, 'linux')).toBe(
-      'clipsx-transform://localhost/result-id/0'
+    expect(artifactFileUrl('file-id', 'linux')).toBe(
+      'clipsx-artifact://localhost/file-id'
     )
   })
 })

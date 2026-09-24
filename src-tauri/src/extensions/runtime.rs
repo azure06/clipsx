@@ -120,15 +120,8 @@ pub struct ExtensionOutputRepresentation {
 
 #[derive(Debug, Clone)]
 pub enum ExtensionActionResult {
-    Output {
-        outputs: Vec<ExtensionOutputRepresentation>,
-        disposition: super::ActionDisposition,
-    },
     OpenHttpsUrl(String),
-    Notification {
-        level: String,
-        message: String,
-    },
+    Notification { level: String, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -951,17 +944,8 @@ fn from_wit_leading(
 fn from_wit_action_result(
     value: bindings::clipsx::extension::types::ActionResult,
 ) -> ExtensionActionResult {
-    use bindings::clipsx::extension::types::{ActionDisposition, ActionResult};
+    use bindings::clipsx::extension::types::ActionResult;
     match value {
-        ActionResult::Output((outputs, disposition)) => ExtensionActionResult::Output {
-            outputs: outputs.into_iter().map(from_wit_output).collect(),
-            disposition: match disposition {
-                ActionDisposition::Preview => super::ActionDisposition::Preview,
-                ActionDisposition::Copy => super::ActionDisposition::Copy,
-                ActionDisposition::Paste => super::ActionDisposition::Paste,
-                ActionDisposition::SaveAsClip => super::ActionDisposition::SaveAsClip,
-            },
-        },
         ActionResult::OpenHttpsUrl(url) => ExtensionActionResult::OpenHttpsUrl(url),
         ActionResult::Notification((level, message)) => {
             ExtensionActionResult::Notification { level, message }

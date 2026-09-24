@@ -64,7 +64,7 @@ jobs:
               if (!response.ok || !Buffer.from(await response.arrayBuffer()).equals(readFileSync(name))) process.exit(1)
             }
             const index = JSON.parse(readFileSync("index.json", "utf8"))
-            if (index.schemaVersion !== 4 || !index.packages?.length || index.packages.some(item => item.apiVersion !== "^3.0")) process.exit(1)
+            if (index.schemaVersion !== 4 || !index.packages?.length || index.packages.some(item => item.apiVersion !== "^3.1")) process.exit(1)
           '
       - name: Scan repository for secrets
         uses: gitleaks/gitleaks-action@v2

@@ -104,13 +104,8 @@ pub enum RenderModel {
     rename_all_fields = "camelCase"
 )]
 pub enum ImageSource {
-    Managed {
-        asset_id: String,
-    },
-    TransformResult {
-        result_id: String,
-        output_index: usize,
-    },
+    Managed { asset_id: String },
+    ArtifactFile { file_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

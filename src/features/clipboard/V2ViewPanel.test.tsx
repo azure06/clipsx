@@ -132,7 +132,6 @@ describe('V2ViewPanel resolver boundary', () => {
         expect.objectContaining({ rendererId: 'builtin.text' })
       )
     })
-    expect(invokeMock).not.toHaveBeenCalledWith('create_transform_preview', expect.anything())
   })
 
   it('refreshes only the render model after artifact completion', async () => {

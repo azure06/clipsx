@@ -107,21 +107,8 @@ struct CoreUtility {
     rename_all_fields = "camelCase"
 )]
 enum ContextActionRunResponse {
-    Queued {
-        job_id: String,
-        clip_id: String,
-    },
-    Output {
-        preview: Box<transformers::TransformPreview>,
-        disposition: String,
-    },
-    OpenHttpsUrl {
-        url: String,
-    },
-    Notification {
-        level: String,
-        message: String,
-    },
+    OpenHttpsUrl { url: String },
+    Notification { level: String, message: String },
     OpenDialog,
     NativeAction,
 }
@@ -1032,83 +1019,15 @@ async fn list_transformer_contributions(
     presentation_kind: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<transformers::TransformerDescriptor>, String> {
-    let mut descriptors = state
-        .transforms
-        .list_source(&state.history, &clip_id, &source_id, &presentation_kind)
-        .await
-        .map_err(|error| error.to_string())?;
+    let _ = presentation_kind;
     let (source, _) = state
         .history
         .source_representation(&clip_id, &source_id)
         .await
         .map_err(|error| error.to_string())?;
-    for descriptor in state
+    state
         .extensions
         .transformer_descriptors_for(&state.history, &source)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        if !descriptors
-            .iter()
-            .any(|existing| existing.id == descriptor.id)
-        {
-            descriptors.push(descriptor);
-        }
-    }
-    descriptors.retain(|descriptor| descriptor.expose_in_menu);
-    Ok(descriptors)
-}
-
-#[tauri::command]
-async fn create_transform_preview(
-    clip_id: String,
-    transformer_id: String,
-    source_id: String,
-    parameters: serde_json::Value,
-    invocation_token: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<transformers::TransformPreview, String> {
-    let (source, _) = state
-        .history
-        .source_representation(&clip_id, &source_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    if let Some((version, outputs)) = state
-        .extensions
-        .transform(
-            &state.history,
-            &transformer_id,
-            source,
-            parameters.clone(),
-            None,
-            invocation_token
-                .as_deref()
-                .map(|token| (clip_id.as_str(), source_id.as_str(), token)),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        return state
-            .transforms
-            .cache_external(
-                clip_id,
-                transformer_id,
-                version,
-                source_id,
-                parameters,
-                outputs,
-            )
-            .map_err(|error| error.to_string());
-    }
-    state
-        .transforms
-        .preview(
-            &state.history,
-            &clip_id,
-            &transformer_id,
-            &source_id,
-            parameters,
-        )
         .await
         .map_err(|error| error.to_string())
 }
@@ -1149,28 +1068,6 @@ async fn list_clip_extension_results(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-async fn get_extension_result(
-    job_id: String,
-    state: State<'_, AppState>,
-) -> Result<crate::extensions::ExtensionJobSummary, String> {
-    let clip_id: String =
-        sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
-            .bind(&job_id)
-            .fetch_optional(&state.history.pool)
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "extension result is unavailable".to_string())?;
-    state
-        .extensions
-        .list_durable_results(&state.history, &clip_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .find(|item| item.job_id == job_id)
-        .ok_or_else(|| "extension result is unavailable".to_string())
-}
-
 async fn enqueue_existing_extension_job(
     job_id: String,
     request_id: String,
@@ -1178,7 +1075,7 @@ async fn enqueue_existing_extension_job(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<crate::extensions::ExtensionJobResult, String> {
-    let row = sqlx::query("SELECT source_clip_id,source_representation_id,contribution_id,parameters_json FROM extension_jobs WHERE id=?")
+    let row = sqlx::query("SELECT source_clip_id,source_representation_id,contribution_id,parameters_json,display_label,default_view FROM extension_jobs WHERE id=?")
         .bind(&job_id).fetch_optional(&state.history.pool).await.map_err(|error| error.to_string())?
         .ok_or_else(|| "extension result is unavailable".to_string())?;
     let request = crate::extensions::EnqueueExtensionJob {
@@ -1191,6 +1088,11 @@ async fn enqueue_existing_extension_job(
         regenerate: true,
         invocation_token: Some(invocation_token),
         capture_application: None,
+        setup_id: None,
+        display_label: Some(row.get(4)),
+        default_view: Some(row.get(5)),
+        result_controls: Vec::new(),
+        result_presentations: Vec::new(),
     };
     enqueue_extension_transform(request, app, state).await
 }
@@ -1262,6 +1164,76 @@ async fn list_source_applications(
             display_name: row.get(2),
         })
         .collect())
+}
+
+#[tauri::command]
+async fn render_extension_result_output(
+    job_id: String,
+    ordinal: i64,
+    raw: bool,
+    state: State<'_, AppState>,
+) -> Result<crate::contracts::RenderModel, String> {
+    crate::extensions::jobs::render_output(&state.history, &job_id, ordinal, raw)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn render_extension_result_source(
+    job_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::contracts::RenderModel, String> {
+    crate::extensions::jobs::render_source(&state.history, &job_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn list_extension_transform_setups(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::extensions::SavedTransformSetup>, String> {
+    state
+        .extensions
+        .list_transform_setups(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn save_extension_transform_setup(
+    id: Option<String>,
+    expected_revision: Option<i64>,
+    transformer_id: String,
+    label: String,
+    parameters: serde_json::Value,
+    default_view: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::SavedTransformSetup, String> {
+    state
+        .extensions
+        .save_transform_setup(
+            &state.history,
+            id.as_deref(),
+            expected_revision,
+            &transformer_id,
+            &label,
+            parameters,
+            &default_view,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn delete_extension_transform_setup(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .extensions
+        .delete_transform_setup(&state.history, &id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1342,36 +1314,6 @@ async fn run_context_action(
         .await
         .map_err(|error| error.to_string())?
     {
-        crate::extensions::ActionOutcome::Queued { job_id, clip_id } => {
-            let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":job_id,"clipId":clip_id,"status":"pending","reasonCode":null}));
-            crate::app::workers::wake_extensions(
-                &app,
-                state.history.clone(),
-                state.extensions.clone(),
-            );
-            Ok(ContextActionRunResponse::Queued { job_id, clip_id })
-        }
-        crate::extensions::ActionOutcome::Output {
-            outputs,
-            disposition,
-            action_id,
-            version,
-        } => {
-            let preview = state
-                .transforms
-                .cache_external(clip_id, action_id, version, source_id, parameters, outputs)
-                .map_err(|error| error.to_string())?;
-            Ok(ContextActionRunResponse::Output {
-                preview: Box::new(preview),
-                disposition: match disposition {
-                    crate::extensions::ActionDisposition::Preview => "preview",
-                    crate::extensions::ActionDisposition::Copy => "copy",
-                    crate::extensions::ActionDisposition::Paste => "paste",
-                    crate::extensions::ActionDisposition::SaveAsClip => "save_as_clip",
-                }
-                .into(),
-            })
-        }
         crate::extensions::ActionOutcome::OpenHttpsUrl(url) => {
             open_external_url(url.clone(), app)?;
             Ok(ContextActionRunResponse::OpenHttpsUrl { url })
@@ -1727,73 +1669,23 @@ async fn extension_bridge(
             Ok(serde_json::json!({ "opened": true }))
         }
         BridgeOutcome::GenerationText(text) => Ok(serde_json::json!({ "text": text })),
-        BridgeOutcome::Output {
-            outputs,
-            disposition,
-            action_id,
-            version,
-            clip_id,
-            source_id,
-            facet_id,
-        } => {
-            let preview = state
-                .transforms
-                .cache_external(
-                    clip_id,
-                    action_id,
-                    version,
-                    source_id,
-                    serde_json::json!({ "facetId": facet_id }),
-                    outputs,
-                )
-                .map_err(|error| error.to_string())?;
-            let mut saved_clip_id = None;
-            match disposition {
-                crate::extensions::ActionDisposition::Preview => {}
-                crate::extensions::ActionDisposition::SaveAsClip => {
-                    saved_clip_id =
-                        Some(save_transform_result_impl(app, &preview.result_id, &state).await?);
-                }
-                crate::extensions::ActionDisposition::Copy
-                | crate::extensions::ActionDisposition::Paste => {
-                    let disposition = if disposition == crate::extensions::ActionDisposition::Copy {
-                        output::ClipboardOutputDisposition::Copy
-                    } else {
-                        output::ClipboardOutputDisposition::Paste
-                    };
-                    execute_clipboard_output_impl(
-                        app,
-                        output::ClipboardOutputRequest {
-                            disposition,
-                            source: output::ClipboardOutputSource::Transformed {
-                                result_id: preview.result_id.clone(),
-                            },
-                        },
-                        &state,
-                        &host_state,
-                    )
-                    .await?;
-                }
-            }
-            Ok(serde_json::json!({
-                "resultId": preview.result_id,
-                "savedClipId": saved_clip_id,
-            }))
+        BridgeOutcome::CopyText { text, clip_id } => {
+            execute_clipboard_output_impl(
+                app,
+                output::ClipboardOutputRequest {
+                    disposition: output::ClipboardOutputDisposition::Copy,
+                    source: output::ClipboardOutputSource::LiteralText {
+                        text,
+                        source_clip_id: Some(clip_id),
+                    },
+                },
+                &state,
+                &host_state,
+            )
+            .await?;
+            Ok(serde_json::json!({ "copied": true }))
         }
     }
-}
-
-#[tauri::command]
-async fn set_extension_action_pinned(
-    action_id: String,
-    pinned: bool,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    state
-        .extensions
-        .set_action_pinned(&state.history, &action_id, pinned)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1841,9 +1733,7 @@ async fn execute_clipboard_output_impl(
     state: &AppState,
     host_state: &HostState,
 ) -> Result<(), String> {
-    if let Err(error) =
-        output::write_source(&request.source, &state.history, &state.transforms).await
-    {
+    if let Err(error) = output::write_source(&request.source, &state.history).await {
         let message = error.to_string();
         if request.disposition == output::ClipboardOutputDisposition::Paste {
             let _ = app.emit("paste-failed", &message);
@@ -1894,90 +1784,6 @@ async fn share_clip(
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-async fn save_transform_result(
-    app: tauri::AppHandle,
-    result_id: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    save_transform_result_impl(app, &result_id, &state).await
-}
-
-async fn save_transform_result_impl(
-    app: tauri::AppHandle,
-    result_id: &str,
-    state: &AppState,
-) -> Result<String, String> {
-    let (preview, source_clip_id, parameter_sha256) = state
-        .transforms
-        .saved_metadata(result_id)
-        .map_err(|error| error.to_string())?;
-    let snapshot = history::CapturedSnapshot {
-        token: 0,
-        source_app_name: Some("ClipsX".into()),
-        source_app_id: Some("clipsx.transform".into()),
-        format_observations: Vec::new(),
-        representations: state
-            .transforms
-            .transformed(result_id)
-            .map_err(|error| error.to_string())?,
-    };
-    let settings = state
-        .history
-        .settings()
-        .await
-        .map_err(|error| error.to_string())?;
-    let clip_id = state
-        .history
-        .capture_forced(
-            snapshot,
-            &settings,
-            &history::TransformProvenance {
-                source_clip_id,
-                source_representation_id: preview.source_id,
-                transformer_id: preview.transformer_id,
-                transformer_version: preview.transformer_version,
-                parameter_sha256,
-            },
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let history = state.history.clone();
-    let extensions = state.extensions.clone();
-    let detect_id = clip_id.clone();
-    let detect_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if detect_with_extensions(&history, &extensions, &detect_id)
-            .await
-            .is_ok()
-        {
-            emit_clip_facets_updated(&detect_app, Some(&detect_id));
-        }
-        let _ = search::upsert_projection(&history, &detect_id).await;
-    });
-    let _ = app.emit("transform-result-saved", &clip_id);
-    let _ = app.emit("clip-captured", &clip_id);
-    Ok(clip_id)
-}
-
-#[tauri::command]
-async fn get_transform_preferences(
-    state: State<'_, AppState>,
-) -> Result<transformers::TransformPreferences, String> {
-    transformers::preferences(&state.history)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn update_transform_preferences(
-    preferences: transformers::TransformPreferences,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    transformers::update_preferences(&state.history, &preferences)
-        .await
-        .map_err(|error| error.to_string())
-}
 #[tauri::command]
 async fn delete_clip(
     app: tauri::AppHandle,
@@ -2664,16 +2470,6 @@ fn list_core_utilities() -> Vec<CoreUtility> {
                 version: item.version,
             }),
     );
-    utilities.extend(
-        transformers::descriptors()
-            .into_iter()
-            .map(|item| CoreUtility {
-                id: item.id,
-                kind: "Transformer".into(),
-                label: item.label,
-                version: item.version,
-            }),
-    );
     utilities
 }
 #[tauri::command]
@@ -3100,36 +2896,6 @@ pub(crate) fn run() {
                     .unwrap(),
             }
         })
-        .register_uri_scheme_protocol("clipsx-transform", |context, request| {
-            let path = request.uri().path().trim_start_matches('/');
-            let mut parts = path.split('/');
-            let result_id = parts.next().unwrap_or_default();
-            let output_index = parts.next().and_then(|value| value.parse::<usize>().ok());
-            let response = context
-                .app_handle()
-                .try_state::<AppState>()
-                .and_then(|state| {
-                    output_index.and_then(|index| {
-                        state.transforms.image_output(result_id, index).ok()
-                    })
-                });
-            match response {
-                Some((bytes, mime)) => tauri::http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", mime)
-                    .header("Cache-Control", "no-store")
-                    .header("X-Content-Type-Options", "nosniff")
-                    .header("Referrer-Policy", "no-referrer")
-                    .body(bytes)
-                    .unwrap(),
-                None => tauri::http::Response::builder()
-                    .status(404)
-                    .header("Content-Type", "text/plain")
-                    .header("Cache-Control", "no-store")
-                    .body(b"transform image unavailable".to_vec())
-                    .unwrap(),
-            }
-        })
         .register_uri_scheme_protocol("clipsx-asset", |context, request| {
             let id = request.uri().path().trim_start_matches('/');
             let Some(state) = context.app_handle().try_state::<AppState>() else {
@@ -3296,7 +3062,6 @@ pub(crate) fn run() {
                 app.manage(AppState {
                     roots: roots.clone(),
                     history: history.clone(),
-                    transforms: transformers::TransformService::default(),
                     extensions: extensions.clone(),
                     workers: crate::app::workers::BackgroundWorkers::default(),
                     recall: Default::default(),
@@ -3529,16 +3294,19 @@ pub(crate) fn run() {
             get_clip_detail,
             capture_clipboard,
             list_transformer_contributions,
-            create_transform_preview,
             enqueue_extension_transform,
             list_clip_extension_results,
-            get_extension_result,
+            render_extension_result_output,
+            render_extension_result_source,
             retry_extension_job,
             regenerate_extension_result,
             cancel_extension_job,
             delete_extension_result,
             promote_extension_result,
             list_source_applications,
+            list_extension_transform_setups,
+            save_extension_transform_setup,
+            delete_extension_transform_setup,
             get_extension_automation,
             set_extension_automation,
             list_context_actions,
@@ -3555,13 +3323,9 @@ pub(crate) fn run() {
             open_extension_custom_view,
             close_extension_custom_view,
             sync_extension_custom_view,
-            set_extension_action_pinned,
             set_extension_action_shortcut,
             execute_clipboard_output,
             share_clip,
-            save_transform_result,
-            get_transform_preferences,
-            update_transform_preferences,
             delete_clip,
             clear_history,
             set_clip_pinned,

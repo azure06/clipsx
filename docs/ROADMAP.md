@@ -1,6 +1,6 @@
 # ClipsX roadmap
 
-The Extension API v3 and durable result implementation requires installed-host
+The Extension API v3.1 transformation-tab implementation requires installed-host
 certification and coordinated package publication before release. Work that can
 wait belongs under **After the first release**.
 
@@ -10,47 +10,32 @@ release is produced, and what waits until afterward.
 
 ## Before the first release
 
-### Extension API v3 certification
+### Extension API v3.1 certification
 
 Test facet-constrained activation against current detection results before
 certifying the release. Durable text and binary outputs use artifact storage;
 package-state writes are staged with job completion, provider failures use
-bounded retry categories, and unsuccessful or temporary jobs have bounded
+bounded retry categories, and unsuccessful jobs have bounded
 retention.
 
 Validate Rewrite and the rebuilt first-party packages in installed Windows,
 macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
 deduplication, restart recovery, source deletion, and retained results after
-disablement and uninstall. Publish reviewed immutable v3 package archives and
-signed registry metadata only after these tests pass. The v3 host requires a
-fresh database baseline and shows only v3 releases in Discover.
+disablement and uninstall. Verify saved setups, built-in presets, multiple typed
+outputs, Compare resizing, result controls, and the single Tools entry point.
+Publish reviewed immutable v3.1 package archives and signed registry metadata
+only after these tests pass. The host requires an explicit reset to database
+version 12 and shows only current-contract releases in Discover.
 
 ### 1. Complete extension catalog sync and smoke test
 
-The extension repository, signed registry, validation workflows, signing flow,
-and revocation process are implemented. JWT Inspector 1.2.2 and Mermaid 1.0.1
-are published, and their reviewed entries are present in the signed registry.
-The remaining work is operational sync configuration and one production smoke
-test; no redesign is needed.
-
-The remaining work is:
-
-- [x] Publish JWT Inspector 1.2.2 and Mermaid 1.0.1 from
-      `clipsx-extensions`.
-- [x] Add their reviewed metadata to `clipsx-registry`, run **Publish signed
-      registry**, and merge the generated publication PR.
-- [x] Configure the registry-to-`clipsx-web` dispatch credential and the
-      `clipsx-web` `SUPABASE_DB_URL`, rerun the sync, and verify the transactional
-      approval-catalog reconciliation succeeds.
-- [x] Confirm the registry-to-`clipsx-web` approval-catalog sync succeeds.
-- [ ] In a production ClipsX build, refresh Discover and install, exercise,
-      disable, re-enable, and remove each package.
-
-The live registry contains JWT Inspector 1.2.2 and Mermaid 1.0.1. The correlated
-registry and web workflows have successfully dispatched and transactionally
-reconciled the three expected portable-setting approvals through the Supabase
-Session pooler, including post-commit readback. The production desktop smoke test
-remains before this milestone is complete.
+Merge the reviewed host v3.1 contract and package tool before publishing new
+packages. Rebuild and publish six immutable 2.0.0 extension archives, replace
+the reviewed registry metadata with their exact generated records, and publish
+the signed index and signature pair. Verify the public catalog, registry-to-web
+portable-setting reconciliation and readback, then test Discover and each
+package on installed desktop builds. Release the desktop app last. A source
+merge alone does not make an archive visible in Discover.
 
 ### 2. Configure production desktop signing
 

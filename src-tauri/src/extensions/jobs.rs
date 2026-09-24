@@ -29,6 +29,19 @@ pub struct ApplicationRule {
     pub revision: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTransformSetup {
+    pub id: String,
+    pub package_id: String,
+    pub transformer_id: String,
+    pub label: String,
+    pub parameters: serde_json::Value,
+    pub default_view: String,
+    pub revision: i64,
+    pub available: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnqueueExtensionJob {
@@ -39,6 +52,16 @@ pub struct EnqueueExtensionJob {
     pub parameters: serde_json::Value,
     pub request_id: Option<String>,
     pub invocation_token: Option<String>,
+    #[serde(default)]
+    pub setup_id: Option<String>,
+    #[serde(default)]
+    pub display_label: Option<String>,
+    #[serde(default)]
+    pub default_view: Option<String>,
+    #[serde(skip)]
+    pub result_controls: Vec<super::ResultControl>,
+    #[serde(skip)]
+    pub result_presentations: Vec<super::manifest::ResultPresentation>,
     #[serde(skip)]
     pub capture_application: Option<SourceApplication>,
     #[serde(default)]
@@ -66,9 +89,20 @@ pub struct ExtensionJobSummary {
     pub parameters: serde_json::Value,
     pub created_at: i64,
     pub completed_at: Option<i64>,
-    pub output_text: Option<String>,
-    pub source_text: Option<String>,
-    pub output_mime_type: Option<String>,
+    pub display_label: String,
+    pub default_view: String,
+    pub outputs: Vec<ExtensionOutputDescriptor>,
+    pub result_controls: Vec<super::ResultControl>,
+    pub result_presentations: Vec<super::manifest::ResultPresentation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionOutputDescriptor {
+    pub ordinal: i64,
+    pub mime_type: String,
+    pub byte_length: i64,
+    pub has_rendered_view: bool,
 }
 
 pub(crate) struct DurableExecution {
@@ -108,7 +142,6 @@ pub(crate) async fn enqueue(
     package_id: &str,
     package_sha256: &str,
     contribution_version: &str,
-    lifetime: &str,
     priority: i64,
 ) -> Result<ExtensionJobResult> {
     if !request.parameters.is_object() {
@@ -121,25 +154,44 @@ pub(crate) async fn enqueue(
     {
         bail!("extension request ID is invalid");
     }
-    let row = sqlx::query("SELECT t.sha256,c.source_app_platform,c.source_app_id,c.source_app_name FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id JOIN clip_items c ON c.id=r.clip_id WHERE c.id=? AND r.id=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready'")
-        .bind(&request.clip_id).bind(&request.source_id).fetch_optional(&repo.pool).await?
-        .context("extension job source is unavailable")?;
-    let input_sha: String = row.get(0);
+    let (input, input_sha) = repo
+        .source_representation(&request.clip_id, &request.source_id)
+        .await?;
+    if matches!(input.payload, CapturedPayload::Files(_)) {
+        bail!("extension jobs do not support file-list inputs");
+    }
+    let row = sqlx::query(
+        "SELECT source_app_platform,source_app_id,source_app_name FROM clip_items WHERE id=?",
+    )
+    .bind(&request.clip_id)
+    .fetch_one(&repo.pool)
+    .await?;
     let app_platform: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.platform.clone())
-        .or_else(|| row.get(1));
+        .or_else(|| row.get(0));
     let app_id: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.id.clone())
-        .or_else(|| row.get(2));
+        .or_else(|| row.get(1));
     let app_name: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.display_name.clone())
-        .or_else(|| row.get(3));
+        .or_else(|| row.get(2));
+    let display_label = request
+        .display_label
+        .as_deref()
+        .unwrap_or(&request.transformer_id);
+    if display_label.trim().is_empty() || display_label.len() > 120 {
+        bail!("extension result label is invalid");
+    }
+    let default_view = request.default_view.as_deref().unwrap_or("result_only");
+    if !matches!(default_view, "result_only" | "compare") {
+        bail!("extension result view is invalid");
+    }
     let parameters_json = canonical_json(&request.parameters);
     let parameter_sha = digest(&[&parameters_json]);
     let settings_revision = revision(repo, package_id, "configuration_revision").await?;
@@ -199,11 +251,11 @@ pub(crate) async fn enqueue(
     let id = new_id();
     let now = now_ms();
     let nonce = request.regenerate.then(new_id);
-    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,parameter_sha256,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,result_lifetime,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
+    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,setup_id,display_label,default_view,parameter_sha256,result_controls_json,result_presentations_json,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
         .bind(&id).bind(request.request_id).bind(&request.clip_id).bind(&request.source_id)
         .bind(package_id).bind(&request.transformer_id).bind(contribution_version).bind(package_sha256)
-        .bind(input_sha).bind(parameters_json).bind(parameter_sha).bind(app_platform).bind(app_id).bind(app_name)
-        .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority).bind(lifetime)
+        .bind(input_sha).bind(parameters_json).bind(request.setup_id).bind(display_label).bind(default_view).bind(parameter_sha).bind(serde_json::to_string(&request.result_controls)?).bind(serde_json::to_string(&request.result_presentations)?).bind(app_platform).bind(app_id).bind(app_name)
+        .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority)
         .bind(dedupe).bind(nonce).bind(now).bind(now).bind(now).execute(&repo.pool).await?;
     Ok(ExtensionJobResult {
         job_id: id,
@@ -261,18 +313,17 @@ pub(crate) async fn recover(repo: &HistoryRepository) -> Result<()> {
 async fn cleanup_expired(repo: &HistoryRepository) -> Result<()> {
     let now = now_ms();
     let terminal_cutoff = now - 7 * 24 * 60 * 60 * 1000;
-    let temporary_cutoff = now - 15 * 60 * 1000;
     let mut tx = repo.pool.begin().await?;
-    sqlx::query("DELETE FROM artifact_records WHERE id IN (SELECT artifact_id FROM extension_result_outputs WHERE job_id IN (SELECT id FROM extension_jobs WHERE (status IN ('failed','cancelled') AND completed_at<?) OR (status='completed' AND result_lifetime='temporary' AND completed_at<?)))")
+    sqlx::query("DELETE FROM artifact_records WHERE id IN (SELECT artifact_id FROM extension_result_outputs WHERE job_id IN (SELECT id FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<?))")
         .bind(terminal_cutoff)
-        .bind(temporary_cutoff)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM extension_jobs WHERE (status IN ('failed','cancelled') AND completed_at<?) OR (status='completed' AND result_lifetime='temporary' AND completed_at<?)")
-        .bind(terminal_cutoff)
-        .bind(temporary_cutoff)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<?",
+    )
+    .bind(terminal_cutoff)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM extension_activation_events WHERE status<>'pending' AND updated_at<?")
         .bind(terminal_cutoff)
         .execute(&mut *tx)
@@ -310,7 +361,7 @@ pub(crate) async fn run_next(
     if changed == 0 {
         return Ok(None);
     }
-    let actual_sha: Option<String> = sqlx::query_scalar("SELECT t.sha256 FROM clip_text_values t JOIN clip_representations r ON r.id=t.representation_id WHERE r.id=? AND r.clip_id=? AND r.lifecycle_state='ready'")
+    let actual_sha: Option<String> = sqlx::query_scalar("SELECT COALESCE(t.sha256,b.sha256) FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.id=? AND r.clip_id=? AND r.lifecycle_state='ready' AND r.storage_kind IN ('text','binary_asset')")
         .bind(&source_id).bind(&clip_id).fetch_optional(&repo.pool).await?;
     if actual_sha.as_deref() != Some(&input_sha) {
         finish(repo, &job_id, claim, "cancelled", Some("stale_source")).await?;
@@ -418,7 +469,7 @@ async fn persist_outputs(
     }
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
-    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id JOIN clip_text_values t ON t.representation_id=r.id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND t.sha256=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
             .bind(job_id)
             .bind(claim)
             .fetch_optional(&mut *tx)
@@ -512,28 +563,42 @@ pub(crate) async fn list(
     repo: &HistoryRepository,
     clip_id: &str,
 ) -> Result<Vec<ExtensionJobSummary>> {
-    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,t.text_value,o.mime_type,src.text_value FROM extension_jobs j LEFT JOIN extension_result_outputs o ON o.job_id=j.id AND o.ordinal=0 LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN clip_text_values src ON src.representation_id=j.source_representation_id WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
+    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,j.display_label,j.default_view,j.result_controls_json,j.result_presentations_json FROM extension_jobs j WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
         .bind(clip_id).fetch_all(&repo.pool).await?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(ExtensionJobSummary {
-                job_id: row.get(0),
-                clip_id: row.get(1),
-                source_id: row.get(2),
-                package_id: row.get(3),
-                transformer_id: row.get(4),
-                transformer_version: row.get(5),
-                status: row.get(6),
-                reason_code: row.get(7),
-                parameters: serde_json::from_str(&row.get::<String, _>(8))?,
-                created_at: row.get(9),
-                completed_at: row.get(10),
-                output_text: row.get(11),
-                output_mime_type: row.get(12),
-                source_text: row.get(13),
-            })
-        })
-        .collect()
+    let mut summaries = Vec::with_capacity(rows.len());
+    for row in rows {
+        let job_id: String = row.get(0);
+        let outputs = sqlx::query("SELECT o.ordinal,o.mime_type,COALESCE(t.utf8_byte_length,b.byte_length) FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id WHERE o.job_id=? ORDER BY o.ordinal")
+            .bind(&job_id).fetch_all(&repo.pool).await?
+            .into_iter().map(|output| {
+                let mime_type: String = output.get(1);
+                ExtensionOutputDescriptor {
+                    ordinal: output.get(0),
+                    has_rendered_view: matches!(mime_type.as_str(), "text/html" | "application/json" | "text/markdown" | "text/csv" | "text/tab-separated-values" | "text/typescript" | "application/yaml" | "application/x-yaml" | "application/toml") || mime_type.starts_with("image/"),
+                    mime_type,
+                    byte_length: output.get(2),
+                }
+            }).collect();
+        summaries.push(Ok(ExtensionJobSummary {
+            job_id,
+            clip_id: row.get(1),
+            source_id: row.get(2),
+            package_id: row.get(3),
+            transformer_id: row.get(4),
+            transformer_version: row.get(5),
+            status: row.get(6),
+            reason_code: row.get(7),
+            parameters: serde_json::from_str(&row.get::<String, _>(8))?,
+            created_at: row.get(9),
+            completed_at: row.get(10),
+            display_label: row.get(11),
+            default_view: row.get(12),
+            outputs,
+            result_controls: serde_json::from_str(&row.get::<String, _>(13))?,
+            result_presentations: serde_json::from_str(&row.get::<String, _>(14))?,
+        }));
+    }
+    summaries.into_iter().collect()
 }
 
 pub(crate) async fn cancel(repo: &HistoryRepository, job_id: &str) -> Result<()> {
@@ -599,6 +664,105 @@ pub(crate) async fn output(
         .collect()
 }
 
+pub(crate) async fn render_output(
+    repo: &HistoryRepository,
+    job_id: &str,
+    ordinal: i64,
+    raw: bool,
+) -> Result<crate::contracts::RenderModel> {
+    use crate::contracts::{ImageSource, OcrPresentation, RenderModel};
+    let row = sqlx::query("SELECT o.format_key,o.mime_type,t.text_value,b.id,COALESCE(t.utf8_byte_length,b.byte_length) FROM extension_result_outputs o JOIN extension_jobs j ON j.id=o.job_id LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id AND b.lifecycle_state='ready' WHERE o.job_id=? AND o.ordinal=? AND j.status='completed'")
+        .bind(job_id).bind(ordinal).fetch_optional(&repo.pool).await?
+        .context("extension output is unavailable")?;
+    let mime: String = row.get(1);
+    if let Some(text) = row.get::<Option<String>, _>(2) {
+        return Ok(if raw {
+            RenderModel::Text { text }
+        } else if mime == "text/html" {
+            RenderModel::Html {
+                sanitized_html: crate::contributions::sanitize_html(&text),
+            }
+        } else {
+            crate::contributions::typed_text_render_model(Some(&mime), &text)
+        });
+    }
+    if !raw
+        && matches!(
+            mime.as_str(),
+            "image/png"
+                | "image/jpeg"
+                | "image/webp"
+                | "image/gif"
+                | "image/avif"
+                | "image/bmp"
+                | "image/x-icon"
+        )
+    {
+        let file_id: String = row
+            .get::<Option<String>, _>(3)
+            .context("extension image is unavailable")?;
+        return Ok(RenderModel::Image {
+            source: ImageSource::ArtifactFile { file_id },
+            ocr: OcrPresentation::Disabled,
+        });
+    }
+    Ok(RenderModel::Unsupported {
+        format_key: row.get(0),
+        mime_type: Some(mime),
+        native_type: None,
+        byte_length: row.get(4),
+    })
+}
+
+pub(crate) async fn render_source(
+    repo: &HistoryRepository,
+    job_id: &str,
+) -> Result<crate::contracts::RenderModel> {
+    use crate::contracts::{ImageSource, OcrPresentation, RenderModel};
+    let row = sqlx::query("SELECT j.source_clip_id,j.source_representation_id,r.binary_file_id FROM extension_jobs j JOIN clip_representations r ON r.id=j.source_representation_id WHERE j.id=?")
+        .bind(job_id).fetch_optional(&repo.pool).await?.context("extension source is unavailable")?;
+    let clip_id: String = row.get(0);
+    let representation_id: String = row.get(1);
+    let (source, _) = repo
+        .source_representation(&clip_id, &representation_id)
+        .await?;
+    match source.payload {
+        CapturedPayload::Text(text) => Ok(crate::contributions::typed_text_render_model(
+            source.canonical_mime_type.as_deref(),
+            &text,
+        )),
+        CapturedPayload::Binary(bytes) => {
+            if source.canonical_mime_type.as_deref().is_some_and(|mime| {
+                matches!(
+                    mime,
+                    "image/png"
+                        | "image/jpeg"
+                        | "image/webp"
+                        | "image/gif"
+                        | "image/avif"
+                        | "image/bmp"
+                        | "image/x-icon"
+                )
+            }) {
+                Ok(RenderModel::Image {
+                    source: ImageSource::Managed {
+                        asset_id: row.get(2),
+                    },
+                    ocr: OcrPresentation::Disabled,
+                })
+            } else {
+                Ok(RenderModel::Unsupported {
+                    format_key: source.format_key,
+                    mime_type: source.canonical_mime_type,
+                    native_type: source.native_type,
+                    byte_length: bytes.len() as i64,
+                })
+            }
+        }
+        CapturedPayload::Files(_) => bail!("extension source is unsupported"),
+    }
+}
+
 pub(crate) async fn promote(
     repo: &HistoryRepository,
     job_id: &str,
@@ -651,7 +815,7 @@ mod tests {
                 .unwrap();
         let checksum = "a".repeat(64);
         let now = now_ms();
-        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.0','developer',?,'packages/rewrite',1,?,?)")
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.1','developer',?,'packages/rewrite',1,?,?)")
             .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
             .execute(&repo.pool).await.unwrap();
@@ -664,6 +828,19 @@ mod tests {
             regenerate: false,
             invocation_token: None,
             capture_application: None,
+            setup_id: None,
+            display_label: None,
+            default_view: None,
+            result_controls: Vec::new(),
+            result_presentations: vec![super::super::manifest::ResultPresentation {
+                id: "review".into(),
+                display_name: "Review".into(),
+                layout: super::super::manifest::ResultLayout::Stack,
+                modules: vec![
+                    super::super::manifest::ResultModule::Output,
+                    super::super::manifest::ResultModule::Input,
+                ],
+            }],
         };
         let first = enqueue(
             &repo,
@@ -671,7 +848,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
@@ -682,13 +858,14 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
         .unwrap();
         assert_eq!(first.job_id, second.job_id);
         assert!(second.reused);
+        let retained = list(&repo, &clip_id).await.unwrap();
+        assert_eq!(retained[0].result_presentations[0].id, "review");
         sqlx::query("UPDATE extension_jobs SET status='running',claim_generation=1 WHERE id=?")
             .bind(&first.job_id)
             .execute(&repo.pool)
@@ -732,7 +909,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
@@ -791,7 +967,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await

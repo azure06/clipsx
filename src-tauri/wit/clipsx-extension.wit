@@ -1,4 +1,4 @@
-package clipsx:extension@3.0.0;
+package clipsx:extension@3.1.0;
 
 interface types {
   enum guest-error-code { unsupported, invalid-input, invalid-parameters, failed }
@@ -48,10 +48,8 @@ interface types {
   variant output-content { text(string), binary(list<u8>) }
   variant prepare-decision { skip(string), run(string) }
 
-  enum action-disposition { preview, copy, paste, save-as-clip }
   variant action-state { hidden, disabled(string), enabled }
   variant action-result {
-    output(tuple<list<output-representation>, action-disposition>),
     open-https-url(string),
     notification(tuple<string, string>),
   }

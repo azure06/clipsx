@@ -70,7 +70,6 @@ const packageDetail = (shortcut: string | null): PackageDetail => ({
       available: true,
       unavailableReason: null,
       shortcut,
-      pinned: false,
     },
   ],
   settings: {},

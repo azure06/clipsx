@@ -26,12 +26,12 @@ use super::packages::{
     MAX_ARCHIVE_BYTES, MAX_CATALOG_ICON_BYTES, MAX_REGISTRY_BYTES, MAX_REGISTRY_SIGNATURE_BYTES,
 };
 use super::{
-    permission_fingerprint, ActionDisposition, ActionEffect, ActionHandler, ContributionKind,
-    ContributionMatcher, ExecutionClass, ExtensionActionResult, ExtensionActionState,
-    ExtensionCatalog, ExtensionCatalogEntry, ExtensionContent, ExtensionLeadingVisual,
-    ExtensionPackageDetail, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
-    ExtensionRuntime, ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex,
-    RegistryPackage, RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
+    permission_fingerprint, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
+    ExecutionClass, ExtensionActionResult, ExtensionActionState, ExtensionCatalog,
+    ExtensionCatalogEntry, ExtensionContent, ExtensionLeadingVisual, ExtensionPackageDetail,
+    ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation, ExtensionRuntime,
+    ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex, RegistryPackage,
+    RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
     OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
 
@@ -63,7 +63,6 @@ pub struct ContextActionDescriptor {
     pub unavailable_reason: Option<String>,
     pub parameter_schema: serde_json::Value,
     pub shortcut: Option<String>,
-    pub pinned: bool,
     pub consent_required: bool,
     pub external_navigation_origins: Vec<String>,
     pub http_origins: Vec<String>,
@@ -87,21 +86,8 @@ pub struct CustomViewSession {
 
 #[derive(Debug, Clone)]
 pub enum ActionOutcome {
-    Queued {
-        job_id: String,
-        clip_id: String,
-    },
-    Output {
-        outputs: Vec<CapturedRepresentation>,
-        disposition: ActionDisposition,
-        action_id: String,
-        version: String,
-    },
     OpenHttpsUrl(String),
-    Notification {
-        level: String,
-        message: String,
-    },
+    Notification { level: String, message: String },
     OpenDialog,
     ComposeEmail(String),
     DialPhone(String),
@@ -140,11 +126,7 @@ struct PendingCustomView {
     extension_id: String,
     package_id: String,
     package_sha256: String,
-    action_id: Option<String>,
-    action_version: Option<String>,
     clip_id: String,
-    source_id: String,
-    facet_id: Option<String>,
     effects: Vec<ActionEffect>,
     http_permissions: Vec<super::manifest::HttpPermission>,
     credential_permissions: Vec<super::manifest::CredentialPermission>,
@@ -178,28 +160,18 @@ pub enum BridgeRequest {
     SubmitOutput {
         mime_type: String,
         text: String,
-        disposition: ActionDisposition,
+        disposition: String,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum BridgeOutcome {
-    ViewReady {
-        focus: bool,
-    },
+    ViewReady { focus: bool },
     ViewFailed(String),
     Https(super::BrokerHttpResponse),
     OpenExternal(String),
     GenerationText(String),
-    Output {
-        outputs: Vec<CapturedRepresentation>,
-        disposition: ActionDisposition,
-        action_id: String,
-        version: String,
-        clip_id: String,
-        source_id: String,
-        facet_id: Option<String>,
-    },
+    CopyText { text: String, clip_id: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,7 +283,7 @@ impl ExtensionService {
             for release in index
                 .packages
                 .iter()
-                .filter(|release| release.api_version == "^3.0")
+                .filter(|release| release.api_version == "^3.1")
             {
                 let replace = latest
                     .get(&release.package_id)
@@ -847,6 +819,10 @@ impl ExtensionService {
             .bind(package_id)
             .execute(&mut *transaction)
             .await?;
+        sqlx::query("DELETE FROM extension_transform_setups WHERE package_id=?")
+            .bind(package_id)
+            .execute(&mut *transaction)
+            .await?;
         let result = sqlx::query("DELETE FROM extension_installs WHERE package_id=?")
             .bind(package_id)
             .execute(&mut *transaction)
@@ -1281,10 +1257,16 @@ impl ExtensionService {
             .filter(|item| accepts(&item.declaration, input, None))
         {
             let consent_required = self.consent_required(repo, &item).await?;
+            let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
             descriptors.push(crate::contributions::transformer::TransformerDescriptor {
                 id: item.id,
+                package_id: item.package_id.clone(),
                 version: item.version,
                 label: item.declaration.display_name,
+                icon: item.declaration.icon,
+                icon_svg,
+                icon_svg_dark,
+                icon_scale: item.declaration.icon_scale,
                 parameter_schema: item.declaration.parameter_schema,
                 input_limit_bytes: item.declaration.input_limit_bytes,
                 timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
@@ -1299,16 +1281,137 @@ impl ExtensionService {
                     .iter()
                     .map(|value| value.origin.clone())
                     .collect(),
-                providers: item.providers,
-                expose_in_menu: item.declaration.expose_in_menu,
-                result_lifetime: match item.declaration.result_lifetime {
-                    super::ResultLifetime::Temporary => "temporary",
-                    super::ResultLifetime::SourceClip => "source_clip",
-                }
-                .into(),
+                providers: item.providers.clone(),
+                setups: item.declaration.setups,
+                default_view: item.declaration.default_view,
+                result_controls: item.declaration.result_controls,
+                provider_available: !item
+                    .providers
+                    .iter()
+                    .any(|provider| provider == "generation.text")
+                    || crate::providers::generation::available(repo).await?,
             });
         }
         Ok(descriptors)
+    }
+
+    pub async fn list_transform_setups(
+        &self,
+        repo: &HistoryRepository,
+    ) -> Result<Vec<super::SavedTransformSetup>> {
+        let active = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?;
+        let rows = sqlx::query("SELECT id,package_id,transformer_id,label,parameters_json,default_view,revision FROM extension_transform_setups ORDER BY updated_at DESC,id")
+            .fetch_all(&repo.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                let package_id: String = row.get(1);
+                let transformer_id: String = row.get(2);
+                let parameters: serde_json::Value = serde_json::from_str(&row.get::<String, _>(4))?;
+                let available = active
+                    .iter()
+                    .find(|item| item.package_id == package_id && item.id == transformer_id)
+                    .is_some_and(|item| {
+                        super::manifest::normalized_parameters(
+                            &item.declaration.parameter_schema,
+                            &parameters,
+                        )
+                        .is_ok()
+                    });
+                Ok(super::SavedTransformSetup {
+                    id: row.get(0),
+                    package_id,
+                    transformer_id,
+                    label: row.get(3),
+                    parameters,
+                    default_view: row.get(5),
+                    revision: row.get(6),
+                    available,
+                })
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_transform_setup(
+        &self,
+        repo: &HistoryRepository,
+        id: Option<&str>,
+        expected_revision: Option<i64>,
+        transformer_id: &str,
+        label: &str,
+        parameters: serde_json::Value,
+        default_view: &str,
+    ) -> Result<super::SavedTransformSetup> {
+        if label.trim().is_empty()
+            || label.len() > 80
+            || !matches!(default_view, "result_only" | "compare")
+        {
+            bail!("transform setup label or view is invalid");
+        }
+        let transformer = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?
+            .into_iter()
+            .find(|item| item.id == transformer_id)
+            .context("extension transformer is unavailable")?;
+        let parameters = super::manifest::normalized_parameters(
+            &transformer.declaration.parameter_schema,
+            &parameters,
+        )?;
+        let parameters_json = serde_json::to_string(&parameters)?;
+        if parameters_json.len() > 16_384 {
+            bail!("transform setup parameters exceed 16 KiB");
+        }
+        let now = now_ms();
+        let mut tx = repo.pool.begin().await?;
+        let (id, revision) = if let Some(id) = id {
+            let revision = expected_revision.context("transform setup revision is required")?;
+            let changed = sqlx::query("UPDATE extension_transform_setups SET label=?,parameters_json=?,default_view=?,revision=revision+1,updated_at=? WHERE id=? AND package_id=? AND transformer_id=? AND revision=?")
+                .bind(label.trim()).bind(&parameters_json).bind(default_view).bind(now).bind(id)
+                .bind(&transformer.package_id).bind(transformer_id).bind(revision)
+                .execute(&mut *tx).await?.rows_affected();
+            if changed != 1 {
+                bail!("transform setup changed or is unavailable");
+            }
+            (id.to_owned(), revision + 1)
+        } else {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM extension_transform_setups WHERE package_id=?",
+            )
+            .bind(&transformer.package_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count >= 64 {
+                bail!("extension already has 64 saved setups");
+            }
+            let id = new_id();
+            sqlx::query("INSERT INTO extension_transform_setups(id,package_id,transformer_id,label,parameters_json,default_view,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)")
+                .bind(&id).bind(&transformer.package_id).bind(transformer_id).bind(label.trim())
+                .bind(&parameters_json).bind(default_view).bind(now).bind(now)
+                .execute(&mut *tx).await?;
+            (id, 1)
+        };
+        tx.commit().await?;
+        Ok(super::SavedTransformSetup {
+            id,
+            package_id: transformer.package_id,
+            transformer_id: transformer_id.into(),
+            label: label.trim().into(),
+            parameters,
+            default_view: default_view.into(),
+            revision,
+            available: true,
+        })
+    }
+
+    pub async fn delete_transform_setup(&self, repo: &HistoryRepository, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM extension_transform_setups WHERE id=?")
+            .bind(id)
+            .execute(&repo.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn renderer_descriptors(
@@ -1356,7 +1459,6 @@ impl ExtensionService {
             ));
         }
         let shortcuts = self.action_shortcuts(repo).await?;
-        let pins = self.action_pins(repo).await?;
         let facets = crate::contributions::facets(repo, clip_id).await?;
         let mut actions = Vec::new();
         for item in self
@@ -1390,13 +1492,9 @@ impl ExtensionService {
             };
             let consent_required = self.consent_required(repo, &item).await?;
             let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-            let transform_preset = matches!(
-                &item.declaration.handler,
-                Some(ActionHandler::TransformerPreset { .. })
-            );
+            let transform_preset = false;
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
-                pinned: pins.contains(&item.id),
                 id: item.id,
                 package_id: item.package_id,
                 source_id: Some(selected_source_id),
@@ -1446,7 +1544,6 @@ impl ExtensionService {
         repo: &HistoryRepository,
     ) -> Result<Vec<ContextActionDescriptor>> {
         let shortcuts = self.action_shortcuts(repo).await?;
-        let pins = self.action_pins(repo).await?;
         let mut actions: Vec<_> = self
             .active_contributions(repo, ContributionKind::Action)
             .await?
@@ -1454,13 +1551,9 @@ impl ExtensionService {
             .map(|item| {
                 let available = true;
                 let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-                let transform_preset = matches!(
-                    &item.declaration.handler,
-                    Some(ActionHandler::TransformerPreset { .. })
-                );
+                let transform_preset = false;
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
-                    pinned: pins.contains(&item.id),
                     id: item.id,
                     package_id: item.package_id,
                     source_id: None,
@@ -1586,63 +1679,6 @@ impl ExtensionService {
             } => {
                 ActionOutcome::DialPhone(facet_string_value(facet.as_ref(), &facet_value_pointer)?)
             }
-            ActionHandler::TransformerPreset {
-                transformer_id,
-                parameters: preset,
-                disposition,
-            } => {
-                let parameters = merge_parameters(preset, parameters)?;
-                let qualified = format!("{}/{}", contribution.package_id, transformer_id);
-                let transformer = self
-                    .active_contributions(repo, ContributionKind::Transformer)
-                    .await?
-                    .into_iter()
-                    .find(|item| item.id == qualified)
-                    .context("action transformer is unavailable")?;
-                if transformer.declaration.result_lifetime == super::ResultLifetime::SourceClip {
-                    if contribution.declaration.execution != ExecutionClass::CapabilityBacked {
-                        bail!("durable preset actions require a bound user invocation");
-                    }
-                    super::manifest::validate_parameters(
-                        &transformer.declaration.parameter_schema,
-                        &parameters,
-                    )?;
-                    let queued = super::jobs::enqueue(
-                        repo,
-                        super::EnqueueExtensionJob {
-                            clip_id: clip_id.into(),
-                            source_id: source_id.into(),
-                            transformer_id: qualified,
-                            parameters,
-                            request_id: Some(new_id()),
-                            regenerate: false,
-                            invocation_token: None,
-                            capture_application: None,
-                        },
-                        &transformer.package_id,
-                        &transformer.sha256,
-                        &transformer.version,
-                        "source_clip",
-                        0,
-                    )
-                    .await?;
-                    ActionOutcome::Queued {
-                        job_id: queued.job_id,
-                        clip_id: clip_id.into(),
-                    }
-                } else {
-                    let (_, outputs) = self
-                        .transform(repo, &qualified, source.clone(), parameters, facet_id, None)
-                        .await?
-                        .context("action transformer is unavailable")?;
-                    ActionOutcome::Output {
-                        outputs,
-                        disposition,
-                        action_id: contribution.id.clone(),
-                        version: contribution.version.clone(),
-                    }
-                }
-            }
             ActionHandler::Guest => {
                 let broker =
                     if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
@@ -1665,7 +1701,7 @@ impl ExtensionService {
                     )
                     .await;
                 match result {
-                    Ok(result) => action_outcome(&contribution, result)?,
+                    Ok(result) => action_outcome(result),
                     Err(error) => {
                         self.failure(repo, &contribution, &error, true).await?;
                         return Err(error);
@@ -1945,11 +1981,7 @@ impl ExtensionService {
                 extension_id: contribution.extension_id,
                 package_id: contribution.package_id,
                 package_sha256: contribution.sha256,
-                action_id: Some(contribution.id),
-                action_version: Some(contribution.version),
                 clip_id: clip_id.into(),
-                source_id: source_id.into(),
-                facet_id: facet_id.map(str::to_string),
                 effects: contribution.declaration.effects,
                 http_permissions: contribution.http_permissions,
                 credential_permissions: contribution.credential_permissions,
@@ -1982,7 +2014,7 @@ impl ExtensionService {
                         "locale": locale,
                     }))?
                 )
-                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.ClipsX=Object.freeze(window.ClipsX);"#),
+                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='copy')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.ClipsX=Object.freeze(window.ClipsX);"#),
                 expires_at: now_ms() + 60 * 60 * 1000,
             },
         );
@@ -2077,10 +2109,6 @@ impl ExtensionService {
             }
             request => request,
         };
-        let action_id = session
-            .action_id
-            .clone()
-            .context("extension contribution identity is missing")?;
         match request {
             BridgeRequest::Https { request } => {
                 let url =
@@ -2189,30 +2217,18 @@ impl ExtensionService {
                 text,
                 disposition,
             } => {
-                let effect = disposition_effect(disposition);
-                if !session.effects.contains(&effect) || text.len() > 10 * 1024 * 1024 {
+                if disposition != "copy"
+                    || !session.effects.contains(&ActionEffect::Copy)
+                    || text.len() > 10 * 1024 * 1024
+                {
                     bail!("extension output is undeclared or exceeds host limits");
                 }
-                if !valid_output_mime_type(&mime_type) {
+                if mime_type != "text/plain" {
                     bail!("extension output MIME type is invalid");
                 }
-                Ok(BridgeOutcome::Output {
-                    outputs: vec![CapturedRepresentation {
-                        format_key: format!("mime:{mime_type}"),
-                        canonical_mime_type: Some(mime_type),
-                        native_type: None,
-                        platform: platform().into(),
-                        capture_priority: 10,
-                        payload: CapturedPayload::Text(text),
-                    }],
-                    disposition,
-                    action_id,
-                    version: session
-                        .action_version
-                        .context("extension contribution version is missing")?,
+                Ok(BridgeOutcome::CopyText {
+                    text,
                     clip_id: session.clip_id,
-                    source_id: session.source_id,
-                    facet_id: session.facet_id,
                 })
             }
             BridgeRequest::ViewReady | BridgeRequest::ViewFailed { .. } => {
@@ -2582,34 +2598,6 @@ impl ExtensionService {
         Ok(())
     }
 
-    pub async fn set_action_pinned(
-        &self,
-        repo: &HistoryRepository,
-        action_id: &str,
-        pinned: bool,
-    ) -> Result<()> {
-        let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
-            .await?
-            .into_iter()
-            .find(|item| item.id == action_id)
-            .context("extension action is not installed and enabled")?;
-        if pinned {
-            sqlx::query("INSERT INTO extension_action_pins(extension_id,action_id,pinned_at) VALUES(?,?,?) ON CONFLICT(action_id) DO UPDATE SET extension_id=excluded.extension_id,pinned_at=excluded.pinned_at")
-                .bind(&contribution.extension_id)
-                .bind(action_id)
-                .bind(now_ms())
-                .execute(&repo.pool)
-                .await?;
-        } else {
-            sqlx::query("DELETE FROM extension_action_pins WHERE action_id=?")
-                .bind(action_id)
-                .execute(&repo.pool)
-                .await?;
-        }
-        Ok(())
-    }
-
     async fn action_shortcuts(
         &self,
         repo: &HistoryRepository,
@@ -2621,19 +2609,6 @@ impl ExtensionService {
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
             .collect())
-    }
-
-    async fn action_pins(
-        &self,
-        repo: &HistoryRepository,
-    ) -> Result<std::collections::BTreeSet<String>> {
-        Ok(
-            sqlx::query_scalar("SELECT action_id FROM extension_action_pins")
-                .fetch_all(&repo.pool)
-                .await?
-                .into_iter()
-                .collect(),
-        )
     }
 
     fn contribution_icons(
@@ -3097,105 +3072,6 @@ impl ExtensionService {
         }
     }
 
-    pub async fn transform(
-        &self,
-        repo: &HistoryRepository,
-        transformer_id: &str,
-        input: CapturedRepresentation,
-        parameters: serde_json::Value,
-        facet_id: Option<&str>,
-        invocation_scope: Option<(&str, &str, &str)>,
-    ) -> Result<Option<(String, Vec<CapturedRepresentation>)>> {
-        let Some(contribution) = self
-            .active_contributions(repo, ContributionKind::Transformer)
-            .await?
-            .into_iter()
-            .find(|item| item.id == transformer_id && accepts(&item.declaration, &input, facet_id))
-        else {
-            return Ok(None);
-        };
-        if !parameters.is_object() {
-            bail!("extension transformer parameters must be an object");
-        }
-        super::manifest::validate_parameters(
-            &contribution.declaration.parameter_schema,
-            &parameters,
-        )?;
-        let broker = if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
-            let (clip_id, source_id, token) = invocation_scope
-                .context("capability-backed transformer requires an invocation token")?;
-            self.consume_invocation(
-                &contribution,
-                transformer_id,
-                clip_id,
-                source_id,
-                None,
-                token,
-            )?;
-            Some(self.runtime_broker_context(repo, &contribution).await?)
-        } else {
-            None
-        };
-        let generation_failure = broker
-            .as_ref()
-            .map(|context| context.generation_failure.clone());
-        let outputs = self
-            .runtime
-            .transform(
-                &contribution.sha256,
-                &contribution.local_id,
-                representation(input, contribution.declaration.input_limit_bytes)?,
-                serde_json::json!({"operationId":new_id(),"origin":"manual"}).to_string(),
-                serde_json::to_string(&parameters)?,
-                broker,
-            )
-            .await;
-        match outputs {
-            Ok(outputs) => {
-                let outputs = outputs
-                    .into_iter()
-                    .map(|output| {
-                        if output.mime_type.is_empty() || !output.format_key.starts_with("mime:") {
-                            bail!("extension transformer output must use a MIME format key")
-                        }
-                        let payload = match output.content {
-                            ExtensionContent::Text(value) => CapturedPayload::Text(value),
-                            ExtensionContent::Binary(value) => CapturedPayload::Binary(value),
-                            ExtensionContent::Files(_) => {
-                                bail!("extension transformers cannot emit file lists")
-                            }
-                        };
-                        Ok(CapturedRepresentation {
-                            format_key: output.format_key,
-                            canonical_mime_type: Some(output.mime_type),
-                            native_type: None,
-                            platform: platform().into(),
-                            capture_priority: 10,
-                            payload,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if outputs.is_empty()
-                    || outputs.len() > 8
-                    || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
-                {
-                    bail!("extension transformer output exceeds host limits");
-                }
-                self.success(repo, &contribution).await?;
-                Ok(Some((contribution.version, outputs)))
-            }
-            Err(error) => {
-                if let Some(failure) = generation_failure {
-                    if let Some(kind) = *failure.lock().await {
-                        return Err(super::runtime::GenerationFailureError(kind).into());
-                    }
-                }
-                self.failure(repo, &contribution, &error, true).await?;
-                Err(error)
-            }
-        }
-    }
-
     async fn persist_install(
         &self,
         repo: &HistoryRepository,
@@ -3429,6 +3305,60 @@ impl ExtensionService {
             &contribution.declaration.parameter_schema,
             &request.parameters,
         )?;
+        request.result_controls = contribution.declaration.result_controls.clone();
+        request.result_presentations = contribution.declaration.result_presentations.clone();
+        if let Some(setup_id) = request.setup_id.as_deref() {
+            let row = sqlx::query("SELECT package_id,transformer_id,label,parameters_json,default_view FROM extension_transform_setups WHERE id=?")
+                .bind(setup_id).fetch_optional(&repo.pool).await?
+                .context("saved transform setup is unavailable")?;
+            let stored_parameters: serde_json::Value =
+                serde_json::from_str(&row.get::<String, _>(3))?;
+            if row.get::<String, _>(0) != contribution.package_id
+                || row.get::<String, _>(1) != contribution.id
+                || stored_parameters != request.parameters
+            {
+                bail!("saved transform setup does not match this run");
+            }
+            request.display_label = Some(format!(
+                "{} · {}",
+                contribution.declaration.display_name,
+                row.get::<String, _>(2)
+            ));
+            request.default_view = Some(row.get(4));
+        } else {
+            let matching_setup = contribution.declaration.setups.iter().find(|setup| {
+                setup.parameters.as_object().is_some_and(|fixed| {
+                    fixed
+                        .iter()
+                        .all(|(key, value)| request.parameters.get(key) == Some(value))
+                })
+            });
+            if !request.regenerate || request.display_label.is_none() {
+                request.display_label = matching_setup
+                    .map(|setup| {
+                        format!(
+                            "{} · {}",
+                            contribution.declaration.display_name, setup.display_name
+                        )
+                    })
+                    .or_else(|| Some(contribution.declaration.display_name.clone()));
+            }
+            if request.default_view.is_none() {
+                request.default_view =
+                    matching_setup
+                        .and_then(|setup| setup.default_view)
+                        .map(|view| match view {
+                            super::ResultView::ResultOnly => "result_only".into(),
+                            super::ResultView::Compare => "compare".into(),
+                        });
+            }
+        }
+        request
+            .default_view
+            .get_or_insert_with(|| match contribution.declaration.default_view {
+                super::ResultView::ResultOnly => "result_only".into(),
+                super::ResultView::Compare => "compare".into(),
+            });
         if !background && contribution.declaration.execution == ExecutionClass::CapabilityBacked {
             self.consume_invocation(
                 &contribution,
@@ -3442,20 +3372,12 @@ impl ExtensionService {
                     .context("extension transformer requires an invocation token")?,
             )?;
         }
-        let lifetime = match contribution.declaration.result_lifetime {
-            super::ResultLifetime::Temporary if background => {
-                bail!("background transformations require source_clip result lifetime")
-            }
-            super::ResultLifetime::Temporary => "temporary",
-            super::ResultLifetime::SourceClip => "source_clip",
-        };
         super::jobs::enqueue(
             repo,
             request,
             &contribution.package_id,
             &contribution.sha256,
             &contribution.version,
-            lifetime,
             if background { 1 } else { 0 },
         )
         .await
@@ -3488,16 +3410,17 @@ impl ExtensionService {
             &contribution.declaration.parameter_schema,
             &parameters,
         )?;
-        let row = sqlx::query("SELECT r.format_key,r.canonical_mime_type,r.platform,t.text_value FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.id=? AND r.lifecycle_state='ready'")
-            .bind(source_id).fetch_optional(&repo.pool).await?.context("extension job source is unavailable")?;
-        let input = CapturedRepresentation {
-            format_key: row.get(0),
-            canonical_mime_type: row.get(1),
-            native_type: None,
-            platform: row.get(2),
-            capture_priority: 10,
-            payload: CapturedPayload::Text(row.get(3)),
-        };
+        let source_clip_id: String =
+            sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
+                .bind(job_id)
+                .fetch_one(&repo.pool)
+                .await?;
+        let (input, _) = repo
+            .source_representation(&source_clip_id, source_id)
+            .await?;
+        if matches!(input.payload, CapturedPayload::Files(_)) {
+            bail!("extension job source is unsupported");
+        }
         if !accepts(&contribution.declaration, &input, None) {
             bail!("extension job source no longer matches transformer");
         }
@@ -3946,6 +3869,11 @@ impl ExtensionService {
                                             regenerate: false,
                                             invocation_token: None,
                                             capture_application: Some(application.clone()),
+                                            setup_id: None,
+                                            display_label: None,
+                                            default_view: None,
+                                            result_controls: Vec::new(),
+                                            result_presentations: Vec::new(),
                                         };
                                         if self
                                             .enqueue_durable_transform(repo, request, true)
@@ -4154,42 +4082,13 @@ fn execution_name(value: ExecutionClass) -> &'static str {
 
 fn action_effect_name(value: ActionEffect) -> &'static str {
     match value {
-        ActionEffect::Preview => "preview",
         ActionEffect::Copy => "copy",
-        ActionEffect::Paste => "paste",
-        ActionEffect::SaveAsClip => "save_as_clip",
         ActionEffect::OpenHttpsUrl => "open_https_url",
         ActionEffect::Notification => "notification",
         ActionEffect::OpenDialog => "open_dialog",
         ActionEffect::ComposeEmail => "compose_email",
         ActionEffect::DialPhone => "dial_phone",
     }
-}
-
-fn disposition_effect(value: ActionDisposition) -> ActionEffect {
-    match value {
-        ActionDisposition::Preview => ActionEffect::Preview,
-        ActionDisposition::Copy => ActionEffect::Copy,
-        ActionDisposition::Paste => ActionEffect::Paste,
-        ActionDisposition::SaveAsClip => ActionEffect::SaveAsClip,
-    }
-}
-
-fn valid_output_mime_type(value: &str) -> bool {
-    let Some((kind, subtype)) = value.split_once('/') else {
-        return false;
-    };
-    !kind.is_empty()
-        && !subtype.is_empty()
-        && value.len() <= 200
-        && !subtype.contains('/')
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(
-                    byte,
-                    b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-' | b'/'
-                )
-        })
 }
 
 fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
@@ -4201,41 +4100,13 @@ fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
     })
 }
 
-fn merge_parameters(
-    mut preset: serde_json::Value,
-    supplied: serde_json::Value,
-) -> Result<serde_json::Value> {
-    let preset = preset
-        .as_object_mut()
-        .context("action preset parameters must be an object")?;
-    let supplied = supplied
-        .as_object()
-        .context("action parameters must be an object")?;
-    for (key, value) in supplied {
-        preset.insert(key.clone(), value.clone());
-    }
-    Ok(serde_json::Value::Object(std::mem::take(preset)))
-}
-
-fn action_outcome(
-    contribution: &ActiveContribution,
-    value: ExtensionActionResult,
-) -> Result<ActionOutcome> {
-    Ok(match value {
-        ExtensionActionResult::Output {
-            outputs,
-            disposition,
-        } => ActionOutcome::Output {
-            outputs: extension_outputs(outputs)?,
-            disposition,
-            action_id: contribution.id.clone(),
-            version: contribution.version.clone(),
-        },
+fn action_outcome(value: ExtensionActionResult) -> ActionOutcome {
+    match value {
         ExtensionActionResult::OpenHttpsUrl(url) => ActionOutcome::OpenHttpsUrl(url),
         ExtensionActionResult::Notification { level, message } => {
             ActionOutcome::Notification { level, message }
         }
-    })
+    }
 }
 
 fn validate_action_outcome(
@@ -4243,8 +4114,6 @@ fn validate_action_outcome(
     outcome: &ActionOutcome,
 ) -> Result<()> {
     let effect = match outcome {
-        ActionOutcome::Queued { .. } => ActionEffect::Preview,
-        ActionOutcome::Output { disposition, .. } => disposition_effect(*disposition),
         ActionOutcome::OpenHttpsUrl(url) => {
             let parsed = url::Url::parse(url).context("action URL is invalid")?;
             if parsed.scheme() != "https" || parsed.host_str().is_none() || url.len() > 2048 {
@@ -4908,8 +4777,10 @@ mod tests {
             handler: None,
             parameter_schema: json!({}),
             input_limit_bytes: 1024 * 1024,
-            expose_in_menu: true,
-            result_lifetime: crate::extensions::ResultLifetime::Temporary,
+            setups: vec![],
+            default_view: crate::extensions::ResultView::ResultOnly,
+            result_controls: vec![],
+            result_presentations: vec![],
         }
     }
 
@@ -5078,11 +4949,7 @@ mod tests {
     }
 
     #[test]
-    fn bridge_outputs_require_strict_mime_types_and_do_not_reflect_secrets() {
-        assert!(valid_output_mime_type("application/json"));
-        assert!(valid_output_mime_type("text/plain"));
-        assert!(!valid_output_mime_type("text/plain\r\nx-evil: yes"));
-        assert!(!valid_output_mime_type("text/plain/extra"));
+    fn bridge_responses_do_not_reflect_secrets() {
         assert!(contains_protected_secret(
             b"authorization: secret-token",
             &[b"secret-token".to_vec()]

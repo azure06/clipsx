@@ -1,16 +1,16 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, ChevronRight, ScanText, Sparkles } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { ChevronLeft, ChevronRight, ScanText, Sparkles, X } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { presentationTextStats } from './presentationModel'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
 import { V2ViewPanel, type ViewTabControls } from './V2ViewPanel'
-import type { ContextAction, TransformControls } from './useTransformState'
-import { ContributionParametersPanel } from './ContributionParametersDialog'
-import { OperationVisual, TransformActionsPanel } from './TransformActionsDialog'
+import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import {
   DropdownMenu,
@@ -18,7 +18,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../shared/components/ui'
-import { ExtensionResults } from './ExtensionResults'
+import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
+import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
+import { retainInstalledPins } from './extensionPins'
+import { useClipExtensionJobs } from './useClipExtensionJobs'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -43,123 +46,6 @@ const KIND_COLOR: Record<string, string> = {
   text: 'bg-gray-400',
 }
 
-const ClipToolsButton = ({
-  controls,
-  container,
-}: {
-  controls: TransformControls | null
-  container: HTMLElement | null
-}) => {
-  const open = controls ? controls.pickerOpen || controls.parameterRequest !== null : false
-
-  // Extension custom views render as a native webview positioned above this
-  // window's content, not a DOM node — CSS z-index can't cover it. Toggling
-  // this event tells it to hide itself while the modal is open, and the
-  // opaque backdrop covers the gap until it does.
-  useEffect(() => {
-    if (!open) return
-    window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: true } }))
-    return () => {
-      window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } }))
-    }
-  }, [open])
-
-  if (!controls) return null
-
-  return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={next => {
-        if (next) {
-          controls.openPicker()
-          return
-        }
-        if (controls.parameterRequest) controls.cancelParameterRequest()
-        controls.closePicker()
-      }}
-    >
-      <Dialog.Trigger asChild>
-        <button
-          type="button"
-          aria-label="Clip tools"
-          title="Clip tools"
-          className={`shrink-0 rounded-md p-1.5 transition-all duration-150 ${
-            open
-              ? 'scale-110 bg-violet-500/10 text-violet-600 dark:text-violet-400'
-              : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'
-          }`}
-        >
-          {controls.busy !== null ? (
-            <span className="block h-4 w-4 animate-spin rounded-full border border-current border-t-transparent" />
-          ) : (
-            <Sparkles className="h-4 w-4" />
-          )}
-        </button>
-      </Dialog.Trigger>
-      <Dialog.Portal container={container}>
-        <Dialog.Overlay className="absolute inset-0 z-40 rounded-2xl bg-slate-950/40 backdrop-blur-sm dark:bg-black/55" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          className="absolute inset-0 z-40 flex items-center justify-center p-6 outline-none"
-          onOpenAutoFocus={event => event.preventDefault()}
-        >
-          <Dialog.Title className="sr-only">Clip tools</Dialog.Title>
-          <div className="flex h-96 max-h-full w-96 flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_28px_80px_-36px_rgba(15,23,42,.55)] dark:border-white/10 dark:bg-slate-900/95">
-            {controls.parameterRequest ? (
-              <ContributionParametersPanel
-                request={controls.parameterRequest}
-                onCancel={controls.cancelParameterRequest}
-                onSubmit={controls.submitParameters}
-              />
-            ) : (
-              <TransformActionsPanel
-                items={controls.items}
-                actions={controls.actions}
-                busy={controls.busy}
-                run={id => void controls.run(id)}
-                runAction={id => void controls.runAction(id)}
-                pinAction={(id, pinned) => void controls.pinAction(id, pinned)}
-                onClose={controls.closePicker}
-              />
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
-const PinnedActionButton = ({
-  action,
-  busy,
-  onRun,
-}: {
-  action: ContextAction
-  busy: boolean
-  onRun: () => void
-}) => (
-  <button
-    type="button"
-    aria-label={action.label}
-    title={action.unavailableReason ?? action.label}
-    disabled={!action.available || busy}
-    className="shrink-0 rounded-md p-1.5 text-gray-500 transition-colors hover:bg-slate-200/60 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-white/10"
-    onClick={onRun}
-  >
-    {busy ? (
-      <span className="block h-4 w-4 animate-spin rounded-full border border-current border-t-transparent" />
-    ) : (
-      <OperationVisual
-        label={action.label}
-        icon={action.icon}
-        iconSvg={action.iconSvg}
-        iconSvgDark={action.iconSvgDark}
-        iconScale={action.iconScale}
-      />
-    )}
-  </button>
-)
-
 export const ViewTabIcon = ({
   light,
   dark,
@@ -182,7 +68,27 @@ export const ViewTabIcon = ({
 
 export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSummary }) {
   const { t, i18n } = useTranslation()
-  const [previewEl, setPreviewEl] = useState<HTMLDivElement | null>(null)
+  const [previewContainer, setPreviewContainer] = useState<HTMLDivElement | null>(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const toolsTriggerRef = useRef<HTMLButtonElement>(null)
+  const [requestedOperationId, setRequestedOperationId] = useState<string | null>(null)
+  const [pinnedOperations, setPinnedOperations] = useState<PinnedOperation[]>(() => {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem('clipsx.extensionOperationPins.v1') ?? '[]')
+      return Array.isArray(value) ? (value as unknown[]).filter((item): item is PinnedOperation =>
+        typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'string' && item.id.length <= 160 &&
+        'label' in item && typeof item.label === 'string' && item.label.length <= 120 &&
+        'kind' in item && (item.kind === 'action' || item.kind === 'transformer') &&
+        'iconScale' in item && typeof item.iconScale === 'number' && Number.isFinite(item.iconScale)
+      ).map(item => ({
+        ...item,
+        packageId: typeof item.packageId === 'string' ? item.packageId : item.id.match(/^(?:action|setup|custom):([^/:]+)\//)?.[1] ?? '',
+      })).filter(item => item.packageId.length > 0).slice(0, 24) : []
+    } catch { return [] }
+  })
+  const [enabledPackages, setEnabledPackages] = useState<Set<string>>(() => new Set())
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
+  const { jobs, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
   const [toolbarScroll, setToolbarScroll] = useState({
     canScrollLeft: false,
@@ -222,10 +128,45 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
     (controls: TransformControls | null) => setTransformControls(controls),
     []
   )
-  const pinnedActions = useMemo(
-    () => transformControls?.actions.filter(action => action.pinned) ?? [],
-    [transformControls]
-  )
+  const selectedResult = jobs.find(job => job.jobId === selectedResultId) ?? null
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: toolsOpen } }))
+    return () => { window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } })) }
+  }, [toolsOpen])
+  useEffect(() => {
+    localStorage.setItem('clipsx.extensionOperationPins.v1', JSON.stringify(pinnedOperations))
+  }, [pinnedOperations])
+  useEffect(() => {
+    let alive = true
+    let request = 0
+    const refresh = () => {
+      const current = ++request
+      setEnabledPackages(new Set())
+      void invoke<Array<{ packageId: string; enabled: boolean }>>('list_extensions').then(packages => {
+        if (!alive || current !== request) return
+        const installed = new Set(packages.map(item => item.packageId))
+        setEnabledPackages(new Set(packages.filter(item => item.enabled).map(item => item.packageId)))
+        setPinnedOperations(current => retainInstalledPins(current, installed))
+      }).catch(() => { /* Keep saved pins when the local package query fails. */ })
+    }
+    refresh()
+    const listeners: Array<() => void> = []
+    for (const eventName of ['extension-catalog-updated', 'extensions-changed']) {
+      void listen(eventName, refresh).then(stop => {
+        if (alive) listeners.push(stop)
+        else stop()
+      })
+    }
+    return () => { alive = false; listeners.forEach(stop => stop()) }
+  }, [])
+  const toggleOperationPin = useCallback((operation: PinnedOperation) => {
+    setPinnedOperations(current => {
+      return current.some(item => item.id === operation.id)
+        ? current.filter(item => item.id !== operation.id)
+        : [...current, operation].slice(-24)
+    })
+  }, [])
+  useEffect(() => { setSelectedResultId(null); setToolsOpen(false) }, [clip.id])
   const updateToolbarScroll = useCallback(() => {
     if (!toolbarEl) return
     setToolbarScroll({
@@ -242,7 +183,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
       observer.disconnect()
       window.cancelAnimationFrame(raf)
     }
-  }, [toolbarEl, updateToolbarScroll, pinnedActions, currentPresentation])
+  }, [toolbarEl, updateToolbarScroll, currentPresentation])
   const scrollToolbarBy = (direction: 1 | -1) =>
     toolbarEl?.scrollBy({ left: direction * 96, behavior: 'smooth' })
   const typeLabel = currentPresentation?.activeView.presentationKind ?? clip.primaryPresentationKind
@@ -253,11 +194,11 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
     [presentation]
   )
   const ocr = currentPresentation?.model.kind === 'image' ? currentPresentation.model.ocr : null
-  const visibleTabs = tabControls && tabControls.views.length > 1 ? tabControls : null
+  const visibleTabs = tabControls && tabControls.views.length + jobs.length > 1 ? tabControls : null
 
   return (
     <div
-      ref={setPreviewEl}
+      ref={setPreviewContainer}
       className="relative my-0.5 mr-2 flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/25 backdrop-blur-xl dark:border-white/5 dark:bg-slate-100/5"
     >
       {/* Header: row 1 — type badge + actions */}
@@ -292,18 +233,16 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 onScroll={updateToolbarScroll}
                 className="flex min-w-0 items-center gap-1 overflow-x-auto no-scrollbar"
               >
-                {pinnedActions.map(action => (
-                  <PinnedActionButton
-                    key={action.id}
-                    action={action}
-                    busy={transformControls?.busy === action.id}
-                    onRun={() => void transformControls?.runAction(action.id)}
-                  />
-                ))}
-                <ClipToolsButton controls={transformControls} container={previewEl} />
-                {transformControls && (
-                  <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
-                )}
+                {pinnedOperations.filter(operation => enabledPackages.has(operation.packageId)).map(operation => {
+                  const action = operation.kind === 'action' ? transformControls?.actions.find(item => `action:${item.id}` === operation.id) : null
+                  const available = operation.kind !== 'action' || Boolean(action?.available)
+                  return <button type="button" key={operation.id} aria-label={operation.label} title={available ? operation.label : action?.unavailableReason ?? 'Unavailable for this clip'} disabled={!available} onClick={() => {
+                    if (action) void transformControls?.runAction(action.id)
+                    else { setRequestedOperationId(operation.id); setToolsOpen(true) }
+                  }} className="shrink-0 rounded-md p-1.5 text-violet-600 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-35 dark:text-violet-300"><ExtensionOperationIcon operation={operation} /></button>
+                })}
+                <button ref={toolsTriggerRef} type="button" aria-label="Open clip tools" title="Tools" aria-haspopup="dialog" aria-expanded={toolsOpen} onClick={() => { setRequestedOperationId(null); setToolsOpen(true) }} className={`shrink-0 rounded-md p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${toolsOpen ? 'bg-violet-500/15 text-violet-600' : 'text-gray-500 hover:bg-slate-200/60 dark:hover:bg-white/10'}`}><Sparkles className="h-4 w-4" /></button>
+                <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
                 {currentPresentation && (
                   <div className="shrink-0">
                     <ClipActionsToolbar
@@ -332,7 +271,6 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
           <div className="flex gap-1 overflow-x-auto px-3 pb-1.5 no-scrollbar">
             {visibleTabs.views.map(item => {
               const isOcr = item.id === '__ocr__'
-              const isTransform = item.id === '__transform__'
               const ocrState =
                 isOcr && currentPresentation?.model.kind === 'image'
                   ? currentPresentation.model.ocr.state
@@ -344,15 +282,13 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                     ? 'bg-emerald-400'
                     : ocrState === 'failed'
                       ? 'bg-red-400'
-                      : isTransform
-                        ? 'bg-violet-400 animate-pulse'
-                        : null
+                      : null
               return (
                 <button
                   key={item.id}
-                  onClick={() => visibleTabs.onTabChange(item.id)}
+                  onClick={() => { setSelectedResultId(null); setToolsOpen(false); visibleTabs.onTabChange(item.id) }}
                   className={`flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${
-                    visibleTabs.activeId === item.id
+                    !selectedResultId && visibleTabs.activeId === item.id
                       ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
                       : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'
                   }`}
@@ -367,7 +303,17 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 </button>
               )
             })}
-            {visibleTabs.preferenceScopes.length > 0 && !visibleTabs.activeId.startsWith('__') && (
+            {jobs.map(job => <div key={job.jobId} className={`flex shrink-0 items-center rounded-md text-xs ${selectedResultId === job.jobId ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300' : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'}`}>
+              <button type="button" onClick={() => { setSelectedResultId(job.jobId); setToolsOpen(false) }} className="max-w-40 truncate px-2.5 py-1" title={`${job.displayLabel} · ${job.status}`}>{job.displayLabel}{job.status !== 'completed' ? ` · ${job.status.replaceAll('_', ' ')}` : ''}</button>
+              <button type="button" aria-label={`${['completed', 'failed', 'cancelled'].includes(job.status) ? 'Delete' : 'Cancel'} ${job.displayLabel} result`} title={['completed', 'failed', 'cancelled'].includes(job.status) ? 'Delete result' : 'Cancel job'} className="rounded-r-md p-1 hover:bg-red-500/10 hover:text-red-600" onClick={() => {
+                const terminal = ['completed', 'failed', 'cancelled'].includes(job.status)
+                if (terminal && !window.confirm(`Delete ${job.displayLabel} result?`)) return
+                void invoke(terminal ? 'delete_extension_result' : 'cancel_extension_job', { jobId: job.jobId })
+                  .then(() => { if (selectedResultId === job.jobId && terminal) setSelectedResultId(null); void refreshJobs() })
+                  .catch(error => window.dispatchEvent(new CustomEvent('clipsx-extension-action-notification', { detail: { level: 'error', message: String(error) } })))
+              }}><X className="h-3 w-3" /></button>
+            </div>)}
+            {visibleTabs.preferenceScopes.length > 0 && !selectedResultId && !visibleTabs.activeId.startsWith('__') && (
               <DropdownMenu
                 onOpenChange={open =>
                   window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open } }))
@@ -396,16 +342,22 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
       </div>
 
       <div className="flex-1 overflow-hidden p-0 relative">
-        <V2ViewPanel
-          key={clip.id}
-          clipId={clip.id}
-          onPresentation={handlePresentation}
-          onTabControls={handleTabControls}
-          onTransformControls={handleTransformControls}
-        />
+        <div className={`h-full ${selectedResultId ? 'hidden' : ''}`}><V2ViewPanel
+          key={clip.id} clipId={clip.id} onPresentation={handlePresentation}
+          onTabControls={handleTabControls} onTransformControls={handleTransformControls}
+        /></div>
+        {selectedResult && <ExtensionResultTab key={selectedResult.jobId} job={selectedResult} presentation={currentPresentation} canRegenerate={Boolean(transformControls?.items.some(item => item.id === selectedResult.transformerId))} onChanged={() => void refreshJobs()} onQueued={jobId => { setSelectedResultId(jobId); void refreshJobs() }} />}
+        {selectedResultId && !selectedResult && <div className="flex h-full items-center justify-center text-xs text-slate-500">Loading result…</div>}
       </div>
 
-      <ExtensionResults clipId={clip.id} />
+      <Dialog.Root open={toolsOpen} onOpenChange={setToolsOpen}>
+        <Dialog.Portal container={previewContainer}>
+          <Dialog.Overlay className="absolute inset-0 z-40 bg-slate-950/30 backdrop-blur-[2px] dark:bg-black/55" />
+          <Dialog.Content onCloseAutoFocus={event => { event.preventDefault(); toolsTriggerRef.current?.focus() }} className="absolute left-1/2 top-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50 shadow-[0_20px_55px_-20px_rgba(15,23,42,.55)] outline-none dark:border-white/10 dark:bg-slate-900" style={{ width: 'min(calc(100% - 1rem), 680px)', height: 'min(calc(100% - 1rem), 580px)' }} aria-describedby="clip-tools-description">
+            <ExtensionTools clipId={clip.id} sourceId={currentPresentation?.activeView.sourceId ?? ''} transformers={transformControls?.items ?? []} actions={transformControls?.actions ?? []} pinnedIds={pinnedOperations.map(item => item.id)} onTogglePin={toggleOperationPin} initialOperationId={requestedOperationId} runAction={id => { void transformControls?.runAction(id); setToolsOpen(false) }} onClose={() => setToolsOpen(false)} onQueued={jobId => { setSelectedResultId(jobId); setToolsOpen(false); void refreshJobs() }} />
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <div className="shrink-0 flex flex-col gap-1.5 px-3 py-2 bg-slate-100/45 dark:bg-black/10 border-t border-slate-200/70 dark:border-slate-100/5">
         <TagChips clipId={clip.id} tags={clip.tags ?? []} />

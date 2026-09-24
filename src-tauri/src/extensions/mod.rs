@@ -12,14 +12,14 @@ pub use broker::{BrokerHttpRequest, BrokerHttpResponse};
 
 pub use jobs::{
     ApplicationRule, EnqueueExtensionJob, ExtensionJobResult, ExtensionJobSummary,
-    SourceApplication,
+    SavedTransformSetup, SourceApplication,
 };
 #[allow(unused_imports)]
 pub use manifest::{
-    ActionDisposition, ActionEffect, ActionHandler, ActionPlacement, ActivationEvent,
-    ApplicationSelector, ContributionKind, ContributionMatcher, ExecutionClass,
-    ExtensionActivation, ExtensionManifest, ExtensionSetting, ExtensionStateKey,
-    ManifestContribution, RenderSurface, ResultLifetime, SettingScope, UiSurface, ViewPurpose,
+    ActionEffect, ActionHandler, ActionPlacement, ActivationEvent, ApplicationSelector,
+    ContributionKind, ContributionMatcher, ExecutionClass, ExtensionActivation, ExtensionManifest,
+    ExtensionSetting, ExtensionStateKey, ManifestContribution, RenderSurface, ResultControl,
+    ResultView, SettingScope, TransformerSetup, UiSurface, ViewPurpose,
 };
 #[allow(unused_imports)]
 pub use packages::{
@@ -40,7 +40,7 @@ pub use service::{
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "3.0.0";
+pub const API_VERSION: &str = "3.1.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 pub const OFFICIAL_REGISTRY_SIGNATURES_URL: &str =

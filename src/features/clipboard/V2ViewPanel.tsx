@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import { Copy, Database, FolderInput, RotateCw, ScanText, Sparkles, X } from 'lucide-react'
+import { Database, RotateCw, ScanText, X } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -18,7 +17,6 @@ import { useClipboardStore } from '../../stores/clipboardStore'
 import { useTheme } from '../../shared/hooks/useTheme'
 
 const OCR_TAB_ID = '__ocr__'
-const TRANSFORM_TAB_ID = '__transform__'
 
 type ExtensionCustomViewSession = { token: string; label: string; entryUrl: string }
 type ExtensionCustomViewState = {
@@ -265,104 +263,6 @@ const OcrPanel = ({
   </div>
 )
 
-const TransformAction = ({
-  label,
-  onClick,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  children: React.ReactNode
-}) => (
-  <Tooltip.Root>
-    <Tooltip.Trigger asChild>
-      <button
-        aria-label={label}
-        className="rounded p-1 text-gray-500 transition-colors hover:bg-slate-100 dark:hover:bg-white/10"
-        onClick={onClick}
-      >
-        {children}
-      </button>
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-      <Tooltip.Content
-        className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
-        sideOffset={5}
-      >
-        {label}
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
-)
-
-const TransformResultTab = ({
-  appliedTheme,
-  label,
-  presentation,
-  outputs,
-  busy,
-  error,
-  applyResult,
-  onDismiss,
-}: {
-  appliedTheme: 'light' | 'dark'
-  label: string
-  presentation: ClipPresentation | null
-  outputs: Array<{ canonicalMimeType: string | null; byteLength: number }>
-  busy: boolean
-  error: string | null
-  applyResult: (action: 'copy' | 'save') => Promise<void>
-  onDismiss: () => void
-}) => (
-  <Tooltip.Provider delayDuration={300}>
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200/60 px-3 py-1.5 dark:border-white/5">
-        <Sparkles className="h-3.5 w-3.5 text-violet-400" />
-        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-gray-500">
-          {label}
-        </span>
-        {outputs.map((output, index) => (
-          <span
-            className="hidden shrink-0 rounded-md border border-violet-200/70 bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] text-violet-700 sm:inline dark:border-violet-400/20 dark:bg-violet-400/10 dark:text-violet-200"
-            key={`${output.canonicalMimeType}:${index}`}
-          >
-            {output.canonicalMimeType ?? 'binary'} · {formatBytes(output.byteLength)}
-          </span>
-        ))}
-        {presentation && (
-          <div className="flex items-center gap-0.5">
-            <TransformAction label="Copy" onClick={() => void applyResult('copy')}>
-              <Copy className="h-3.5 w-3.5" />
-            </TransformAction>
-            <TransformAction label="Save as new clip" onClick={() => void applyResult('save')}>
-              <FolderInput className="h-3.5 w-3.5" />
-            </TransformAction>
-          </div>
-        )}
-        <TransformAction label="Dismiss" onClick={onDismiss}>
-          <X className="h-3.5 w-3.5 text-gray-400" />
-        </TransformAction>
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {busy && (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-gray-500">
-            <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-violet-500" />
-            Running transform…
-          </div>
-        )}
-        {error && !busy && (
-          <div className="flex h-full items-center justify-center p-4 text-sm text-red-500">
-            {error}
-          </div>
-        )}
-        {presentation && !busy && (
-          <RenderModelView appliedTheme={appliedTheme} presentation={presentation} />
-        )}
-      </div>
-    </div>
-  </Tooltip.Provider>
-)
-
 type ArtifactUpdate = { clipId: string; sourceId: string }
 
 export type ViewTabControls = {
@@ -577,7 +477,7 @@ export const V2ViewPanel = ({
   }, [clipId, retry])
 
   const [lastRealView, setLastRealView] = useState<ClipViewDescriptor | null>(null)
-  const isSyntheticTab = active === OCR_TAB_ID || active === TRANSFORM_TAB_ID
+  const isSyntheticTab = active === OCR_TAB_ID
   const view = useMemo(
     () => (isSyntheticTab ? null : (viewSet?.views.find(item => item.id === active) ?? null)),
     [active, isSyntheticTab, viewSet]
@@ -650,7 +550,7 @@ export const V2ViewPanel = ({
 
   const handleTabChange = useCallback(
     (id: string) => {
-      if (id !== active && id !== OCR_TAB_ID && id !== TRANSFORM_TAB_ID) setModel(null)
+      if (id !== active && id !== OCR_TAB_ID) setModel(null)
       setActive(id)
     },
     [active]
@@ -691,7 +591,7 @@ export const V2ViewPanel = ({
     }
   }
 
-  const transformState = useTransformState({
+  useTransformState({
     clipId,
     sourceId: view?.sourceId ?? lastRealView?.sourceId ?? '',
     basePresentation: presentation,
@@ -725,26 +625,7 @@ export const V2ViewPanel = ({
             placement: 'alternate',
           }
         : null
-    const transformTab: ClipViewDescriptor | null = transformState.activeTransformer
-      ? {
-          id: TRANSFORM_TAB_ID,
-          rendererId: '',
-          label: transformState.activeTransformer.label,
-          sourceId: '',
-          mimeType: null,
-          capabilityId: 'builtin.transform',
-          facetId: null,
-          iconSvg: null,
-          iconSvgDark: null,
-          iconScale: 1,
-          isOriginal: false,
-          presentationKind: 'text',
-          purpose: 'structured',
-          matchSpecificity: 0,
-          placement: 'alternate',
-        }
-      : null
-    const views = [...visible, ...(ocrTab ? [ocrTab] : []), ...(transformTab ? [transformTab] : [])]
+    const views = [...visible, ...(ocrTab ? [ocrTab] : [])]
     onTabControls?.({
       views,
       activeId: active,
@@ -763,7 +644,6 @@ export const V2ViewPanel = ({
     viewSet,
     active,
     model,
-    transformState.activeTransformer,
     onTabControls,
     handleTabChange,
     handleShowInspector,
@@ -773,11 +653,6 @@ export const V2ViewPanel = ({
 
   // Clear controls when unmounted
   useEffect(() => () => onTabControls?.(null), [onTabControls])
-
-  // Auto-switch to transform tab as soon as a transform is initiated
-  useEffect(() => {
-    if (transformState.activeTransformer) setActive(TRANSFORM_TAB_ID)
-  }, [transformState.activeTransformer])
 
   if (error)
     return (
@@ -807,35 +682,10 @@ export const V2ViewPanel = ({
     )
 
   const isOcrTab = active === OCR_TAB_ID
-  const isTransformTab = active === TRANSFORM_TAB_ID
-  const transformPresentation: ClipPresentation | null =
-    transformState.preview && presentation
-      ? { ...presentation, model: transformState.preview.model }
-      : null
-
-  const handleDismissTransform = () => {
-    transformState.dismissPreview()
-    transformState.dismissError()
-    // Return to the previous real tab
-    const fallback = viewSet?.views.find(v => v.id !== OCR_TAB_ID) ?? null
-    if (fallback) setActive(fallback.id)
-  }
-
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {isTransformTab ? (
-          <TransformResultTab
-            appliedTheme={appliedTheme}
-            label={transformState.activeTransformer?.label ?? 'Transform'}
-            presentation={transformPresentation}
-            outputs={transformState.preview?.outputs ?? []}
-            busy={!!transformState.busy}
-            error={transformState.error}
-            applyResult={transformState.applyResult}
-            onDismiss={handleDismissTransform}
-          />
-        ) : isOcrTab && presentation?.model.kind === 'image' ? (
+        {isOcrTab && presentation?.model.kind === 'image' ? (
           <OcrPanel
             ocr={presentation.model.ocr}
             retrying={retryingOcr}

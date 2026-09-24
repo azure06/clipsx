@@ -2,7 +2,6 @@
 
 use crate::{
     clipboard::{contract::ClipboardAdapter, plain_text_representation, SystemClipboardAdapter},
-    contributions::transformer::TransformService,
     history::{CapturedPayload, CapturedRepresentation, HistoryRepository},
 };
 use anyhow::Result;
@@ -30,9 +29,6 @@ pub enum ClipboardOutputSource {
     PlainText {
         clip_id: String,
     },
-    Transformed {
-        result_id: String,
-    },
     Derived {
         job_id: String,
     },
@@ -52,7 +48,6 @@ pub struct ClipboardOutputRequest {
 async fn resolve_source(
     source: &ClipboardOutputSource,
     history: &HistoryRepository,
-    transforms: &TransformService,
 ) -> Result<(Vec<CapturedRepresentation>, Option<String>)> {
     let (representations, source_clip_id) = match source {
         ClipboardOutputSource::Original { clip_id } => (
@@ -63,10 +58,6 @@ async fn resolve_source(
             history.plain_text_reconstruction(clip_id).await?,
             Some(clip_id.clone()),
         ),
-        ClipboardOutputSource::Transformed { result_id } => {
-            let (_, source_clip_id, _) = transforms.saved_metadata(result_id)?;
-            (transforms.transformed(result_id)?, Some(source_clip_id))
-        }
         ClipboardOutputSource::Derived { job_id } => (
             crate::extensions::jobs::output(history, job_id).await?,
             sqlx::query_scalar(
@@ -135,19 +126,17 @@ fn portable_plain_text_source(representation: &CapturedRepresentation) -> Option
 pub async fn write_source(
     source: &ClipboardOutputSource,
     history: &HistoryRepository,
-    transforms: &TransformService,
 ) -> Result<()> {
     let mut adapter = SystemClipboardAdapter::new();
-    write_source_with_adapter(&mut adapter, source, history, transforms).await
+    write_source_with_adapter(&mut adapter, source, history).await
 }
 
 async fn write_source_with_adapter(
     adapter: &mut dyn ClipboardAdapter,
     source: &ClipboardOutputSource,
     history: &HistoryRepository,
-    transforms: &TransformService,
 ) -> Result<()> {
-    let (representations, source_clip_id) = resolve_source(source, history, transforms).await?;
+    let (representations, source_clip_id) = resolve_source(source, history).await?;
     adapter.write(&representations)?;
     if let Some(clip_id) = source_clip_id {
         history.touch(&clip_id).await?;
@@ -162,7 +151,6 @@ mod tests {
         foundation::{self, AppRoots},
         history::{CaptureSettings, CapturedPayload, CapturedSnapshot},
     };
-    use serde_json::json;
 
     #[derive(Default)]
     struct RecordingAdapter {
@@ -187,7 +175,7 @@ mod tests {
     #[test]
     fn request_uses_the_frontend_camel_case_wire_shape() {
         assert_eq!(
-            serde_json::from_value::<ClipboardOutputRequest>(json!({
+            serde_json::from_value::<ClipboardOutputRequest>(serde_json::json!({
                 "disposition": "copy",
                 "source": {
                     "kind": "literal_text",
@@ -263,7 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transformed_and_saved_typed_text_copy_with_plain_companion_without_mutating_output() {
+    async fn typed_text_copy_has_plain_companion_without_mutating_source() {
         let temp = tempfile::TempDir::new().unwrap();
         let roots = AppRoots {
             data: temp.path().join("data"),
@@ -287,39 +275,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let source_id = history.detail(&clip_id).await.unwrap().representations[0]
-            .id
-            .clone();
-        let transforms = TransformService::default();
-        let preview = transforms
-            .cache_external(
-                clip_id.clone(),
-                "example.test/transform".into(),
-                "1.0.0".into(),
-                source_id,
-                json!({}),
-                vec![markdown],
-            )
-            .unwrap();
         let mut adapter = RecordingAdapter::default();
-
-        write_source_with_adapter(
-            &mut adapter,
-            &ClipboardOutputSource::Transformed {
-                result_id: preview.result_id.clone(),
-            },
-            &history,
-            &transforms,
-        )
-        .await
-        .unwrap();
         write_source_with_adapter(
             &mut adapter,
             &ClipboardOutputSource::Original {
                 clip_id: clip_id.clone(),
             },
             &history,
-            &transforms,
         )
         .await
         .unwrap();
@@ -335,16 +297,6 @@ mod tests {
                 Some("text/plain")
             );
         }
-        let cached = transforms.transformed(&preview.result_id).unwrap();
-        assert_eq!(
-            cached.len(),
-            1,
-            "clipboard companions must not enter the cache"
-        );
-        assert_eq!(
-            cached[0].canonical_mime_type.as_deref(),
-            Some("text/markdown")
-        );
         let saved = history.reconstruction(&clip_id).await.unwrap();
         assert_eq!(saved.len(), 1, "clipboard companions must not be persisted");
         assert_eq!(
@@ -377,29 +329,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let source_id = history.detail(&clip_id).await.unwrap().representations[0]
-            .id
-            .clone();
-        let transforms = TransformService::default();
-        let transformed = transforms
-            .cache_external(
-                clip_id.clone(),
-                "example.test/transform".into(),
-                "1.0.0".into(),
-                source_id,
-                json!({}),
-                vec![plain_text_representation("transformed".into())],
-            )
-            .unwrap();
         let sources = [
             ClipboardOutputSource::Original {
                 clip_id: clip_id.clone(),
             },
             ClipboardOutputSource::PlainText {
                 clip_id: clip_id.clone(),
-            },
-            ClipboardOutputSource::Transformed {
-                result_id: transformed.result_id,
             },
             ClipboardOutputSource::LiteralText {
                 text: "#FF0040".into(),
@@ -409,14 +344,14 @@ mod tests {
         let mut adapter = RecordingAdapter::default();
 
         for source in &sources {
-            write_source_with_adapter(&mut adapter, source, &history, &transforms)
+            write_source_with_adapter(&mut adapter, source, &history)
                 .await
                 .unwrap();
         }
 
         assert_eq!(adapter.writes.len(), sources.len());
         assert!(matches!(
-            &adapter.writes[3][0].payload,
+            &adapter.writes[2][0].payload,
             CapturedPayload::Text(value) if value == "#FF0040"
         ));
         let clip_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM clip_items")
@@ -434,7 +369,7 @@ mod tests {
             "literal output must not create a history entry"
         );
         assert_eq!(
-            access_count, 4,
+            access_count, 3,
             "each source-linked output touches the source clip"
         );
     }

@@ -32,7 +32,7 @@ Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
 Release notes must explain incompatible-schema resets; packaging is not a reason
 to add compatibility reads.
 
-Extension API v3 releases must certify durable Rewrite jobs across restart, exact source-application attribution, source deletion, package update/uninstall, and explicit promotion. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
+Extension API v3.1 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The fresh database baseline is version 12 and requires an explicit reset. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
 
 ## Build and publication
 
@@ -144,10 +144,12 @@ Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Use their package-validation
 workflows and confirm the production catalog/approval sync. App CI does not
 publish extension releases.
-The desktop release preflight requires a nonempty, signed v3 registry whose
+The desktop release preflight requires a nonempty, signed v3.1 registry whose
 published raw index and signatures match the reviewed registry revision. Merge
 the six immutable package releases, reviewed metadata, and protected signed
-publication before creating a desktop release candidate. A source merge alone
+publication before creating a desktop release candidate. Merge the host contract
+and package tool before publishing extension archives, but release the desktop
+app last. A source merge alone
 does not make a package visible in Discover.
 
 ## Native clipboard sequence

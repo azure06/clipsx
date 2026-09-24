@@ -306,11 +306,3 @@ pub struct CapturedSnapshot {
     pub representations: Vec<CapturedRepresentation>,
     pub format_observations: Vec<FormatObservation>,
 }
-#[derive(Debug, Clone)]
-pub struct TransformProvenance {
-    pub source_clip_id: String,
-    pub source_representation_id: String,
-    pub transformer_id: String,
-    pub transformer_version: String,
-    pub parameter_sha256: String,
-}

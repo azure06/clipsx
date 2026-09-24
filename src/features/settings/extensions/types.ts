@@ -82,7 +82,6 @@ export type ExtensionAction = {
   available: boolean
   unavailableReason: string | null
   shortcut: string | null
-  pinned: boolean
 }
 
 export type PackageDetail = {

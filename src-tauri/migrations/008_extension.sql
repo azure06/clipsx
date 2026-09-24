@@ -78,6 +78,20 @@ CREATE TABLE extension_package_state (
     PRIMARY KEY (package_id, state_key)
 );
 
+CREATE TABLE extension_transform_setups (
+    id TEXT PRIMARY KEY NOT NULL,
+    package_id TEXT NOT NULL,
+    transformer_id TEXT NOT NULL,
+    label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
+    parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json) AND length(parameters_json) <= 16384),
+    default_view TEXT NOT NULL CHECK (default_view IN ('result_only', 'compare')),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX extension_transform_setups_by_transformer
+    ON extension_transform_setups(package_id, transformer_id, updated_at DESC);
+
 CREATE TABLE extension_activation_events (
     event_id TEXT NOT NULL,
     package_id TEXT NOT NULL,
@@ -112,7 +126,12 @@ CREATE TABLE extension_jobs (
     package_sha256 TEXT NOT NULL CHECK (length(package_sha256) = 64),
     input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
+    setup_id TEXT REFERENCES extension_transform_setups(id) ON DELETE SET NULL,
+    display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 120),
+    default_view TEXT NOT NULL CHECK (default_view IN ('result_only', 'compare')),
     parameter_sha256 TEXT NOT NULL CHECK (length(parameter_sha256) = 64),
+    result_controls_json TEXT NOT NULL CHECK (json_valid(result_controls_json)),
+    result_presentations_json TEXT NOT NULL CHECK (json_valid(result_presentations_json)),
     app_platform TEXT CHECK (app_platform IS NULL OR app_platform IN ('windows', 'macos', 'linux_x11')),
     app_id TEXT CHECK (app_id IS NULL OR length(app_id) BETWEEN 1 AND 256),
     app_display_name TEXT CHECK (app_display_name IS NULL OR length(app_display_name) BETWEEN 1 AND 256),
@@ -121,7 +140,6 @@ CREATE TABLE extension_jobs (
     state_revision INTEGER NOT NULL CHECK (state_revision >= 0),
     provider_revision INTEGER NOT NULL CHECK (provider_revision >= 0),
     priority INTEGER NOT NULL CHECK (priority IN (0, 1, 2)),
-    result_lifetime TEXT NOT NULL CHECK (result_lifetime IN ('temporary', 'source_clip')),
     dedupe_key TEXT NOT NULL CHECK (length(dedupe_key) = 64),
     regeneration_nonce TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'waiting_provider', 'completed', 'failed', 'cancelled')),

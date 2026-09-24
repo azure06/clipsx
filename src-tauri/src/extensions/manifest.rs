@@ -63,10 +63,53 @@ pub enum ExecutionClass {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ResultLifetime {
+pub enum ResultView {
     #[default]
-    Temporary,
-    SourceClip,
+    ResultOnly,
+    Compare,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultLayout {
+    Single,
+    Split,
+    Stack,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultModule {
+    Input,
+    Output,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultPresentation {
+    pub id: String,
+    pub display_name: String,
+    pub layout: ResultLayout,
+    pub modules: Vec<ResultModule>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultControl {
+    Copy,
+    Paste,
+    SaveAsClip,
+    Regenerate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransformerSetup {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default = "empty_object")]
+    pub parameters: Value,
+    pub default_view: Option<ResultView>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,24 +140,12 @@ pub struct ExtensionActivation {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionEffect {
-    Preview,
     Copy,
-    Paste,
-    SaveAsClip,
     OpenHttpsUrl,
     Notification,
     OpenDialog,
     ComposeEmail,
     DialPhone,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionDisposition {
-    Preview,
-    Copy,
-    Paste,
-    SaveAsClip,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,18 +157,8 @@ pub enum ActionDisposition {
 pub enum ActionHandler {
     Guest,
     Dialog,
-    ComposeEmail {
-        facet_value_pointer: String,
-    },
-    DialPhone {
-        facet_value_pointer: String,
-    },
-    TransformerPreset {
-        transformer_id: String,
-        #[serde(default = "empty_object")]
-        parameters: Value,
-        disposition: ActionDisposition,
-    },
+    ComposeEmail { facet_value_pointer: String },
+    DialPhone { facet_value_pointer: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -235,14 +256,14 @@ pub struct ManifestContribution {
     /// Packages that intentionally process larger local assets opt in here.
     #[serde(default = "default_extension_input_bytes")]
     pub input_limit_bytes: usize,
-    /// Transformer contributions default to appearing in the host's generic
-    /// Transform menu. Set to `false` when the transformer exists only to
-    /// back one or more `TransformerPreset` actions that already cover its
-    /// full parameter space, so the operation isn't offered twice.
-    #[serde(default = "default_true")]
-    pub expose_in_menu: bool,
     #[serde(default)]
-    pub result_lifetime: ResultLifetime,
+    pub setups: Vec<TransformerSetup>,
+    #[serde(default)]
+    pub default_view: ResultView,
+    #[serde(default)]
+    pub result_controls: Vec<ResultControl>,
+    #[serde(default)]
+    pub result_presentations: Vec<ResultPresentation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,9 +356,6 @@ fn default_version() -> String {
 fn default_icon_scale() -> f32 {
     1.0
 }
-fn default_true() -> bool {
-    true
-}
 fn default_extension_input_bytes() -> usize {
     1024 * 1024
 }
@@ -387,7 +405,9 @@ impl ExtensionManifest {
             bail!("unsupported extension schema; build this package for Extension API v3");
         }
         if value.get("contractRevision").is_none() {
-            bail!("obsolete extension package; rebuild with Extension API v3 contractRevision = 1");
+            bail!(
+                "obsolete extension package; rebuild with Extension API v3.1 contractRevision = 2"
+            );
         }
         let manifest: Self = toml::from_str(source)
             .context("extension manifest is not valid Extension API v3 TOML")?;
@@ -402,8 +422,10 @@ impl ExtensionManifest {
         if self.schema_version != 3 {
             bail!("unsupported extension manifest schema; expected schemaVersion = 3");
         }
-        if self.contract_revision != 1 {
-            bail!("unsupported Extension API v3 contract revision; expected contractRevision = 1");
+        if self.contract_revision != 2 {
+            bail!(
+                "unsupported Extension API v3.1 contract revision; expected contractRevision = 2"
+            );
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -474,17 +496,13 @@ impl ExtensionManifest {
             for matcher in &activation.matchers {
                 matcher.validate()?;
             }
-            let transformer = self
-                .contributions
+            self.contributions
                 .iter()
                 .find(|item| {
                     item.id == activation.transformer_id
                         && item.kind == ContributionKind::Transformer
                 })
                 .context("activation references an unknown transformer")?;
-            if transformer.result_lifetime != ResultLifetime::SourceClip {
-                bail!("automatic activations require a source_clip transformer");
-            }
             if !self.permissions.background_clip_created || !self.permissions.selected_input {
                 bail!("automatic activations require selected_input and background_clip_created permissions");
             }
@@ -521,6 +539,60 @@ impl ExtensionManifest {
     }
 
     fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
+        if contribution.kind == ContributionKind::Transformer {
+            if contribution.setups.len() > 32
+                || contribution.result_controls.len() > 4
+                || contribution.result_presentations.len() > 4
+            {
+                bail!("transformer setup, result control, or presentation limit exceeded");
+            }
+            let mut presentation_ids = BTreeSet::new();
+            for presentation in &contribution.result_presentations {
+                valid_id(&presentation.id, "result presentation")?;
+                if !presentation_ids.insert(&presentation.id)
+                    || presentation.display_name.trim().is_empty()
+                    || presentation.display_name.len() > 40
+                    || presentation.modules.is_empty()
+                    || presentation.modules.len() > 2
+                    || presentation
+                        .modules
+                        .iter()
+                        .filter(|module| **module == ResultModule::Output)
+                        .count()
+                        != 1
+                    || (presentation.layout == ResultLayout::Single)
+                        != (presentation.modules.len() == 1)
+                {
+                    bail!("transformer result presentation is invalid");
+                }
+            }
+            let mut setup_ids = BTreeSet::new();
+            for setup in &contribution.setups {
+                valid_id(&setup.id, "transformer setup")?;
+                if !setup_ids.insert(&setup.id)
+                    || setup.display_name.trim().is_empty()
+                    || setup.display_name.len() > 80
+                    || !setup.parameters.is_object()
+                {
+                    bail!("transformer setup is invalid");
+                }
+                let mut partial_schema = contribution.parameter_schema.clone();
+                if let Some(object) = partial_schema.as_object_mut() {
+                    object.remove("required");
+                }
+                validate_parameters(&partial_schema, &setup.parameters)?;
+            }
+            let unique_controls: BTreeSet<_> = contribution.result_controls.iter().collect();
+            if unique_controls.len() != contribution.result_controls.len() {
+                bail!("transformer result controls must be unique");
+            }
+        } else if !contribution.setups.is_empty()
+            || !contribution.result_controls.is_empty()
+            || !contribution.result_presentations.is_empty()
+            || contribution.default_view != ResultView::ResultOnly
+        {
+            bail!("only transformers may declare result presentation");
+        }
         let has_matcher = contribution
             .matchers
             .iter()
@@ -560,18 +632,6 @@ impl ExtensionManifest {
                 }
                 if contribution.placements.is_empty() {
                     bail!("action contributions require at least one placement");
-                }
-                if let Some(ActionHandler::TransformerPreset { transformer_id, .. }) =
-                    &contribution.handler
-                {
-                    valid_id(transformer_id, "transformer reference")?;
-                    let valid = self.contributions.iter().any(|candidate| {
-                        candidate.id == *transformer_id
-                            && candidate.kind == ContributionKind::Transformer
-                    });
-                    if !valid {
-                        bail!("action references an unknown local transformer");
-                    }
                 }
                 if matches!(contribution.handler, Some(ActionHandler::Dialog))
                     && (!contribution.effects.contains(&ActionEffect::OpenDialog)
@@ -626,9 +686,6 @@ impl ExtensionManifest {
         }
         if contribution.kind != ContributionKind::Action && !contribution.placements.is_empty() {
             bail!("only action contributions may declare action placement");
-        }
-        if contribution.kind != ContributionKind::Transformer && !contribution.expose_in_menu {
-            bail!("only transformer contributions may set exposeInMenu to false");
         }
         if contribution.ui_surfaces.is_empty() != contribution.ui_entry.is_none() {
             bail!("custom UI requires both uiEntry and at least one UI surface");
@@ -1224,10 +1281,10 @@ mod tests {
     fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
         ExtensionManifest {
             schema_version: 3,
-            contract_revision: 1,
+            contract_revision: 2,
             package_id: "example.colors".into(),
             version: "1.0.0".into(),
-            api_version: "^3.0".into(),
+            api_version: "^3.1".into(),
             display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
@@ -1273,8 +1330,10 @@ mod tests {
             handler: None,
             parameter_schema: empty_object(),
             input_limit_bytes: 1024 * 1024,
-            expose_in_menu: true,
-            result_lifetime: ResultLifetime::Temporary,
+            setups: vec![],
+            default_view: ResultView::ResultOnly,
+            result_controls: vec![],
+            result_presentations: vec![],
         }
     }
 
@@ -1282,6 +1341,37 @@ mod tests {
     fn obsolete_schema_is_rejected_with_upgrade_message() {
         let error = ExtensionManifest::parse(b"schemaVersion = 1").unwrap_err();
         assert!(error.to_string().contains("Extension API v3"));
+    }
+
+    #[test]
+    fn v31_rejects_retired_transformer_fields_and_preset_actions() {
+        let base = "schemaVersion = 3\ncontractRevision = 2\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.1\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
+        assert!(ExtensionManifest::parse(base.as_bytes()).is_ok());
+        for retired in ["resultLifetime = \"temporary\"", "exposeInMenu = false"] {
+            let text = format!("{base}{retired}\n");
+            assert!(ExtensionManifest::parse(text.as_bytes()).is_err());
+        }
+        let preset = format!("{base}[[contributions]]\nid = \"business\"\nkind = \"action\"\ndisplayName = \"Business\"\nhandler = {{ kind = \"transformer_preset\", transformerId = \"rewrite\", disposition = \"preview\" }}\n");
+        assert!(ExtensionManifest::parse(preset.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn result_presentations_have_bounded_host_modules() {
+        let mut value = contribution(ContributionKind::Transformer);
+        value.result_presentations = vec![ResultPresentation {
+            id: "review".into(),
+            display_name: "Review".into(),
+            layout: ResultLayout::Stack,
+            modules: vec![ResultModule::Output, ResultModule::Input],
+        }];
+        assert!(manifest(value.clone()).validate().is_ok());
+        value.result_presentations[0].modules = vec![ResultModule::Input];
+        assert!(manifest(value.clone()).validate().is_err());
+        value.result_presentations[0].modules = vec![ResultModule::Output, ResultModule::Input];
+        value
+            .result_presentations
+            .push(value.result_presentations[0].clone());
+        assert!(manifest(value).validate().is_err());
     }
 
     #[test]
