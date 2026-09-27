@@ -5,7 +5,7 @@ import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import type { PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import type { ExtensionJob } from './useClipExtensionJobs'
-import type { Transformer } from './useTransformState'
+import type { ContextAction, Transformer } from './useTransformState'
 import { useUIStore } from '../../stores/uiStore'
 
 const invokeMock = vi.hoisted(() => vi.fn())
@@ -80,6 +80,66 @@ describe('one durable transformation path', () => {
         parameters: { preset: 'business' },
       },
     })
+  })
+
+  it('updates an action pin appearance without affecting the other action', async () => {
+    const action: ContextAction = {
+      id: 'infiniti.ask-ai/chatgpt',
+      packageId: 'infiniti.ask-ai',
+      label: 'Ask ChatGPT',
+      icon: 'globe',
+      iconSvg: null,
+      iconSvgDark: null,
+      iconScale: 1,
+      placements: ['action_menu'],
+      effects: ['open_https_url'],
+      execution: 'local',
+      available: true,
+      unavailableReason: null,
+      parameterSchema: {},
+      shortcut: null,
+      consentRequired: false,
+      externalNavigationOrigins: [],
+      httpOrigins: [],
+      providers: [],
+    }
+    let pins: string[] = []
+    const onTogglePin = vi.fn((operation: PinnedOperation) => {
+      pins = pins.includes(operation.id) ? [] : [operation.id]
+    })
+    const view = () => (
+      <Dialog.Root open>
+        <Dialog.Content>
+          <ExtensionTools
+            clipId="clip-1"
+            sourceId="source-1"
+            transformers={[]}
+            actions={[action, { ...action, id: 'infiniti.ask-ai/claude', label: 'Ask Claude' }]}
+            runAction={vi.fn()}
+            onClose={vi.fn()}
+            onQueued={vi.fn()}
+            pinnedIds={pins}
+            onTogglePin={onTogglePin}
+          />
+        </Dialog.Content>
+      </Dialog.Root>
+    )
+    const { rerender } = render(view())
+    fireEvent.click(await screen.findByRole('button', { name: /Ask ai/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pin Ask ChatGPT' }))
+    rerender(view())
+    expect(screen.getByRole('button', { name: 'Unpin Ask ChatGPT' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByRole('button', { name: 'Unpin Ask ChatGPT' })).toHaveClass('text-amber-500')
+    expect(screen.getByRole('button', { name: 'Pin Ask Claude' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin Ask ChatGPT' }))
+    rerender(view())
+    expect(screen.getByRole('button', { name: 'Pin Ask ChatGPT' })).toHaveClass('text-slate-500')
   })
 
   it('filters operations and pins a specific setup from the modal', () => {

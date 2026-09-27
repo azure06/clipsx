@@ -47,6 +47,10 @@ ClipsX renders typed content and always retains an Output preview fallback.
 The host owns result controls. Automatic work never copies or pastes. The job
 snapshots its view, labels and controls, so they survive uninstall.
 
+Operations inherit the package icon when they do not declare their own icon.
+Specific operation icons take precedence; pinned buttons use current installed
+icons rather than stale icon snapshots.
+
 ## Manifest
 
 ```toml

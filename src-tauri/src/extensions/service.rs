@@ -97,6 +97,7 @@ pub struct ActiveContribution {
     pub extension_id: String,
     pub package_id: String,
     pub package_label: String,
+    pub package_icon_assets: Option<super::manifest::ThemedIconAssets>,
     pub sha256: String,
     pub local_id: String,
     pub id: String,
@@ -944,6 +945,7 @@ impl ExtensionService {
             {
                 values.push(ActiveContribution {
                     package_label: package.manifest.display_name.clone(),
+                    package_icon_assets: package.manifest.icon_assets.clone(),
                     extension_id: row.get(0),
                     package_id: package.manifest.package_id.clone(),
                     sha256: package.sha256.clone(),
@@ -2833,9 +2835,18 @@ impl ExtensionService {
         &self,
         contribution: &ActiveContribution,
     ) -> (Option<String>, Option<String>) {
-        self.declared_contribution_icons(
+        if contribution.declaration.icon.is_some()
+            || contribution.declaration.icon_assets.is_some()
+            || contribution.declaration.icon_asset.is_some()
+        {
+            return self.declared_contribution_icons(
+                &contribution.package_relative_path,
+                &contribution.declaration,
+            );
+        }
+        self.package_identity_icons(
             &contribution.package_relative_path,
-            &contribution.declaration,
+            contribution.package_icon_assets.as_ref(),
         )
     }
 
@@ -5073,6 +5084,46 @@ fn append_bounded_chunk(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE pointing to the local Base64 archive"]
+    async fn transformer_icons_inherit_package_identity_and_preserve_overrides() {
+        let archive = std::env::var("CLIPSX_TEST_EXTENSION_ARCHIVE").unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots).unwrap();
+        service.set_developer_mode(&repo, true).await.unwrap();
+        service
+            .install_local(&repo, Path::new(&archive))
+            .await
+            .unwrap();
+        let mut items = service
+            .active_contributions(&repo, ContributionKind::Transformer)
+            .await
+            .unwrap();
+        let item = items
+            .iter_mut()
+            .find(|item| item.package_id == "infiniti.base64")
+            .unwrap();
+        assert!(item.declaration.icon.is_none());
+        assert!(item.declaration.icon_assets.is_none());
+        let (light, dark) = service.contribution_icons(item);
+        assert!(light
+            .as_deref()
+            .is_some_and(|value| value.starts_with("data:image/svg+xml;base64,")));
+        assert!(dark
+            .as_deref()
+            .is_some_and(|value| value.starts_with("data:image/svg+xml;base64,")));
+        item.declaration.icon = Some("code".into());
+        assert_eq!(service.contribution_icons(item), (None, None));
+    }
+
     #[tokio::test]
     #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE pointing to the local Rewrite archive"]
     async fn rewrite_saved_setup_rules_keep_accepted_capture_snapshots() {

@@ -443,7 +443,8 @@ export function ExtensionTools({
                       type="button"
                       aria-label={`${pinnedIds.includes(entry.icon.id) ? 'Unpin' : 'Pin'} ${entry.label}`}
                       onClick={() => onTogglePin(entry.icon)}
-                      className="rounded p-2 text-slate-500"
+                      aria-pressed={pinnedIds.includes(entry.icon.id)}
+                      className={`rounded p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 ${pinnedIds.includes(entry.icon.id) ? 'text-amber-500' : 'text-slate-500'}`}
                     >
                       <Pin className="h-3.5 w-3.5" />
                     </button>
@@ -518,6 +519,7 @@ export function ExtensionTools({
                     aria-label={`${pinnedIds.includes(pin.id) ? 'Unpin' : 'Pin'} ${label}`}
                     disabled={dirty}
                     title={dirty ? 'Save these choices before pinning them' : `Pin ${label}`}
+                    aria-pressed={pinnedIds.includes(pin.id)}
                     onClick={() => onTogglePin(pin)}
                     className={`rounded-lg p-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40 ${pinnedIds.includes(pin.id) ? 'text-amber-500' : 'text-slate-500'}`}
                   >

@@ -333,7 +333,19 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                         }}
                         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-violet-600 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-35 dark:text-violet-300"
                       >
-                        <ExtensionOperationIcon operation={operation} />
+                        <ExtensionOperationIcon
+                          operation={{
+                            ...operation,
+                            ...(action || transformer
+                              ? {
+                                  icon: (action ?? transformer)?.icon ?? null,
+                                  iconSvg: (action ?? transformer)?.iconSvg ?? null,
+                                  iconSvgDark: (action ?? transformer)?.iconSvgDark ?? null,
+                                  iconScale: (action ?? transformer)?.iconScale ?? 1,
+                                }
+                              : {}),
+                          }}
+                        />
                       </button>
                     )
                   })}
