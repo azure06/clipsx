@@ -1,8 +1,18 @@
 import { create } from 'zustand'
 type ViewType = 'clips' | 'extensions' | 'intelligence' | 'settings'
+export type ExtensionSettingsRequest = {
+  packageId: string
+  section: 'setups' | 'automation'
+  setupKind?: 'builtin' | 'saved'
+  setupRef?: string
+  transformerId?: string
+}
 
 interface UIState {
   activeView: ViewType
+  extensionSettingsRequest: ExtensionSettingsRequest | null
+  openExtensionSettings: (request: ExtensionSettingsRequest) => void
+  clearExtensionSettingsRequest: () => void
   searchQuery: string
   previewClipId: string | null
   isSemanticActive: boolean
@@ -17,6 +27,10 @@ interface UIState {
 
 export const useUIStore = create<UIState>(set => ({
   activeView: 'clips',
+  extensionSettingsRequest: null,
+  openExtensionSettings: extensionSettingsRequest =>
+    set({ activeView: 'extensions', extensionSettingsRequest }),
+  clearExtensionSettingsRequest: () => set({ extensionSettingsRequest: null }),
   searchQuery: '',
   previewClipId: null,
   isSemanticActive: true, // Default to ON when a model is available

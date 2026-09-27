@@ -96,6 +96,7 @@ pub enum ActionOutcome {
 pub struct ActiveContribution {
     pub extension_id: String,
     pub package_id: String,
+    pub package_label: String,
     pub sha256: String,
     pub local_id: String,
     pub id: String,
@@ -367,6 +368,42 @@ impl ExtensionService {
             .find(|entry| entry.package.package_id == package_id)
             .context("extension package was not found")?;
         let installed = entry.installed.clone();
+        let (activations, transformers, automation_permissions) = if installed.is_some() {
+            let (_, package) = self.package_for_settings(repo, package_id).await?;
+            let provider_available = package.manifest.permissions.providers.is_empty()
+                || crate::providers::generation::available(repo).await?;
+            let transformers = package
+                .manifest
+                .contributions
+                .iter()
+                .filter(|item| item.kind == ContributionKind::Transformer)
+                .map(|item| super::TransformerConfiguration {
+                    id: package.manifest.qualified_contribution_id(&item.id),
+                    local_id: item.id.clone(),
+                    label: item.display_name.clone(),
+                    parameter_schema: item.parameter_schema.clone(),
+                    parameter_ui: item.parameter_ui.clone(),
+                    setups: item.setups.clone(),
+                    default_view: item.default_view,
+                    provider_available,
+                })
+                .collect();
+            (
+                package.manifest.activations,
+                transformers,
+                package.manifest.permissions,
+            )
+        } else {
+            (Vec::new(), Vec::new(), Default::default())
+        };
+
+        let automation_consent_required = if automation_permissions.background_clip_created {
+            !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM extension_installs i JOIN extension_permission_grants g ON g.extension_id=i.id AND g.package_sha256=i.sha256 WHERE i.package_id=? AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+                .bind(package_id).fetch_one(&repo.pool).await?
+        } else {
+            false
+        };
+
         let (settings, credentials, actions, diagnostics) = if let Some(installed) = &installed {
             let mut diagnostics = Vec::new();
             if installed.status != RuntimeStatus::Ready {
@@ -394,6 +431,10 @@ impl ExtensionService {
             installed,
             package: Some(entry.package),
             actions,
+            activations,
+            transformers,
+            automation_permissions,
+            automation_consent_required,
             settings,
             credentials,
             update: entry.update,
@@ -755,7 +796,7 @@ impl ExtensionService {
         }
         if !enabled {
             self.invalidate_runtime_sessions();
-            sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+            sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
                 .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&repo.pool).await?;
             sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=(SELECT id FROM extension_installs WHERE package_id=?)")
                 .bind(package_id)
@@ -813,7 +854,7 @@ impl ExtensionService {
             .execute(&repo.pool)
             .await?;
         let mut transaction = repo.pool.begin().await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_uninstalled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_uninstalled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *transaction).await?;
         sqlx::query("DELETE FROM extension_package_state WHERE package_id=?")
             .bind(package_id)
@@ -901,6 +942,7 @@ impl ExtensionService {
                 })
             {
                 values.push(ActiveContribution {
+                    package_label: package.manifest.display_name.clone(),
                     extension_id: row.get(0),
                     package_id: package.manifest.package_id.clone(),
                     sha256: package.sha256.clone(),
@@ -1325,6 +1367,8 @@ impl ExtensionService {
                 icon_svg_dark,
                 icon_scale: item.declaration.icon_scale,
                 parameter_schema: item.declaration.parameter_schema,
+                parameter_ui: item.declaration.parameter_ui,
+                package_label: item.package_label,
                 input_limit_bytes: item.declaration.input_limit_bytes,
                 timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
                     125_000
@@ -1412,8 +1456,9 @@ impl ExtensionService {
                     .iter()
                     .find(|item| item.package_id == package_id && item.id == transformer_id)
                     .is_some_and(|item| {
-                        super::manifest::normalized_parameters(
+                        super::parameters::normalize(
                             &item.declaration.parameter_schema,
+                            &item.declaration.parameter_ui,
                             &parameters,
                         )
                         .is_ok()
@@ -1455,8 +1500,9 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == transformer_id)
             .context("extension transformer is unavailable")?;
-        let parameters = super::manifest::normalized_parameters(
+        let parameters = super::parameters::normalize(
             &transformer.declaration.parameter_schema,
+            &transformer.declaration.parameter_ui,
             &parameters,
         )?;
         let parameters_json = serde_json::to_string(&parameters)?;
@@ -1492,6 +1538,10 @@ impl ExtensionService {
                 .execute(&mut *tx).await?;
             (id, 1)
         };
+        sqlx::query("UPDATE extension_automation_rules SET parameters_json=?,setup_label=?,default_view=?,reason_code=NULL,revision=revision+1,updated_at=? WHERE package_id=? AND setup_kind='saved' AND setup_ref=?")
+            .bind(&parameters_json).bind(setup_display_label(&transformer.declaration.display_name,label.trim())).bind(default_view).bind(now).bind(&transformer.package_id).bind(&id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=configuration_revision+1,updated_at=excluded.updated_at")
+            .bind(&transformer.package_id).bind(now).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(super::SavedTransformSetup {
             id,
@@ -1506,10 +1556,24 @@ impl ExtensionService {
     }
 
     pub async fn delete_transform_setup(&self, repo: &HistoryRepository, id: &str) -> Result<()> {
+        let mut tx = repo.pool.begin().await?;
+        let package_id: Option<String> =
+            sqlx::query_scalar("SELECT package_id FROM extension_transform_setups WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        sqlx::query("UPDATE extension_automation_rules SET enabled=0,reason_code='setup_deleted',revision=revision+1,updated_at=? WHERE setup_kind='saved' AND setup_ref=?")
+            .bind(now_ms()).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',claim_generation=claim_generation+1,completed_at=?,updated_at=? WHERE EXISTS(SELECT 1 FROM extension_automation_rules r WHERE r.package_id=extension_jobs.package_id AND r.rule_id=extension_jobs.automation_rule_id AND r.setup_kind='saved' AND r.setup_ref=?) AND status IN ('pending','running','waiting_provider','waiting_write_review')")
+            .bind(now_ms()).bind(now_ms()).bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM extension_transform_setups WHERE id=?")
             .bind(id)
-            .execute(&repo.pool)
+            .execute(&mut *tx)
             .await?;
+        if let Some(package_id) = package_id {
+            sqlx::query("UPDATE extension_package_revisions SET configuration_revision=configuration_revision+1,updated_at=? WHERE package_id=?").bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -3277,10 +3341,37 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_updated',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_updated',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
             .bind(now).bind(now).bind(&package.manifest.package_id).execute(&mut *transaction).await?;
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&package.manifest.package_id).bind(now).execute(&mut *transaction).await?;
+        // Reconcile references against the new declaration without changing accepted captures.
+        let rules = sqlx::query("SELECT rule_id,activation_id,setup_kind,setup_ref FROM extension_automation_rules WHERE package_id=?")
+            .bind(&package.manifest.package_id).fetch_all(&mut *transaction).await?;
+        for row in rules {
+            let rule_id: String = row.get(0);
+            let activation_id: String = row.get(1);
+            let setup_kind: String = row.get(2);
+            let setup_ref: String = row.get(3);
+            match resolve_setup_reference(
+                &mut transaction,
+                &package.manifest,
+                &activation_id,
+                &setup_kind,
+                &setup_ref,
+            )
+            .await
+            {
+                Ok((parameters, label, view)) => {
+                    sqlx::query("UPDATE extension_automation_rules SET parameters_json=?,setup_label=?,default_view=?,reason_code=NULL,revision=revision+1,updated_at=? WHERE package_id=? AND rule_id=?")
+                        .bind(serde_json::to_string(&parameters)?).bind(label).bind(view).bind(now).bind(&package.manifest.package_id).bind(&rule_id).execute(&mut *transaction).await?;
+                }
+                Err(_) => {
+                    sqlx::query("UPDATE extension_automation_rules SET enabled=0,reason_code='setup_unavailable',revision=revision+1,updated_at=? WHERE package_id=? AND rule_id=?")
+                        .bind(now).bind(&package.manifest.package_id).bind(&rule_id).execute(&mut *transaction).await?;
+                }
+            }
+        }
         if let Some(entry) = registry_entry {
             sqlx::query("INSERT INTO extension_registry_snapshots(package_id,version,metadata_json,recorded_at) VALUES(?,?,?,?) ON CONFLICT(package_id) DO UPDATE SET version=excluded.version,metadata_json=excluded.metadata_json,recorded_at=excluded.recorded_at")
                 .bind(&package.manifest.package_id)
@@ -3471,8 +3562,9 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == request.transformer_id)
             .context("extension transformer is not installed and enabled")?;
-        request.parameters = super::manifest::normalized_parameters(
+        request.parameters = super::parameters::normalize(
             &contribution.declaration.parameter_schema,
+            &contribution.declaration.parameter_ui,
             &request.parameters,
         )?;
         request.result_controls = contribution.declaration.result_controls.clone();
@@ -3511,7 +3603,7 @@ impl ExtensionService {
                         .all(|(key, value)| request.parameters.get(key) == Some(value))
                 })
             });
-            if !request.regenerate || request.display_label.is_none() {
+            if (!request.regenerate && !background) || request.display_label.is_none() {
                 request.display_label = matching_setup
                     .map(|setup| {
                         format!(
@@ -3800,7 +3892,7 @@ impl ExtensionService {
         .fetch_optional(&repo.pool)
         .await?
         .unwrap_or(0);
-        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision FROM extension_automation_rules WHERE package_id=? ORDER BY lower(app_display_name),rule_id")
+        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,setup_kind,setup_ref,setup_label,default_view,reason_code FROM extension_automation_rules WHERE package_id=? ORDER BY lower(app_display_name),rule_id")
             .bind(package_id).fetch_all(&repo.pool).await?;
         let rules = rows
             .into_iter()
@@ -3816,6 +3908,11 @@ impl ExtensionService {
                     enabled: row.get::<i64, _>(5) != 0,
                     parameters: serde_json::from_str(&row.get::<String, _>(6))?,
                     revision: row.get(7),
+                    setup_kind: row.get(8),
+                    setup_ref: row.get(9),
+                    setup_label: row.get(10),
+                    default_view: row.get(11),
+                    reason_code: row.get(12),
                 })
             })
             .collect::<Result<_>>()?;
@@ -3827,7 +3924,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
         package_id: &str,
         expected_revision: i64,
-        rules: Vec<super::ApplicationRule>,
+        mut rules: Vec<super::ApplicationRule>,
     ) -> Result<i64> {
         if rules.len() > 64 {
             bail!("extension automation rules exceed 64 entries");
@@ -3844,28 +3941,16 @@ impl ExtensionService {
             .load(Path::new(&package_row.get::<String, _>(1)))?;
         if !package.manifest.permissions.background_clip_created
             || !package.manifest.permissions.selected_input
-            || !package.manifest.permissions.source_application
         {
-            bail!(
-                "automation requires declared background input and source application permissions"
-            );
+            bail!("automation requires declared background and selected input permissions");
         }
         let mut unique = std::collections::BTreeSet::new();
+        let mut rule_ids = std::collections::BTreeSet::new();
         for rule in &rules {
+            if !rule_ids.insert(&rule.id) {
+                bail!("automation rule IDs must be unique");
+            }
             valid_rule_application(&rule.application)?;
-            let activation = package
-                .manifest
-                .activations
-                .iter()
-                .find(|item| item.id == rule.activation_id)
-                .context("automation rule references an unknown activation")?;
-            let transformer = package
-                .manifest
-                .contributions
-                .iter()
-                .find(|item| item.id == activation.transformer_id)
-                .context("automation activation transformer is unavailable")?;
-            super::manifest::validate_parameters(&transformer.parameter_schema, &rule.parameters)?;
             if !unique.insert((
                 &rule.activation_id,
                 &rule.application.platform,
@@ -3885,6 +3970,41 @@ impl ExtensionService {
         if current != expected_revision {
             bail!("extension automation settings changed; reload and try again");
         }
+        for rule in &mut rules {
+            if rule.id.is_empty() || rule.id.len() > 120 {
+                bail!("automation rule ID is invalid");
+            }
+            match resolve_rule_setup(&mut tx, &package.manifest, rule).await {
+                Ok((parameters, label, view)) => {
+                    rule.parameters = parameters;
+                    rule.setup_label = label;
+                    rule.default_view = view;
+                    rule.reason_code = None;
+                }
+                Err(error) if rule.enabled => return Err(error),
+                Err(_) => {
+                    let old=sqlx::query("SELECT parameters_json,setup_label,default_view,reason_code FROM extension_automation_rules WHERE package_id=? AND rule_id=?")
+                        .bind(package_id).bind(&rule.id).fetch_optional(&mut *tx).await?;
+                    rule.parameters = old
+                        .as_ref()
+                        .map(|row| serde_json::from_str(&row.get::<String, _>(0)))
+                        .transpose()?
+                        .unwrap_or(serde_json::json!({}));
+                    rule.setup_label = old
+                        .as_ref()
+                        .map(|row| row.get(1))
+                        .unwrap_or_else(|| "Unavailable setup".into());
+                    rule.default_view = old
+                        .as_ref()
+                        .map(|row| row.get(2))
+                        .unwrap_or_else(|| "result_only".into());
+                    rule.reason_code = old
+                        .as_ref()
+                        .and_then(|row| row.get::<Option<String>, _>(3))
+                        .or_else(|| Some("setup_unavailable".into()));
+                }
+            }
+        }
         let next = current + 1;
         sqlx::query("DELETE FROM extension_automation_rules WHERE package_id=?")
             .bind(package_id)
@@ -3892,17 +4012,41 @@ impl ExtensionService {
             .await?;
         let has_enabled_rules = rules.iter().any(|rule| rule.enabled);
         for rule in rules {
-            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.platform).bind(rule.application.id).bind(rule.application.display_name).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(next).bind(now_ms()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,setup_kind,setup_ref,setup_label,default_view,reason_code,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.platform).bind(rule.application.id).bind(rule.application.display_name).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).execute(&mut *tx).await?;
         }
         if has_enabled_rules {
-            for (kind, value) in [
-                ("background_clip_created", "clip.created"),
-                ("source_application", "normalized"),
-            ] {
+            for (kind, value) in [("background_clip_created", "clip.created")] {
                 sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                     .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2))
                     .bind(kind).bind(value).bind(now_ms()).execute(&mut *tx).await?;
+            }
+            let mut grants = Vec::new();
+            if package.manifest.permissions.source_application {
+                grants.push(("source_application", "normalized".to_string()));
+            }
+            if package.manifest.permissions.package_state {
+                grants.push(("package_state", "declared".into()));
+            }
+            grants.extend(
+                package
+                    .manifest
+                    .permissions
+                    .http
+                    .iter()
+                    .map(|permission| ("http", permission.origin.clone())),
+            );
+            grants.extend(
+                package
+                    .manifest
+                    .permissions
+                    .external_writes
+                    .iter()
+                    .map(|permission| ("external_write", permission.origin.clone())),
+            );
+            for (kind, value) in grants {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2)).bind(kind).bind(value).bind(now_ms()).execute(&mut *tx).await?;
             }
             for provider in &package.manifest.permissions.providers {
                 sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
@@ -3912,7 +4056,7 @@ impl ExtensionService {
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,updated_at=excluded.updated_at")
             .bind(package_id).bind(next).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(next)
@@ -3923,7 +4067,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
         clip_id: &str,
     ) -> Result<usize> {
-        let events = sqlx::query("SELECT event_id,package_id,activation_id,source_clip_id,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,is_new_clip FROM extension_activation_events WHERE status='pending' AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
+        let events = sqlx::query("SELECT event_id,package_id,activation_id,source_clip_id,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,is_new_clip,setup_label,default_view FROM extension_activation_events WHERE status='pending' AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
             .bind(clip_id).bind(clip_id).fetch_all(&repo.pool).await?;
         let processed = events.len();
         for event in events {
@@ -3939,15 +4083,14 @@ impl ExtensionService {
                     .unwrap_or_else(|| "Application".into()),
             };
             let checksum: String = event.get(7);
-            let configuration_revision: i64 = event.get(8);
+            let _configuration_revision: i64 = event.get(8);
             let grant_revision: i64 = event.get(9);
             let rule_id: String = event.get(10);
             let parameters_json: String = event.get(11);
             let is_new_clip = event.get::<i64, _>(12) != 0;
-            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND r.app_platform=? AND r.app_id=? AND r.parameters_json=? AND COALESCE(p.configuration_revision,0)=? AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND r.app_platform=? AND r.app_id=? AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
                 .bind(&package_id).bind(&checksum).bind(&rule_id).bind(&activation_id)
-                .bind(&application.platform).bind(&application.id).bind(&parameters_json)
-                .bind(configuration_revision).bind(grant_revision)
+                .bind(&application.platform).bind(&application.id).bind(grant_revision)
                 .fetch_optional(&repo.pool).await?;
             let mut reason = "ineligible";
             if let Some(active) = active {
@@ -4085,8 +4228,8 @@ impl ExtensionService {
                                             settings_snapshot_revision: None,
                                             inventory_json: String::new(),
                                             setup_id: None,
-                                            display_label: None,
-                                            default_view: None,
+                                            display_label: Some(event.get(13)),
+                                            default_view: Some(event.get(14)),
                                             result_controls: Vec::new(),
                                         };
                                         if self
@@ -4113,6 +4256,95 @@ impl ExtensionService {
         }
         Ok(processed)
     }
+}
+
+fn setup_display_label(operation: &str, setup: &str) -> String {
+    let label = format!("{operation} \u{b7} {setup}");
+    let mut end = label.len().min(120);
+    while !label.is_char_boundary(end) {
+        end -= 1;
+    }
+    label[..end].to_owned()
+}
+
+async fn resolve_rule_setup(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    manifest: &super::ExtensionManifest,
+    rule: &super::ApplicationRule,
+) -> Result<(serde_json::Value, String, String)> {
+    resolve_setup_reference(
+        tx,
+        manifest,
+        &rule.activation_id,
+        &rule.setup_kind,
+        &rule.setup_ref,
+    )
+    .await
+}
+
+async fn resolve_setup_reference(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    manifest: &super::ExtensionManifest,
+    activation_id: &str,
+    setup_kind: &str,
+    setup_ref: &str,
+) -> Result<(serde_json::Value, String, String)> {
+    if setup_ref.is_empty() || setup_ref.len() > 120 {
+        bail!("automation setup reference is invalid");
+    }
+    let activation = manifest
+        .activations
+        .iter()
+        .find(|item| item.id == activation_id)
+        .context("automation rule references an unknown activation")?;
+    let transformer = manifest
+        .contributions
+        .iter()
+        .find(|item| item.id == activation.transformer_id)
+        .context("automation operation is unavailable")?;
+    let (parameters, label, view) = match setup_kind {
+        "builtin" => {
+            let setup = transformer
+                .setups
+                .iter()
+                .find(|item| item.id == setup_ref)
+                .context("built-in setup is unavailable")?;
+            (
+                setup.parameters.clone(),
+                setup.display_name.clone(),
+                setup.default_view.unwrap_or(transformer.default_view),
+            )
+        }
+        "saved" => {
+            let row = sqlx::query("SELECT parameters_json,label,default_view FROM extension_transform_setups WHERE id=? AND package_id=? AND transformer_id=?")
+                .bind(setup_ref).bind(&manifest.package_id).bind(manifest.qualified_contribution_id(&transformer.id)).fetch_optional(&mut **tx).await?.context("saved setup is unavailable; choose another setup")?;
+            (
+                serde_json::from_str(&row.get::<String, _>(0))?,
+                row.get(1),
+                if row.get::<String, _>(2) == "compare" {
+                    super::ResultView::Compare
+                } else {
+                    super::ResultView::ResultOnly
+                },
+            )
+        }
+        _ => bail!("automation setup kind is invalid"),
+    };
+    let parameters = super::parameters::normalize(
+        &transformer.parameter_schema,
+        &transformer.parameter_ui,
+        &parameters,
+    )
+    .context("complete this setup and save it before using automation")?;
+    Ok((
+        parameters,
+        setup_display_label(&transformer.display_name, &label),
+        match view {
+            super::ResultView::Compare => "compare",
+            super::ResultView::ResultOnly => "result_only",
+        }
+        .into(),
+    ))
 }
 
 fn valid_rule_application(application: &super::SourceApplication) -> Result<()> {
@@ -4834,6 +5066,172 @@ fn append_bounded_chunk(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE pointing to the local Rewrite archive"]
+    async fn rewrite_saved_setup_rules_keep_accepted_capture_snapshots() {
+        let archive = std::env::var("CLIPSX_TEST_EXTENSION_ARCHIVE").unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots).unwrap();
+        service.set_developer_mode(&repo, true).await.unwrap();
+        service
+            .install_local(&repo, Path::new(&archive))
+            .await
+            .unwrap();
+        let setup = service
+            .save_transform_setup(
+                &repo,
+                None,
+                None,
+                "infiniti.rewrite/rewrite",
+                "Technical",
+                serde_json::json!({"preset":"custom", "custom_instruction":"Be concise"}),
+                "compare",
+            )
+            .await
+            .unwrap();
+        let (revision, _) = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap();
+        let rule = super::super::ApplicationRule {
+            id: "outlook-rule".into(),
+            activation_id: "on-copy".into(),
+            application: super::super::SourceApplication {
+                platform: "windows".into(),
+                id: "exe:outlook.exe".into(),
+                display_name: "Outlook".into(),
+            },
+            enabled: true,
+            setup_kind: "saved".into(),
+            setup_ref: setup.id.clone(),
+            setup_label: String::new(),
+            default_view: "result_only".into(),
+            reason_code: None,
+            parameters: serde_json::json!({"forged":"ignored"}),
+            revision: 0,
+        };
+        service
+            .set_automation_rules(&repo, "infiniti.rewrite", revision, vec![rule])
+            .await
+            .unwrap();
+        let capture = || crate::history::CapturedSnapshot {
+            token: 1,
+            source_app_name: Some("Outlook".into()),
+            source_app_id: Some("exe:outlook.exe".into()),
+            format_observations: vec![],
+            representations: vec![CapturedRepresentation {
+                format_key: "mime:text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("Please review this change".into()),
+            }],
+        };
+        let (clip, _) = repo
+            .capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        service
+            .save_transform_setup(
+                &repo,
+                Some(&setup.id),
+                Some(setup.revision),
+                "infiniti.rewrite/rewrite",
+                "Technical v2",
+                serde_json::json!({"preset":"custom", "custom_instruction":"Be detailed"}),
+                "result_only",
+            )
+            .await
+            .unwrap();
+        assert!(service
+            .save_transform_setup(
+                &repo,
+                Some(&setup.id),
+                Some(setup.revision),
+                "infiniti.rewrite/rewrite",
+                "Stale",
+                serde_json::json!({"preset":"business"}),
+                "result_only"
+            )
+            .await
+            .is_err());
+        repo.capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        let snapshots = sqlx::query("SELECT parameters_json,setup_label,default_view,is_new_clip FROM extension_activation_events ORDER BY created_at,rowid").fetch_all(&repo.pool).await.unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert!(snapshots[0].get::<String, _>(0).contains("Be concise"));
+        assert_eq!(snapshots[0].get::<String, _>(1), "Rewrite · Technical");
+        assert_eq!(snapshots[0].get::<String, _>(2), "compare");
+        assert_eq!(snapshots[1].get::<i64, _>(3), 0);
+        assert!(snapshots[1].get::<String, _>(0).contains("Be detailed"));
+        service
+            .enqueue_capture_automations(&repo, &clip)
+            .await
+            .unwrap();
+        let jobs = super::super::jobs::list(&repo, &clip).await.unwrap();
+        assert_eq!(
+            jobs.len(),
+            2,
+            "editing the setup must not fence out an already accepted capture"
+        );
+        let old = jobs
+            .iter()
+            .find(|job| job.display_label == "Rewrite · Technical")
+            .unwrap();
+        assert_eq!(old.parameters["custom_instruction"], "Be concise");
+        sqlx::query("UPDATE extension_jobs SET status='completed' WHERE id=?")
+            .bind(&old.job_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        service
+            .delete_transform_setup(&repo, &setup.id)
+            .await
+            .unwrap();
+        let (_, rules) = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap();
+        assert!(!rules[0].enabled);
+        assert_eq!(rules[0].reason_code.as_deref(), Some("setup_deleted"));
+        let retained = super::super::jobs::list(&repo, &clip).await.unwrap();
+        assert!(retained
+            .iter()
+            .any(|job| job.job_id == old.job_id && job.status == "completed"));
+        assert!(retained.iter().any(|job| job.status == "cancelled"));
+        repo.capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM extension_activation_events")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(event_count, 2);
+        let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .automation_rules(&reopened, "infiniti.rewrite")
+                .await
+                .unwrap()
+                .1[0]
+                .setup_ref,
+            setup.id
+        );
+    }
+
     #[test]
     fn format_inventory_excludes_content_and_host_identifiers() {
         let representation: crate::history::RepresentationDetail = serde_json::from_value(serde_json::json!({
@@ -5026,6 +5424,7 @@ mod tests {
             ui_entry: None,
             effects: vec![],
             handler: None,
+            parameter_ui: vec![],
             parameter_schema: json!({}),
             input_limit_bytes: 1024 * 1024,
             setups: vec![],

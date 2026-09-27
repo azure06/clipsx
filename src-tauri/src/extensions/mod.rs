@@ -6,6 +6,8 @@ mod flow;
 pub(crate) mod jobs;
 mod manifest;
 mod packages;
+mod parameters;
+pub use parameters::ParameterField;
 mod runtime;
 mod service;
 
@@ -110,6 +112,10 @@ pub struct ExtensionPackageDetail {
     pub installed: Option<ExtensionSummary>,
     pub package: Option<RegistryPackage>,
     pub actions: Vec<ContextActionDescriptor>,
+    pub activations: Vec<ExtensionActivation>,
+    pub transformers: Vec<TransformerConfiguration>,
+    pub automation_permissions: manifest::ExtensionPermissions,
+    pub automation_consent_required: bool,
     pub settings: serde_json::Value,
     pub credentials: Vec<CredentialStatus>,
     pub update: Option<RegistryPackage>,
@@ -118,4 +124,17 @@ pub struct ExtensionPackageDetail {
     pub grants_revoked_on_update: bool,
     pub diagnostics: Vec<String>,
     pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransformerConfiguration {
+    pub id: String,
+    pub local_id: String,
+    pub label: String,
+    pub parameter_schema: serde_json::Value,
+    pub parameter_ui: Vec<ParameterField>,
+    pub setups: Vec<TransformerSetup>,
+    pub default_view: ResultView,
+    pub provider_available: bool,
 }

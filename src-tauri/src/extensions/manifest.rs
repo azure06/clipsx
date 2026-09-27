@@ -228,6 +228,8 @@ pub struct ManifestContribution {
     pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+    #[serde(default)]
+    pub parameter_ui: Vec<super::ParameterField>,
     /// Maximum representation bytes the host may copy into this contribution.
     /// Packages that intentionally process larger local assets opt in here.
     #[serde(default = "default_extension_input_bytes")]
@@ -516,6 +518,7 @@ impl ExtensionManifest {
     }
 
     fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
+        super::parameters::validate_ui(&contribution.parameter_schema, &contribution.parameter_ui)?;
         if contribution.kind == ContributionKind::Transformer {
             if contribution.setups.len() > 32 || contribution.result_controls.len() > 4 {
                 bail!("transformer setup or result control limit exceeded");
@@ -931,14 +934,6 @@ pub fn validate_parameters(schema: &Value, parameters: &Value) -> Result<()> {
     validate_schema_value(schema, parameters)
 }
 
-pub fn normalized_parameters(schema: &Value, parameters: &Value) -> Result<Value> {
-    validate_parameter_schema(schema)?;
-    let mut normalized = parameters.clone();
-    apply_schema_defaults(schema, &mut normalized);
-    validate_parameters(schema, &normalized)?;
-    Ok(normalized)
-}
-
 pub fn validate_setting_value(setting: &ExtensionSetting, value: &Value) -> Result<()> {
     if serde_json::to_vec(value)?.len() > 16 * 1024 {
         bail!("extension setting exceeds 16 KiB");
@@ -963,7 +958,7 @@ pub fn validate_state_value(schema: &Value, value: &Value) -> Result<()> {
     validate_schema_value(schema, value)
 }
 
-fn apply_schema_defaults(schema: &Value, value: &mut Value) {
+pub(crate) fn apply_schema_defaults(schema: &Value, value: &mut Value) {
     if let (Some(properties), Some(values)) = (
         schema.get("properties").and_then(Value::as_object),
         value.as_object_mut(),
@@ -1320,6 +1315,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: empty_object(),
+            parameter_ui: Vec::new(),
             input_limit_bytes: 1024 * 1024,
             setups: vec![],
             default_view: ResultView::ResultOnly,

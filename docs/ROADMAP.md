@@ -25,7 +25,7 @@ disablement and uninstall. Verify saved setups, built-in presets, multiple typed
 outputs, Compare resizing, result controls, and the single Tools entry point.
 Publish reviewed immutable v3.2 package archives and signed registry metadata
 only after these tests pass. The host requires an explicit reset to database
-version 13 and shows only current-contract releases in Discover.
+version 14 and shows only current-contract releases in Discover.
 
 ### Local review before publication
 

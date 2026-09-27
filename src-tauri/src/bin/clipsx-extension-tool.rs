@@ -15,6 +15,10 @@ const API_VERSION: &str = "3.2.0";
 #[allow(dead_code)]
 #[path = "../extensions/manifest.rs"]
 mod manifest;
+#[allow(dead_code)]
+#[path = "../extensions/parameters.rs"]
+mod parameters;
+use parameters::ParameterField;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();

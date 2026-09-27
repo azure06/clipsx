@@ -61,6 +61,11 @@ CREATE TABLE extension_automation_rules (
     app_id TEXT NOT NULL CHECK (length(app_id) BETWEEN 1 AND 256),
     app_display_name TEXT NOT NULL CHECK (length(app_display_name) BETWEEN 1 AND 256),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    setup_kind TEXT NOT NULL DEFAULT 'builtin' CHECK (setup_kind IN ('builtin', 'saved')),
+    setup_ref TEXT NOT NULL DEFAULT 'default' CHECK (length(setup_ref) BETWEEN 1 AND 120),
+    setup_label TEXT NOT NULL DEFAULT '' CHECK (length(setup_label) <= 120),
+    default_view TEXT NOT NULL DEFAULT 'result_only' CHECK (default_view IN ('result_only', 'compare')),
+    reason_code TEXT,
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
     revision INTEGER NOT NULL CHECK (revision >= 0),
     updated_at INTEGER NOT NULL,
@@ -107,6 +112,8 @@ CREATE TABLE extension_activation_events (
     configuration_revision INTEGER NOT NULL CHECK (configuration_revision >= 0),
     grant_revision INTEGER NOT NULL CHECK (grant_revision >= 0),
     rule_id TEXT NOT NULL,
+    setup_label TEXT NOT NULL DEFAULT '',
+    default_view TEXT NOT NULL DEFAULT 'result_only',
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
     status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'skipped', 'failed')),
     reason_code TEXT,
@@ -160,7 +167,7 @@ CREATE TABLE extension_jobs (
 );
 
 CREATE UNIQUE INDEX extension_jobs_active_dedupe ON extension_jobs(dedupe_key)
-    WHERE regeneration_nonce IS NULL AND status IN ('pending', 'running', 'waiting_provider', 'completed');
+    WHERE regeneration_nonce IS NULL AND status IN ('pending', 'running', 'waiting_provider', 'waiting_write_review', 'completed');
 CREATE UNIQUE INDEX extension_jobs_request_id ON extension_jobs(request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX extension_jobs_queue ON extension_jobs(status, priority, retry_at, requested_at, id);
 CREATE INDEX extension_jobs_source ON extension_jobs(source_clip_id, package_id, created_at DESC);

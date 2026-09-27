@@ -90,7 +90,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v3`, version 13. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 14. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion
@@ -455,3 +455,16 @@ The main webview has no generic filesystem asset protocol or inline scripts.
 Managed binaries use opaque database IDs. Core file-list image preview checks
 clip membership, bounds reads to 4 MiB, sniffs an allowed raster, and returns a
 data URL. Extensions cannot invoke this or generic local-path activation.
+
+### Extension configuration ownership
+
+Tools groups operations by package and offers built-in/saved setups inside the
+preview-card workspace. One host parameter form serves manual runs and setup
+editing. The bounded `parameterUi` declaration selects labels, controls and
+primitive equality visibility; Rust validates the same rules independently.
+
+Extension settings own General, Saved setups and Automation. Automation rules
+reference setups and cache resolved parameters, labels and views for the capture
+transaction. Saved edits refresh rule snapshots atomically; accepted intents
+and jobs remain immutable. Deleted/incompatible setups disable rules. Pins,
+setups and rules stay local. Durable output storage and WIT execution are unchanged.

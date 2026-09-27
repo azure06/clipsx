@@ -1,3 +1,4 @@
+import type { TransformerConfiguration } from '../../extensions/parameters'
 export type UpdateMode = 'inherit' | 'enabled' | 'disabled'
 
 export type ExtensionSummary = {
@@ -88,6 +89,21 @@ export type PackageDetail = {
   installed: ExtensionSummary | null
   package: RegistryPackage | null
   actions: ExtensionAction[]
+  activations: Array<{
+    id: string
+    event: 'clip_created'
+    transformerId: string
+    matchers?: Array<{ mimeTypes?: string[] }>
+  }>
+  transformers: TransformerConfiguration[]
+  automationConsentRequired: boolean
+  automationPermissions: {
+    sourceApplication: boolean
+    providers: string[]
+    packageState: boolean
+    http: Array<{ origin: string }>
+    externalWrites: Array<{ origin: string }>
+  }
   settings: Record<string, unknown>
   credentials: Array<{ id: string; label: string; configured: boolean }>
   update: RegistryPackage | null

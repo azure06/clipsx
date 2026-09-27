@@ -32,7 +32,7 @@ Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
 Release notes must explain incompatible-schema resets; packaging is not a reason
 to add compatibility reads.
 
-Extension API v3.2 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The fresh database baseline is version 13 and requires an explicit reset. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
+Extension API v3.2 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The fresh database baseline is version 14 and requires an explicit reset. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
 
 ## Build and publication
 

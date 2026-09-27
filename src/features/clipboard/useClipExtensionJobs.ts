@@ -11,13 +11,33 @@ export type ExtensionJob = {
   transformerVersion: string
   displayLabel: string
   defaultView: 'result_only' | 'compare'
-  status: 'pending' | 'running' | 'waiting_provider' | 'waiting_write_review' | 'completed' | 'failed' | 'cancelled'
+  status:
+    | 'pending'
+    | 'running'
+    | 'waiting_provider'
+    | 'waiting_write_review'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
   reasonCode: string | null
   parameters: Record<string, unknown>
   resultControls: Array<'copy' | 'paste' | 'save_as_clip' | 'regenerate'>
-  view: { tabs: Array<{ id: string; label: string; layout: 'single' | 'split' | 'stack'; panels: Array<{ source: 'input' } | { source: 'output'; outputId: string }> }> } | null
+  view: {
+    tabs: Array<{
+      id: string
+      label: string
+      layout: 'single' | 'split' | 'stack'
+      panels: Array<{ source: 'input' } | { source: 'output'; outputId: string }>
+    }>
+  } | null
   completedWrites: number
-  outputs: Array<{ ordinal: number; outputId: string; mimeType: string; byteLength: number; hasRenderedView: boolean }>
+  outputs: Array<{
+    ordinal: number
+    outputId: string
+    mimeType: string
+    byteLength: number
+    hasRenderedView: boolean
+  }>
 }
 
 export function useClipExtensionJobs(clipId: string) {
@@ -39,6 +59,10 @@ export function useClipExtensionJobs(clipId: string) {
 
   useEffect(() => {
     void refresh()
+    const configurationChanged = () => {
+      void refresh()
+    }
+    window.addEventListener('clipsx-extension-permissions-changed', configurationChanged)
     let disposed = false
     let unlisten: (() => void) | undefined
     void listen<{ clipId: string }>('extension-job-updated', event => {
@@ -48,6 +72,7 @@ export function useClipExtensionJobs(clipId: string) {
       else unlisten = stop
     })
     return () => {
+      window.removeEventListener('clipsx-extension-permissions-changed', configurationChanged)
       disposed = true
       sequence.current += 1
       unlisten?.()

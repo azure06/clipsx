@@ -25,7 +25,16 @@ pub struct ApplicationRule {
     pub activation_id: String,
     pub application: SourceApplication,
     pub enabled: bool,
+    #[serde(default, skip_deserializing)]
     pub parameters: serde_json::Value,
+    pub setup_kind: String,
+    pub setup_ref: String,
+    #[serde(default, skip_deserializing)]
+    pub setup_label: String,
+    #[serde(default, skip_deserializing)]
+    pub default_view: String,
+    #[serde(default, skip_deserializing)]
+    pub reason_code: Option<String>,
     pub revision: i64,
 }
 
@@ -296,16 +305,16 @@ pub(crate) async fn enqueue(
         }
     }
     if !request.regenerate {
-        if let Some(id) = sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE dedupe_key=? AND regeneration_nonce IS NULL AND status IN ('pending','running','waiting_provider','completed') ORDER BY created_at DESC LIMIT 1")
+        if let Some(id) = sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE dedupe_key=? AND regeneration_nonce IS NULL AND status IN ('pending','running','waiting_provider','waiting_write_review','completed') ORDER BY created_at DESC LIMIT 1")
             .bind(&dedupe).fetch_optional(&repo.pool).await? {
             return Ok(ExtensionJobResult { job_id: id, reused: true });
         }
     }
-    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider')").fetch_one(&repo.pool).await?;
+    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await?;
     if outstanding >= 1000 {
         bail!("extension job queue is full");
     }
-    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider')").bind(package_id).fetch_one(&repo.pool).await?;
+    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')").bind(package_id).fetch_one(&repo.pool).await?;
     if package_outstanding >= 100 {
         bail!("extension package job queue is full");
     }
@@ -704,7 +713,7 @@ pub(crate) async fn list(
 }
 
 pub(crate) async fn cancel(repo: &HistoryRepository, job_id: &str) -> Result<()> {
-    sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='user_cancelled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE id=? AND status IN ('pending','running','waiting_provider')")
+    sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='user_cancelled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
         .bind(now_ms()).bind(now_ms()).bind(job_id).execute(&repo.pool).await?;
     Ok(())
 }
@@ -961,6 +970,25 @@ mod tests {
         .unwrap();
         assert_eq!(first.job_id, second.job_id);
         assert!(second.reused);
+        sqlx::query("UPDATE extension_jobs SET status='waiting_write_review' WHERE id=?")
+            .bind(&first.job_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        let paused = enqueue(
+            &repo,
+            request("paused-equivalent"),
+            "example.rewrite",
+            &checksum,
+            "1.0.0",
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(paused.job_id, first.job_id);
+        assert!(paused.reused);
+        let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(outstanding, 1);
         let retained = list(&repo, &clip_id).await.unwrap();
         assert!(retained[0].view.is_none());
         sqlx::query("UPDATE extension_jobs SET status='running',claim_generation=1 WHERE id=?")

@@ -4,7 +4,7 @@ ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
 `schemaVersion = 3`, `contractRevision = 3`, `apiVersion = "^3.2"`, and
 `clipsx:extension@3.2.0`. The host rejects other contract revisions. A fresh
-local database at schema version 13 is required; ClipsX asks for an explicit
+local database at schema version 14 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
 ## One transformer path
@@ -84,17 +84,66 @@ transform action may open a declared HTTPS destination, notify, or open a
 declared dialog. Transformer preset actions, action output dispositions,
 `resultLifetime`, and `exposeInMenu` are not part of v3.2.
 
+## Parameter presentation and Tools
+
+Tools opens inside the preview card and groups operations by package. A package
+appears once; its operations and built-in/user setups are selected inside its
+workspace. Pins refer to a specific action or setup, remain device-local, and
+are removed when the package or saved setup disappears. Disabling a package
+does not erase its pin preferences.
+
+Transformers may declare `parameterUi` entries in form order. Each entry has a
+`field`, `label`, optional `description`, compatible `control` (`text`,
+`textarea`, `select`, `checkbox`, `number`), optional `when = { field, equals }`,
+and `required` while visible. References must be declared schema properties;
+conditions compare a primitive value, cannot refer to the same field or form a
+conditional chain, and cannot hide a globally required property. At most 32
+entries and 16 KiB of metadata are accepted; labels are limited to 80 UTF-8
+bytes and help text to 256. Metadata controls presentation, never capabilities.
+Undescribed fields use host controls and readable labels.
+
+```toml
+[[contributions.parameterUi]]
+field = "custom_instruction"
+label = "Custom instruction"
+control = "textarea"
+when = { field = "preset", equals = "custom" }
+required = true
+```
+
+Tools and saved-setup editing use the same form. Changing a controlling field
+removes inactive values; Rust independently applies the same visibility and
+required rules before saving or enqueueing. A built-in setup is immutable;
+saving edited values creates a user setup. Saved edits require the expected
+revision. A setup with missing required values must be completed and saved
+before automation can select it.
+
 ## Capture automation
 
 An activation targets one transformer and declares representation matchers
 for `clip_created`. A device-local, user-enabled application rule selects an
-exact platform/application ID and parameters. The manifest filter and rule
+exact platform/application ID and a built-in or saved setup. The host resolves
+and validates its parameters; rules do not expose a second parameter editor. The manifest filter and rule
 intersect. Every accepted external capture occurrence is considered, including
 a repeated copy of an existing clip. The host commits an activation intent
 with the capture, then a coordinator evaluates eligibility and runs the same
 transformer executor used by Tools. No guest or model work blocks capture.
 Equivalent jobs reuse an outstanding or completed result; explicit Regenerate
 creates another run.
+
+Extension settings are the canonical automation editor. Tools' Manage automation
+opens it with the selected setup; unsaved choices must be saved first. Rules
+store `setupKind`, `setupRef`, and host-maintained parameter/label/view snapshots.
+Editing a saved setup updates referencing rules and revisions in the same
+transaction. Accepted capture intents and existing jobs keep their snapshots;
+setup edits do not invalidate them. Deleting a setup disables its rules with
+`setup_deleted`; incompatible package declarations leave rules inactive with
+`setup_unavailable`. Live revocation, rule disablement and source deletion still
+cancel unfinished work. Completed results remain readable.
+
+Jobs waiting for external-write review count toward outstanding quotas and
+participate in deduplication. An equivalent automatic capture cannot bypass the
+pause by creating another job.
 
 Source application IDs are normalized platform-specific keys, not publisher
 proof and not the paste destination. Missing identity does not stop capture

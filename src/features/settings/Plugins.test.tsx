@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Plugins } from './Plugins'
+import { PackageDetailView } from './extensions/PackageDetail'
 import type { ExtensionCatalog, PackageDetail } from './extensions/types'
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }))
@@ -73,6 +74,16 @@ const packageDetail = (shortcut: string | null): PackageDetail => ({
     },
   ],
   settings: {},
+  transformers: [],
+  automationConsentRequired: false,
+  automationPermissions: {
+    sourceApplication: false,
+    providers: [],
+    packageState: false,
+    http: [],
+    externalWrites: [],
+  },
+  activations: [],
   credentials: [],
   update: null,
   autoUpdateMode: 'inherit',
@@ -80,6 +91,77 @@ const packageDetail = (shortcut: string | null): PackageDetail => ({
   grantsRevokedOnUpdate: true,
   diagnostics: [],
   revoked: false,
+})
+
+describe('Rewrite automation declaration', () => {
+  it('uses the installed activation ID rather than a hardcoded host ID', async () => {
+    mockInvoke.mockReset()
+    const app = { platform: 'windows', id: 'exe:outlook.exe', displayName: 'Outlook' }
+    mockInvoke.mockImplementation((command: string) => {
+      if (command === 'get_extension_automation') return Promise.resolve({ revision: 0, rules: [] })
+      if (command === 'list_source_applications') return Promise.resolve([app])
+      if (command === 'set_extension_automation') return Promise.resolve(1)
+      if (command === 'list_extension_transform_setups') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    const originalConfirm = Object.getOwnPropertyDescriptor(window, 'confirm')
+    window.confirm = vi.fn().mockReturnValue(true)
+    const detail = {
+      ...packageDetail(null),
+      installed: { ...installed, packageId: 'infiniti.rewrite' },
+      transformers: [
+        {
+          id: 'infiniti.rewrite/rewrite',
+          localId: 'rewrite',
+          label: 'Rewrite',
+          parameterSchema: {
+            type: 'object',
+            properties: { preset: { type: 'string' } },
+            required: ['preset'],
+          },
+          setups: [{ id: 'business', displayName: 'Business', parameters: { preset: 'business' } }],
+          defaultView: 'result_only' as const,
+          providerAvailable: true,
+        },
+      ],
+      activations: [
+        { id: 'package-declared-copy', event: 'clip_created' as const, transformerId: 'rewrite' },
+      ],
+    }
+    render(
+      <PackageDetailView
+        packageId="infiniti.rewrite"
+        detail={detail}
+        busy={false}
+        onClose={vi.fn()}
+        onChanged={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+    fireEvent.click(await screen.findByRole('tab', { name: 'Automation' }))
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Automation setup' }), {
+      target: { value: 'builtin:business' },
+    })
+    const add = screen.getByRole('button', { name: 'Add rule' })
+    await waitFor(() => expect(add).toBeEnabled())
+    fireEvent.click(add)
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'set_extension_automation',
+        expect.objectContaining({
+          rules: [
+            expect.objectContaining({
+              activationId: 'package-declared-copy',
+              application: app,
+              setupKind: 'builtin',
+              setupRef: 'business',
+            }),
+          ],
+        })
+      )
+    )
+    if (originalConfirm) Object.defineProperty(window, 'confirm', originalConfirm)
+    else Reflect.deleteProperty(window, 'confirm')
+  })
 })
 
 describe('extension action shortcuts', () => {
