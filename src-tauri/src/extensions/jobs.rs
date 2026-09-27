@@ -8,7 +8,8 @@ use crate::history::{
     new_id, now_ms, safe_relative, CapturedPayload, CapturedRepresentation, HistoryRepository,
 };
 
-use super::{runtime::GenerationFailure, ExtensionService};
+use super::ExtensionService;
+use crate::failure::{OperationFailure, Recovery};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -477,54 +478,56 @@ pub(crate) async fn run_next(
     cancellation.cancel();
     match execution {
         Ok(execution) => {
-            persist_outputs(repo, &job_id, claim, &clip_id, &source_id, execution).await?
+            if let Err(error) =
+                persist_outputs(repo, &job_id, claim, &clip_id, &source_id, execution).await
+            {
+                record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?;
+            }
         }
-        Err(error) => match error
-            .downcast_ref::<super::runtime::GenerationFailureError>()
-            .map(|failure| failure.0)
-        {
-            Some(GenerationFailure::WaitingProvider) => {
-                sqlx::query("UPDATE extension_jobs SET status='waiting_provider',reason_code='provider_unavailable',retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
-                    .bind(now_ms()+60_000).bind(now_ms()).bind(&job_id).bind(claim).execute(&repo.pool).await?;
-            }
-            Some(GenerationFailure::Transient) => {
-                let retries: i64 = sqlx::query_scalar(
-                    "SELECT transient_retry_count FROM extension_jobs WHERE id=?",
-                )
-                .bind(&job_id)
-                .fetch_one(&repo.pool)
-                .await?;
-                if let Some(delay) = [5_000_i64, 15_000, 60_000].get(retries as usize) {
-                    sqlx::query("UPDATE extension_jobs SET status='pending',transient_retry_count=transient_retry_count+1,reason_code='provider_retry',retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
-                        .bind(now_ms()+*delay).bind(now_ms()).bind(&job_id).bind(claim).execute(&repo.pool).await?;
-                } else {
-                    finish(
-                        repo,
-                        &job_id,
-                        claim,
-                        "failed",
-                        Some("provider_retries_exhausted"),
-                    )
-                    .await?;
-                }
-            }
-            Some(GenerationFailure::Cancelled) => {
-                finish(
-                    repo,
-                    &job_id,
-                    claim,
-                    "cancelled",
-                    Some("provider_cancelled"),
-                )
-                .await?;
-            }
-            Some(GenerationFailure::Terminal) => {
-                finish(repo, &job_id, claim, "failed", Some("provider_rejected")).await?;
-            }
-            None => finish(repo, &job_id, claim, "failed", Some("execution_failed")).await?,
-        },
+        Err(error) => {
+            record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?
+        }
     }
     Ok(Some((job_id, clip_id)))
+}
+
+pub(super) async fn record_failure(
+    repo: &HistoryRepository,
+    job_id: &str,
+    claim: i64,
+    failure: OperationFailure,
+) -> Result<()> {
+    let reason = failure.code.as_str();
+    match failure.recovery {
+        Recovery::Wait => {
+            sqlx::query("UPDATE extension_jobs SET status='waiting_provider',reason_code=?,retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
+                .bind(reason).bind(now_ms()+60_000).bind(now_ms()).bind(job_id).bind(claim).execute(&repo.pool).await?;
+        }
+        Recovery::Retry => {
+            let retries: Option<i64> = sqlx::query_scalar("SELECT transient_retry_count FROM extension_jobs WHERE id=? AND claim_generation=? AND status='running'")
+                .bind(job_id).bind(claim).fetch_optional(&repo.pool).await?;
+            let Some(retries) = retries else {
+                return Ok(());
+            };
+            if let Some(delay) = [5_000_i64, 15_000, 60_000].get(retries as usize) {
+                sqlx::query("UPDATE extension_jobs SET status='pending',transient_retry_count=transient_retry_count+1,reason_code=?,retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
+                    .bind(reason).bind(now_ms()+*delay).bind(now_ms()).bind(job_id).bind(claim).execute(&repo.pool).await?;
+            } else {
+                // Keep the specific cause without introducing a schema column or raw text.
+                finish(
+                    repo,
+                    job_id,
+                    claim,
+                    "failed",
+                    Some(&format!("retry_exhausted:{reason}")),
+                )
+                .await?;
+            }
+        }
+        Recovery::Cancel => finish(repo, job_id, claim, "cancelled", Some(reason)).await?,
+        Recovery::Stop => finish(repo, job_id, claim, "failed", Some(reason)).await?,
+    }
+    Ok(())
 }
 
 async fn persist_outputs(
@@ -542,7 +545,8 @@ async fn persist_outputs(
         view_json,
     } = execution;
     if let Some(view) = &view_json {
-        validate_view(view, &output_ids)?;
+        validate_view(view, &output_ids)
+            .map_err(|_| crate::failure::FailureCode::InvalidOutput.failure())?;
     }
     if outputs.len() > 8 {
         bail!("durable extension output count is invalid");
@@ -561,13 +565,13 @@ async fn persist_outputs(
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         })
     {
-        bail!("operation output identities are invalid");
+        return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
     }
     if outputs.is_empty() {
         let completed_writes: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_job_steps WHERE job_id=? AND kind='write' AND status='completed'")
             .bind(job_id).fetch_one(&repo.pool).await?;
         if completed_writes == 0 {
-            bail!("operation produced neither output nor a completed write");
+            return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
         }
     }
     let now = now_ms();
@@ -607,7 +611,7 @@ async fn persist_outputs(
                     .bind(new_id()).bind(&artifact_id).bind(sha).bind(byte_length).bind(relative).bind(now).bind(now).execute(&mut *tx).await?;
             }
             CapturedPayload::Files(_) => {
-                bail!("file-list output cannot be attached to an extension job")
+                return Err(crate::failure::FailureCode::InvalidOutput.failure().into())
             }
         }
         sqlx::query("INSERT INTO extension_result_outputs(job_id,ordinal,output_id,artifact_id,format_key,mime_type) VALUES(?,?,?,?,?,?)")

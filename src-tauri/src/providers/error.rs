@@ -4,6 +4,10 @@ use std::fmt::{Display, Formatter};
 pub enum ProviderError {
     Cancelled,
     Disabled,
+    NotConfigured,
+    InputLimit,
+    Timeout,
+    ModelUnavailable,
     InvalidConfiguration(String),
     Unavailable(String),
     Rejected {
@@ -17,6 +21,30 @@ pub enum ProviderError {
 }
 
 impl ProviderError {
+    pub fn failure(&self) -> crate::failure::OperationFailure {
+        use crate::failure::FailureCode;
+        match self {
+            Self::Cancelled => FailureCode::ProviderCancelled,
+            Self::Disabled => FailureCode::ProviderDisabled,
+            Self::NotConfigured => FailureCode::ProviderNotConfigured,
+            Self::InputLimit => FailureCode::InputLimit,
+            Self::Timeout => FailureCode::ProviderTimeout,
+            Self::ModelUnavailable => FailureCode::ModelUnavailable,
+            Self::InvalidConfiguration(_) => FailureCode::ProviderConfiguration,
+            Self::Unavailable(_) => FailureCode::ConnectionUnavailable,
+            Self::Rejected {
+                context_overflow: true,
+                ..
+            } => FailureCode::ContextOverflow,
+            Self::Rejected { status: 429, .. } => FailureCode::ProviderRateLimited,
+            Self::Rejected {
+                status: 500..=599, ..
+            } => FailureCode::ProviderServerError,
+            Self::Rejected { .. } => FailureCode::ProviderRejected,
+            Self::InvalidDescriptor(_) | Self::InvalidOutput(_) => FailureCode::InvalidResponse,
+        }
+        .failure()
+    }
     pub fn is_context_overflow(&self) -> bool {
         matches!(
             self,
@@ -31,6 +59,10 @@ impl ProviderError {
         match self {
             Self::Cancelled => "cancelled",
             Self::Disabled => "disabled",
+            Self::NotConfigured => "provider_not_configured",
+            Self::InputLimit => "input_limit",
+            Self::Timeout => "provider_timeout",
+            Self::ModelUnavailable => "model_unavailable",
             Self::InvalidConfiguration(_) => "invalid_configuration",
             Self::Unavailable(_) => "unavailable",
             Self::Rejected {
@@ -46,35 +78,7 @@ impl ProviderError {
 
 impl Display for ProviderError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Cancelled => formatter.write_str("generation was cancelled"),
-            Self::Disabled => formatter.write_str("provider is disabled"),
-            Self::InvalidConfiguration(message) => {
-                write!(formatter, "invalid provider configuration: {message}")
-            }
-            Self::Unavailable(message) => write!(formatter, "provider is unavailable: {message}"),
-            Self::Rejected {
-                operation,
-                status,
-                detail,
-                context_overflow,
-            } => {
-                write!(formatter, "provider rejected {operation} (HTTP {status})")?;
-                if let Some(detail) = detail {
-                    write!(formatter, ": {detail}")?;
-                }
-                if *context_overflow {
-                    formatter.write_str(
-                        ". The model context was exceeded even after bounded chunking; update Ollama or choose a model with a larger embedding context",
-                    )?;
-                }
-                Ok(())
-            }
-            Self::InvalidDescriptor(message) => {
-                write!(formatter, "invalid provider descriptor: {message}")
-            }
-            Self::InvalidOutput(message) => write!(formatter, "invalid provider output: {message}"),
-        }
+        formatter.write_str(self.failure().code.message())
     }
 }
 

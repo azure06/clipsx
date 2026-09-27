@@ -1,6 +1,7 @@
 //! Durable, linear operation continuation. The guest chooses the next step;
 //! the host alone performs effects and journals each request before dispatch.
 
+use crate::failure::{FailureCode, OperationFailure};
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Deserialize;
@@ -11,22 +12,25 @@ use crate::history::{now_ms, HistoryRepository};
 use super::{
     broker::{self, BrokerHttpRequest},
     runtime::{
-        self, GenerationFailureError, OperationComplete, OperationProgress, RuntimeBrokerContext,
-        StepCall, StepKind,
+        self, OperationComplete, OperationProgress, RuntimeBrokerContext, StepCall, StepKind,
     },
     ExtensionRepresentation, ExtensionRuntime,
 };
 
 #[derive(Debug)]
-pub(crate) struct GuestExecutionError;
+pub(crate) struct GuestExecutionError(pub OperationFailure);
 
 impl std::fmt::Display for GuestExecutionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("extension guest execution failed")
+        std::fmt::Display::fmt(&self.0, formatter)
     }
 }
 
-impl std::error::Error for GuestExecutionError {}
+impl std::error::Error for GuestExecutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -47,7 +51,7 @@ async fn active(repo: &HistoryRepository, job_id: &str, claim: i64) -> Result<()
     let valid: Option<i64> = sqlx::query_scalar("SELECT 1 FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND j.status='running' AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND (j.automation_rule_id IS NULL OR EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=j.package_id AND a.rule_id=j.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=j.app_platform AND a.app_id=j.app_id)))) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
         .bind(job_id).bind(claim).fetch_optional(&repo.pool).await?;
     if valid.is_none() {
-        bail!("extension job context is stale");
+        return Err(FailureCode::StaleContext.failure().into());
     }
     Ok(())
 }
@@ -85,9 +89,7 @@ async fn execute_step(
             } else {
                 "http"
             };
-            runtime::require_live_grant(context, grant_kind, &permission.origin)
-                .await
-                .map_err(|reason| anyhow!(reason))?;
+            runtime::require_live_grant(context, grant_kind, &permission.origin).await?;
             let mut injected = context
                 .injected_headers
                 .get(&permission.origin)
@@ -117,23 +119,25 @@ async fn execute_step(
         }
         StepKind::ModelCall => {
             if !context.generation_allowed {
-                bail!("generation.text is not declared");
+                return Err(FailureCode::PermissionRequired.failure().into());
             }
-            runtime::require_live_grant(context, "provider", "generation.text")
-                .await
-                .map_err(|reason| anyhow!(reason))?;
-            let request: ModelStepRequest = serde_json::from_str(&step.request_json)?;
+            runtime::require_live_grant(context, "provider", "generation.text").await?;
+            let request: ModelStepRequest = serde_json::from_str(&step.request_json)
+                .map_err(|_| FailureCode::InvalidParameters.failure())?;
             if request.messages.is_empty()
                 || request.messages.len() > 16
                 || !(1..=4096).contains(&request.max_output_tokens)
-                || request
-                    .messages
-                    .iter()
-                    .map(|message| message.content.len())
-                    .sum::<usize>()
-                    > 1024 * 1024
             {
-                bail!("generation request exceeds host limits");
+                return Err(FailureCode::InvalidParameters.failure().into());
+            }
+            if request
+                .messages
+                .iter()
+                .map(|message| message.content.len())
+                .sum::<usize>()
+                > 1024 * 1024
+            {
+                return Err(FailureCode::InputLimit.failure().into());
             }
             let response = crate::providers::generation::generate_stream(
                 &context.repo,
@@ -143,7 +147,7 @@ async fn execute_step(
                 &|_| Ok(()),
             )
             .await
-            .map_err(|error| GenerationFailureError(runtime::classify_generation_error(&error)))?;
+            .map_err(|error| OperationFailure::from_error(&error))?;
             let reason = match response.completion_reason {
                 crate::providers::contracts::generation::GenerationCompletionReason::Stop => "stop",
                 crate::providers::contracts::generation::GenerationCompletionReason::Length => {
@@ -217,8 +221,7 @@ async fn send_step(
             },
             &permission.origin,
         )
-        .await
-        .map_err(|reason| anyhow!(reason))?;
+        .await?;
     }
     let changed = sqlx::query("UPDATE extension_job_steps SET status='sending',dispatch_claim=?,updated_at=? WHERE job_id=? AND ordinal=? AND status IN ('prepared','sending') AND EXISTS(SELECT 1 FROM extension_jobs WHERE id=? AND claim_generation=? AND status='running')")
         .bind(claim).bind(now_ms()).bind(job_id).bind(ordinal).bind(job_id).bind(claim).execute(&repo.pool).await?.rows_affected();
@@ -331,10 +334,11 @@ async fn run_inner(
     let mut ordinal = 0_i64;
     let mut state = "{}".to_string();
     let mut previous: Option<String> = None;
+    let mut previous_was_model = false;
     loop {
         active(repo, job_id, claim).await?;
         if broker.generation_cancellation.is_cancelled() {
-            bail!("operation was cancelled");
+            return Err(FailureCode::ProviderCancelled.failure().into());
         }
         let existing = sqlx::query("SELECT step_id,kind,request_json,state_json,response_json,idempotency_key,status FROM extension_job_steps WHERE job_id=? AND ordinal=?")
             .bind(job_id).bind(ordinal).fetch_optional(&repo.pool).await?;
@@ -379,11 +383,17 @@ async fn run_inner(
                 }
                 _ => bail!("invalid journaled step status"),
             };
+            previous_was_model = step.kind == StepKind::ModelCall;
             state = step.state_json;
             previous = Some(response);
             ordinal += 1;
             continue;
         }
+        let output_limited = previous_was_model
+            && previous
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                .is_some_and(|value| value["completionReason"] == "length");
         let progress = runtime
             .advance(
                 sha256,
@@ -395,7 +405,13 @@ async fn run_inner(
                 previous,
             )
             .await
-            .map_err(|_| GuestExecutionError)?;
+            .map_err(|error| {
+                let mut failure = OperationFailure::from_error(&error);
+                if output_limited && failure.code == FailureCode::ExtensionFailed {
+                    failure = FailureCode::ExtensionFailedAfterOutputLimit.failure();
+                }
+                GuestExecutionError(failure)
+            })?;
         match progress {
             OperationProgress::Complete(value) => return Ok(value),
             OperationProgress::Skip(reason) => {
@@ -424,6 +440,7 @@ async fn run_inner(
                 let response =
                     send_step(repo, job_id, claim, ordinal, &step, &key, &broker).await?;
                 state = step.state_json;
+                previous_was_model = step.kind == StepKind::ModelCall;
                 previous = Some(response);
                 ordinal += 1;
             }
@@ -437,6 +454,20 @@ mod tests {
     use crate::history::{
         CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
     };
+
+    #[test]
+    fn guest_failure_keeps_its_typed_cause() {
+        let error = anyhow::Error::new(GuestExecutionError(FailureCode::InvalidInput.failure()))
+            .context("private context");
+        assert_eq!(
+            OperationFailure::from_error(&error).code,
+            FailureCode::InvalidInput
+        );
+        assert_eq!(
+            OperationFailure::from_error(&error).recovery,
+            crate::failure::Recovery::Stop
+        );
+    }
 
     async fn fixture() -> (tempfile::TempDir, HistoryRepository, String, String) {
         let temp = tempfile::tempdir().unwrap();
@@ -496,6 +527,87 @@ mod tests {
     async fn sending(repo: &HistoryRepository, job: &str, ordinal: i64, kind: &str) {
         sqlx::query("INSERT INTO extension_job_steps(job_id,ordinal,step_id,kind,request_json,state_json,idempotency_key,dispatch_claim,status,created_at,updated_at) VALUES(?,?,?,?,'{}','{}',?,1,'sending',0,0)")
             .bind(job).bind(ordinal).bind(format!("step-{ordinal}")).bind(kind).bind(format!("key-{ordinal}")).execute(&repo.pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failures_preserve_reason_across_retries_reopen_and_delivery_review() {
+        let (temp, repo, job, _) = fixture().await;
+        super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ConnectionUnavailable.failure(),
+        )
+        .await
+        .unwrap();
+        let row: (String, String, i64) = sqlx::query_as(
+            "SELECT status,reason_code,transient_retry_count FROM extension_jobs WHERE id=?",
+        )
+        .bind(&job)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(row, ("pending".into(), "connection_unavailable".into(), 1));
+        sqlx::query(
+            "UPDATE extension_jobs SET status='running',transient_retry_count=3 WHERE id=?",
+        )
+        .bind(&job)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ConnectionUnavailable.failure(),
+        )
+        .await
+        .unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let row: (String, String) =
+            sqlx::query_as("SELECT status,reason_code FROM extension_jobs WHERE id=?")
+                .bind(&job)
+                .fetch_one(&reopened.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            row,
+            (
+                "failed".into(),
+                "retry_exhausted:connection_unavailable".into()
+            )
+        );
+        sqlx::query("UPDATE extension_jobs SET status='running' WHERE id=?")
+            .bind(&job)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        super::super::jobs::record_failure(&repo, &job, 1, FailureCode::InputLimit.failure())
+            .await
+            .unwrap();
+        let row: (String, String) =
+            sqlx::query_as("SELECT status,reason_code FROM extension_jobs WHERE id=?")
+                .bind(&job)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(row, ("failed".into(), "input_limit".into()));
+        sqlx::query("UPDATE extension_jobs SET status='waiting_write_review',reason_code='write_outcome_unknown' WHERE id=?").bind(&job).execute(&repo.pool).await.unwrap();
+        super::super::jobs::record_failure(&repo, &job, 1, FailureCode::ProviderTimeout.failure())
+            .await
+            .unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM extension_jobs WHERE id=?")
+            .bind(&job)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "waiting_write_review");
     }
 
     #[tokio::test]

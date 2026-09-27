@@ -1778,19 +1778,25 @@ impl ExtensionService {
         invocation_token: Option<&str>,
     ) -> Result<ActionOutcome> {
         if !parameters.is_object() {
-            bail!("extension action parameters must be an object");
+            return Err(crate::failure::FailureCode::InvalidParameters
+                .failure()
+                .into());
         }
-        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let (source, _) = repo
+            .source_representation(clip_id, source_id)
+            .await
+            .map_err(|_| crate::failure::FailureCode::StaleContext.failure())?;
         let contribution = self
             .active_contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
-            .context("contextual action is not available for this representation")?;
+            .ok_or_else(|| crate::failure::FailureCode::UnsupportedInput.failure())?;
         super::manifest::validate_parameters(
             &contribution.declaration.parameter_schema,
             &parameters,
-        )?;
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
         if contribution.declaration.execution == ExecutionClass::CapabilityBacked
             || contribution.declaration.effects.iter().any(|effect| {
                 matches!(
@@ -1808,8 +1814,10 @@ impl ExtensionService {
                 clip_id,
                 source_id,
                 facet_id,
-                invocation_token.context("extension action requires an invocation token")?,
-            )?;
+                invocation_token
+                    .ok_or_else(|| crate::failure::FailureCode::PermissionRequired.failure())?,
+            )
+            .map_err(|_| crate::failure::FailureCode::PermissionRequired.failure())?;
         }
         let facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
@@ -1819,9 +1827,15 @@ impl ExtensionService {
             .await?
         {
             ExtensionActionState::Enabled => {}
-            ExtensionActionState::Hidden => bail!("extension action is hidden for this clip"),
-            ExtensionActionState::Disabled(reason) => {
-                bail!("extension action is disabled: {reason}")
+            ExtensionActionState::Hidden => {
+                return Err(crate::failure::FailureCode::UnsupportedInput
+                    .failure()
+                    .into())
+            }
+            ExtensionActionState::Disabled(_) => {
+                return Err(crate::failure::FailureCode::ExtensionFailed
+                    .failure()
+                    .into());
             }
         }
         let outcome = match contribution
@@ -1984,7 +1998,9 @@ impl ExtensionService {
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
             .context("contextual action is not available for this representation")?;
         if self.consent_required(repo, &contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         let facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
@@ -2094,7 +2110,9 @@ impl ExtensionService {
             bail!("local transformers do not require invocation tokens");
         }
         if self.consent_required(repo, &contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         if contribution
             .providers
@@ -2997,7 +3015,9 @@ impl ExtensionService {
         contribution: &ActiveContribution,
     ) -> Result<super::runtime::RuntimeBrokerContext> {
         if self.consent_required(repo, contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         let mut injected_headers = std::collections::BTreeMap::new();
         let mut protected_secrets = Vec::new();
@@ -3045,7 +3065,7 @@ impl ExtensionService {
                 .any(|provider| provider == "generation.text"),
             generation_cancellation:
                 crate::providers::contracts::generation::GenerationCancellation::default(),
-            generation_failure: Default::default(),
+            invocation_failure: Default::default(),
             package_id: contribution.package_id.clone(),
             state_keys: self
                 .store
@@ -3579,7 +3599,8 @@ impl ExtensionService {
             &contribution.declaration.parameter_schema,
             &contribution.declaration.parameter_ui,
             &request.parameters,
-        )?;
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
         request.result_controls = contribution.declaration.result_controls.clone();
         let settings_revision: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT configuration_revision FROM extension_package_revisions WHERE package_id=?),0)")
             .bind(&contribution.package_id).fetch_one(&repo.pool).await?;
@@ -3600,7 +3621,9 @@ impl ExtensionService {
                 || row.get::<String, _>(1) != contribution.id
                 || stored_parameters != request.parameters
             {
-                bail!("saved transform setup does not match this run");
+                return Err(crate::failure::FailureCode::InvalidParameters
+                    .failure()
+                    .into());
             }
             request.display_label = Some(format!(
                 "{} · {}",
@@ -3646,7 +3669,9 @@ impl ExtensionService {
             .source_representation(&request.clip_id, &request.source_id)
             .await?;
         if !accepts(&contribution.declaration, &source, None) {
-            bail!("transformer input does not match its declaration");
+            return Err(crate::failure::FailureCode::UnsupportedInput
+                .failure()
+                .into());
         }
         let availability = self.runtime.assess(&contribution.sha256, &contribution.local_id,
             representation(source, contribution.declaration.input_limit_bytes)?,
@@ -3655,7 +3680,9 @@ impl ExtensionService {
                 "formats": serde_json::from_str::<serde_json::Value>(&request.inventory_json)?,
             }).to_string(), request.parameters.to_string()).await?;
         if !matches!(availability, super::OperationAvailability::Ready) {
-            bail!("operation is unavailable for this input and parameters");
+            return Err(crate::failure::FailureCode::UnsupportedInput
+                .failure()
+                .into());
         }
         if !background && contribution.declaration.execution == ExecutionClass::CapabilityBacked {
             self.consume_invocation(
@@ -3667,8 +3694,9 @@ impl ExtensionService {
                 request
                     .invocation_token
                     .as_deref()
-                    .context("extension transformer requires an invocation token")?,
-            )?;
+                    .ok_or_else(|| crate::failure::FailureCode::PermissionRequired.failure())?,
+            )
+            .map_err(|_| crate::failure::FailureCode::PermissionRequired.failure())?;
         }
         super::jobs::enqueue(
             repo,
@@ -3704,11 +3732,12 @@ impl ExtensionService {
                     && item.sha256 == package_sha256
                     && item.id == contribution_id
             })
-            .context("extension job package or transformer is stale")?;
+            .ok_or_else(|| crate::failure::FailureCode::StaleContext.failure())?;
         super::manifest::validate_parameters(
             &contribution.declaration.parameter_schema,
             &parameters,
-        )?;
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
         let source_clip_id: String =
             sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
                 .bind(job_id)
@@ -3808,7 +3837,9 @@ impl ExtensionService {
                     .transpose()?
                     .unwrap_or_default();
                 if !state_allowed && !state_writes.is_empty() {
-                    bail!("package state permission is absent");
+                    return Err(crate::failure::FailureCode::PermissionRequired
+                        .failure()
+                        .into());
                 }
                 for (key, value) in &state_writes {
                     let schema = state_schemas
@@ -3816,7 +3847,9 @@ impl ExtensionService {
                         .context("package state key is undeclared")?;
                     if let Some(value) = value {
                         if value.len() > 8192 {
-                            bail!("package state value exceeds host limit");
+                            return Err(crate::failure::FailureCode::ResourceLimit
+                                .failure()
+                                .into());
                         }
                         super::manifest::validate_state_value(
                             schema,
@@ -3834,12 +3867,12 @@ impl ExtensionService {
                         .sum::<usize>()
                         > 128 * 1024
                 {
-                    bail!("package state quota exceeded");
+                    return Err(crate::failure::FailureCode::ResourceLimit.failure().into());
                 }
                 if result.view_json.as_ref().is_some_and(|view| {
                     view.len() > 16_384 || serde_json::from_str::<serde_json::Value>(view).is_err()
                 }) {
-                    bail!("extension result view is invalid");
+                    return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
                 }
                 Ok(super::jobs::DurableExecution {
                     output_ids: result
@@ -3847,7 +3880,8 @@ impl ExtensionService {
                         .iter()
                         .map(|output| output.id.clone())
                         .collect(),
-                    outputs: extension_outputs(result.outputs)?,
+                    outputs: extension_outputs(result.outputs)
+                        .map_err(|_| crate::failure::FailureCode::InvalidOutput.failure())?,
                     state_writes,
                     view_json: result.view_json,
                 })
@@ -3856,6 +3890,9 @@ impl ExtensionService {
                 if error
                     .downcast_ref::<super::flow::GuestExecutionError>()
                     .is_some()
+                    && crate::failure::OperationFailure::from_error(&error)
+                        .code
+                        .is_guest_fault()
                 {
                     self.failure(repo, &contribution, &error, true).await?;
                 }
@@ -4732,7 +4769,7 @@ fn representation(
         ExtensionContent::Files(value) => value.iter().map(String::len).sum(),
     };
     if size > input_limit_bytes {
-        bail!("extension input exceeds its declared limit");
+        return Err(crate::failure::FailureCode::InputLimit.failure().into());
     }
     Ok(ExtensionRepresentation {
         format_key: value.format_key,

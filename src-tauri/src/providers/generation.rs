@@ -1,5 +1,6 @@
+use super::error::ProviderError;
 use crate::history::{now_ms, HistoryRepository};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tokio::sync::Semaphore;
@@ -85,7 +86,11 @@ pub async fn status(repo: &HistoryRepository) -> Result<GenerationProviderStatus
         model_catalog::require_model(repo, &config.model, ModelCapability::TextGeneration)
             .await
             .err()
-            .map(|error| error.to_string())
+            .map(|_| {
+                crate::failure::FailureCode::ModelUnavailable
+                    .message()
+                    .to_owned()
+            })
     } else {
         None
     };
@@ -138,16 +143,20 @@ pub async fn resolve(
 ) -> Result<(GenerationProviderConfig, Box<dyn GenerationProvider>)> {
     let config = get_config(repo)
         .await?
-        .context("generation.text provider is not configured")?;
+        .ok_or(ProviderError::NotConfigured)?;
     if !config.enabled {
-        bail!("generation.text provider is disabled");
+        return Err(ProviderError::Disabled.into());
     }
     let provider: Box<dyn GenerationProvider> = match config.provider_id.as_str() {
         PROVIDER_ID => Box::new(OllamaGenerationProvider::new(
             &model_catalog::endpoint(repo).await?,
             config.model.clone(),
         )?),
-        value => bail!("unknown text-generation provider {value}"),
+        _ => {
+            return Err(
+                ProviderError::InvalidConfiguration("unknown generation provider".into()).into(),
+            )
+        }
     };
     Ok((config, provider))
 }
@@ -173,12 +182,13 @@ pub async fn generate_stream(
         .await;
     match result {
         Ok(output) => {
-            record_success_for(repo, &config.provider_id).await?;
+            let _ = record_success_for(repo, &config.provider_id).await;
             Ok(output)
         }
         Err(error) => {
             if !matches!(error, super::error::ProviderError::Cancelled) {
-                record_failure_for(repo, &config.provider_id, &error).await?;
+                // Diagnostics must not replace the original provider failure.
+                let _ = record_failure_for(repo, &config.provider_id, &error).await;
             }
             Err(error.into())
         }
@@ -249,20 +259,78 @@ pub(crate) async fn record_failure_for(
     )
     .bind(provider_id)
     .bind(now_ms())
-    .bind(error.code())
-    .bind(error.to_string().chars().take(512).collect::<String>())
+    .bind(error.failure().code.as_str())
+    .bind(error.failure().code.message())
     .execute(&repo.pool)
     .await?;
     Ok(())
 }
 
 async fn provider_diagnostic(repo: &HistoryRepository) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT last_error_message FROM provider_runtime_diagnostics
-         WHERE provider_id=? AND capability='text_generation'",
-    )
-    .bind(PROVIDER_ID)
-    .fetch_optional(&repo.pool)
-    .await?
-    .flatten())
+    let code: Option<String> = sqlx::query_scalar("SELECT last_error_code FROM provider_runtime_diagnostics WHERE provider_id=? AND capability='text_generation'")
+        .bind(PROVIDER_ID).fetch_optional(&repo.pool).await?.flatten();
+    let Some(code) = code else {
+        return Ok(None);
+    };
+    let message = diagnostic_message(&code);
+    // Replace historical raw details when diagnostics are read; unrelated capabilities are untouched.
+    sqlx::query("UPDATE provider_runtime_diagnostics SET last_error_message=? WHERE provider_id=? AND capability='text_generation' AND last_error_code=?")
+        .bind(message).bind(PROVIDER_ID).bind(code).execute(&repo.pool).await?;
+    Ok(Some(message.to_owned()))
+}
+
+fn diagnostic_message(code: &str) -> &'static str {
+    use crate::failure::FailureCode;
+    let code = match code {
+        "disabled" => FailureCode::ProviderDisabled,
+        "invalid_configuration" => FailureCode::ProviderConfiguration,
+        "unavailable" => FailureCode::ConnectionUnavailable,
+        "request_rejected" => FailureCode::ProviderRejected,
+        "invalid_descriptor" | "invalid_output" => FailureCode::InvalidResponse,
+        _ => serde_json::from_value(serde_json::Value::String(code.to_owned()))
+            .unwrap_or(FailureCode::UnknownFailure),
+    };
+    code.message()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::failure::{FailureCode, OperationFailure, Recovery};
+
+    #[tokio::test]
+    async fn diagnostics_are_safe_and_legacy_cleanup_is_generation_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let error = ProviderError::Rejected {
+            operation: "api/generate".into(),
+            status: 400,
+            detail: Some("private clipboard credential".into()),
+            context_overflow: true,
+        };
+        record_failure_for(&repo, PROVIDER_ID, &error)
+            .await
+            .unwrap();
+        let message: String = sqlx::query_scalar("SELECT last_error_message FROM provider_runtime_diagnostics WHERE provider_id=? AND capability='text_generation'").bind(PROVIDER_ID).fetch_one(&repo.pool).await.unwrap();
+        assert!(!message.contains("private"));
+        sqlx::query("UPDATE provider_runtime_diagnostics SET last_error_message='old private credential',last_error_code='unavailable' WHERE provider_id=?").bind(PROVIDER_ID).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO provider_runtime_diagnostics(provider_id,capability,last_error_message) VALUES(?,'text_embedding','unrelated')").bind(PROVIDER_ID).execute(&repo.pool).await.unwrap();
+        assert_eq!(
+            provider_diagnostic(&repo).await.unwrap().unwrap(),
+            FailureCode::ConnectionUnavailable.message()
+        );
+        let other: String = sqlx::query_scalar("SELECT last_error_message FROM provider_runtime_diagnostics WHERE provider_id=? AND capability='text_embedding'").bind(PROVIDER_ID).fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(other, "unrelated");
+        let error = resolve(&repo).await.err().unwrap();
+        let failure = OperationFailure::from_error(&error);
+        assert_eq!(failure.code, FailureCode::ProviderNotConfigured);
+        assert_eq!(failure.recovery, Recovery::Wait);
+    }
 }

@@ -7,6 +7,7 @@ mod clipboard;
 mod contracts;
 mod contributions;
 mod extensions;
+mod failure;
 mod foundation;
 mod history;
 mod ipc;

@@ -35,7 +35,7 @@ pub use runtime::{
     ExtensionActionResult, ExtensionActionState, ExtensionCompactModel, ExtensionContent,
     ExtensionFacet, ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
     ExtensionRepresentation, ExtensionRuntime, OperationAvailability, OperationComplete,
-    OperationProgress, RuntimeErrorCode, StepCall, StepKind,
+    OperationProgress, StepCall, StepKind,
 };
 pub use service::{
     ActionInvocation, ActionOutcome, BridgeOutcome, BridgeRequest, ContextActionDescriptor,

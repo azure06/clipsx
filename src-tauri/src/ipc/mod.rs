@@ -1032,18 +1032,18 @@ async fn enqueue_extension_transform(
     request: crate::extensions::EnqueueExtensionJob,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ExtensionJobResult, String> {
+) -> Result<crate::extensions::ExtensionJobResult, crate::failure::OperationFailure> {
     let result = state
         .extensions
         .enqueue_durable_transform(&state.history, request, false)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))?;
     let clip_id: Option<String> =
         sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
             .bind(&result.job_id)
             .fetch_optional(&state.history.pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?;
     if let Some(clip_id) = clip_id {
         let _ = app.emit("extension-job-updated", serde_json::json!({"jobId":result.job_id,"clipId":clip_id,"status":"pending","reasonCode":null}));
     }
@@ -1069,16 +1069,16 @@ async fn enqueue_existing_extension_job(
     invocation_token: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ExtensionJobResult, String> {
+) -> Result<crate::extensions::ExtensionJobResult, crate::failure::OperationFailure> {
     let row = sqlx::query("SELECT source_clip_id,source_representation_id,contribution_id,parameters_json,display_label,default_view FROM extension_jobs WHERE id=?")
-        .bind(&job_id).fetch_optional(&state.history.pool).await.map_err(|error| error.to_string())?
-        .ok_or_else(|| "extension result is unavailable".to_string())?;
+        .bind(&job_id).fetch_optional(&state.history.pool).await.map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?
+        .ok_or_else(|| crate::failure::FailureCode::StaleContext.failure())?;
     let request = crate::extensions::EnqueueExtensionJob {
         clip_id: row.get(0),
         source_id: row.get(1),
         transformer_id: row.get(2),
         parameters: serde_json::from_str(&row.get::<String, _>(3))
-            .map_err(|error| error.to_string())?,
+            .map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?,
         request_id: Some(request_id),
         regenerate: true,
         invocation_token: Some(invocation_token),
@@ -1102,7 +1102,7 @@ async fn retry_extension_job(
     invocation_token: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ExtensionJobResult, String> {
+) -> Result<crate::extensions::ExtensionJobResult, crate::failure::OperationFailure> {
     enqueue_existing_extension_job(job_id, request_id, invocation_token, app, state).await
 }
 
@@ -1113,7 +1113,7 @@ async fn regenerate_extension_result(
     invocation_token: String,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ExtensionJobResult, String> {
+) -> Result<crate::extensions::ExtensionJobResult, crate::failure::OperationFailure> {
     enqueue_existing_extension_job(job_id, request_id, invocation_token, app, state).await
 }
 
@@ -1297,7 +1297,7 @@ async fn run_context_action(
     parameters: serde_json::Value,
     invocation_token: Option<String>,
     state: State<'_, AppState>,
-) -> Result<ContextActionRunResponse, String> {
+) -> Result<ContextActionRunResponse, crate::failure::OperationFailure> {
     match state
         .extensions
         .run_action(
@@ -1310,10 +1310,11 @@ async fn run_context_action(
             invocation_token.as_deref(),
         )
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))?
     {
         crate::extensions::ActionOutcome::OpenHttpsUrl(url) => {
-            open_external_url(url.clone(), app)?;
+            open_external_url(url.clone(), app)
+                .map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?;
             Ok(ContextActionRunResponse::OpenHttpsUrl { url })
         }
         crate::extensions::ActionOutcome::Notification { level, message } => {
@@ -1325,11 +1326,13 @@ async fn run_context_action(
         }
         crate::extensions::ActionOutcome::OpenDialog => Ok(ContextActionRunResponse::OpenDialog),
         crate::extensions::ActionOutcome::ComposeEmail(address) => {
-            compose_email(address, app)?;
+            compose_email(address, app)
+                .map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?;
             Ok(ContextActionRunResponse::NativeAction)
         }
         crate::extensions::ActionOutcome::DialPhone(number) => {
-            start_phone_action(number, false, app)?;
+            start_phone_action(number, false, app)
+                .map_err(|_| crate::failure::FailureCode::UnknownFailure.failure())?;
             Ok(ContextActionRunResponse::NativeAction)
         }
     }
@@ -1339,12 +1342,12 @@ async fn run_context_action(
 async fn grant_extension_action_permissions(
     action_id: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::OperationFailure> {
     state
         .extensions
         .grant_action_permissions(&state.history, &action_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))
 }
 
 #[tauri::command]
@@ -1354,7 +1357,7 @@ async fn issue_extension_action_invocation(
     source_id: String,
     facet_id: Option<String>,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ActionInvocation, String> {
+) -> Result<crate::extensions::ActionInvocation, crate::failure::OperationFailure> {
     state
         .extensions
         .issue_action_invocation(
@@ -1365,19 +1368,19 @@ async fn issue_extension_action_invocation(
             facet_id.as_deref(),
         )
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))
 }
 
 #[tauri::command]
 async fn grant_extension_transformer_permissions(
     transformer_id: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<(), crate::failure::OperationFailure> {
     state
         .extensions
         .grant_transformer_permissions(&state.history, &transformer_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))
 }
 
 #[tauri::command]
@@ -1386,12 +1389,12 @@ async fn issue_extension_transformer_invocation(
     clip_id: String,
     source_id: String,
     state: State<'_, AppState>,
-) -> Result<crate::extensions::ActionInvocation, String> {
+) -> Result<crate::extensions::ActionInvocation, crate::failure::OperationFailure> {
     state
         .extensions
         .issue_transformer_invocation(&state.history, &transformer_id, &clip_id, &source_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| crate::failure::OperationFailure::from_error(&error))
 }
 
 #[tauri::command]
