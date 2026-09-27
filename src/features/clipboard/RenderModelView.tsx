@@ -37,7 +37,7 @@ import {
 } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
-import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
+import { artifactFileUrl, managedAssetUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
@@ -368,16 +368,13 @@ const KeyValueView = ({ entries, clipId }: { entries: [string, string][]; clipId
 
 const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => {
   const { t } = useTranslation()
-  const sourceKey =
-    model.source.kind === 'managed'
-      ? model.source.assetId
-      : `${model.source.resultId}:${model.source.outputIndex}`
+  const sourceKey = model.source.kind === 'managed' ? model.source.assetId : model.source.fileId
   const [failedAssetId, setFailedAssetId] = useState<string | null>(null)
   const failed = failedAssetId === sourceKey
   const sourceUrl =
     model.source.kind === 'managed'
       ? managedAssetUrl(model.source.assetId)
-      : transformImageUrl(model.source.resultId, model.source.outputIndex)
+      : artifactFileUrl(model.source.fileId)
 
   return (
     <div

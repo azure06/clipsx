@@ -1,44 +1,49 @@
-import { useClipboardStore } from '../../stores/clipboardStore'
+import { failureCode, failureMessage } from '../extensions/failures'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { executeClipboardOutput } from '../../shared/clipboardOutput'
-import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
+import type { ClipPresentation } from '../../shared/types/v2'
 import { getPlatform, matchShortcut, parseAccelerator } from '../../shared/keyboard/shortcuts'
-import type { ParameterRequest } from './ContributionParametersDialog'
-import { schemaHasParameters } from './contributionParameters'
 import { useTheme } from '../../shared/hooks/useTheme'
+import { useClipboardStore } from '../../stores/clipboardStore'
 
 export type Transformer = {
   id: string
+  sourceId: string
+  packageId: string
+  packageLabel?: string
   label: string
+  icon?: string | null
+  iconSvg?: string | null
+  iconSvgDark?: string | null
+  iconScale?: number
   version: string
-  parameterSchema?: Record<string, unknown>
-  execution?: 'local' | 'capability_backed'
-  consentRequired?: boolean
-  httpOrigins?: string[]
-  providers?: string[]
-  resultLifetime?: 'temporary' | 'source_clip'
-}
-export type TransformPreview = {
-  resultId: string
-  outputs: Array<{ canonicalMimeType: string | null; byteLength: number }>
-  model: RenderModel
-}
-
-export type TransformControls = {
-  items: Transformer[]
-  actions: ContextAction[]
-  run: (id: string, parameters?: Record<string, unknown>) => Promise<void>
-  runAction: (id: string, parameters?: Record<string, unknown>) => Promise<void>
-  pinAction: (id: string, pinned: boolean) => Promise<void>
-  busy: string | null
-  parameterRequest: ParameterRequest | null
-  cancelParameterRequest: () => void
-  submitParameters: (parameters: Record<string, unknown>) => void
-  pickerOpen: boolean
-  openPicker: () => void
-  closePicker: () => void
+  setupSelectorParameter?: string | null
+  parameterSchema: Record<string, unknown>
+  parameterUi?: import('../extensions/parameters').ParameterField[]
+  execution: 'local' | 'capability_backed'
+  consentRequired: boolean
+  httpOrigins: string[]
+  providers: string[]
+  setups: Array<{
+    id: string
+    displayName: string
+    parameters: Record<string, unknown>
+    defaultView?: 'result_only' | 'compare'
+  }>
+  defaultView: 'result_only' | 'compare'
+  resultControls: Array<'copy' | 'paste' | 'save_as_clip' | 'regenerate'>
+  providerAvailable: boolean
+  setupAvailability: Record<
+    string,
+    { state: 'hidden' | 'disabled' | 'ready'; reason: string | null; sourceId?: string | null }
+  >
+  customAvailability: {
+    state: 'hidden' | 'disabled' | 'ready'
+    reason: string | null
+    sourceId?: string | null
+  }
 }
 
 export type ContextAction = {
@@ -53,28 +58,25 @@ export type ContextAction = {
   iconScale: number
   placements: Array<'preview_toolbar' | 'action_menu'>
   effects: string[]
-  transformPreset: boolean
   execution: 'local' | 'capability_backed'
   available: boolean
   unavailableReason: string | null
   parameterSchema: Record<string, unknown>
   shortcut: string | null
-  pinned: boolean
   consentRequired: boolean
   externalNavigationOrigins: string[]
   httpOrigins: string[]
   providers: string[]
 }
 
-type ActionInvocation = { token: string; expiresAt: number }
+export type TransformControls = {
+  items: Transformer[]
+  actions: ContextAction[]
+  runAction: (id: string, parameters?: Record<string, unknown>) => Promise<void>
+}
 
-type ContextActionRunResponse =
-  | { kind: 'queued'; jobId: string; clipId: string }
-  | {
-      kind: 'output'
-      preview: TransformPreview
-      disposition: 'preview' | 'copy' | 'paste' | 'save_as_clip'
-    }
+type ActionInvocation = { token: string; expiresAt: number }
+type ActionResult =
   | { kind: 'open_https_url'; url: string }
   | { kind: 'notification'; level: string; message: string }
   | { kind: 'open_dialog' }
@@ -96,140 +98,77 @@ export const useTransformState = ({
   const locale = i18n.resolvedLanguage ?? i18n.language ?? 'en'
   const [items, setItems] = useState<Transformer[]>([])
   const [actions, setActions] = useState<ContextAction[]>([])
-  const [busy, setBusy] = useState<string | null>(null)
-  const [activeTransformer, setActiveTransformer] = useState<Transformer | null>(null)
-  const [preview, setPreview] = useState<TransformPreview | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [parameterRequest, setParameterRequest] = useState<ParameterRequest | null>(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [revision, setRevision] = useState(0)
   const presentationKind = basePresentation?.activeView.presentationKind
+  const facetId = basePresentation?.activeView.facetId ?? null
 
   useEffect(() => {
-    if (!presentationKind || !sourceId) return
-    setPreview(null)
-    setError(null)
-    setActiveTransformer(null)
+    const refresh = () => setRevision(value => value + 1)
+    window.addEventListener('clipsx-extension-permissions-changed', refresh)
+    let alive = true
+    const listeners: Array<() => void> = []
+    for (const eventName of [
+      'extension-catalog-updated',
+      'extensions-changed',
+      'generation-provider-status-changed',
+    ]) {
+      void listen(eventName, refresh).then(stop => {
+        if (alive) listeners.push(stop)
+        else stop()
+      })
+    }
+    return () => {
+      alive = false
+      window.removeEventListener('clipsx-extension-permissions-changed', refresh)
+      listeners.forEach(stop => stop())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!presentationKind || !sourceId) {
+      setItems([])
+      setActions([])
+      return
+    }
+    let alive = true
     void Promise.all([
       invoke<Transformer[]>('list_transformer_contributions', {
         clipId,
         sourceId,
         presentationKind,
       }),
-      invoke<ContextAction[]>('list_context_actions', {
-        clipId,
-        sourceId,
-        facetId: basePresentation?.activeView.facetId ?? null,
-      }),
+      invoke<ContextAction[]>('list_context_actions', { clipId, sourceId, facetId }),
     ])
       .then(([transformers, contextualActions]) => {
-        setItems(transformers)
-        setActions(contextualActions)
+        if (alive) {
+          setItems(transformers)
+          setActions(contextualActions)
+        }
       })
       .catch(() => {
-        setItems([])
-        setActions([])
+        if (alive) {
+          setItems([])
+          setActions([])
+        }
       })
-  }, [basePresentation?.activeView.facetId, presentationKind, clipId, sourceId])
-
-  const run = useCallback(
-    async (id: string, parameters?: Record<string, unknown>) => {
-      const item = items.find(t => t.id === id)
-      if (!item) return
-      if (parameters === undefined && schemaHasParameters(item.parameterSchema)) {
-        setParameterRequest({
-          kind: 'transformer',
-          id,
-          label: item.label,
-          schema: item.parameterSchema,
-        })
-        return
-      }
-      setBusy(item.id)
-      setActiveTransformer(item)
-      setError(null)
-      setPreview(null)
-      try {
-        let invocationToken: string | null = null
-        if (item.execution === 'capability_backed') {
-          if (item.consentRequired) {
-            const destinations = [
-              ...(item.httpOrigins ?? []),
-              ...(item.providers ?? []).map(provider => `Host provider: ${provider}`),
-            ].join('\n')
-            const approved = window.confirm(
-              `${item.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
-            )
-            if (!approved) return
-            await invoke('grant_extension_transformer_permissions', { transformerId: item.id })
-          }
-          const invocation = await invoke<ActionInvocation>(
-            'issue_extension_transformer_invocation',
-            { transformerId: item.id, clipId, sourceId }
-          )
-          invocationToken = invocation.token
-        }
-        if (item.resultLifetime === 'source_clip') {
-          await invoke('enqueue_extension_transform', {
-            request: {
-              clipId,
-              sourceId,
-              transformerId: item.id,
-              parameters: parameters ?? {},
-              requestId: crypto.randomUUID(),
-              invocationToken,
-            },
-          })
-          return
-        }
-        const result = await invoke<TransformPreview>('create_transform_preview', {
-          clipId,
-          transformerId: item.id,
-          sourceId,
-          parameters: parameters ?? {},
-          invocationToken,
-        })
-        setPreview(result)
-      } catch (value) {
-        setError(String(value))
-      } finally {
-        setBusy(null)
-      }
-    },
-    [clipId, items, sourceId]
-  )
+    return () => {
+      alive = false
+    }
+  }, [clipId, sourceId, presentationKind, facetId, revision])
 
   const runAction = useCallback(
-    async (id: string, parameters?: Record<string, unknown>) => {
+    async (id: string, parameters: Record<string, unknown> = {}) => {
       const action = actions.find(item => item.id === id)
-      if (!action || !action.available) return
-      if (parameters === undefined && schemaHasParameters(action.parameterSchema)) {
-        setParameterRequest({
-          kind: 'action',
-          id,
-          label: action.label,
-          schema: action.parameterSchema,
-        })
-        return
-      }
+      if (!action?.available) return
       const actionSourceId = action.sourceId ?? sourceId
-      const actionFacetId =
-        action.sourceId === undefined
-          ? (basePresentation?.activeView.facetId ?? null)
-          : (action.facetId ?? null)
-      if (action.transformPreset) {
-        setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
-        setPreview(null)
-      }
-      setBusy(action.id)
-      setError(null)
+      const actionFacetId = action.sourceId === undefined ? facetId : (action.facetId ?? null)
       try {
         let invocationToken: string | null = null
         if (
           action.execution === 'capability_backed' ||
-          action.effects.includes('open_https_url') ||
-          action.effects.includes('open_dialog') ||
-          action.effects.includes('compose_email') ||
-          action.effects.includes('dial_phone')
+          action.effects.some(effect =>
+            ['open_https_url', 'open_dialog', 'compose_email', 'dial_phone'].includes(effect)
+          )
         ) {
           if (action.consentRequired) {
             const destinations = [
@@ -237,13 +176,14 @@ export const useTransformState = ({
               ...action.httpOrigins,
               ...action.providers.map(provider => `Host provider: ${provider}`),
             ].join('\n')
-            const approved = window.confirm(
-              `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
+            if (
+              !window.confirm(
+                `${action.label} wants to send this clip's selected content to:\n\n${destinations}\n\nAllow this exact extension release?`
+              )
             )
-            if (!approved) {
               return
-            }
             await invoke('grant_extension_action_permissions', { actionId: action.id })
+            window.dispatchEvent(new Event('clipsx-extension-permissions-changed'))
           }
           const invocation = await invoke<ActionInvocation>('issue_extension_action_invocation', {
             actionId: action.id,
@@ -253,22 +193,19 @@ export const useTransformState = ({
           })
           invocationToken = invocation.token
         }
-        const result = await invoke<ContextActionRunResponse>('run_context_action', {
+        const result = await invoke<ActionResult>('run_context_action', {
           clipId,
           sourceId: actionSourceId,
           facetId: actionFacetId,
           actionId: action.id,
-          parameters: parameters ?? {},
+          parameters,
           invocationToken,
         })
-        if (result.kind === 'queued') return
         if (result.kind === 'notification') {
           window.dispatchEvent(
             new CustomEvent('clipsx-extension-action-notification', { detail: result })
           )
-          return
-        }
-        if (result.kind === 'open_dialog') {
+        } else if (result.kind === 'open_dialog') {
           const width = Math.min(Math.max(window.innerWidth - 48, 320), 960)
           const height = Math.min(Math.max(window.innerHeight - 96, 240), 720)
           await invoke('open_extension_custom_view', {
@@ -284,101 +221,21 @@ export const useTransformState = ({
             width,
             height,
           })
-          return
         }
-        if (result.kind !== 'output') {
-          return
-        }
-        if (result.disposition === 'preview') {
-          setActiveTransformer({ id: action.id, label: action.label, version: '2.0.0' })
-          setPreview(result.preview)
-          return
-        }
-        if (result.disposition === 'save_as_clip') {
-          await invoke('save_transform_result', { resultId: result.preview.resultId })
-        } else {
-          await executeClipboardOutput(result.disposition, {
-            kind: 'transformed',
-            resultId: result.preview.resultId,
-          })
-        }
-      } catch (value) {
-        if (action.transformPreset) {
-          setError(String(value))
-          return
-        }
+      } catch (error) {
         window.dispatchEvent(
           new CustomEvent('clipsx-extension-action-notification', {
-            detail: { level: 'error', message: String(value) },
+            detail: { level: 'error', message: failureMessage(error), code: failureCode(error) },
           })
         )
-      } finally {
-        setBusy(null)
       }
     },
-    [actions, appliedTheme, basePresentation?.activeView.facetId, clipId, locale, sourceId]
-  )
-
-  const pinAction = useCallback(async (id: string, pinned: boolean) => {
-    await invoke('set_extension_action_pinned', { actionId: id, pinned })
-    setActions(current =>
-      current.map(action => (action.id === id ? { ...action, pinned } : action))
-    )
-  }, [])
-
-  const openPicker = useCallback(() => setPickerOpen(true), [])
-  const closePicker = useCallback(() => setPickerOpen(false), [])
-  const cancelParameterRequest = useCallback(() => {
-    setParameterRequest(null)
-    setPickerOpen(true)
-  }, [])
-  const submitParameters = useCallback(
-    (parameters: Record<string, unknown>) => {
-      const request = parameterRequest
-      setParameterRequest(null)
-      if (!request) return
-      void (request.kind === 'action'
-        ? runAction(request.id, parameters)
-        : run(request.id, parameters))
-    },
-    [parameterRequest, run, runAction]
+    [actions, appliedTheme, clipId, facetId, locale, sourceId]
   )
 
   useEffect(() => {
-    onControls?.(
-      items.length > 0 || actions.length > 0
-        ? {
-            items,
-            actions,
-            run,
-            runAction,
-            pinAction,
-            busy,
-            parameterRequest,
-            cancelParameterRequest,
-            submitParameters,
-            pickerOpen,
-            openPicker,
-            closePicker,
-          }
-        : null
-    )
-  }, [
-    actions,
-    busy,
-    cancelParameterRequest,
-    closePicker,
-    items,
-    onControls,
-    openPicker,
-    parameterRequest,
-    pickerOpen,
-    pinAction,
-    run,
-    runAction,
-    submitParameters,
-  ])
-
+    onControls?.(items.length || actions.length ? { items, actions, runAction } : null)
+  }, [items, actions, runAction, onControls])
   useEffect(() => () => onControls?.(null), [onControls])
 
   useEffect(() => {
@@ -398,44 +255,4 @@ export const useTransformState = ({
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [actions, runAction])
-
-  const applyResult = async (action: 'copy' | 'save') => {
-    if (!preview) return
-    if (action === 'save') {
-      await invoke('save_transform_result', { resultId: preview.resultId })
-    } else {
-      await executeClipboardOutput('copy', {
-        kind: 'transformed',
-        resultId: preview.resultId,
-      })
-    }
-    setPreview(null)
-  }
-
-  return {
-    items,
-    actions,
-    run,
-    runAction,
-    pinAction,
-    busy,
-    activeTransformer,
-    preview,
-    error,
-    parameterRequest,
-    cancelParameterRequest,
-    submitParameters,
-    applyResult,
-    dismissPreview: () => {
-      setPreview(null)
-      setActiveTransformer(null)
-    },
-    dismissError: () => {
-      setError(null)
-      setActiveTransformer(null)
-    },
-    pickerOpen,
-    openPicker,
-    closePicker,
-  }
 }

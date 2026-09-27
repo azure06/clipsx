@@ -3,7 +3,6 @@ export type V2Tag = { id: string; name: string; color: string | null }
 export type ClipboardOutputSource =
   | { kind: 'original'; clipId: string }
   | { kind: 'plain_text'; clipId: string }
-  | { kind: 'transformed'; resultId: string }
   | { kind: 'derived'; jobId: string }
   | { kind: 'literal_text'; text: string; sourceClipId?: string }
 
@@ -208,9 +207,7 @@ export type RenderModel =
   | { kind: 'key_value'; entries: [string, string][] }
   | {
       kind: 'image'
-      source:
-        | { kind: 'managed'; assetId: string }
-        | { kind: 'transform_result'; resultId: string; outputIndex: number }
+      source: { kind: 'managed'; assetId: string } | { kind: 'artifact_file'; fileId: string }
       ocr: OcrPresentation
     }
   | { kind: 'html'; sanitizedHtml: string }

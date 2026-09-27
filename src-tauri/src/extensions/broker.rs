@@ -90,7 +90,7 @@ pub async fn https(
     })
 }
 
-fn validate_request(
+pub(crate) fn validate_request(
     permission: &HttpPermission,
     request: &BrokerHttpRequest,
     url: &Url,
@@ -159,6 +159,7 @@ mod tests {
             max_request_bytes: 1024,
             max_response_bytes: 2048,
             timeout_ms: 1_000,
+            idempotency_header: None,
         }
     }
 

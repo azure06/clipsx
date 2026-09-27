@@ -2,9 +2,12 @@
 //! WebAssembly and receive no ambient host capabilities.
 
 mod broker;
+mod flow;
 pub(crate) mod jobs;
 mod manifest;
 mod packages;
+mod parameters;
+pub use parameters::ParameterField;
 mod runtime;
 mod service;
 
@@ -12,14 +15,14 @@ pub use broker::{BrokerHttpRequest, BrokerHttpResponse};
 
 pub use jobs::{
     ApplicationRule, EnqueueExtensionJob, ExtensionJobResult, ExtensionJobSummary,
-    SourceApplication,
+    SavedTransformSetup, SourceApplication,
 };
 #[allow(unused_imports)]
 pub use manifest::{
-    ActionDisposition, ActionEffect, ActionHandler, ActionPlacement, ActivationEvent,
-    ApplicationSelector, ContributionKind, ContributionMatcher, ExecutionClass,
-    ExtensionActivation, ExtensionManifest, ExtensionSetting, ExtensionStateKey,
-    ManifestContribution, RenderSurface, ResultLifetime, SettingScope, UiSurface, ViewPurpose,
+    ActionEffect, ActionHandler, ActionPlacement, ActivationEvent, ApplicationSelector,
+    ContributionKind, ContributionMatcher, ExecutionClass, ExtensionActivation, ExtensionManifest,
+    ExtensionSetting, ExtensionStateKey, ManifestContribution, RenderSurface, ResultControl,
+    ResultView, SettingScope, TransformerSetup, UiSurface, ViewPurpose,
 };
 #[allow(unused_imports)]
 pub use packages::{
@@ -31,7 +34,8 @@ pub use packages::{
 pub use runtime::{
     ExtensionActionResult, ExtensionActionState, ExtensionCompactModel, ExtensionContent,
     ExtensionFacet, ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
-    ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
+    ExtensionRepresentation, ExtensionRuntime, OperationAvailability, OperationComplete,
+    OperationProgress, StepCall, StepKind,
 };
 pub use service::{
     ActionInvocation, ActionOutcome, BridgeOutcome, BridgeRequest, ContextActionDescriptor,
@@ -40,7 +44,7 @@ pub use service::{
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "3.0.0";
+pub const API_VERSION: &str = "3.2.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 pub const OFFICIAL_REGISTRY_SIGNATURES_URL: &str =
@@ -108,6 +112,10 @@ pub struct ExtensionPackageDetail {
     pub installed: Option<ExtensionSummary>,
     pub package: Option<RegistryPackage>,
     pub actions: Vec<ContextActionDescriptor>,
+    pub activations: Vec<ExtensionActivation>,
+    pub transformers: Vec<TransformerConfiguration>,
+    pub automation_permissions: manifest::ExtensionPermissions,
+    pub automation_consent_required: bool,
     pub settings: serde_json::Value,
     pub credentials: Vec<CredentialStatus>,
     pub update: Option<RegistryPackage>,
@@ -116,4 +124,18 @@ pub struct ExtensionPackageDetail {
     pub grants_revoked_on_update: bool,
     pub diagnostics: Vec<String>,
     pub revoked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransformerConfiguration {
+    pub id: String,
+    pub local_id: String,
+    pub label: String,
+    pub parameter_schema: serde_json::Value,
+    pub parameter_ui: Vec<ParameterField>,
+    pub setup_selector_parameter: Option<String>,
+    pub setups: Vec<TransformerSetup>,
+    pub default_view: ResultView,
+    pub provider_available: bool,
 }

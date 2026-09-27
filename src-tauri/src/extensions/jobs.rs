@@ -8,7 +8,8 @@ use crate::history::{
     new_id, now_ms, safe_relative, CapturedPayload, CapturedRepresentation, HistoryRepository,
 };
 
-use super::{runtime::GenerationFailure, ExtensionService};
+use super::ExtensionService;
+use crate::failure::{OperationFailure, Recovery};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -23,10 +24,32 @@ pub struct SourceApplication {
 pub struct ApplicationRule {
     pub id: String,
     pub activation_id: String,
-    pub application: SourceApplication,
+    pub application: Option<SourceApplication>,
     pub enabled: bool,
+    #[serde(default, skip_deserializing)]
     pub parameters: serde_json::Value,
+    pub setup_kind: String,
+    pub setup_ref: String,
+    #[serde(default, skip_deserializing)]
+    pub setup_label: String,
+    #[serde(default, skip_deserializing)]
+    pub default_view: String,
+    #[serde(default, skip_deserializing)]
+    pub reason_code: Option<String>,
     pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTransformSetup {
+    pub id: String,
+    pub package_id: String,
+    pub transformer_id: String,
+    pub label: String,
+    pub parameters: serde_json::Value,
+    pub default_view: String,
+    pub revision: i64,
+    pub available: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,8 +62,24 @@ pub struct EnqueueExtensionJob {
     pub parameters: serde_json::Value,
     pub request_id: Option<String>,
     pub invocation_token: Option<String>,
+    #[serde(default)]
+    pub setup_id: Option<String>,
+    #[serde(default)]
+    pub display_label: Option<String>,
+    #[serde(default)]
+    pub default_view: Option<String>,
+    #[serde(skip)]
+    pub result_controls: Vec<super::ResultControl>,
     #[serde(skip)]
     pub capture_application: Option<SourceApplication>,
+    #[serde(skip)]
+    pub automation_rule_id: Option<String>,
+    #[serde(skip)]
+    pub settings_snapshot_json: String,
+    #[serde(skip)]
+    pub settings_snapshot_revision: Option<i64>,
+    #[serde(skip)]
+    pub inventory_json: String,
     #[serde(default)]
     pub regenerate: bool,
 }
@@ -66,14 +105,78 @@ pub struct ExtensionJobSummary {
     pub parameters: serde_json::Value,
     pub created_at: i64,
     pub completed_at: Option<i64>,
-    pub output_text: Option<String>,
-    pub source_text: Option<String>,
-    pub output_mime_type: Option<String>,
+    pub display_label: String,
+    pub default_view: String,
+    pub outputs: Vec<ExtensionOutputDescriptor>,
+    pub result_controls: Vec<super::ResultControl>,
+    pub view: Option<ResultViewDescription>,
+    pub completed_writes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultViewDescription {
+    pub tabs: Vec<ResultViewTab>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultViewTab {
+    pub id: String,
+    pub label: String,
+    pub layout: String,
+    pub panels: Vec<ResultViewPanel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "source",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ResultViewPanel {
+    Input,
+    Output { output_id: String },
+}
+
+fn validate_view(value: &str, output_ids: &[String]) -> Result<ResultViewDescription> {
+    if value.len() > 16_384 {
+        bail!("result view exceeds host limit");
+    }
+    let view: ResultViewDescription = serde_json::from_str(value)?;
+    if view.tabs.is_empty() || view.tabs.len() > 4 {
+        bail!("result view tab count is invalid");
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for tab in &view.tabs {
+        if tab.id.is_empty() || tab.id.len() > 64 || tab.label.is_empty() || tab.label.len() > 80 || !ids.insert(&tab.id)
+            || !matches!(tab.layout.as_str(), "single" | "split" | "stack")
+            || tab.panels.is_empty() || tab.panels.len() > 2
+            || (tab.layout == "single" && tab.panels.len() != 1)
+            || (tab.layout != "single" && tab.panels.len() != 2)
+            || tab.panels.iter().any(|panel| matches!(panel, ResultViewPanel::Output { output_id } if !output_ids.contains(output_id))) {
+            bail!("result view contains an invalid tab or panel");
+        }
+    }
+    Ok(view)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionOutputDescriptor {
+    pub ordinal: i64,
+    pub output_id: String,
+    pub mime_type: String,
+    pub byte_length: i64,
+    pub has_rendered_view: bool,
 }
 
 pub(crate) struct DurableExecution {
     pub outputs: Vec<CapturedRepresentation>,
+    pub output_ids: Vec<String>,
     pub state_writes: std::collections::BTreeMap<String, Option<String>>,
+    pub view_json: Option<String>,
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {
@@ -108,7 +211,6 @@ pub(crate) async fn enqueue(
     package_id: &str,
     package_sha256: &str,
     contribution_version: &str,
-    lifetime: &str,
     priority: i64,
 ) -> Result<ExtensionJobResult> {
     if !request.parameters.is_object() {
@@ -121,28 +223,53 @@ pub(crate) async fn enqueue(
     {
         bail!("extension request ID is invalid");
     }
-    let row = sqlx::query("SELECT t.sha256,c.source_app_platform,c.source_app_id,c.source_app_name FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id JOIN clip_items c ON c.id=r.clip_id WHERE c.id=? AND r.id=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready'")
-        .bind(&request.clip_id).bind(&request.source_id).fetch_optional(&repo.pool).await?
-        .context("extension job source is unavailable")?;
-    let input_sha: String = row.get(0);
+    let (input, input_sha) = repo
+        .source_representation(&request.clip_id, &request.source_id)
+        .await?;
+    if matches!(input.payload, CapturedPayload::Files(_)) {
+        bail!("extension jobs do not support file-list inputs");
+    }
+    let row = sqlx::query(
+        "SELECT source_app_platform,source_app_id,source_app_name FROM clip_items WHERE id=?",
+    )
+    .bind(&request.clip_id)
+    .fetch_one(&repo.pool)
+    .await?;
     let app_platform: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.platform.clone())
-        .or_else(|| row.get(1));
+        .or_else(|| if priority == 1 { None } else { row.get(0) });
     let app_id: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.id.clone())
-        .or_else(|| row.get(2));
+        .or_else(|| if priority == 1 { None } else { row.get(1) });
     let app_name: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.display_name.clone())
-        .or_else(|| row.get(3));
+        .or_else(|| if priority == 1 { None } else { row.get(2) });
+    let display_label = request
+        .display_label
+        .as_deref()
+        .unwrap_or(&request.transformer_id);
+    if display_label.trim().is_empty() || display_label.len() > 120 {
+        bail!("extension result label is invalid");
+    }
+    let default_view = request.default_view.as_deref().unwrap_or("result_only");
+    if !matches!(default_view, "result_only" | "compare") {
+        bail!("extension result view is invalid");
+    }
     let parameters_json = canonical_json(&request.parameters);
     let parameter_sha = digest(&[&parameters_json]);
     let settings_revision = revision(repo, package_id, "configuration_revision").await?;
+    if request
+        .settings_snapshot_revision
+        .is_some_and(|expected| expected != settings_revision)
+    {
+        bail!("extension settings changed while scheduling");
+    }
     let grant_revision = revision(repo, package_id, "grant_revision").await?;
     let state_revision = revision(repo, package_id, "state_revision").await?;
     let provider_revision = provider_revision(repo).await?;
@@ -179,16 +306,16 @@ pub(crate) async fn enqueue(
         }
     }
     if !request.regenerate {
-        if let Some(id) = sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE dedupe_key=? AND regeneration_nonce IS NULL AND status IN ('pending','running','waiting_provider','completed') ORDER BY created_at DESC LIMIT 1")
+        if let Some(id) = sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE dedupe_key=? AND regeneration_nonce IS NULL AND status IN ('pending','running','waiting_provider','waiting_write_review','completed') ORDER BY created_at DESC LIMIT 1")
             .bind(&dedupe).fetch_optional(&repo.pool).await? {
             return Ok(ExtensionJobResult { job_id: id, reused: true });
         }
     }
-    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider')").fetch_one(&repo.pool).await?;
+    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await?;
     if outstanding >= 1000 {
         bail!("extension job queue is full");
     }
-    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider')").bind(package_id).fetch_one(&repo.pool).await?;
+    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')").bind(package_id).fetch_one(&repo.pool).await?;
     if package_outstanding >= 100 {
         bail!("extension package job queue is full");
     }
@@ -199,11 +326,11 @@ pub(crate) async fn enqueue(
     let id = new_id();
     let now = now_ms();
     let nonce = request.regenerate.then(new_id);
-    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,parameter_sha256,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,result_lifetime,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
+    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,settings_json,inventory_json,automation_rule_id,setup_id,display_label,default_view,parameter_sha256,result_controls_json,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
         .bind(&id).bind(request.request_id).bind(&request.clip_id).bind(&request.source_id)
         .bind(package_id).bind(&request.transformer_id).bind(contribution_version).bind(package_sha256)
-        .bind(input_sha).bind(parameters_json).bind(parameter_sha).bind(app_platform).bind(app_id).bind(app_name)
-        .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority).bind(lifetime)
+        .bind(input_sha).bind(parameters_json).bind(if request.settings_snapshot_json.is_empty() { "{}" } else { &request.settings_snapshot_json }).bind(if request.inventory_json.is_empty() { "[]" } else { &request.inventory_json }).bind(request.automation_rule_id).bind(request.setup_id).bind(display_label).bind(default_view).bind(parameter_sha).bind(serde_json::to_string(&request.result_controls)?).bind(app_platform).bind(app_id).bind(app_name)
+        .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority)
         .bind(dedupe).bind(nonce).bind(now).bind(now).bind(now).execute(&repo.pool).await?;
     Ok(ExtensionJobResult {
         job_id: id,
@@ -261,18 +388,17 @@ pub(crate) async fn recover(repo: &HistoryRepository) -> Result<()> {
 async fn cleanup_expired(repo: &HistoryRepository) -> Result<()> {
     let now = now_ms();
     let terminal_cutoff = now - 7 * 24 * 60 * 60 * 1000;
-    let temporary_cutoff = now - 15 * 60 * 1000;
     let mut tx = repo.pool.begin().await?;
-    sqlx::query("DELETE FROM artifact_records WHERE id IN (SELECT artifact_id FROM extension_result_outputs WHERE job_id IN (SELECT id FROM extension_jobs WHERE (status IN ('failed','cancelled') AND completed_at<?) OR (status='completed' AND result_lifetime='temporary' AND completed_at<?)))")
+    sqlx::query("DELETE FROM artifact_records WHERE id IN (SELECT artifact_id FROM extension_result_outputs WHERE job_id IN (SELECT id FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<?))")
         .bind(terminal_cutoff)
-        .bind(temporary_cutoff)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM extension_jobs WHERE (status IN ('failed','cancelled') AND completed_at<?) OR (status='completed' AND result_lifetime='temporary' AND completed_at<?)")
-        .bind(terminal_cutoff)
-        .bind(temporary_cutoff)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<? AND NOT EXISTS(SELECT 1 FROM extension_job_steps s WHERE s.job_id=extension_jobs.id AND s.kind='write' AND s.status IN ('completed','unknown'))",
+    )
+    .bind(terminal_cutoff)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM extension_activation_events WHERE status<>'pending' AND updated_at<?")
         .bind(terminal_cutoff)
         .execute(&mut *tx)
@@ -310,7 +436,7 @@ pub(crate) async fn run_next(
     if changed == 0 {
         return Ok(None);
     }
-    let actual_sha: Option<String> = sqlx::query_scalar("SELECT t.sha256 FROM clip_text_values t JOIN clip_representations r ON r.id=t.representation_id WHERE r.id=? AND r.clip_id=? AND r.lifecycle_state='ready'")
+    let actual_sha: Option<String> = sqlx::query_scalar("SELECT COALESCE(t.sha256,b.sha256) FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id WHERE r.id=? AND r.clip_id=? AND r.lifecycle_state='ready' AND r.storage_kind IN ('text','binary_asset')")
         .bind(&source_id).bind(&clip_id).fetch_optional(&repo.pool).await?;
     if actual_sha.as_deref() != Some(&input_sha) {
         finish(repo, &job_id, claim, "cancelled", Some("stale_source")).await?;
@@ -327,7 +453,7 @@ pub(crate) async fn run_next(
                 _ = watcher_cancel.cancelled() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
             }
-            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
                 .bind(&watcher_job).fetch_optional(&watcher_repo.pool).await.unwrap_or(None);
             if active != Some(claim) {
                 watcher_cancel.cancel();
@@ -339,6 +465,7 @@ pub(crate) async fn run_next(
         .execute_durable_transform(
             repo,
             &job_id,
+            claim,
             &package_id,
             &package_sha,
             &contribution_id,
@@ -351,54 +478,56 @@ pub(crate) async fn run_next(
     cancellation.cancel();
     match execution {
         Ok(execution) => {
-            persist_outputs(repo, &job_id, claim, &clip_id, &source_id, execution).await?
+            if let Err(error) =
+                persist_outputs(repo, &job_id, claim, &clip_id, &source_id, execution).await
+            {
+                record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?;
+            }
         }
-        Err(error) => match error
-            .downcast_ref::<super::runtime::GenerationFailureError>()
-            .map(|failure| failure.0)
-        {
-            Some(GenerationFailure::WaitingProvider) => {
-                sqlx::query("UPDATE extension_jobs SET status='waiting_provider',reason_code='provider_unavailable',retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
-                    .bind(now_ms()+60_000).bind(now_ms()).bind(&job_id).bind(claim).execute(&repo.pool).await?;
-            }
-            Some(GenerationFailure::Transient) => {
-                let retries: i64 = sqlx::query_scalar(
-                    "SELECT transient_retry_count FROM extension_jobs WHERE id=?",
-                )
-                .bind(&job_id)
-                .fetch_one(&repo.pool)
-                .await?;
-                if let Some(delay) = [5_000_i64, 15_000, 60_000].get(retries as usize) {
-                    sqlx::query("UPDATE extension_jobs SET status='pending',transient_retry_count=transient_retry_count+1,reason_code='provider_retry',retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
-                        .bind(now_ms()+*delay).bind(now_ms()).bind(&job_id).bind(claim).execute(&repo.pool).await?;
-                } else {
-                    finish(
-                        repo,
-                        &job_id,
-                        claim,
-                        "failed",
-                        Some("provider_retries_exhausted"),
-                    )
-                    .await?;
-                }
-            }
-            Some(GenerationFailure::Cancelled) => {
-                finish(
-                    repo,
-                    &job_id,
-                    claim,
-                    "cancelled",
-                    Some("provider_cancelled"),
-                )
-                .await?;
-            }
-            Some(GenerationFailure::Terminal) => {
-                finish(repo, &job_id, claim, "failed", Some("provider_rejected")).await?;
-            }
-            None => finish(repo, &job_id, claim, "failed", Some("execution_failed")).await?,
-        },
+        Err(error) => {
+            record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?
+        }
     }
     Ok(Some((job_id, clip_id)))
+}
+
+pub(super) async fn record_failure(
+    repo: &HistoryRepository,
+    job_id: &str,
+    claim: i64,
+    failure: OperationFailure,
+) -> Result<()> {
+    let reason = failure.code.as_str();
+    match failure.recovery {
+        Recovery::Wait => {
+            sqlx::query("UPDATE extension_jobs SET status='waiting_provider',reason_code=?,retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
+                .bind(reason).bind(now_ms()+60_000).bind(now_ms()).bind(job_id).bind(claim).execute(&repo.pool).await?;
+        }
+        Recovery::Retry => {
+            let retries: Option<i64> = sqlx::query_scalar("SELECT transient_retry_count FROM extension_jobs WHERE id=? AND claim_generation=? AND status='running'")
+                .bind(job_id).bind(claim).fetch_optional(&repo.pool).await?;
+            let Some(retries) = retries else {
+                return Ok(());
+            };
+            if let Some(delay) = [5_000_i64, 15_000, 60_000].get(retries as usize) {
+                sqlx::query("UPDATE extension_jobs SET status='pending',transient_retry_count=transient_retry_count+1,reason_code=?,retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
+                    .bind(reason).bind(now_ms()+*delay).bind(now_ms()).bind(job_id).bind(claim).execute(&repo.pool).await?;
+            } else {
+                // Keep the specific cause without introducing a schema column or raw text.
+                finish(
+                    repo,
+                    job_id,
+                    claim,
+                    "failed",
+                    Some(&format!("retry_exhausted:{reason}")),
+                )
+                .await?;
+            }
+        }
+        Recovery::Cancel => finish(repo, job_id, claim, "cancelled", Some(reason)).await?,
+        Recovery::Stop => finish(repo, job_id, claim, "failed", Some(reason)).await?,
+    }
+    Ok(())
 }
 
 async fn persist_outputs(
@@ -411,14 +540,43 @@ async fn persist_outputs(
 ) -> Result<()> {
     let DurableExecution {
         outputs,
+        output_ids,
         state_writes,
+        view_json,
     } = execution;
-    if outputs.is_empty() || outputs.len() > 8 {
+    if let Some(view) = &view_json {
+        validate_view(view, &output_ids)
+            .map_err(|_| crate::failure::FailureCode::InvalidOutput.failure())?;
+    }
+    if outputs.len() > 8 {
         bail!("durable extension output count is invalid");
+    }
+    if output_ids.len() != outputs.len()
+        || output_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != outputs.len()
+        || output_ids.iter().any(|id| {
+            id.is_empty()
+                || id.len() > 80
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
+        return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
+    }
+    if outputs.is_empty() {
+        let completed_writes: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_job_steps WHERE job_id=? AND kind='write' AND status='completed'")
+            .bind(job_id).fetch_one(&repo.pool).await?;
+        if completed_writes == 0 {
+            return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
+        }
     }
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
-    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id JOIN clip_text_values t ON t.representation_id=r.id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND t.sha256=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
             .bind(job_id)
             .bind(claim)
             .fetch_optional(&mut *tx)
@@ -453,11 +611,11 @@ async fn persist_outputs(
                     .bind(new_id()).bind(&artifact_id).bind(sha).bind(byte_length).bind(relative).bind(now).bind(now).execute(&mut *tx).await?;
             }
             CapturedPayload::Files(_) => {
-                bail!("file-list output cannot be attached to an extension job")
+                return Err(crate::failure::FailureCode::InvalidOutput.failure().into())
             }
         }
-        sqlx::query("INSERT INTO extension_result_outputs(job_id,ordinal,artifact_id,format_key,mime_type) VALUES(?,?,?,?,?)")
-            .bind(job_id).bind(ordinal as i64).bind(artifact_id).bind(output.format_key)
+        sqlx::query("INSERT INTO extension_result_outputs(job_id,ordinal,output_id,artifact_id,format_key,mime_type) VALUES(?,?,?,?,?,?)")
+            .bind(job_id).bind(ordinal as i64).bind(&output_ids[ordinal]).bind(artifact_id).bind(output.format_key)
             .bind(output.canonical_mime_type.unwrap_or_else(|| "text/plain".into())).execute(&mut *tx).await?;
     }
     if !state_writes.is_empty() {
@@ -489,8 +647,8 @@ async fn persist_outputs(
             }
         }
     }
-    sqlx::query("UPDATE extension_jobs SET status='completed',completed_at=?,updated_at=?,reason_code=NULL WHERE id=? AND claim_generation=? AND status='running'")
-        .bind(now).bind(now).bind(job_id).bind(claim).execute(&mut *tx).await?;
+    sqlx::query("UPDATE extension_jobs SET status='completed',view_json=?,completed_at=?,updated_at=?,reason_code=NULL WHERE id=? AND claim_generation=? AND status='running'")
+        .bind(view_json).bind(now).bind(now).bind(job_id).bind(claim).execute(&mut *tx).await?;
     tx.commit().await?;
     let _ = clip_id;
     Ok(())
@@ -512,32 +670,54 @@ pub(crate) async fn list(
     repo: &HistoryRepository,
     clip_id: &str,
 ) -> Result<Vec<ExtensionJobSummary>> {
-    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,t.text_value,o.mime_type,src.text_value FROM extension_jobs j LEFT JOIN extension_result_outputs o ON o.job_id=j.id AND o.ordinal=0 LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN clip_text_values src ON src.representation_id=j.source_representation_id WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
+    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,j.display_label,j.default_view,j.result_controls_json,j.view_json FROM extension_jobs j WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
         .bind(clip_id).fetch_all(&repo.pool).await?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(ExtensionJobSummary {
-                job_id: row.get(0),
-                clip_id: row.get(1),
-                source_id: row.get(2),
-                package_id: row.get(3),
-                transformer_id: row.get(4),
-                transformer_version: row.get(5),
-                status: row.get(6),
-                reason_code: row.get(7),
-                parameters: serde_json::from_str(&row.get::<String, _>(8))?,
-                created_at: row.get(9),
-                completed_at: row.get(10),
-                output_text: row.get(11),
-                output_mime_type: row.get(12),
-                source_text: row.get(13),
-            })
-        })
-        .collect()
+    let mut summaries = Vec::with_capacity(rows.len());
+    for row in rows {
+        let job_id: String = row.get(0);
+        let completed_writes: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_job_steps WHERE job_id=? AND kind='write' AND status='completed'")
+            .bind(&job_id).fetch_one(&repo.pool).await?;
+        let outputs = sqlx::query("SELECT o.ordinal,o.mime_type,COALESCE(t.utf8_byte_length,b.byte_length),o.output_id FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id WHERE o.job_id=? ORDER BY o.ordinal")
+            .bind(&job_id).fetch_all(&repo.pool).await?
+            .into_iter().map(|output| {
+                let mime_type: String = output.get(1);
+                ExtensionOutputDescriptor {
+                    ordinal: output.get(0),
+                    output_id: output.get(3),
+                    has_rendered_view: matches!(mime_type.as_str(), "text/html" | "application/json" | "text/markdown" | "text/csv" | "text/tab-separated-values" | "text/typescript" | "application/yaml" | "application/x-yaml" | "application/toml") || mime_type.starts_with("image/"),
+                    mime_type,
+                    byte_length: output.get(2),
+                }
+            }).collect();
+        summaries.push(Ok(ExtensionJobSummary {
+            job_id,
+            clip_id: row.get(1),
+            source_id: row.get(2),
+            package_id: row.get(3),
+            transformer_id: row.get(4),
+            transformer_version: row.get(5),
+            status: row.get(6),
+            reason_code: row.get(7),
+            parameters: serde_json::from_str(&row.get::<String, _>(8))?,
+            created_at: row.get(9),
+            completed_at: row.get(10),
+            display_label: row.get(11),
+            default_view: row.get(12),
+            outputs,
+            result_controls: serde_json::from_str(&row.get::<String, _>(13))?,
+            view: row
+                .get::<Option<String>, _>(14)
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?,
+            completed_writes,
+        }));
+    }
+    summaries.into_iter().collect()
 }
 
 pub(crate) async fn cancel(repo: &HistoryRepository, job_id: &str) -> Result<()> {
-    sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='user_cancelled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE id=? AND status IN ('pending','running','waiting_provider')")
+    sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='user_cancelled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
         .bind(now_ms()).bind(now_ms()).bind(job_id).execute(&repo.pool).await?;
     Ok(())
 }
@@ -599,6 +779,105 @@ pub(crate) async fn output(
         .collect()
 }
 
+pub(crate) async fn render_output(
+    repo: &HistoryRepository,
+    job_id: &str,
+    ordinal: i64,
+    raw: bool,
+) -> Result<crate::contracts::RenderModel> {
+    use crate::contracts::{ImageSource, OcrPresentation, RenderModel};
+    let row = sqlx::query("SELECT o.format_key,o.mime_type,t.text_value,b.id,COALESCE(t.utf8_byte_length,b.byte_length) FROM extension_result_outputs o JOIN extension_jobs j ON j.id=o.job_id LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id AND b.lifecycle_state='ready' WHERE o.job_id=? AND o.ordinal=? AND j.status='completed'")
+        .bind(job_id).bind(ordinal).fetch_optional(&repo.pool).await?
+        .context("extension output is unavailable")?;
+    let mime: String = row.get(1);
+    if let Some(text) = row.get::<Option<String>, _>(2) {
+        return Ok(if raw {
+            RenderModel::Text { text }
+        } else if mime == "text/html" {
+            RenderModel::Html {
+                sanitized_html: crate::contributions::sanitize_html(&text),
+            }
+        } else {
+            crate::contributions::typed_text_render_model(Some(&mime), &text)
+        });
+    }
+    if !raw
+        && matches!(
+            mime.as_str(),
+            "image/png"
+                | "image/jpeg"
+                | "image/webp"
+                | "image/gif"
+                | "image/avif"
+                | "image/bmp"
+                | "image/x-icon"
+        )
+    {
+        let file_id: String = row
+            .get::<Option<String>, _>(3)
+            .context("extension image is unavailable")?;
+        return Ok(RenderModel::Image {
+            source: ImageSource::ArtifactFile { file_id },
+            ocr: OcrPresentation::Disabled,
+        });
+    }
+    Ok(RenderModel::Unsupported {
+        format_key: row.get(0),
+        mime_type: Some(mime),
+        native_type: None,
+        byte_length: row.get(4),
+    })
+}
+
+pub(crate) async fn render_source(
+    repo: &HistoryRepository,
+    job_id: &str,
+) -> Result<crate::contracts::RenderModel> {
+    use crate::contracts::{ImageSource, OcrPresentation, RenderModel};
+    let row = sqlx::query("SELECT j.source_clip_id,j.source_representation_id,r.binary_file_id FROM extension_jobs j JOIN clip_representations r ON r.id=j.source_representation_id WHERE j.id=?")
+        .bind(job_id).fetch_optional(&repo.pool).await?.context("extension source is unavailable")?;
+    let clip_id: String = row.get(0);
+    let representation_id: String = row.get(1);
+    let (source, _) = repo
+        .source_representation(&clip_id, &representation_id)
+        .await?;
+    match source.payload {
+        CapturedPayload::Text(text) => Ok(crate::contributions::typed_text_render_model(
+            source.canonical_mime_type.as_deref(),
+            &text,
+        )),
+        CapturedPayload::Binary(bytes) => {
+            if source.canonical_mime_type.as_deref().is_some_and(|mime| {
+                matches!(
+                    mime,
+                    "image/png"
+                        | "image/jpeg"
+                        | "image/webp"
+                        | "image/gif"
+                        | "image/avif"
+                        | "image/bmp"
+                        | "image/x-icon"
+                )
+            }) {
+                Ok(RenderModel::Image {
+                    source: ImageSource::Managed {
+                        asset_id: row.get(2),
+                    },
+                    ocr: OcrPresentation::Disabled,
+                })
+            } else {
+                Ok(RenderModel::Unsupported {
+                    format_key: source.format_key,
+                    mime_type: source.canonical_mime_type,
+                    native_type: source.native_type,
+                    byte_length: bytes.len() as i64,
+                })
+            }
+        }
+        CapturedPayload::Files(_) => bail!("extension source is unsupported"),
+    }
+}
+
 pub(crate) async fn promote(
     repo: &HistoryRepository,
     job_id: &str,
@@ -651,7 +930,7 @@ mod tests {
                 .unwrap();
         let checksum = "a".repeat(64);
         let now = now_ms();
-        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.0','developer',?,'packages/rewrite',1,?,?)")
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.2','developer',?,'packages/rewrite',1,?,?)")
             .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
             .execute(&repo.pool).await.unwrap();
@@ -663,7 +942,19 @@ mod tests {
             request_id: Some(request_id.into()),
             regenerate: false,
             invocation_token: None,
-            capture_application: None,
+            capture_application: Some(SourceApplication {
+                platform: "windows".into(),
+                id: "exe:outlook.exe".into(),
+                display_name: "Outlook".into(),
+            }),
+            automation_rule_id: None,
+            settings_snapshot_json: String::new(),
+            settings_snapshot_revision: None,
+            inventory_json: String::new(),
+            setup_id: None,
+            display_label: None,
+            default_view: None,
+            result_controls: Vec::new(),
         };
         let first = enqueue(
             &repo,
@@ -671,7 +962,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
@@ -682,13 +972,33 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
         .unwrap();
         assert_eq!(first.job_id, second.job_id);
         assert!(second.reused);
+        sqlx::query("UPDATE extension_jobs SET status='waiting_write_review' WHERE id=?")
+            .bind(&first.job_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        let paused = enqueue(
+            &repo,
+            request("paused-equivalent"),
+            "example.rewrite",
+            &checksum,
+            "1.0.0",
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(paused.job_id, first.job_id);
+        assert!(paused.reused);
+        let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(outstanding, 1);
+        let retained = list(&repo, &clip_id).await.unwrap();
+        assert!(retained[0].view.is_none());
         sqlx::query("UPDATE extension_jobs SET status='running',claim_generation=1 WHERE id=?")
             .bind(&first.job_id)
             .execute(&repo.pool)
@@ -701,6 +1011,7 @@ mod tests {
             &clip_id,
             &source_id,
             DurableExecution {
+                output_ids: vec!["rewritten".into()],
                 outputs: vec![CapturedRepresentation {
                     format_key: "mime:text/plain".into(),
                     canonical_mime_type: Some("text/plain".into()),
@@ -712,6 +1023,7 @@ mod tests {
                 state_writes: [("last_preset".into(), Some("\"business\"".into()))]
                     .into_iter()
                     .collect(),
+                view_json: None,
             },
         )
         .await
@@ -732,7 +1044,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await
@@ -749,6 +1060,7 @@ mod tests {
             &clip_id,
             &source_id,
             DurableExecution {
+                output_ids: vec!["image".into()],
                 outputs: vec![CapturedRepresentation {
                     format_key: "mime:image/png".into(),
                     canonical_mime_type: Some("image/png".into()),
@@ -758,6 +1070,7 @@ mod tests {
                     payload: CapturedPayload::Binary(vec![137, 80, 78, 71]),
                 }],
                 state_writes: Default::default(),
+                view_json: None,
             },
         )
         .await
@@ -791,7 +1104,6 @@ mod tests {
             "example.rewrite",
             &checksum,
             "1.0.0",
-            "source_clip",
             0,
         )
         .await

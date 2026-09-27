@@ -4,7 +4,7 @@ import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { RenderModelView } from './RenderModelView'
 import { renderModelText } from './presentationModel'
 import { invoke } from '@tauri-apps/api/core'
-import { managedAssetUrl, transformImageUrl } from '../../shared/utils/assetUrl'
+import { artifactFileUrl, managedAssetUrl } from '../../shared/utils/assetUrl'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
@@ -313,19 +313,19 @@ describe('RenderModelView', () => {
     expect(screen.getByText('No image source found')).toBeInTheDocument()
   })
 
-  it('renders decoded images from the expiring transform-result source', () => {
+  it('renders durable extension images from artifact storage', () => {
     render(
       <RenderModelView
         presentation={presentation({
           kind: 'image',
-          source: { kind: 'transform_result', resultId: 'result-1', outputIndex: 0 },
+          source: { kind: 'artifact_file', fileId: 'file-1' },
           ocr: { state: 'disabled' },
         })}
       />
     )
     expect(screen.getByRole('img', { name: /clipboard image/i })).toHaveAttribute(
       'src',
-      transformImageUrl('result-1', 0)
+      artifactFileUrl('file-1')
     )
   })
 

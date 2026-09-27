@@ -6,7 +6,7 @@ export { Switch } from './Switch'
 export type { SwitchProps } from './Switch'
 
 export { Select } from './Select'
-export type { SelectProps, SelectOption } from './Select'
+export type { SelectProps, SelectOption, SelectGroup } from './Select'
 
 export {
   DropdownMenu,

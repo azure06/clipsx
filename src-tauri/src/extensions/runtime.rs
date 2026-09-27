@@ -1,3 +1,4 @@
+use crate::failure::{FailureCode, OperationFailure};
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
@@ -5,15 +6,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use bindings::Extension;
-use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 use wasmtime::{
     component::{Component, HasSelf, Linker},
     Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
 };
 
+#[allow(clippy::too_many_arguments)]
 mod bindings {
     wasmtime::component::bindgen!({
         path: "wit",
@@ -35,19 +36,6 @@ const TRANSFORM_FUEL: u64 = 50_000_000;
 const LOCAL_FUEL: u64 = u64::MAX;
 const MIB: usize = 1024 * 1024;
 const HOSTCALL_TRANSFER_LIMIT: usize = 16 * MIB;
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeErrorCode {
-    Load,
-    Trap,
-    Fuel,
-    Timeout,
-    Memory,
-    InvalidOutput,
-    Cancelled,
-}
 
 #[derive(Debug, Clone)]
 pub enum ExtensionContent {
@@ -113,22 +101,52 @@ pub struct ExtensionCompactModel {
 
 #[derive(Debug, Clone)]
 pub struct ExtensionOutputRepresentation {
+    pub id: String,
     pub format_key: String,
     pub mime_type: String,
     pub content: ExtensionContent,
 }
 
 #[derive(Debug, Clone)]
+pub enum OperationAvailability {
+    Hidden,
+    Disabled(String),
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepKind {
+    Read,
+    ModelCall,
+    Write,
+}
+
+#[derive(Debug, Clone)]
+pub struct StepCall {
+    pub id: String,
+    pub kind: StepKind,
+    pub request_json: String,
+    pub state_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OperationComplete {
+    pub outputs: Vec<ExtensionOutputRepresentation>,
+    pub view_json: Option<String>,
+    pub state_writes_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum OperationProgress {
+    Skip(String),
+    Call(StepCall),
+    Complete(OperationComplete),
+}
+
+#[derive(Debug, Clone)]
 pub enum ExtensionActionResult {
-    Output {
-        outputs: Vec<ExtensionOutputRepresentation>,
-        disposition: super::ActionDisposition,
-    },
     OpenHttpsUrl(String),
-    Notification {
-        level: String,
-        message: String,
-    },
+    Notification { level: String, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,11 +165,14 @@ struct StoreData {
 pub struct RuntimeBrokerContext {
     pub repo: crate::history::HistoryRepository,
     pub http_permissions: Vec<super::manifest::HttpPermission>,
+    pub write_permissions: Vec<super::manifest::HttpPermission>,
+    pub extension_id: String,
+    pub package_sha256: String,
     pub injected_headers: BTreeMap<String, BTreeMap<String, String>>,
     pub protected_secrets: Vec<Vec<u8>>,
     pub generation_allowed: bool,
     pub generation_cancellation: crate::providers::contracts::generation::GenerationCancellation,
-    pub generation_failure: Arc<tokio::sync::Mutex<Option<GenerationFailure>>>,
+    pub invocation_failure: Arc<tokio::sync::Mutex<Option<OperationFailure>>>,
     pub package_id: String,
     pub state_keys: Vec<String>,
     pub state_schemas: BTreeMap<String, serde_json::Value>,
@@ -159,45 +180,25 @@ pub struct RuntimeBrokerContext {
     pub staged_state: Option<Arc<tokio::sync::Mutex<StagedPackageState>>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerationFailure {
-    WaitingProvider,
-    Transient,
-    Terminal,
-    Cancelled,
-}
-
-#[derive(Debug)]
-pub struct GenerationFailureError(pub GenerationFailure);
-
-impl std::fmt::Display for GenerationFailureError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "generation_{:?}", self.0)
+pub(crate) async fn require_live_grant(
+    context: &RuntimeBrokerContext,
+    kind: &str,
+    value: &str,
+) -> std::result::Result<(), OperationFailure> {
+    let granted: Option<i64> = sqlx::query_scalar("SELECT 1 FROM extension_permission_grants g JOIN extension_installs i ON i.id=g.extension_id WHERE g.extension_id=? AND g.package_sha256=? AND g.permission_kind=? AND g.permission_value=? AND i.enabled=1 AND i.sha256=g.package_sha256")
+        .bind(&context.extension_id)
+        .bind(&context.package_sha256)
+        .bind(kind)
+        .bind(value)
+        .fetch_optional(&context.repo.pool)
+        .await
+        .map_err(|_| FailureCode::UnknownFailure.failure())?;
+    if granted.is_none() {
+        let failure = FailureCode::PermissionRequired.failure();
+        *context.invocation_failure.lock().await = Some(failure);
+        return Err(failure);
     }
-}
-
-impl std::error::Error for GenerationFailureError {}
-
-fn classify_generation_error(error: &anyhow::Error) -> GenerationFailure {
-    use crate::providers::error::ProviderError;
-    match error.downcast_ref::<ProviderError>() {
-        Some(ProviderError::Cancelled) => GenerationFailure::Cancelled,
-        Some(ProviderError::Disabled | ProviderError::InvalidConfiguration(_)) => {
-            GenerationFailure::WaitingProvider
-        }
-        Some(ProviderError::Unavailable(_)) => GenerationFailure::Transient,
-        Some(ProviderError::Rejected {
-            status: 429 | 500..=599,
-            ..
-        }) => GenerationFailure::Transient,
-        Some(_) => GenerationFailure::Terminal,
-        None if error.to_string().contains("provider is not configured")
-            || error.to_string().contains("provider is disabled") =>
-        {
-            GenerationFailure::WaitingProvider
-        }
-        None => GenerationFailure::Terminal,
-    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -226,6 +227,14 @@ impl bindings::clipsx::extension::broker::Host for StoreData {
                     .unwrap_or(false)
             })
             .ok_or_else(|| "extension HTTPS origin is not declared".to_string())?;
+        if !matches!(request.method.as_str(), "GET" | "HEAD") {
+            return Err(
+                "direct mutating HTTPS is unavailable; use a durable operation step".into(),
+            );
+        }
+        require_live_grant(&context, "http", &permission.origin)
+            .await
+            .map_err(|failure| failure.to_string())?;
         let headers = request
             .headers
             .into_iter()
@@ -266,6 +275,9 @@ impl bindings::clipsx::extension::broker::Host for StoreData {
             .clone()
             .filter(|context| context.generation_allowed)
             .ok_or_else(|| "generation.text is unavailable for this invocation".to_string())?;
+        require_live_grant(&context, "provider", "generation.text")
+            .await
+            .map_err(|failure| failure.to_string())?;
         if request.messages.is_empty()
             || request.messages.len() > 16
             || !(1..=4096).contains(&request.max_output_tokens)
@@ -276,7 +288,9 @@ impl bindings::clipsx::extension::broker::Host for StoreData {
                 .sum::<usize>()
                 > MIB
         {
-            return Err("generation request exceeds host limits".into());
+            let failure = FailureCode::InputLimit.failure();
+            *context.invocation_failure.lock().await = Some(failure);
+            return Err(failure.to_string());
         }
         let messages = request
             .messages
@@ -309,9 +323,9 @@ impl bindings::clipsx::extension::broker::Host for StoreData {
         let response = match response {
             Ok(response) => response,
             Err(error) => {
-                let failure = classify_generation_error(&error);
-                *context.generation_failure.lock().await = Some(failure);
-                return Err(format!("generation_{failure:?}"));
+                let failure = OperationFailure::from_error(&error);
+                *context.invocation_failure.lock().await = Some(failure);
+                return Err(failure.to_string());
             }
         };
         Ok(bindings::clipsx::extension::broker::GenerationResponse {
@@ -547,7 +561,7 @@ impl ExtensionRuntime {
             instance.call_detect(&mut store, contribution_id, &to_wit_representation(input)),
         )
         .await
-        .map_err(|_| anyhow!("extension detector timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         result
             .map(|facets| {
@@ -583,7 +597,7 @@ impl ExtensionRuntime {
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension renderer timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         result.map(from_wit_render_model).map_err(guest_error)
     }
@@ -609,67 +623,79 @@ impl ExtensionRuntime {
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension compact renderer timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         result.map(from_wit_compact_model).map_err(guest_error)
     }
 
-    pub async fn transform(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn advance(
         &self,
         sha256: &str,
         contribution_id: &str,
         input: ExtensionRepresentation,
         context_json: String,
         parameters_json: String,
-        broker: Option<RuntimeBrokerContext>,
-    ) -> Result<Vec<ExtensionOutputRepresentation>> {
-        let capability_backed = broker.is_some();
-        let deadline = if capability_backed {
-            Duration::from_secs(125)
-        } else {
-            local_deadline(&input, 500, 2_000)
-        };
-        let fuel = if capability_backed {
-            TRANSFORM_FUEL
-        } else {
-            LOCAL_FUEL
-        };
+        state_json: String,
+        previous_response_json: Option<String>,
+    ) -> Result<OperationProgress> {
+        let deadline = local_deadline(&input, 500, 2_000);
         let (mut store, instance) = self
-            .binding_instance(sha256, fuel, deadline, broker)
+            .binding_instance(sha256, TRANSFORM_FUEL, deadline, None)
             .await?;
         let result = timeout(
             deadline,
-            instance.call_transform(
+            instance.call_advance(
                 &mut store,
                 contribution_id,
                 &to_wit_representation(input),
                 &context_json,
                 &parameters_json,
+                &state_json,
+                previous_response_json.as_deref(),
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension transformer timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
-        result
-            .map(|outputs| outputs.into_iter().map(from_wit_output).collect())
-            .map_err(guest_error)
+        use bindings::clipsx::extension::types::{
+            OperationProgress as WitProgress, StepKind as WitKind,
+        };
+        Ok(match result.map_err(guest_error)? {
+            WitProgress::Skip(reason) => OperationProgress::Skip(reason),
+            WitProgress::Call(call) => OperationProgress::Call(StepCall {
+                id: call.id,
+                kind: match call.kind {
+                    WitKind::Read => StepKind::Read,
+                    WitKind::ModelCall => StepKind::ModelCall,
+                    WitKind::Write => StepKind::Write,
+                },
+                request_json: call.request_json,
+                state_json: call.state_json,
+            }),
+            WitProgress::Complete(value) => OperationProgress::Complete(OperationComplete {
+                outputs: value.outputs.into_iter().map(from_wit_output).collect(),
+                view_json: value.view_json,
+                state_writes_json: value.state_writes_json,
+            }),
+        })
     }
 
-    pub async fn prepare_transform(
+    pub async fn assess(
         &self,
         sha256: &str,
         contribution_id: &str,
         input: ExtensionRepresentation,
         context_json: String,
         parameters_json: String,
-    ) -> Result<Option<String>> {
+    ) -> Result<OperationAvailability> {
         let deadline = local_deadline(&input, 100, 500);
         let (mut store, instance) = self
             .binding_instance(sha256, LOCAL_FUEL, deadline, None)
             .await?;
         let result = timeout(
             deadline,
-            instance.call_prepare_transform(
+            instance.call_assess(
                 &mut store,
                 contribution_id,
                 &to_wit_representation(input),
@@ -678,14 +704,14 @@ impl ExtensionRuntime {
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension prepare-transform timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
-        match result.map_err(guest_error)? {
-            bindings::clipsx::extension::types::PrepareDecision::Skip(_) => Ok(None),
-            bindings::clipsx::extension::types::PrepareDecision::Run(parameters) => {
-                Ok(Some(parameters))
-            }
-        }
+        use bindings::clipsx::extension::types::OperationAvailability as WitAvailability;
+        Ok(match result.map_err(guest_error)? {
+            WitAvailability::Hidden => OperationAvailability::Hidden,
+            WitAvailability::Disabled(reason) => OperationAvailability::Disabled(reason),
+            WitAvailability::Ready => OperationAvailability::Ready,
+        })
     }
 
     pub async fn run_action(
@@ -708,6 +734,9 @@ impl ExtensionRuntime {
         } else {
             LOCAL_FUEL
         };
+        let invocation_failure = broker
+            .as_ref()
+            .map(|context| context.invocation_failure.clone());
         let (mut store, instance) = self
             .binding_instance(sha256, fuel, deadline, broker)
             .await?;
@@ -722,9 +751,19 @@ impl ExtensionRuntime {
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension action timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
-        result.map(from_wit_action_result).map_err(guest_error)
+        match result {
+            Ok(result) => Ok(from_wit_action_result(result)),
+            Err(error) => {
+                if let Some(failure) = invocation_failure {
+                    if let Some(failure) = *failure.lock().await {
+                        return Err(failure.into());
+                    }
+                }
+                Err(guest_error(error))
+            }
+        }
     }
 
     pub async fn action_state(
@@ -750,7 +789,7 @@ impl ExtensionRuntime {
             ),
         )
         .await
-        .map_err(|_| anyhow!("extension action-state timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         result.map(from_wit_action_state).map_err(guest_error)
     }
@@ -777,7 +816,7 @@ impl ExtensionRuntime {
             Extension::instantiate_async(&mut store, &component, &linker),
         )
         .await
-        .map_err(|_| anyhow!("extension component instantiation timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         Ok((store, instance))
     }
@@ -795,7 +834,7 @@ impl ExtensionRuntime {
             Extension::instantiate_async(&mut store, &component, &linker),
         )
         .await
-        .map_err(|_| anyhow!("extension component instantiation timed out"))?
+        .map_err(|_| FailureCode::ExtensionTimeout.failure())?
         .map_err(wasmtime_error)?;
         Ok(())
     }
@@ -847,8 +886,15 @@ fn local_deadline(input: &ExtensionRepresentation, baseline_ms: u64, maximum_ms:
 }
 
 fn guest_error(error: bindings::clipsx::extension::types::GuestError) -> anyhow::Error {
-    let message = error.message.chars().take(512).collect::<String>();
-    anyhow!("extension returned {:?}: {message}", error.code)
+    use bindings::clipsx::extension::types::GuestErrorCode;
+    match error.code {
+        GuestErrorCode::Unsupported => FailureCode::UnsupportedInput,
+        GuestErrorCode::InvalidInput => FailureCode::InvalidInput,
+        GuestErrorCode::InvalidParameters => FailureCode::InvalidParameters,
+        GuestErrorCode::Failed => FailureCode::ExtensionFailed,
+    }
+    .failure()
+    .into()
 }
 
 fn to_wit_representation(
@@ -878,6 +924,7 @@ fn from_wit_output(
     value: bindings::clipsx::extension::types::OutputRepresentation,
 ) -> ExtensionOutputRepresentation {
     ExtensionOutputRepresentation {
+        id: value.id,
         format_key: value.format_key,
         mime_type: value.mime_type,
         content: match value.content {
@@ -951,17 +998,8 @@ fn from_wit_leading(
 fn from_wit_action_result(
     value: bindings::clipsx::extension::types::ActionResult,
 ) -> ExtensionActionResult {
-    use bindings::clipsx::extension::types::{ActionDisposition, ActionResult};
+    use bindings::clipsx::extension::types::ActionResult;
     match value {
-        ActionResult::Output((outputs, disposition)) => ExtensionActionResult::Output {
-            outputs: outputs.into_iter().map(from_wit_output).collect(),
-            disposition: match disposition {
-                ActionDisposition::Preview => super::ActionDisposition::Preview,
-                ActionDisposition::Copy => super::ActionDisposition::Copy,
-                ActionDisposition::Paste => super::ActionDisposition::Paste,
-                ActionDisposition::SaveAsClip => super::ActionDisposition::SaveAsClip,
-            },
-        },
         ActionResult::OpenHttpsUrl(url) => ExtensionActionResult::OpenHttpsUrl(url),
         ActionResult::Notification((level, message)) => {
             ExtensionActionResult::Notification { level, message }
@@ -981,27 +1019,18 @@ fn from_wit_action_state(
 }
 
 fn wasmtime_error(error: wasmtime::Error) -> anyhow::Error {
-    anyhow!(format!("{error:?}"))
+    let code = match error.downcast_ref::<wasmtime::Trap>() {
+        Some(wasmtime::Trap::OutOfFuel | wasmtime::Trap::StackOverflow) => {
+            FailureCode::ResourceLimit
+        }
+        Some(wasmtime::Trap::Interrupt) => FailureCode::ExtensionTimeout,
+        _ => FailureCode::ExtensionTrap,
+    };
+    code.failure().into()
 }
 
 pub(super) fn runtime_error_code(error: &anyhow::Error) -> &'static str {
-    let message = format!("{error:#}").to_ascii_lowercase();
-    if message.contains("fuel") {
-        "fuel"
-    } else if message.contains("timed out") || message.contains("interrupt") {
-        "timeout"
-    } else if message.contains("memory") || message.contains("allocation") {
-        "memory"
-    } else if message.contains("extension returned") {
-        "guest_error"
-    } else if message.contains("invalid")
-        || message.contains("undeclared")
-        || message.contains("emitted too many")
-    {
-        "invalid_output"
-    } else {
-        "trap"
-    }
+    OperationFailure::from_error(error).code.as_str()
 }
 
 #[cfg(test)]
@@ -1042,15 +1071,16 @@ mod tests {
 
     #[test]
     fn runtime_errors_keep_actionable_categories() {
-        assert_eq!(runtime_error_code(&anyhow!("all fuel consumed")), "fuel");
-        assert_eq!(
-            runtime_error_code(&anyhow!("extension action-state timed out")),
-            "timeout"
-        );
-        assert_eq!(
-            runtime_error_code(&anyhow!("extension returned Failed: nope")),
-            "guest_error"
-        );
+        let error = wasmtime_error(wasmtime::Trap::OutOfFuel.into());
+        assert_eq!(runtime_error_code(&error), "resource_limit");
+        let error = wasmtime_error(wasmtime::Trap::Interrupt.into());
+        assert_eq!(runtime_error_code(&error), "extension_timeout");
+        let error = guest_error(bindings::clipsx::extension::types::GuestError {
+            code: bindings::clipsx::extension::types::GuestErrorCode::InvalidInput,
+            message: "clipboard credential".into(),
+        });
+        assert_eq!(runtime_error_code(&error), "invalid_input");
+        assert!(!error.to_string().contains("credential"));
     }
 
     #[test]
@@ -1059,34 +1089,5 @@ mod tests {
         let maximum_base64_output = maximum_input.div_ceil(3) * 4;
         assert!(maximum_base64_output <= 14 * MIB);
         const { assert!(14 * MIB < HOSTCALL_TRANSFER_LIMIT) };
-    }
-
-    #[test]
-    fn provider_failures_have_reviewed_retry_categories() {
-        use crate::providers::error::ProviderError;
-        assert_eq!(
-            classify_generation_error(&ProviderError::Disabled.into()),
-            GenerationFailure::WaitingProvider
-        );
-        assert_eq!(
-            classify_generation_error(&ProviderError::Unavailable("offline".into()).into()),
-            GenerationFailure::Transient
-        );
-        assert_eq!(
-            classify_generation_error(
-                &ProviderError::Rejected {
-                    operation: "generate".into(),
-                    status: 429,
-                    detail: None,
-                    context_overflow: false,
-                }
-                .into()
-            ),
-            GenerationFailure::Transient
-        );
-        assert_eq!(
-            classify_generation_error(&ProviderError::InvalidOutput("bad".into()).into()),
-            GenerationFailure::Terminal
-        );
     }
 }

@@ -1,3 +1,4 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -15,6 +16,63 @@ const SelectHarness = () => {
 }
 
 describe('Select', () => {
+  it('groups choices and associates its label, help, and error with the trigger', async () => {
+    const user = userEvent.setup()
+    render(
+      <Select
+        value=""
+        onChange={() => undefined}
+        label="Setup"
+        placeholder="Choose a setup"
+        helpText="Reusable configuration"
+        error="Choose a valid setup"
+        groups={[
+          {
+            label: 'Built-in setups',
+            options: [
+              { value: 'one', label: 'One' },
+              { value: 'blocked', label: 'Unavailable', disabled: true },
+            ],
+          },
+          { label: 'Saved setups', options: [{ value: 'saved', label: 'Technical' }] },
+        ]}
+      />
+    )
+    const trigger = screen.getByRole('combobox', { name: 'Setup' })
+    expect(trigger).toHaveTextContent('Choose a setup')
+    expect(trigger).toHaveAccessibleDescription('Reusable configuration Choose a valid setup')
+    expect(trigger).toHaveAttribute('aria-invalid', 'true')
+    await user.click(trigger)
+    expect(screen.getByRole('group', { name: 'Built-in setups' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Saved setups' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Unavailable' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    expect(screen.getByRole('listbox')).toHaveClass('max-w-[calc(100vw-1rem)]')
+  })
+  it('opens a portalled menu above a containing dialog and restores focus on Escape', async () => {
+    const user = userEvent.setup()
+    render(
+      <Dialog.Root open>
+        <Dialog.Content>
+          <Dialog.Title>Tools</Dialog.Title>
+          <Dialog.Description>Choose a setup</Dialog.Description>
+          <SelectHarness />
+        </Dialog.Content>
+      </Dialog.Root>
+    )
+    const trigger = screen.getByRole('combobox')
+    await user.click(trigger)
+    const popup = await screen.findByRole('listbox')
+    expect(popup).toHaveClass('z-[80]')
+    expect(screen.getByRole('dialog', { hidden: true })).not.toContainElement(popup)
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
   it('uses the shared theme surface and matches the popup to the trigger width', async () => {
     const user = userEvent.setup()
     render(<SelectHarness />)

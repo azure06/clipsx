@@ -26,12 +26,12 @@ use super::packages::{
     MAX_ARCHIVE_BYTES, MAX_CATALOG_ICON_BYTES, MAX_REGISTRY_BYTES, MAX_REGISTRY_SIGNATURE_BYTES,
 };
 use super::{
-    permission_fingerprint, ActionDisposition, ActionEffect, ActionHandler, ContributionKind,
-    ContributionMatcher, ExecutionClass, ExtensionActionResult, ExtensionActionState,
-    ExtensionCatalog, ExtensionCatalogEntry, ExtensionContent, ExtensionLeadingVisual,
-    ExtensionPackageDetail, ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation,
-    ExtensionRuntime, ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex,
-    RegistryPackage, RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
+    permission_fingerprint, ActionEffect, ActionHandler, ContributionKind, ContributionMatcher,
+    ExecutionClass, ExtensionActionResult, ExtensionActionState, ExtensionCatalog,
+    ExtensionCatalogEntry, ExtensionContent, ExtensionLeadingVisual, ExtensionPackageDetail,
+    ExtensionPackageStore, ExtensionRenderModel, ExtensionRepresentation, ExtensionRuntime,
+    ExtensionSummary, InstallSource, ManifestContribution, RegistryIndex, RegistryPackage,
+    RegistryStatus, RenderSurface, RuntimeStatus, UiSurface, ViewPurpose,
     OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
 
@@ -57,13 +57,11 @@ pub struct ContextActionDescriptor {
     pub icon_scale: f32,
     pub placements: Vec<String>,
     pub effects: Vec<String>,
-    pub transform_preset: bool,
     pub execution: String,
     pub available: bool,
     pub unavailable_reason: Option<String>,
     pub parameter_schema: serde_json::Value,
     pub shortcut: Option<String>,
-    pub pinned: bool,
     pub consent_required: bool,
     pub external_navigation_origins: Vec<String>,
     pub http_origins: Vec<String>,
@@ -87,21 +85,8 @@ pub struct CustomViewSession {
 
 #[derive(Debug, Clone)]
 pub enum ActionOutcome {
-    Queued {
-        job_id: String,
-        clip_id: String,
-    },
-    Output {
-        outputs: Vec<CapturedRepresentation>,
-        disposition: ActionDisposition,
-        action_id: String,
-        version: String,
-    },
     OpenHttpsUrl(String),
-    Notification {
-        level: String,
-        message: String,
-    },
+    Notification { level: String, message: String },
     OpenDialog,
     ComposeEmail(String),
     DialPhone(String),
@@ -111,6 +96,8 @@ pub enum ActionOutcome {
 pub struct ActiveContribution {
     pub extension_id: String,
     pub package_id: String,
+    pub package_label: String,
+    pub package_icon_assets: Option<super::manifest::ThemedIconAssets>,
     pub sha256: String,
     pub local_id: String,
     pub id: String,
@@ -118,6 +105,7 @@ pub struct ActiveContribution {
     pub declaration: ManifestContribution,
     pub external_navigation_origins: Vec<String>,
     pub http_permissions: Vec<super::manifest::HttpPermission>,
+    pub write_permissions: Vec<super::manifest::HttpPermission>,
     pub credential_permissions: Vec<super::manifest::CredentialPermission>,
     pub providers: Vec<String>,
     pub package_relative_path: std::path::PathBuf,
@@ -140,11 +128,7 @@ struct PendingCustomView {
     extension_id: String,
     package_id: String,
     package_sha256: String,
-    action_id: Option<String>,
-    action_version: Option<String>,
     clip_id: String,
-    source_id: String,
-    facet_id: Option<String>,
     effects: Vec<ActionEffect>,
     http_permissions: Vec<super::manifest::HttpPermission>,
     credential_permissions: Vec<super::manifest::CredentialPermission>,
@@ -178,28 +162,18 @@ pub enum BridgeRequest {
     SubmitOutput {
         mime_type: String,
         text: String,
-        disposition: ActionDisposition,
+        disposition: String,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum BridgeOutcome {
-    ViewReady {
-        focus: bool,
-    },
+    ViewReady { focus: bool },
     ViewFailed(String),
     Https(super::BrokerHttpResponse),
     OpenExternal(String),
     GenerationText(String),
-    Output {
-        outputs: Vec<CapturedRepresentation>,
-        disposition: ActionDisposition,
-        action_id: String,
-        version: String,
-        clip_id: String,
-        source_id: String,
-        facet_id: Option<String>,
-    },
+    CopyText { text: String, clip_id: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,7 +285,7 @@ impl ExtensionService {
             for release in index
                 .packages
                 .iter()
-                .filter(|release| release.api_version == "^3.0")
+                .filter(|release| release.api_version == "^3.2")
             {
                 let replace = latest
                     .get(&release.package_id)
@@ -395,6 +369,43 @@ impl ExtensionService {
             .find(|entry| entry.package.package_id == package_id)
             .context("extension package was not found")?;
         let installed = entry.installed.clone();
+        let (activations, transformers, automation_permissions) = if installed.is_some() {
+            let (_, package) = self.package_for_settings(repo, package_id).await?;
+            let provider_available = package.manifest.permissions.providers.is_empty()
+                || crate::providers::generation::available(repo).await?;
+            let transformers = package
+                .manifest
+                .contributions
+                .iter()
+                .filter(|item| item.kind == ContributionKind::Transformer)
+                .map(|item| super::TransformerConfiguration {
+                    id: package.manifest.qualified_contribution_id(&item.id),
+                    local_id: item.id.clone(),
+                    label: item.display_name.clone(),
+                    parameter_schema: item.parameter_schema.clone(),
+                    parameter_ui: item.parameter_ui.clone(),
+                    setup_selector_parameter: item.setup_selector_parameter.clone(),
+                    setups: item.setups.clone(),
+                    default_view: item.default_view,
+                    provider_available,
+                })
+                .collect();
+            (
+                package.manifest.activations,
+                transformers,
+                package.manifest.permissions,
+            )
+        } else {
+            (Vec::new(), Vec::new(), Default::default())
+        };
+
+        let automation_consent_required = if automation_permissions.background_clip_created {
+            !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM extension_installs i JOIN extension_permission_grants g ON g.extension_id=i.id AND g.package_sha256=i.sha256 WHERE i.package_id=? AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+                .bind(package_id).fetch_one(&repo.pool).await?
+        } else {
+            false
+        };
+
         let (settings, credentials, actions, diagnostics) = if let Some(installed) = &installed {
             let mut diagnostics = Vec::new();
             if installed.status != RuntimeStatus::Ready {
@@ -422,6 +433,10 @@ impl ExtensionService {
             installed,
             package: Some(entry.package),
             actions,
+            activations,
+            transformers,
+            automation_permissions,
+            automation_consent_required,
             settings,
             credentials,
             update: entry.update,
@@ -783,7 +798,7 @@ impl ExtensionService {
         }
         if !enabled {
             self.invalidate_runtime_sessions();
-            sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+            sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
                 .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&repo.pool).await?;
             sqlx::query("DELETE FROM extension_permission_grants WHERE extension_id=(SELECT id FROM extension_installs WHERE package_id=?)")
                 .bind(package_id)
@@ -841,9 +856,13 @@ impl ExtensionService {
             .execute(&repo.pool)
             .await?;
         let mut transaction = repo.pool.begin().await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_uninstalled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_uninstalled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *transaction).await?;
         sqlx::query("DELETE FROM extension_package_state WHERE package_id=?")
+            .bind(package_id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("DELETE FROM extension_transform_setups WHERE package_id=?")
             .bind(package_id)
             .execute(&mut *transaction)
             .await?;
@@ -925,6 +944,8 @@ impl ExtensionService {
                 })
             {
                 values.push(ActiveContribution {
+                    package_label: package.manifest.display_name.clone(),
+                    package_icon_assets: package.manifest.icon_assets.clone(),
                     extension_id: row.get(0),
                     package_id: package.manifest.package_id.clone(),
                     sha256: package.sha256.clone(),
@@ -940,6 +961,7 @@ impl ExtensionService {
                         .map(|permission| permission.origin.clone())
                         .collect(),
                     http_permissions: package.manifest.permissions.http.clone(),
+                    write_permissions: package.manifest.permissions.external_writes.clone(),
                     credential_permissions: package.manifest.permissions.credentials.clone(),
                     providers: package.manifest.permissions.providers.clone(),
                     package_relative_path: package.relative_path.clone(),
@@ -1271,21 +1293,86 @@ impl ExtensionService {
     pub async fn transformer_descriptors_for(
         &self,
         repo: &HistoryRepository,
-        input: &CapturedRepresentation,
+        clip_id: &str,
+        preferred_source_id: &str,
     ) -> Result<Vec<crate::contributions::transformer::TransformerDescriptor>> {
+        let detail = repo.detail(clip_id).await?;
+        let inventory = format_inventory(&detail.representations);
+        let mut candidates = detail.representations.iter().collect::<Vec<_>>();
+        candidates.sort_by_key(|item| {
+            (
+                item.id != preferred_source_id,
+                item.capture_priority,
+                item.ordinal,
+            )
+        });
         let mut descriptors = Vec::new();
         for item in self
             .active_contributions(repo, ContributionKind::Transformer)
             .await?
-            .into_iter()
-            .filter(|item| accepts(&item.declaration, input, None))
         {
+            let mut sources = Vec::new();
+            for candidate in &candidates {
+                if candidate.byte_length < 0
+                    || candidate.byte_length as usize > item.declaration.input_limit_bytes
+                {
+                    continue;
+                }
+                let (source, _) = repo.source_representation(clip_id, &candidate.id).await?;
+                if accepts(&item.declaration, &source, None) {
+                    sources.push((candidate.id.clone(), source));
+                }
+            }
+            let Some((selected_source_id, _)) = sources.first() else {
+                continue;
+            };
+            let selected_source_id = selected_source_id.clone();
+            let settings = self.package_settings(repo, &item.package_id).await?;
+            let context_json = serde_json::json!({
+                "origin": "selection",
+                "settings": settings,
+                "formats": inventory,
+            })
+            .to_string();
+            let mut setup_availability = std::collections::BTreeMap::new();
+            for setup in &item.declaration.setups {
+                let decision = self
+                    .assess_transform_sources(&item, &sources, &context_json, &setup.parameters)
+                    .await?;
+                setup_availability.insert(setup.id.clone(), decision);
+            }
+            for row in sqlx::query("SELECT id,parameters_json FROM extension_transform_setups WHERE package_id=? AND transformer_id=?")
+                .bind(&item.package_id).bind(&item.id).fetch_all(&repo.pool).await? {
+                let parameters: serde_json::Value = serde_json::from_str(&row.get::<String, _>(1))?;
+                let decision = self.assess_transform_sources(&item, &sources, &context_json, &parameters).await?;
+                setup_availability.insert(format!("saved:{}", row.get::<String, _>(0)), decision);
+            }
+            let custom_availability = self
+                .assess_transform_sources(&item, &sources, &context_json, &serde_json::json!({}))
+                .await?;
+            if custom_availability.state == "hidden"
+                && setup_availability
+                    .values()
+                    .all(|value| value.state == "hidden")
+            {
+                continue;
+            }
             let consent_required = self.consent_required(repo, &item).await?;
+            let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
             descriptors.push(crate::contributions::transformer::TransformerDescriptor {
                 id: item.id,
+                source_id: selected_source_id,
+                package_id: item.package_id.clone(),
                 version: item.version,
                 label: item.declaration.display_name,
+                icon: item.declaration.icon,
+                icon_svg,
+                icon_svg_dark,
+                icon_scale: item.declaration.icon_scale,
                 parameter_schema: item.declaration.parameter_schema,
+                parameter_ui: item.declaration.parameter_ui,
+                setup_selector_parameter: item.declaration.setup_selector_parameter,
+                package_label: item.package_label,
                 input_limit_bytes: item.declaration.input_limit_bytes,
                 timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
                     125_000
@@ -1299,16 +1386,199 @@ impl ExtensionService {
                     .iter()
                     .map(|value| value.origin.clone())
                     .collect(),
-                providers: item.providers,
-                expose_in_menu: item.declaration.expose_in_menu,
-                result_lifetime: match item.declaration.result_lifetime {
-                    super::ResultLifetime::Temporary => "temporary",
-                    super::ResultLifetime::SourceClip => "source_clip",
-                }
-                .into(),
+                providers: item.providers.clone(),
+                setups: item.declaration.setups,
+                default_view: item.declaration.default_view,
+                result_controls: item.declaration.result_controls,
+                provider_available: !item
+                    .providers
+                    .iter()
+                    .any(|provider| provider == "generation.text")
+                    || crate::providers::generation::available(repo).await?,
+                setup_availability,
+                custom_availability,
             });
         }
         Ok(descriptors)
+    }
+
+    async fn assess_transform_sources(
+        &self,
+        item: &ActiveContribution,
+        sources: &[(String, CapturedRepresentation)],
+        context_json: &str,
+        parameters: &serde_json::Value,
+    ) -> Result<crate::contributions::transformer::OperationAvailabilityDescriptor> {
+        use crate::contributions::transformer::OperationAvailabilityDescriptor;
+        for (source_id, source) in sources {
+            let decision = self
+                .runtime
+                .assess(
+                    &item.sha256,
+                    &item.local_id,
+                    representation(source.clone(), item.declaration.input_limit_bytes)?,
+                    context_json.to_owned(),
+                    parameters.to_string(),
+                )
+                .await;
+            let (state, reason) = match decision {
+                Ok(super::OperationAvailability::Hidden) => continue,
+                Ok(super::OperationAvailability::Ready) => ("ready", None),
+                Ok(super::OperationAvailability::Disabled(reason)) => {
+                    ("disabled", Some(reason.chars().take(120).collect()))
+                }
+                Err(_) => ("disabled", Some("Availability check failed".into())),
+            };
+            return Ok(OperationAvailabilityDescriptor {
+                state: state.into(),
+                reason,
+                source_id: Some(source_id.clone()),
+            });
+        }
+        Ok(OperationAvailabilityDescriptor {
+            state: "hidden".into(),
+            reason: None,
+            source_id: None,
+        })
+    }
+
+    pub async fn list_transform_setups(
+        &self,
+        repo: &HistoryRepository,
+    ) -> Result<Vec<super::SavedTransformSetup>> {
+        let active = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?;
+        let rows = sqlx::query("SELECT id,package_id,transformer_id,label,parameters_json,default_view,revision FROM extension_transform_setups ORDER BY updated_at DESC,id")
+            .fetch_all(&repo.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                let package_id: String = row.get(1);
+                let transformer_id: String = row.get(2);
+                let parameters: serde_json::Value = serde_json::from_str(&row.get::<String, _>(4))?;
+                let available = active
+                    .iter()
+                    .find(|item| item.package_id == package_id && item.id == transformer_id)
+                    .is_some_and(|item| {
+                        super::parameters::normalize(
+                            &item.declaration.parameter_schema,
+                            &item.declaration.parameter_ui,
+                            &parameters,
+                        )
+                        .is_ok()
+                    });
+                Ok(super::SavedTransformSetup {
+                    id: row.get(0),
+                    package_id,
+                    transformer_id,
+                    label: row.get(3),
+                    parameters,
+                    default_view: row.get(5),
+                    revision: row.get(6),
+                    available,
+                })
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_transform_setup(
+        &self,
+        repo: &HistoryRepository,
+        id: Option<&str>,
+        expected_revision: Option<i64>,
+        transformer_id: &str,
+        label: &str,
+        parameters: serde_json::Value,
+        default_view: &str,
+    ) -> Result<super::SavedTransformSetup> {
+        if label.trim().is_empty()
+            || label.len() > 80
+            || !matches!(default_view, "result_only" | "compare")
+        {
+            bail!("transform setup label or view is invalid");
+        }
+        let transformer = self
+            .active_contributions(repo, ContributionKind::Transformer)
+            .await?
+            .into_iter()
+            .find(|item| item.id == transformer_id)
+            .context("extension transformer is unavailable")?;
+        let parameters = super::parameters::normalize(
+            &transformer.declaration.parameter_schema,
+            &transformer.declaration.parameter_ui,
+            &parameters,
+        )?;
+        let parameters_json = serde_json::to_string(&parameters)?;
+        if parameters_json.len() > 16_384 {
+            bail!("transform setup parameters exceed 16 KiB");
+        }
+        let now = now_ms();
+        let mut tx = repo.pool.begin().await?;
+        let (id, revision) = if let Some(id) = id {
+            let revision = expected_revision.context("transform setup revision is required")?;
+            let changed = sqlx::query("UPDATE extension_transform_setups SET label=?,parameters_json=?,default_view=?,revision=revision+1,updated_at=? WHERE id=? AND package_id=? AND transformer_id=? AND revision=?")
+                .bind(label.trim()).bind(&parameters_json).bind(default_view).bind(now).bind(id)
+                .bind(&transformer.package_id).bind(transformer_id).bind(revision)
+                .execute(&mut *tx).await?.rows_affected();
+            if changed != 1 {
+                bail!("transform setup changed or is unavailable");
+            }
+            (id.to_owned(), revision + 1)
+        } else {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM extension_transform_setups WHERE package_id=?",
+            )
+            .bind(&transformer.package_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if count >= 64 {
+                bail!("extension already has 64 saved setups");
+            }
+            let id = new_id();
+            sqlx::query("INSERT INTO extension_transform_setups(id,package_id,transformer_id,label,parameters_json,default_view,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)")
+                .bind(&id).bind(&transformer.package_id).bind(transformer_id).bind(label.trim())
+                .bind(&parameters_json).bind(default_view).bind(now).bind(now)
+                .execute(&mut *tx).await?;
+            (id, 1)
+        };
+        sqlx::query("UPDATE extension_automation_rules SET parameters_json=?,setup_label=?,default_view=?,reason_code=NULL,revision=revision+1,updated_at=? WHERE package_id=? AND setup_kind='saved' AND setup_ref=?")
+            .bind(&parameters_json).bind(setup_display_label(&transformer.declaration.display_name,label.trim())).bind(default_view).bind(now).bind(&transformer.package_id).bind(&id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=configuration_revision+1,updated_at=excluded.updated_at")
+            .bind(&transformer.package_id).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(super::SavedTransformSetup {
+            id,
+            package_id: transformer.package_id,
+            transformer_id: transformer_id.into(),
+            label: label.trim().into(),
+            parameters,
+            default_view: default_view.into(),
+            revision,
+            available: true,
+        })
+    }
+
+    pub async fn delete_transform_setup(&self, repo: &HistoryRepository, id: &str) -> Result<()> {
+        let mut tx = repo.pool.begin().await?;
+        let package_id: Option<String> =
+            sqlx::query_scalar("SELECT package_id FROM extension_transform_setups WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        sqlx::query("UPDATE extension_automation_rules SET enabled=0,reason_code='setup_deleted',revision=revision+1,updated_at=? WHERE setup_kind='saved' AND setup_ref=?")
+            .bind(now_ms()).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',claim_generation=claim_generation+1,completed_at=?,updated_at=? WHERE EXISTS(SELECT 1 FROM extension_automation_rules r WHERE r.package_id=extension_jobs.package_id AND r.rule_id=extension_jobs.automation_rule_id AND r.setup_kind='saved' AND r.setup_ref=?) AND status IN ('pending','running','waiting_provider','waiting_write_review')")
+            .bind(now_ms()).bind(now_ms()).bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM extension_transform_setups WHERE id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        if let Some(package_id) = package_id {
+            sqlx::query("UPDATE extension_package_revisions SET configuration_revision=configuration_revision+1,updated_at=? WHERE package_id=?").bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn renderer_descriptors(
@@ -1356,7 +1626,6 @@ impl ExtensionService {
             ));
         }
         let shortcuts = self.action_shortcuts(repo).await?;
-        let pins = self.action_pins(repo).await?;
         let facets = crate::contributions::facets(repo, clip_id).await?;
         let mut actions = Vec::new();
         for item in self
@@ -1390,13 +1659,8 @@ impl ExtensionService {
             };
             let consent_required = self.consent_required(repo, &item).await?;
             let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-            let transform_preset = matches!(
-                &item.declaration.handler,
-                Some(ActionHandler::TransformerPreset { .. })
-            );
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
-                pinned: pins.contains(&item.id),
                 id: item.id,
                 package_id: item.package_id,
                 source_id: Some(selected_source_id),
@@ -1422,7 +1686,6 @@ impl ExtensionService {
                     .map(action_effect_name)
                     .map(str::to_string)
                     .collect(),
-                transform_preset,
                 execution: execution_name(item.declaration.execution).into(),
                 available,
                 unavailable_reason,
@@ -1446,7 +1709,6 @@ impl ExtensionService {
         repo: &HistoryRepository,
     ) -> Result<Vec<ContextActionDescriptor>> {
         let shortcuts = self.action_shortcuts(repo).await?;
-        let pins = self.action_pins(repo).await?;
         let mut actions: Vec<_> = self
             .active_contributions(repo, ContributionKind::Action)
             .await?
@@ -1454,13 +1716,8 @@ impl ExtensionService {
             .map(|item| {
                 let available = true;
                 let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-                let transform_preset = matches!(
-                    &item.declaration.handler,
-                    Some(ActionHandler::TransformerPreset { .. })
-                );
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
-                    pinned: pins.contains(&item.id),
                     id: item.id,
                     package_id: item.package_id,
                     source_id: None,
@@ -1486,7 +1743,6 @@ impl ExtensionService {
                         .map(action_effect_name)
                         .map(str::to_string)
                         .collect(),
-                    transform_preset,
                     execution: execution_name(item.declaration.execution).into(),
                     available,
                     unavailable_reason: None,
@@ -1522,19 +1778,25 @@ impl ExtensionService {
         invocation_token: Option<&str>,
     ) -> Result<ActionOutcome> {
         if !parameters.is_object() {
-            bail!("extension action parameters must be an object");
+            return Err(crate::failure::FailureCode::InvalidParameters
+                .failure()
+                .into());
         }
-        let (source, _) = repo.source_representation(clip_id, source_id).await?;
+        let (source, _) = repo
+            .source_representation(clip_id, source_id)
+            .await
+            .map_err(|_| crate::failure::FailureCode::StaleContext.failure())?;
         let contribution = self
             .active_contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
-            .context("contextual action is not available for this representation")?;
+            .ok_or_else(|| crate::failure::FailureCode::UnsupportedInput.failure())?;
         super::manifest::validate_parameters(
             &contribution.declaration.parameter_schema,
             &parameters,
-        )?;
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
         if contribution.declaration.execution == ExecutionClass::CapabilityBacked
             || contribution.declaration.effects.iter().any(|effect| {
                 matches!(
@@ -1552,8 +1814,10 @@ impl ExtensionService {
                 clip_id,
                 source_id,
                 facet_id,
-                invocation_token.context("extension action requires an invocation token")?,
-            )?;
+                invocation_token
+                    .ok_or_else(|| crate::failure::FailureCode::PermissionRequired.failure())?,
+            )
+            .map_err(|_| crate::failure::FailureCode::PermissionRequired.failure())?;
         }
         let facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
@@ -1563,9 +1827,15 @@ impl ExtensionService {
             .await?
         {
             ExtensionActionState::Enabled => {}
-            ExtensionActionState::Hidden => bail!("extension action is hidden for this clip"),
-            ExtensionActionState::Disabled(reason) => {
-                bail!("extension action is disabled: {reason}")
+            ExtensionActionState::Hidden => {
+                return Err(crate::failure::FailureCode::UnsupportedInput
+                    .failure()
+                    .into())
+            }
+            ExtensionActionState::Disabled(_) => {
+                return Err(crate::failure::FailureCode::ExtensionFailed
+                    .failure()
+                    .into());
             }
         }
         let outcome = match contribution
@@ -1585,63 +1855,6 @@ impl ExtensionService {
                 facet_value_pointer,
             } => {
                 ActionOutcome::DialPhone(facet_string_value(facet.as_ref(), &facet_value_pointer)?)
-            }
-            ActionHandler::TransformerPreset {
-                transformer_id,
-                parameters: preset,
-                disposition,
-            } => {
-                let parameters = merge_parameters(preset, parameters)?;
-                let qualified = format!("{}/{}", contribution.package_id, transformer_id);
-                let transformer = self
-                    .active_contributions(repo, ContributionKind::Transformer)
-                    .await?
-                    .into_iter()
-                    .find(|item| item.id == qualified)
-                    .context("action transformer is unavailable")?;
-                if transformer.declaration.result_lifetime == super::ResultLifetime::SourceClip {
-                    if contribution.declaration.execution != ExecutionClass::CapabilityBacked {
-                        bail!("durable preset actions require a bound user invocation");
-                    }
-                    super::manifest::validate_parameters(
-                        &transformer.declaration.parameter_schema,
-                        &parameters,
-                    )?;
-                    let queued = super::jobs::enqueue(
-                        repo,
-                        super::EnqueueExtensionJob {
-                            clip_id: clip_id.into(),
-                            source_id: source_id.into(),
-                            transformer_id: qualified,
-                            parameters,
-                            request_id: Some(new_id()),
-                            regenerate: false,
-                            invocation_token: None,
-                            capture_application: None,
-                        },
-                        &transformer.package_id,
-                        &transformer.sha256,
-                        &transformer.version,
-                        "source_clip",
-                        0,
-                    )
-                    .await?;
-                    ActionOutcome::Queued {
-                        job_id: queued.job_id,
-                        clip_id: clip_id.into(),
-                    }
-                } else {
-                    let (_, outputs) = self
-                        .transform(repo, &qualified, source.clone(), parameters, facet_id, None)
-                        .await?
-                        .context("action transformer is unavailable")?;
-                    ActionOutcome::Output {
-                        outputs,
-                        disposition,
-                        action_id: contribution.id.clone(),
-                        version: contribution.version.clone(),
-                    }
-                }
             }
             ActionHandler::Guest => {
                 let broker =
@@ -1665,7 +1878,7 @@ impl ExtensionService {
                     )
                     .await;
                 match result {
-                    Ok(result) => action_outcome(&contribution, result)?,
+                    Ok(result) => action_outcome(result),
                     Err(error) => {
                         self.failure(repo, &contribution, &error, true).await?;
                         return Err(error);
@@ -1698,9 +1911,17 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id)
             .context("extension action is not installed and enabled")?;
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
         if contribution.external_navigation_origins.is_empty()
             && contribution.http_permissions.is_empty()
+            && contribution.write_permissions.is_empty()
             && contribution.providers.is_empty()
+            && !package_permissions.source_application
+            && !package_permissions.package_state
         {
             bail!("extension action has no grantable external-data permission");
         }
@@ -1723,6 +1944,11 @@ impl ExtensionService {
                 .execute(&mut *transaction)
                 .await?;
         }
+        for permission in &contribution.write_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'external_write', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
         for provider in &contribution.providers {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id)
@@ -1731,6 +1957,24 @@ impl ExtensionService {
                 .bind(now_ms())
                 .execute(&mut *transaction)
                 .await?;
+        }
+        for (required, kind, value) in [
+            (
+                package_permissions.source_application,
+                "source_application",
+                "normalized",
+            ),
+            (
+                package_permissions.package_state,
+                "package_state",
+                "declared",
+            ),
+        ] {
+            if required {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(&contribution.extension_id).bind(&contribution.sha256).bind(kind).bind(value).bind(now_ms())
+                    .execute(&mut *transaction).await?;
+            }
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&contribution.package_id).bind(now_ms()).execute(&mut *transaction).await?;
@@ -1754,7 +1998,9 @@ impl ExtensionService {
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
             .context("contextual action is not available for this representation")?;
         if self.consent_required(repo, &contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         let facet = self
             .action_facet(repo, clip_id, source_id, facet_id)
@@ -1801,9 +2047,19 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == transformer_id)
             .context("extension transformer is not installed and enabled")?;
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
         let mut transaction = repo.pool.begin().await?;
         for permission in &contribution.http_permissions {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'http', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
+        for permission in &contribution.write_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'external_write', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
                 .execute(&mut *transaction).await?;
         }
@@ -1811,6 +2067,24 @@ impl ExtensionService {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id).bind(&contribution.sha256).bind(provider).bind(now_ms())
                 .execute(&mut *transaction).await?;
+        }
+        for (required, kind, value) in [
+            (
+                package_permissions.source_application,
+                "source_application",
+                "normalized",
+            ),
+            (
+                package_permissions.package_state,
+                "package_state",
+                "declared",
+            ),
+        ] {
+            if required {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(&contribution.extension_id).bind(&contribution.sha256).bind(kind).bind(value).bind(now_ms())
+                    .execute(&mut *transaction).await?;
+            }
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&contribution.package_id).bind(now_ms()).execute(&mut *transaction).await?;
@@ -1836,7 +2110,9 @@ impl ExtensionService {
             bail!("local transformers do not require invocation tokens");
         }
         if self.consent_required(repo, &contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         if contribution
             .providers
@@ -1945,11 +2221,7 @@ impl ExtensionService {
                 extension_id: contribution.extension_id,
                 package_id: contribution.package_id,
                 package_sha256: contribution.sha256,
-                action_id: Some(contribution.id),
-                action_version: Some(contribution.version),
                 clip_id: clip_id.into(),
-                source_id: source_id.into(),
-                facet_id: facet_id.map(str::to_string),
                 effects: contribution.declaration.effects,
                 http_permissions: contribution.http_permissions,
                 credential_permissions: contribution.credential_permissions,
@@ -1982,7 +2254,7 @@ impl ExtensionService {
                         "locale": locale,
                     }))?
                 )
-                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='preview')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.ClipsX=Object.freeze(window.ClipsX);"#),
+                + &format!(r#"const __clipsxInvoke=window.__TAURI_INTERNALS__?.invoke;const __clipsxSend=(request)=>typeof __clipsxInvoke==='function'?__clipsxInvoke('extension_bridge',{{token:'{token}',request}}):Promise.reject(new Error('The ClipsX extension bridge is unavailable.'));window.ClipsX.ready=()=>__clipsxSend({{kind:'view_ready'}});window.ClipsX.https=(request)=>__clipsxSend({{kind:'https',request}});window.ClipsX.openExternal=(url)=>__clipsxSend({{kind:'open_external',url}});window.ClipsX.generateText=(prompt)=>__clipsxSend({{kind:'generation_text',prompt}});window.ClipsX.submitText=(mimeType,text,disposition='copy')=>__clipsxSend({{kind:'submit_output',mimeType,text,disposition}});window.ClipsX.close=()=>location.assign('clipsx-extension-bridge://{token}/close');const __clipsxFail=(message)=>__clipsxSend({{kind:'view_failed',message:String(message||'The extension view failed to load.').slice(0,500)}}).catch(()=>{{}});window.addEventListener('error',(event)=>__clipsxFail(event.message||'An extension view resource failed to load.'),true);window.addEventListener('unhandledrejection',(event)=>__clipsxFail(event.reason?.message||event.reason||'The extension view failed to start.'));window.ClipsX=Object.freeze(window.ClipsX);"#),
                 expires_at: now_ms() + 60 * 60 * 1000,
             },
         );
@@ -2077,10 +2349,6 @@ impl ExtensionService {
             }
             request => request,
         };
-        let action_id = session
-            .action_id
-            .clone()
-            .context("extension contribution identity is missing")?;
         match request {
             BridgeRequest::Https { request } => {
                 let url =
@@ -2189,30 +2457,18 @@ impl ExtensionService {
                 text,
                 disposition,
             } => {
-                let effect = disposition_effect(disposition);
-                if !session.effects.contains(&effect) || text.len() > 10 * 1024 * 1024 {
+                if disposition != "copy"
+                    || !session.effects.contains(&ActionEffect::Copy)
+                    || text.len() > 10 * 1024 * 1024
+                {
                     bail!("extension output is undeclared or exceeds host limits");
                 }
-                if !valid_output_mime_type(&mime_type) {
+                if mime_type != "text/plain" {
                     bail!("extension output MIME type is invalid");
                 }
-                Ok(BridgeOutcome::Output {
-                    outputs: vec![CapturedRepresentation {
-                        format_key: format!("mime:{mime_type}"),
-                        canonical_mime_type: Some(mime_type),
-                        native_type: None,
-                        platform: platform().into(),
-                        capture_priority: 10,
-                        payload: CapturedPayload::Text(text),
-                    }],
-                    disposition,
-                    action_id,
-                    version: session
-                        .action_version
-                        .context("extension contribution version is missing")?,
+                Ok(BridgeOutcome::CopyText {
+                    text,
                     clip_id: session.clip_id,
-                    source_id: session.source_id,
-                    facet_id: session.facet_id,
                 })
             }
             BridgeRequest::ViewReady | BridgeRequest::ViewFailed { .. } => {
@@ -2308,8 +2564,6 @@ impl ExtensionService {
             .execute(&mut *tx).await?;
         sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=extension_package_revisions.configuration_revision+1,updated_at=excluded.updated_at")
             .bind(package_id).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='settings_changed',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
-            .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -2582,34 +2836,6 @@ impl ExtensionService {
         Ok(())
     }
 
-    pub async fn set_action_pinned(
-        &self,
-        repo: &HistoryRepository,
-        action_id: &str,
-        pinned: bool,
-    ) -> Result<()> {
-        let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
-            .await?
-            .into_iter()
-            .find(|item| item.id == action_id)
-            .context("extension action is not installed and enabled")?;
-        if pinned {
-            sqlx::query("INSERT INTO extension_action_pins(extension_id,action_id,pinned_at) VALUES(?,?,?) ON CONFLICT(action_id) DO UPDATE SET extension_id=excluded.extension_id,pinned_at=excluded.pinned_at")
-                .bind(&contribution.extension_id)
-                .bind(action_id)
-                .bind(now_ms())
-                .execute(&repo.pool)
-                .await?;
-        } else {
-            sqlx::query("DELETE FROM extension_action_pins WHERE action_id=?")
-                .bind(action_id)
-                .execute(&repo.pool)
-                .await?;
-        }
-        Ok(())
-    }
-
     async fn action_shortcuts(
         &self,
         repo: &HistoryRepository,
@@ -2623,26 +2849,22 @@ impl ExtensionService {
             .collect())
     }
 
-    async fn action_pins(
-        &self,
-        repo: &HistoryRepository,
-    ) -> Result<std::collections::BTreeSet<String>> {
-        Ok(
-            sqlx::query_scalar("SELECT action_id FROM extension_action_pins")
-                .fetch_all(&repo.pool)
-                .await?
-                .into_iter()
-                .collect(),
-        )
-    }
-
     fn contribution_icons(
         &self,
         contribution: &ActiveContribution,
     ) -> (Option<String>, Option<String>) {
-        self.declared_contribution_icons(
+        if contribution.declaration.icon.is_some()
+            || contribution.declaration.icon_assets.is_some()
+            || contribution.declaration.icon_asset.is_some()
+        {
+            return self.declared_contribution_icons(
+                &contribution.package_relative_path,
+                &contribution.declaration,
+            );
+        }
+        self.package_identity_icons(
             &contribution.package_relative_path,
-            &contribution.declaration,
+            contribution.package_icon_assets.as_ref(),
         )
     }
 
@@ -2740,9 +2962,17 @@ impl ExtensionService {
             .declaration
             .effects
             .contains(&ActionEffect::OpenHttpsUrl);
-        let needs_http = !contribution.http_permissions.is_empty();
+        let needs_http =
+            !contribution.http_permissions.is_empty() || !contribution.write_permissions.is_empty();
         let needs_provider = !contribution.providers.is_empty();
-        if !needs_navigation && !needs_http && !needs_provider {
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
+        let needs_source = package_permissions.source_application;
+        let needs_state = package_permissions.package_state;
+        if !needs_navigation && !needs_http && !needs_provider && !needs_source && !needs_state {
             return Ok(false);
         }
         if needs_navigation && contribution.external_navigation_origins.is_empty() {
@@ -2767,10 +2997,16 @@ impl ExtensionService {
                 .http_permissions
                 .iter()
                 .any(|permission| !grants.contains(&("http".into(), permission.origin.clone())))
+            || contribution.write_permissions.iter().any(|permission| {
+                !grants.contains(&("external_write".into(), permission.origin.clone()))
+            })
             || contribution
                 .providers
                 .iter()
-                .any(|provider| !grants.contains(&("provider".into(), provider.clone()))))
+                .any(|provider| !grants.contains(&("provider".into(), provider.clone())))
+            || (needs_source
+                && !grants.contains(&("source_application".into(), "normalized".into())))
+            || (needs_state && !grants.contains(&("package_state".into(), "declared".into()))))
     }
 
     async fn runtime_broker_context(
@@ -2779,7 +3015,9 @@ impl ExtensionService {
         contribution: &ActiveContribution,
     ) -> Result<super::runtime::RuntimeBrokerContext> {
         if self.consent_required(repo, contribution).await? {
-            bail!("external data consent is required for this package release");
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
         }
         let mut injected_headers = std::collections::BTreeMap::new();
         let mut protected_secrets = Vec::new();
@@ -2816,6 +3054,9 @@ impl ExtensionService {
         Ok(super::runtime::RuntimeBrokerContext {
             repo: repo.clone(),
             http_permissions: contribution.http_permissions.clone(),
+            write_permissions: contribution.write_permissions.clone(),
+            extension_id: contribution.extension_id.clone(),
+            package_sha256: contribution.sha256.clone(),
             injected_headers,
             protected_secrets,
             generation_allowed: contribution
@@ -2824,7 +3065,7 @@ impl ExtensionService {
                 .any(|provider| provider == "generation.text"),
             generation_cancellation:
                 crate::providers::contracts::generation::GenerationCancellation::default(),
-            generation_failure: Default::default(),
+            invocation_failure: Default::default(),
             package_id: contribution.package_id.clone(),
             state_keys: self
                 .store
@@ -2928,7 +3169,9 @@ impl ExtensionService {
                     id: facet.id,
                     payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
                 }),
-                "{}".into(),
+                self.package_settings(repo, &contribution.package_id)
+                    .await?
+                    .to_string(),
             )
             .await;
         match state {
@@ -3097,105 +3340,6 @@ impl ExtensionService {
         }
     }
 
-    pub async fn transform(
-        &self,
-        repo: &HistoryRepository,
-        transformer_id: &str,
-        input: CapturedRepresentation,
-        parameters: serde_json::Value,
-        facet_id: Option<&str>,
-        invocation_scope: Option<(&str, &str, &str)>,
-    ) -> Result<Option<(String, Vec<CapturedRepresentation>)>> {
-        let Some(contribution) = self
-            .active_contributions(repo, ContributionKind::Transformer)
-            .await?
-            .into_iter()
-            .find(|item| item.id == transformer_id && accepts(&item.declaration, &input, facet_id))
-        else {
-            return Ok(None);
-        };
-        if !parameters.is_object() {
-            bail!("extension transformer parameters must be an object");
-        }
-        super::manifest::validate_parameters(
-            &contribution.declaration.parameter_schema,
-            &parameters,
-        )?;
-        let broker = if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
-            let (clip_id, source_id, token) = invocation_scope
-                .context("capability-backed transformer requires an invocation token")?;
-            self.consume_invocation(
-                &contribution,
-                transformer_id,
-                clip_id,
-                source_id,
-                None,
-                token,
-            )?;
-            Some(self.runtime_broker_context(repo, &contribution).await?)
-        } else {
-            None
-        };
-        let generation_failure = broker
-            .as_ref()
-            .map(|context| context.generation_failure.clone());
-        let outputs = self
-            .runtime
-            .transform(
-                &contribution.sha256,
-                &contribution.local_id,
-                representation(input, contribution.declaration.input_limit_bytes)?,
-                serde_json::json!({"operationId":new_id(),"origin":"manual"}).to_string(),
-                serde_json::to_string(&parameters)?,
-                broker,
-            )
-            .await;
-        match outputs {
-            Ok(outputs) => {
-                let outputs = outputs
-                    .into_iter()
-                    .map(|output| {
-                        if output.mime_type.is_empty() || !output.format_key.starts_with("mime:") {
-                            bail!("extension transformer output must use a MIME format key")
-                        }
-                        let payload = match output.content {
-                            ExtensionContent::Text(value) => CapturedPayload::Text(value),
-                            ExtensionContent::Binary(value) => CapturedPayload::Binary(value),
-                            ExtensionContent::Files(_) => {
-                                bail!("extension transformers cannot emit file lists")
-                            }
-                        };
-                        Ok(CapturedRepresentation {
-                            format_key: output.format_key,
-                            canonical_mime_type: Some(output.mime_type),
-                            native_type: None,
-                            platform: platform().into(),
-                            capture_priority: 10,
-                            payload,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if outputs.is_empty()
-                    || outputs.len() > 8
-                    || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
-                {
-                    bail!("extension transformer output exceeds host limits");
-                }
-                self.success(repo, &contribution).await?;
-                Ok(Some((contribution.version, outputs)))
-            }
-            Err(error) => {
-                if let Some(failure) = generation_failure {
-                    if let Some(kind) = *failure.lock().await {
-                        return Err(super::runtime::GenerationFailureError(kind).into());
-                    }
-                }
-                self.failure(repo, &contribution, &error, true).await?;
-                Err(error)
-            }
-        }
-    }
-
     async fn persist_install(
         &self,
         repo: &HistoryRepository,
@@ -3230,10 +3374,37 @@ impl ExtensionService {
             .bind(&id)
             .execute(&mut *transaction)
             .await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_updated',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='extension_updated',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')")
             .bind(now).bind(now).bind(&package.manifest.package_id).execute(&mut *transaction).await?;
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&package.manifest.package_id).bind(now).execute(&mut *transaction).await?;
+        // Reconcile references against the new declaration without changing accepted captures.
+        let rules = sqlx::query("SELECT rule_id,activation_id,setup_kind,setup_ref FROM extension_automation_rules WHERE package_id=?")
+            .bind(&package.manifest.package_id).fetch_all(&mut *transaction).await?;
+        for row in rules {
+            let rule_id: String = row.get(0);
+            let activation_id: String = row.get(1);
+            let setup_kind: String = row.get(2);
+            let setup_ref: String = row.get(3);
+            match resolve_setup_reference(
+                &mut transaction,
+                &package.manifest,
+                &activation_id,
+                &setup_kind,
+                &setup_ref,
+            )
+            .await
+            {
+                Ok((parameters, label, view)) => {
+                    sqlx::query("UPDATE extension_automation_rules SET parameters_json=?,setup_label=?,default_view=?,reason_code=NULL,revision=revision+1,updated_at=? WHERE package_id=? AND rule_id=?")
+                        .bind(serde_json::to_string(&parameters)?).bind(label).bind(view).bind(now).bind(&package.manifest.package_id).bind(&rule_id).execute(&mut *transaction).await?;
+                }
+                Err(_) => {
+                    sqlx::query("UPDATE extension_automation_rules SET enabled=0,reason_code='setup_unavailable',revision=revision+1,updated_at=? WHERE package_id=? AND rule_id=?")
+                        .bind(now).bind(&package.manifest.package_id).bind(&rule_id).execute(&mut *transaction).await?;
+                }
+            }
+        }
         if let Some(entry) = registry_entry {
             sqlx::query("INSERT INTO extension_registry_snapshots(package_id,version,metadata_json,recorded_at) VALUES(?,?,?,?) ON CONFLICT(package_id) DO UPDATE SET version=excluded.version,metadata_json=excluded.metadata_json,recorded_at=excluded.recorded_at")
                 .bind(&package.manifest.package_id)
@@ -3357,11 +3528,10 @@ impl ExtensionService {
         error: &anyhow::Error,
         quarantine_after_repeated_failures: bool,
     ) -> Result<()> {
-        let message = format!("{error:#}").chars().take(512).collect::<String>();
         let code = super::runtime::runtime_error_code(error);
         let now = now_ms();
         sqlx::query("INSERT INTO extension_contribution_runtime_state(extension_id,contribution_id,consecutive_failures,last_error_code,last_error_message,last_failed_at,updated_at) VALUES(?,?,1,?,?,?,?) ON CONFLICT(extension_id,contribution_id) DO UPDATE SET consecutive_failures=consecutive_failures+1,last_error_code=excluded.last_error_code,last_error_message=excluded.last_error_message,last_failed_at=excluded.last_failed_at,updated_at=excluded.updated_at")
-            .bind(&contribution.extension_id).bind(&contribution.id).bind(code).bind(&message).bind(now).bind(now).execute(&repo.pool).await?;
+            .bind(&contribution.extension_id).bind(&contribution.id).bind(code).bind("Extension execution failed").bind(now).bind(now).execute(&repo.pool).await?;
         let failures: i64 = sqlx::query_scalar("SELECT consecutive_failures FROM extension_contribution_runtime_state WHERE extension_id=? AND contribution_id=?")
             .bind(&contribution.extension_id).bind(&contribution.id).fetch_one(&repo.pool).await?;
         if should_quarantine(quarantine_after_repeated_failures, failures) {
@@ -3425,10 +3595,95 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == request.transformer_id)
             .context("extension transformer is not installed and enabled")?;
-        request.parameters = super::manifest::normalized_parameters(
+        request.parameters = super::parameters::normalize(
             &contribution.declaration.parameter_schema,
+            &contribution.declaration.parameter_ui,
             &request.parameters,
-        )?;
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
+        request.result_controls = contribution.declaration.result_controls.clone();
+        let settings_revision: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT configuration_revision FROM extension_package_revisions WHERE package_id=?),0)")
+            .bind(&contribution.package_id).fetch_one(&repo.pool).await?;
+        request.settings_snapshot_json = self
+            .package_settings(repo, &contribution.package_id)
+            .await?
+            .to_string();
+        request.settings_snapshot_revision = Some(settings_revision);
+        let detail = repo.detail(&request.clip_id).await?;
+        request.inventory_json = serde_json::to_string(&format_inventory(&detail.representations))?;
+        if let Some(setup_id) = request.setup_id.as_deref() {
+            let row = sqlx::query("SELECT package_id,transformer_id,label,parameters_json,default_view FROM extension_transform_setups WHERE id=?")
+                .bind(setup_id).fetch_optional(&repo.pool).await?
+                .context("saved transform setup is unavailable")?;
+            let stored_parameters: serde_json::Value =
+                serde_json::from_str(&row.get::<String, _>(3))?;
+            if row.get::<String, _>(0) != contribution.package_id
+                || row.get::<String, _>(1) != contribution.id
+                || stored_parameters != request.parameters
+            {
+                return Err(crate::failure::FailureCode::InvalidParameters
+                    .failure()
+                    .into());
+            }
+            request.display_label = Some(format!(
+                "{} · {}",
+                contribution.declaration.display_name,
+                row.get::<String, _>(2)
+            ));
+            request.default_view = Some(row.get(4));
+        } else {
+            let matching_setup = contribution.declaration.setups.iter().find(|setup| {
+                setup.parameters.as_object().is_some_and(|fixed| {
+                    fixed
+                        .iter()
+                        .all(|(key, value)| request.parameters.get(key) == Some(value))
+                })
+            });
+            if (!request.regenerate && !background) || request.display_label.is_none() {
+                request.display_label = matching_setup
+                    .map(|setup| {
+                        format!(
+                            "{} · {}",
+                            contribution.declaration.display_name, setup.display_name
+                        )
+                    })
+                    .or_else(|| Some(contribution.declaration.display_name.clone()));
+            }
+            if request.default_view.is_none() {
+                request.default_view =
+                    matching_setup
+                        .and_then(|setup| setup.default_view)
+                        .map(|view| match view {
+                            super::ResultView::ResultOnly => "result_only".into(),
+                            super::ResultView::Compare => "compare".into(),
+                        });
+            }
+        }
+        request
+            .default_view
+            .get_or_insert_with(|| match contribution.declaration.default_view {
+                super::ResultView::ResultOnly => "result_only".into(),
+                super::ResultView::Compare => "compare".into(),
+            });
+        let (source, _) = repo
+            .source_representation(&request.clip_id, &request.source_id)
+            .await?;
+        if !accepts(&contribution.declaration, &source, None) {
+            return Err(crate::failure::FailureCode::UnsupportedInput
+                .failure()
+                .into());
+        }
+        let availability = self.runtime.assess(&contribution.sha256, &contribution.local_id,
+            representation(source, contribution.declaration.input_limit_bytes)?,
+            serde_json::json!({ "origin": if background { "background" } else { "manual" },
+                "settings": serde_json::from_str::<serde_json::Value>(&request.settings_snapshot_json)?,
+                "formats": serde_json::from_str::<serde_json::Value>(&request.inventory_json)?,
+            }).to_string(), request.parameters.to_string()).await?;
+        if !matches!(availability, super::OperationAvailability::Ready) {
+            return Err(crate::failure::FailureCode::UnsupportedInput
+                .failure()
+                .into());
+        }
         if !background && contribution.declaration.execution == ExecutionClass::CapabilityBacked {
             self.consume_invocation(
                 &contribution,
@@ -3439,23 +3694,16 @@ impl ExtensionService {
                 request
                     .invocation_token
                     .as_deref()
-                    .context("extension transformer requires an invocation token")?,
-            )?;
+                    .ok_or_else(|| crate::failure::FailureCode::PermissionRequired.failure())?,
+            )
+            .map_err(|_| crate::failure::FailureCode::PermissionRequired.failure())?;
         }
-        let lifetime = match contribution.declaration.result_lifetime {
-            super::ResultLifetime::Temporary if background => {
-                bail!("background transformations require source_clip result lifetime")
-            }
-            super::ResultLifetime::Temporary => "temporary",
-            super::ResultLifetime::SourceClip => "source_clip",
-        };
         super::jobs::enqueue(
             repo,
             request,
             &contribution.package_id,
             &contribution.sha256,
             &contribution.version,
-            lifetime,
             if background { 1 } else { 0 },
         )
         .await
@@ -3466,6 +3714,7 @@ impl ExtensionService {
         &self,
         repo: &HistoryRepository,
         job_id: &str,
+        claim: i64,
         package_id: &str,
         package_sha256: &str,
         contribution_id: &str,
@@ -3483,26 +3732,28 @@ impl ExtensionService {
                     && item.sha256 == package_sha256
                     && item.id == contribution_id
             })
-            .context("extension job package or transformer is stale")?;
+            .ok_or_else(|| crate::failure::FailureCode::StaleContext.failure())?;
         super::manifest::validate_parameters(
             &contribution.declaration.parameter_schema,
             &parameters,
-        )?;
-        let row = sqlx::query("SELECT r.format_key,r.canonical_mime_type,r.platform,t.text_value FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.id=? AND r.lifecycle_state='ready'")
-            .bind(source_id).fetch_optional(&repo.pool).await?.context("extension job source is unavailable")?;
-        let input = CapturedRepresentation {
-            format_key: row.get(0),
-            canonical_mime_type: row.get(1),
-            native_type: None,
-            platform: row.get(2),
-            capture_priority: 10,
-            payload: CapturedPayload::Text(row.get(3)),
-        };
+        )
+        .map_err(|_| crate::failure::FailureCode::InvalidParameters.failure())?;
+        let source_clip_id: String =
+            sqlx::query_scalar("SELECT source_clip_id FROM extension_jobs WHERE id=?")
+                .bind(job_id)
+                .fetch_one(&repo.pool)
+                .await?;
+        let (input, _) = repo
+            .source_representation(&source_clip_id, source_id)
+            .await?;
+        if matches!(input.payload, CapturedPayload::Files(_)) {
+            bail!("extension job source is unsupported");
+        }
         if !accepts(&contribution.declaration, &input, None) {
             bail!("extension job source no longer matches transformer");
         }
         let app_row = sqlx::query(
-            "SELECT app_platform,app_id,app_display_name FROM extension_jobs WHERE id=?",
+            "SELECT app_platform,app_id,app_display_name,settings_json,inventory_json FROM extension_jobs WHERE id=?",
         )
         .bind(job_id)
         .fetch_optional(&repo.pool)
@@ -3512,14 +3763,10 @@ impl ExtensionService {
                 .bind(package_id)
                 .fetch_one(&repo.pool)
                 .await?;
-        let source_allowed = self
-            .store
-            .load(Path::new(&package_path))?
-            .manifest
-            .permissions
-            .source_application;
+        let package = self.store.load(Path::new(&package_path))?;
+        let source_allowed = package.manifest.permissions.source_application;
         let source_application = if source_allowed {
-            app_row.and_then(|row| {
+            app_row.as_ref().and_then(|row| {
                 Some(serde_json::json!({
                     "platform": row.get::<Option<String>,_>(0)?,
                     "id": row.get::<Option<String>,_>(1)?,
@@ -3529,95 +3776,126 @@ impl ExtensionService {
         } else {
             None
         };
+        let settings: serde_json::Value =
+            serde_json::from_str(&app_row.as_ref().context("job missing")?.get::<String, _>(3))?;
+        let inventory: serde_json::Value =
+            serde_json::from_str(&app_row.as_ref().context("job missing")?.get::<String, _>(4))?;
+        let mut package_state = serde_json::Map::new();
+        let mut existing_state = std::collections::BTreeMap::new();
+        if package.manifest.permissions.package_state {
+            for row in sqlx::query(
+                "SELECT state_key,value_json FROM extension_package_state WHERE package_id=?",
+            )
+            .bind(package_id)
+            .fetch_all(&repo.pool)
+            .await?
+            {
+                let key: String = row.get(0);
+                let value: String = row.get(1);
+                package_state.insert(key.clone(), serde_json::from_str(&value)?);
+                existing_state.insert(key, value);
+            }
+        }
         let context_json = serde_json::json!({
             "operationId": job_id,
             "origin": if background { "background" } else { "manual" },
             "sourceApplication": source_application,
+            "settings": settings,
+            "formats": inventory,
+            "packageState": package_state,
         })
         .to_string();
-        let mut staged_state = None;
-        let broker = if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
-            let mut broker = self.runtime_broker_context(repo, &contribution).await?;
-            broker.generation_cancellation = cancellation;
-            if broker.state_allowed {
-                let mut tx = repo.pool.begin().await?;
-                let expected_revision: i64 =
-                    sqlx::query_scalar("SELECT state_revision FROM extension_jobs WHERE id=?")
-                        .bind(job_id)
-                        .fetch_one(&mut *tx)
-                        .await?;
-                let current_revision: i64 = sqlx::query_scalar(
-                    "SELECT COALESCE((SELECT state_revision FROM extension_package_revisions WHERE package_id=?),0)",
-                )
-                .bind(package_id)
-                .fetch_one(&mut *tx)
-                .await?;
-                if current_revision != expected_revision {
-                    bail!("state_conflict");
-                }
-                let rows = sqlx::query(
-                    "SELECT state_key,value_json FROM extension_package_state WHERE package_id=?",
-                )
-                .bind(package_id)
-                .fetch_all(&mut *tx)
-                .await?;
-                tx.commit().await?;
-                let snapshot = rows
-                    .into_iter()
-                    .map(|row| (row.get(0), row.get(1)))
-                    .collect();
-                let stage = std::sync::Arc::new(tokio::sync::Mutex::new(
-                    super::runtime::StagedPackageState {
-                        snapshot,
-                        writes: Default::default(),
-                    },
-                ));
-                broker.staged_state = Some(stage.clone());
-                staged_state = Some(stage);
-            }
-            if background {
-                broker.http_permissions.clear();
-                broker.injected_headers.clear();
-                broker.protected_secrets.clear();
-            }
-            Some(broker)
-        } else {
-            None
-        };
-        let generation_failure = broker
-            .as_ref()
-            .map(|context| context.generation_failure.clone());
-        let outputs = self
-            .runtime
-            .transform(
-                &contribution.sha256,
-                &contribution.local_id,
-                representation(input, contribution.declaration.input_limit_bytes)?,
-                context_json,
-                serde_json::to_string(&parameters)?,
-                broker,
-            )
-            .await;
-        match outputs {
-            Ok(outputs) => {
+        let mut broker = self.runtime_broker_context(repo, &contribution).await?;
+        broker.generation_cancellation = cancellation;
+        if contribution.declaration.execution == ExecutionClass::Local {
+            broker.http_permissions.clear();
+            broker.write_permissions.clear();
+            broker.generation_allowed = false;
+        }
+        let state_schemas = broker.state_schemas.clone();
+        let state_allowed = broker.state_allowed;
+        let result = super::flow::run(
+            repo,
+            &self.runtime,
+            job_id,
+            claim,
+            &contribution.sha256,
+            &contribution.local_id,
+            representation(input, contribution.declaration.input_limit_bytes)?,
+            context_json,
+            serde_json::to_string(&parameters)?,
+            broker,
+        )
+        .await;
+        match result {
+            Ok(result) => {
                 self.success(repo, &contribution).await?;
-                let state_writes = if let Some(stage) = staged_state {
-                    stage.lock().await.writes.clone()
-                } else {
-                    Default::default()
-                };
+                let state_writes: std::collections::BTreeMap<String, Option<String>> = result
+                    .state_writes_json
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?
+                    .unwrap_or_default();
+                if !state_allowed && !state_writes.is_empty() {
+                    return Err(crate::failure::FailureCode::PermissionRequired
+                        .failure()
+                        .into());
+                }
+                for (key, value) in &state_writes {
+                    let schema = state_schemas
+                        .get(key)
+                        .context("package state key is undeclared")?;
+                    if let Some(value) = value {
+                        if value.len() > 8192 {
+                            return Err(crate::failure::FailureCode::ResourceLimit
+                                .failure()
+                                .into());
+                        }
+                        super::manifest::validate_state_value(
+                            schema,
+                            &serde_json::from_str(value)?,
+                        )?;
+                        existing_state.insert(key.clone(), value.clone());
+                    } else {
+                        existing_state.remove(key);
+                    }
+                }
+                if existing_state.len() > 64
+                    || existing_state
+                        .iter()
+                        .map(|(key, value)| key.len() + value.len())
+                        .sum::<usize>()
+                        > 128 * 1024
+                {
+                    return Err(crate::failure::FailureCode::ResourceLimit.failure().into());
+                }
+                if result.view_json.as_ref().is_some_and(|view| {
+                    view.len() > 16_384 || serde_json::from_str::<serde_json::Value>(view).is_err()
+                }) {
+                    return Err(crate::failure::FailureCode::InvalidOutput.failure().into());
+                }
                 Ok(super::jobs::DurableExecution {
-                    outputs: extension_outputs(outputs)?,
+                    output_ids: result
+                        .outputs
+                        .iter()
+                        .map(|output| output.id.clone())
+                        .collect(),
+                    outputs: extension_outputs(result.outputs)
+                        .map_err(|_| crate::failure::FailureCode::InvalidOutput.failure())?,
                     state_writes,
+                    view_json: result.view_json,
                 })
             }
             Err(error) => {
-                if let Some(failure) = generation_failure {
-                    if let Some(kind) = *failure.lock().await {
-                        return Err(super::runtime::GenerationFailureError(kind).into());
-                    }
+                if error
+                    .downcast_ref::<super::flow::GuestExecutionError>()
+                    .is_some()
+                    && crate::failure::OperationFailure::from_error(&error)
+                        .code
+                        .is_guest_fault()
+                {
+                    self.failure(repo, &contribution, &error, true).await?;
                 }
-                self.failure(repo, &contribution, &error, true).await?;
                 Err(error)
             }
         }
@@ -3664,7 +3942,7 @@ impl ExtensionService {
         .fetch_optional(&repo.pool)
         .await?
         .unwrap_or(0);
-        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision FROM extension_automation_rules WHERE package_id=? ORDER BY lower(app_display_name),rule_id")
+        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,setup_kind,setup_ref,setup_label,default_view,reason_code FROM extension_automation_rules WHERE package_id=? ORDER BY lower(app_display_name),rule_id")
             .bind(package_id).fetch_all(&repo.pool).await?;
         let rules = rows
             .into_iter()
@@ -3672,14 +3950,21 @@ impl ExtensionService {
                 Ok(super::ApplicationRule {
                     id: row.get(0),
                     activation_id: row.get(1),
-                    application: super::SourceApplication {
-                        platform: row.get(2),
-                        id: row.get(3),
-                        display_name: row.get(4),
-                    },
+                    application: row.get::<Option<String>, _>(2).map(|platform| {
+                        super::SourceApplication {
+                            platform,
+                            id: row.get(3),
+                            display_name: row.get(4),
+                        }
+                    }),
                     enabled: row.get::<i64, _>(5) != 0,
                     parameters: serde_json::from_str(&row.get::<String, _>(6))?,
                     revision: row.get(7),
+                    setup_kind: row.get(8),
+                    setup_ref: row.get(9),
+                    setup_label: row.get(10),
+                    default_view: row.get(11),
+                    reason_code: row.get(12),
                 })
             })
             .collect::<Result<_>>()?;
@@ -3691,7 +3976,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
         package_id: &str,
         expected_revision: i64,
-        rules: Vec<super::ApplicationRule>,
+        mut rules: Vec<super::ApplicationRule>,
     ) -> Result<i64> {
         if rules.len() > 64 {
             bail!("extension automation rules exceed 64 entries");
@@ -3708,32 +3993,23 @@ impl ExtensionService {
             .load(Path::new(&package_row.get::<String, _>(1)))?;
         if !package.manifest.permissions.background_clip_created
             || !package.manifest.permissions.selected_input
-            || !package.manifest.permissions.source_application
         {
-            bail!(
-                "automation requires declared background input and source application permissions"
-            );
+            bail!("automation requires declared background and selected input permissions");
         }
         let mut unique = std::collections::BTreeSet::new();
+        let mut rule_ids = std::collections::BTreeSet::new();
         for rule in &rules {
-            valid_rule_application(&rule.application)?;
-            let activation = package
-                .manifest
-                .activations
-                .iter()
-                .find(|item| item.id == rule.activation_id)
-                .context("automation rule references an unknown activation")?;
-            let transformer = package
-                .manifest
-                .contributions
-                .iter()
-                .find(|item| item.id == activation.transformer_id)
-                .context("automation activation transformer is unavailable")?;
-            super::manifest::validate_parameters(&transformer.parameter_schema, &rule.parameters)?;
+            if !rule_ids.insert(&rule.id) {
+                bail!("automation rule IDs must be unique");
+            }
+            if let Some(application) = &rule.application {
+                valid_rule_application(application)?;
+            }
             if !unique.insert((
                 &rule.activation_id,
-                &rule.application.platform,
-                &rule.application.id,
+                rule.application
+                    .as_ref()
+                    .map(|app| (&app.platform, &app.id)),
             )) {
                 bail!("automation rules must be unique per activation and application");
             }
@@ -3749,6 +4025,41 @@ impl ExtensionService {
         if current != expected_revision {
             bail!("extension automation settings changed; reload and try again");
         }
+        for rule in &mut rules {
+            if rule.id.is_empty() || rule.id.len() > 120 {
+                bail!("automation rule ID is invalid");
+            }
+            match resolve_rule_setup(&mut tx, &package.manifest, rule).await {
+                Ok((parameters, label, view)) => {
+                    rule.parameters = parameters;
+                    rule.setup_label = label;
+                    rule.default_view = view;
+                    rule.reason_code = None;
+                }
+                Err(error) if rule.enabled => return Err(error),
+                Err(_) => {
+                    let old=sqlx::query("SELECT parameters_json,setup_label,default_view,reason_code FROM extension_automation_rules WHERE package_id=? AND rule_id=?")
+                        .bind(package_id).bind(&rule.id).fetch_optional(&mut *tx).await?;
+                    rule.parameters = old
+                        .as_ref()
+                        .map(|row| serde_json::from_str(&row.get::<String, _>(0)))
+                        .transpose()?
+                        .unwrap_or(serde_json::json!({}));
+                    rule.setup_label = old
+                        .as_ref()
+                        .map(|row| row.get(1))
+                        .unwrap_or_else(|| "Unavailable setup".into());
+                    rule.default_view = old
+                        .as_ref()
+                        .map(|row| row.get(2))
+                        .unwrap_or_else(|| "result_only".into());
+                    rule.reason_code = old
+                        .as_ref()
+                        .and_then(|row| row.get::<Option<String>, _>(3))
+                        .or_else(|| Some("setup_unavailable".into()));
+                }
+            }
+        }
         let next = current + 1;
         sqlx::query("DELETE FROM extension_automation_rules WHERE package_id=?")
             .bind(package_id)
@@ -3756,22 +4067,51 @@ impl ExtensionService {
             .await?;
         let has_enabled_rules = rules.iter().any(|rule| rule.enabled);
         for rule in rules {
-            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.platform).bind(rule.application.id).bind(rule.application.display_name).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(next).bind(now_ms()).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,setup_kind,setup_ref,setup_label,default_view,reason_code,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.as_ref().map(|app| &app.platform)).bind(rule.application.as_ref().map(|app| &app.id)).bind(rule.application.as_ref().map(|app| &app.display_name)).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).execute(&mut *tx).await?;
         }
         if has_enabled_rules {
-            for (kind, value) in [
-                ("background_clip_created", "clip.created"),
-                ("source_application", "normalized"),
-            ] {
+            for (kind, value) in [("background_clip_created", "clip.created")] {
                 sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                     .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2))
                     .bind(kind).bind(value).bind(now_ms()).execute(&mut *tx).await?;
             }
+            let mut grants = Vec::new();
+            if package.manifest.permissions.source_application {
+                grants.push(("source_application", "normalized".to_string()));
+            }
+            if package.manifest.permissions.package_state {
+                grants.push(("package_state", "declared".into()));
+            }
+            grants.extend(
+                package
+                    .manifest
+                    .permissions
+                    .http
+                    .iter()
+                    .map(|permission| ("http", permission.origin.clone())),
+            );
+            grants.extend(
+                package
+                    .manifest
+                    .permissions
+                    .external_writes
+                    .iter()
+                    .map(|permission| ("external_write", permission.origin.clone())),
+            );
+            for (kind, value) in grants {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2)).bind(kind).bind(value).bind(now_ms()).execute(&mut *tx).await?;
+            }
+            for provider in &package.manifest.permissions.providers {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2))
+                    .bind("provider").bind(provider).bind(now_ms()).execute(&mut *tx).await?;
+            }
         }
-        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,updated_at=excluded.updated_at")
             .bind(package_id).bind(next).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='configuration_changed',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)))")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(next)
@@ -3782,7 +4122,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
         clip_id: &str,
     ) -> Result<usize> {
-        let events = sqlx::query("SELECT event_id,package_id,activation_id,source_clip_id,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,is_new_clip FROM extension_activation_events WHERE status='pending' AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
+        let events = sqlx::query("SELECT event_id,package_id,activation_id,source_clip_id,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,is_new_clip,setup_label,default_view FROM extension_activation_events WHERE status='pending' AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
             .bind(clip_id).bind(clip_id).fetch_all(&repo.pool).await?;
         let processed = events.len();
         for event in events {
@@ -3790,23 +4130,25 @@ impl ExtensionService {
             let package_id: String = event.get(1);
             let activation_id: String = event.get(2);
             let source_clip_id: String = event.get(3);
-            let application = super::SourceApplication {
-                platform: event.get(4),
-                id: event.get(5),
-                display_name: event
-                    .get::<Option<String>, _>(6)
-                    .unwrap_or_else(|| "Application".into()),
-            };
+            let application =
+                event
+                    .get::<Option<String>, _>(4)
+                    .map(|platform| super::SourceApplication {
+                        platform,
+                        id: event.get(5),
+                        display_name: event
+                            .get::<Option<String>, _>(6)
+                            .unwrap_or_else(|| "Application".into()),
+                    });
             let checksum: String = event.get(7);
-            let configuration_revision: i64 = event.get(8);
+            let _configuration_revision: i64 = event.get(8);
             let grant_revision: i64 = event.get(9);
             let rule_id: String = event.get(10);
             let parameters_json: String = event.get(11);
             let is_new_clip = event.get::<i64, _>(12) != 0;
-            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND r.app_platform=? AND r.app_id=? AND r.parameters_json=? AND COALESCE(p.configuration_revision,0)=? AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
                 .bind(&package_id).bind(&checksum).bind(&rule_id).bind(&activation_id)
-                .bind(&application.platform).bind(&application.id).bind(&parameters_json)
-                .bind(configuration_revision).bind(grant_revision)
+                .bind(application.as_ref().map(|app| &app.platform)).bind(application.as_ref().map(|app| &app.id)).bind(grant_revision)
                 .fetch_optional(&repo.pool).await?;
             let mut reason = "ineligible";
             if let Some(active) = active {
@@ -3819,8 +4161,9 @@ impl ExtensionService {
                     {
                         let app_matches = activation.applications.is_empty()
                             || activation.applications.iter().any(|selector| {
-                                selector.platform == application.platform
-                                    && selector.id == application.id
+                                application.as_ref().is_some_and(|app| {
+                                    selector.platform == app.platform && selector.id == app.id
+                                })
                             });
                         if app_matches {
                             if let Some(transformer) = package
@@ -3885,11 +4228,9 @@ impl ExtensionService {
                                             "operationId": &event_id,
                                             "origin": "background",
                                             "isNewClip": is_new_clip,
-                                            "sourceApplication": package.manifest.permissions.source_application.then(|| serde_json::json!({
-                                                "platform": &application.platform,
-                                                "id": &application.id,
-                                                "displayName": &application.display_name,
-                                            })),
+                                            "settings": self.package_settings(repo, &package_id).await?,
+                                            "formats": format_inventory(&clip.representations),
+                                            "sourceApplication": if package.manifest.permissions.source_application { application.as_ref() } else { None },
                                         }).to_string();
                                         let Ok(prepared_input) =
                                             representation(input, transformer.input_limit_bytes)
@@ -3897,9 +4238,9 @@ impl ExtensionService {
                                             reason = "input_too_large";
                                             break;
                                         };
-                                        let prepared = self
+                                        let assessed = self
                                             .runtime
-                                            .prepare_transform(
+                                            .assess(
                                                 &checksum,
                                                 &activation.transformer_id,
                                                 prepared_input,
@@ -3907,32 +4248,23 @@ impl ExtensionService {
                                                 parameters_json.clone(),
                                             )
                                             .await;
-                                        let Some(prepared_json) = (match prepared {
-                                            Ok(value) => value,
+                                        let ready = match assessed {
+                                            Ok(super::OperationAvailability::Ready) => true,
+                                            Ok(
+                                                super::OperationAvailability::Hidden
+                                                | super::OperationAvailability::Disabled(_),
+                                            ) => false,
                                             Err(_) => {
                                                 reason = "prepare_failed";
                                                 break;
                                             }
-                                        }) else {
+                                        };
+                                        if !ready {
                                             reason = "guest_skipped";
                                             break;
-                                        };
-                                        if prepared_json.len() > 64 * 1024 {
-                                            reason = "invalid_parameters";
-                                            break;
                                         }
-                                        let Ok(parameters) = serde_json::from_str(&prepared_json)
-                                        else {
-                                            reason = "invalid_parameters";
-                                            break;
-                                        };
-                                        let Ok(parameters) = super::manifest::normalized_parameters(
-                                            &transformer.parameter_schema,
-                                            &parameters,
-                                        ) else {
-                                            reason = "invalid_parameters";
-                                            break;
-                                        };
+                                        let parameters: serde_json::Value =
+                                            serde_json::from_str(&parameters_json)?;
                                         let request = super::EnqueueExtensionJob {
                                             clip_id: source_clip_id.clone(),
                                             source_id: representation_detail.id.clone(),
@@ -3945,7 +4277,15 @@ impl ExtensionService {
                                             request_id: None,
                                             regenerate: false,
                                             invocation_token: None,
-                                            capture_application: Some(application.clone()),
+                                            capture_application: application.clone(),
+                                            automation_rule_id: Some(rule_id.clone()),
+                                            settings_snapshot_json: String::new(),
+                                            settings_snapshot_revision: None,
+                                            inventory_json: String::new(),
+                                            setup_id: None,
+                                            display_label: Some(event.get(13)),
+                                            default_view: Some(event.get(14)),
+                                            result_controls: Vec::new(),
                                         };
                                         if self
                                             .enqueue_durable_transform(repo, request, true)
@@ -3971,6 +4311,95 @@ impl ExtensionService {
         }
         Ok(processed)
     }
+}
+
+fn setup_display_label(operation: &str, setup: &str) -> String {
+    let label = format!("{operation} \u{b7} {setup}");
+    let mut end = label.len().min(120);
+    while !label.is_char_boundary(end) {
+        end -= 1;
+    }
+    label[..end].to_owned()
+}
+
+async fn resolve_rule_setup(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    manifest: &super::ExtensionManifest,
+    rule: &super::ApplicationRule,
+) -> Result<(serde_json::Value, String, String)> {
+    resolve_setup_reference(
+        tx,
+        manifest,
+        &rule.activation_id,
+        &rule.setup_kind,
+        &rule.setup_ref,
+    )
+    .await
+}
+
+async fn resolve_setup_reference(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    manifest: &super::ExtensionManifest,
+    activation_id: &str,
+    setup_kind: &str,
+    setup_ref: &str,
+) -> Result<(serde_json::Value, String, String)> {
+    if setup_ref.is_empty() || setup_ref.len() > 120 {
+        bail!("automation setup reference is invalid");
+    }
+    let activation = manifest
+        .activations
+        .iter()
+        .find(|item| item.id == activation_id)
+        .context("automation rule references an unknown activation")?;
+    let transformer = manifest
+        .contributions
+        .iter()
+        .find(|item| item.id == activation.transformer_id)
+        .context("automation operation is unavailable")?;
+    let (parameters, label, view) = match setup_kind {
+        "builtin" => {
+            let setup = transformer
+                .setups
+                .iter()
+                .find(|item| item.id == setup_ref)
+                .context("built-in setup is unavailable")?;
+            (
+                setup.parameters.clone(),
+                setup.display_name.clone(),
+                setup.default_view.unwrap_or(transformer.default_view),
+            )
+        }
+        "saved" => {
+            let row = sqlx::query("SELECT parameters_json,label,default_view FROM extension_transform_setups WHERE id=? AND package_id=? AND transformer_id=?")
+                .bind(setup_ref).bind(&manifest.package_id).bind(manifest.qualified_contribution_id(&transformer.id)).fetch_optional(&mut **tx).await?.context("saved setup is unavailable; choose another setup")?;
+            (
+                serde_json::from_str(&row.get::<String, _>(0))?,
+                row.get(1),
+                if row.get::<String, _>(2) == "compare" {
+                    super::ResultView::Compare
+                } else {
+                    super::ResultView::ResultOnly
+                },
+            )
+        }
+        _ => bail!("automation setup kind is invalid"),
+    };
+    let parameters = super::parameters::normalize(
+        &transformer.parameter_schema,
+        &transformer.parameter_ui,
+        &parameters,
+    )
+    .context("complete this setup and save it before using automation")?;
+    Ok((
+        parameters,
+        setup_display_label(&transformer.display_name, &label),
+        match view {
+            super::ResultView::Compare => "compare",
+            super::ResultView::ResultOnly => "result_only",
+        }
+        .into(),
+    ))
 }
 
 fn valid_rule_application(application: &super::SourceApplication) -> Result<()> {
@@ -4154,42 +4583,13 @@ fn execution_name(value: ExecutionClass) -> &'static str {
 
 fn action_effect_name(value: ActionEffect) -> &'static str {
     match value {
-        ActionEffect::Preview => "preview",
         ActionEffect::Copy => "copy",
-        ActionEffect::Paste => "paste",
-        ActionEffect::SaveAsClip => "save_as_clip",
         ActionEffect::OpenHttpsUrl => "open_https_url",
         ActionEffect::Notification => "notification",
         ActionEffect::OpenDialog => "open_dialog",
         ActionEffect::ComposeEmail => "compose_email",
         ActionEffect::DialPhone => "dial_phone",
     }
-}
-
-fn disposition_effect(value: ActionDisposition) -> ActionEffect {
-    match value {
-        ActionDisposition::Preview => ActionEffect::Preview,
-        ActionDisposition::Copy => ActionEffect::Copy,
-        ActionDisposition::Paste => ActionEffect::Paste,
-        ActionDisposition::SaveAsClip => ActionEffect::SaveAsClip,
-    }
-}
-
-fn valid_output_mime_type(value: &str) -> bool {
-    let Some((kind, subtype)) = value.split_once('/') else {
-        return false;
-    };
-    !kind.is_empty()
-        && !subtype.is_empty()
-        && value.len() <= 200
-        && !subtype.contains('/')
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || matches!(
-                    byte,
-                    b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-' | b'/'
-                )
-        })
 }
 
 fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
@@ -4201,41 +4601,13 @@ fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
     })
 }
 
-fn merge_parameters(
-    mut preset: serde_json::Value,
-    supplied: serde_json::Value,
-) -> Result<serde_json::Value> {
-    let preset = preset
-        .as_object_mut()
-        .context("action preset parameters must be an object")?;
-    let supplied = supplied
-        .as_object()
-        .context("action parameters must be an object")?;
-    for (key, value) in supplied {
-        preset.insert(key.clone(), value.clone());
-    }
-    Ok(serde_json::Value::Object(std::mem::take(preset)))
-}
-
-fn action_outcome(
-    contribution: &ActiveContribution,
-    value: ExtensionActionResult,
-) -> Result<ActionOutcome> {
-    Ok(match value {
-        ExtensionActionResult::Output {
-            outputs,
-            disposition,
-        } => ActionOutcome::Output {
-            outputs: extension_outputs(outputs)?,
-            disposition,
-            action_id: contribution.id.clone(),
-            version: contribution.version.clone(),
-        },
+fn action_outcome(value: ExtensionActionResult) -> ActionOutcome {
+    match value {
         ExtensionActionResult::OpenHttpsUrl(url) => ActionOutcome::OpenHttpsUrl(url),
         ExtensionActionResult::Notification { level, message } => {
             ActionOutcome::Notification { level, message }
         }
-    })
+    }
 }
 
 fn validate_action_outcome(
@@ -4243,8 +4615,6 @@ fn validate_action_outcome(
     outcome: &ActionOutcome,
 ) -> Result<()> {
     let effect = match outcome {
-        ActionOutcome::Queued { .. } => ActionEffect::Preview,
-        ActionOutcome::Output { disposition, .. } => disposition_effect(*disposition),
         ActionOutcome::OpenHttpsUrl(url) => {
             let parsed = url::Url::parse(url).context("action URL is invalid")?;
             if parsed.scheme() != "https" || parsed.host_str().is_none() || url.len() > 2048 {
@@ -4336,6 +4706,24 @@ fn validate_phone_number(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn format_inventory(
+    representations: &[crate::history::RepresentationDetail],
+) -> Vec<serde_json::Value> {
+    representations
+        .iter()
+        .map(|item| {
+            serde_json::json!({
+                "formatKey": item.format_key,
+                "mimeType": item.canonical_mime_type,
+                "storageKind": item.storage_kind,
+                "byteLength": item.byte_length,
+                "capabilityId": item.capability_id,
+                "formatFamily": item.format_family,
+            })
+        })
+        .collect()
+}
+
 fn extension_outputs(
     outputs: Vec<super::ExtensionOutputRepresentation>,
 ) -> Result<Vec<CapturedRepresentation>> {
@@ -4360,10 +4748,7 @@ fn extension_outputs(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    if outputs.is_empty()
-        || outputs.len() > 8
-        || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
-    {
+    if outputs.len() > 8 || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES {
         bail!("extension output exceeds host limits");
     }
     Ok(outputs)
@@ -4384,7 +4769,7 @@ fn representation(
         ExtensionContent::Files(value) => value.iter().map(String::len).sum(),
     };
     if size > input_limit_bytes {
-        bail!("extension input exceeds its declared limit");
+        return Err(crate::failure::FailureCode::InputLimit.failure().into());
     }
     Ok(ExtensionRepresentation {
         format_key: value.format_key,
@@ -4736,6 +5121,259 @@ fn append_bounded_chunk(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE pointing to the local Base64 archive"]
+    async fn transformer_icons_inherit_package_identity_and_preserve_overrides() {
+        let archive = std::env::var("CLIPSX_TEST_EXTENSION_ARCHIVE").unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots).unwrap();
+        service.set_developer_mode(&repo, true).await.unwrap();
+        service
+            .install_local(&repo, Path::new(&archive))
+            .await
+            .unwrap();
+        let mut items = service
+            .active_contributions(&repo, ContributionKind::Transformer)
+            .await
+            .unwrap();
+        let item = items
+            .iter_mut()
+            .find(|item| item.package_id == "infiniti.base64")
+            .unwrap();
+        assert!(item.declaration.icon.is_none());
+        assert!(item.declaration.icon_assets.is_none());
+        let (light, dark) = service.contribution_icons(item);
+        assert!(light
+            .as_deref()
+            .is_some_and(|value| value.starts_with("data:image/svg+xml;base64,")));
+        assert!(dark
+            .as_deref()
+            .is_some_and(|value| value.starts_with("data:image/svg+xml;base64,")));
+        item.declaration.icon = Some("code".into());
+        assert_eq!(service.contribution_icons(item), (None, None));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CLIPSX_TEST_EXTENSION_ARCHIVE pointing to the local Rewrite archive"]
+    async fn rewrite_saved_setup_rules_keep_accepted_capture_snapshots() {
+        let archive = std::env::var("CLIPSX_TEST_EXTENSION_ARCHIVE").unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots).unwrap();
+        service.set_developer_mode(&repo, true).await.unwrap();
+        service
+            .install_local(&repo, Path::new(&archive))
+            .await
+            .unwrap();
+        let setup = service
+            .save_transform_setup(
+                &repo,
+                None,
+                None,
+                "infiniti.rewrite/rewrite",
+                "Technical",
+                serde_json::json!({"preset":"custom", "custom_instruction":"Be concise"}),
+                "compare",
+            )
+            .await
+            .unwrap();
+        let (revision, _) = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap();
+        let rule = super::super::ApplicationRule {
+            id: "outlook-rule".into(),
+            activation_id: "on-copy".into(),
+            application: if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+                None
+            } else {
+                Some(super::super::SourceApplication {
+                    platform: "windows".into(),
+                    id: "exe:outlook.exe".into(),
+                    display_name: "Outlook".into(),
+                })
+            },
+            enabled: true,
+            setup_kind: "saved".into(),
+            setup_ref: setup.id.clone(),
+            setup_label: String::new(),
+            default_view: "result_only".into(),
+            reason_code: None,
+            parameters: serde_json::json!({"forged":"ignored"}),
+            revision: 0,
+        };
+        service
+            .set_automation_rules(&repo, "infiniti.rewrite", revision, vec![rule])
+            .await
+            .unwrap();
+        let capture = || crate::history::CapturedSnapshot {
+            token: 1,
+            source_app_name: Some("Outlook".into()),
+            source_app_id: if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+                None
+            } else {
+                Some("exe:outlook.exe".into())
+            },
+            format_observations: vec![],
+            representations: vec![CapturedRepresentation {
+                format_key: "mime:text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("Please review this change".into()),
+            }],
+        };
+        let (clip, _) = repo
+            .capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        service
+            .save_transform_setup(
+                &repo,
+                Some(&setup.id),
+                Some(setup.revision),
+                "infiniti.rewrite/rewrite",
+                "Technical v2",
+                serde_json::json!({"preset":"custom", "custom_instruction":"Be detailed"}),
+                "result_only",
+            )
+            .await
+            .unwrap();
+        assert!(service
+            .save_transform_setup(
+                &repo,
+                Some(&setup.id),
+                Some(setup.revision),
+                "infiniti.rewrite/rewrite",
+                "Stale",
+                serde_json::json!({"preset":"business"}),
+                "result_only"
+            )
+            .await
+            .is_err());
+        repo.capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        let snapshots = sqlx::query("SELECT parameters_json,setup_label,default_view,is_new_clip FROM extension_activation_events ORDER BY created_at,rowid").fetch_all(&repo.pool).await.unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert!(snapshots[0].get::<String, _>(0).contains("Be concise"));
+        assert_eq!(snapshots[0].get::<String, _>(1), "Rewrite · Technical");
+        assert_eq!(snapshots[0].get::<String, _>(2), "compare");
+        assert_eq!(snapshots[1].get::<i64, _>(3), 0);
+        assert!(snapshots[1].get::<String, _>(0).contains("Be detailed"));
+        if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+            // A later canonical observation must not replace an unknown captured source.
+            sqlx::query("UPDATE clip_items SET source_app_platform='windows',source_app_id='exe:slack.exe',source_app_name='Slack' WHERE id=?").bind(&clip).execute(&repo.pool).await.unwrap();
+        }
+        service
+            .enqueue_capture_automations(&repo, &clip)
+            .await
+            .unwrap();
+        let jobs = super::super::jobs::list(&repo, &clip).await.unwrap();
+        assert_eq!(
+            jobs.len(),
+            2,
+            "editing the setup must not fence out an already accepted capture"
+        );
+        if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+            let identified: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM extension_jobs WHERE source_clip_id=? AND app_id IS NOT NULL",
+            )
+            .bind(&clip)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                identified, 0,
+                "unknown capture identity must remain immutable"
+            );
+        }
+        let old = jobs
+            .iter()
+            .find(|job| job.display_label == "Rewrite · Technical")
+            .unwrap();
+        assert_eq!(old.parameters["custom_instruction"], "Be concise");
+        sqlx::query("UPDATE extension_jobs SET status='completed' WHERE id=?")
+            .bind(&old.job_id)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        service
+            .delete_transform_setup(&repo, &setup.id)
+            .await
+            .unwrap();
+        let (_, rules) = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap();
+        assert!(!rules[0].enabled);
+        assert_eq!(rules[0].reason_code.as_deref(), Some("setup_deleted"));
+        let retained = super::super::jobs::list(&repo, &clip).await.unwrap();
+        assert!(retained
+            .iter()
+            .any(|job| job.job_id == old.job_id && job.status == "completed"));
+        assert!(retained.iter().any(|job| job.status == "cancelled"));
+        repo.capture(capture(), &crate::history::CaptureSettings::default())
+            .await
+            .unwrap();
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM extension_activation_events")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(event_count, 2);
+        let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .automation_rules(&reopened, "infiniti.rewrite")
+                .await
+                .unwrap()
+                .1[0]
+                .setup_ref,
+            setup.id
+        );
+    }
+
+    #[test]
+    fn format_inventory_excludes_content_and_host_identifiers() {
+        let representation: crate::history::RepresentationDetail = serde_json::from_value(serde_json::json!({
+            "id":"opaque-source", "formatKey":"mime:text/plain", "canonicalMimeType":"text/plain",
+            "nativeType":null, "storageKind":"text", "ordinal":0, "capturePriority":1,
+            "byteLength":12, "textValue":"private-text", "fileReferences":["private-path"],
+            "binaryFileId":"private-file", "sha256":"private-hash", "capabilityId":"text", "formatFamily":"text"
+        })).unwrap();
+        let inventory = super::format_inventory(&[representation]);
+        let serialized = serde_json::to_string(&inventory).unwrap();
+        assert_eq!(inventory[0]["byteLength"], 12);
+        assert_eq!(inventory[0].as_object().unwrap().len(), 6);
+        for secret in [
+            "opaque-source",
+            "private-text",
+            "private-path",
+            "private-file",
+            "private-hash",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
+    }
     use super::*;
 
     #[test]
@@ -4906,10 +5544,13 @@ mod tests {
             ui_entry: None,
             effects: vec![],
             handler: None,
+            parameter_ui: vec![],
+            setup_selector_parameter: None,
             parameter_schema: json!({}),
             input_limit_bytes: 1024 * 1024,
-            expose_in_menu: true,
-            result_lifetime: crate::extensions::ResultLifetime::Temporary,
+            setups: vec![],
+            default_view: crate::extensions::ResultView::ResultOnly,
+            result_controls: vec![],
         }
     }
 
@@ -5078,11 +5719,7 @@ mod tests {
     }
 
     #[test]
-    fn bridge_outputs_require_strict_mime_types_and_do_not_reflect_secrets() {
-        assert!(valid_output_mime_type("application/json"));
-        assert!(valid_output_mime_type("text/plain"));
-        assert!(!valid_output_mime_type("text/plain\r\nx-evil: yes"));
-        assert!(!valid_output_mime_type("text/plain/extra"));
+    fn bridge_responses_do_not_reflect_secrets() {
         assert!(contains_protected_secret(
             b"authorization: secret-token",
             &[b"secret-token".to_vec()]

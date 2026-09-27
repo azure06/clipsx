@@ -33,16 +33,31 @@ flowchart LR
 | Rust app / IPC       | Startup, commands, windows, tray, worker coordination         | `src-tauri/src/app/`, `ipc/` |
 | Clipboard adapter    | Native formats, capture, reconstruction, self-write detection | `clipboard/`                 |
 | History / foundation | Canonical records, SQLite, managed files, settings, reset     | `history/`, `foundation/`    |
-| Contributions        | Built-in detectors, view selection, transform cache           | `contributions/`             |
+| Contributions        | Built-in detectors, view selection, transformer metadata      | `contributions/`             |
 | Artifacts            | Thumbnails and OCR jobs                                       | `artifacts/`                 |
 | Search               | FTS, ranking, chunks, vectors, index lifecycle                | `search/`                    |
 | Extensions           | Packages, registry, isolation, permission broker              | `extensions/`, `wit/`        |
 | Providers            | Host-owned OCR, embedding, generation contracts and adapters  | `providers/`                 |
 
 Rust owns every clipboard write; the webview never uses the browser clipboard.
-Extensions receive only approved input and broker capabilities. Extension API v3 routes manual and capture-triggered transformations through a host-owned durable queue. Automatic results remain derived data attached to their source clip; only explicit promotion creates a canonical clip.
+Extensions receive only approved input and broker capabilities. Extension API v3.2 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
 
 ## Diagnostics and error reporting
+
+Provider, extension runtime, job scheduling and interactive actions share typed
+host failures. A stable reason identifies the problem; an independent recovery
+policy determines stop, wait, retry or cancellation. Jobs persist safe reason
+codes, and the frontend maps them to reviewed explanations and next actions.
+Wrapped failures retain their type instead of being classified from formatted
+strings. Unknown failures stay explicitly unknown. Provider failures do not
+contribute to guest quarantine, and delivery-review fencing remains independent
+of failure presentation.
+
+Text-generation diagnostics persist safe categories and reviewed messages rather
+than provider response bodies. Reading legacy generation diagnostics replaces
+stored raw messages with the reviewed description for their existing code;
+other capabilities are untouched. Error presentation excludes input, prompts,
+credentials, endpoint URLs and arbitrary provider/guest text.
 
 The desktop has two independent diagnostic paths. A local Rust logger always
 writes curated `info`, `warn`, and `error` events to Tauri's application log
@@ -90,7 +105,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v3`, version 10. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 15. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion
@@ -157,24 +172,33 @@ built-in view.
 Host `RenderModel` types cover text, code, Markdown, sanitized sandboxed
 HTML/rich text, tables, trees, key/value data, images, files, documents,
 semantic views, and errors. Custom extension UI follows the
-[isolated-view contract](EXTENSION_API_V3.md#custom-ui-and-broker).
+[extension contract](EXTENSION_API_V3.md).
 
-| User action             | Source and result                                                    |
-| ----------------------- | -------------------------------------------------------------------- |
-| Copy / Original         | Reconstruct explicitly supported captured formats                    |
-| Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters  |
-| Transform               | Validate parameters; cache exact result bytes for preview and output |
-| Save transformed result | New canonical clip with provenance; source unchanged                 |
-| Share                   | Explicit host-owned disclosure of supported source content           |
+| User action             | Source and result                                                   |
+| ----------------------- | ------------------------------------------------------------------- |
+| Copy / Original         | Reconstruct explicitly supported captured formats                   |
+| Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters |
+| Transform               | Validate parameters; enqueue one durable clip-owned result job      |
+| Save transformed result | New canonical clip with provenance; source unchanged                |
+| Share                   | Explicit host-owned disclosure of supported source content          |
 
 Copy plain text never substitutes OCR or rendered/extension content.
 Self-writes use a consumable native change token before readback; the snapshot
 fallback requires both matching token and fingerprint.
 
-Transforms use native MIME-aware host previews. Source-clip results are durable artifacts with job provenance; temporary transforms keep the expiring cache. Raster previews use an opaque,
-no-store URL into the expiring cache; unsaved results are not canonical data.
+Transforms use native MIME-aware host previews. Result bytes are durable artifacts
+with job provenance, and result tabs reload from SQLite. Raster results use an
+opaque, no-store artifact URL; results are not canonical data until promoted.
+The clip tab strip contains native views and extension jobs. Tools opens inside
+the preview card and is the single entry point for transformer built-in and
+saved setups; a setup stores parameters locally and produces a tab only when
+run. Pins are device-local operation preferences: uninstall removes them, while
+disablement hides them until the package is enabled again. A result adds one
+compact toolbar row for output selection, view selection, and explicit controls.
+The host owns typed previews, Original/Result comparison, retry, cancellation,
+and deletion.
 At clipboard write time, typed source text without a portable native format may
-gain an identical plain-text companion. Cached and saved representations remain
+gain an identical plain-text companion. Stored representations remain
 unchanged.
 On Windows, a canonical PNG is reconstructed as both registered `PNG` and
 standard `CF_DIBV5` clipboard formats so native applications and browsers can
@@ -446,3 +470,39 @@ The main webview has no generic filesystem asset protocol or inline scripts.
 Managed binaries use opaque database IDs. Core file-list image preview checks
 clip membership, bounds reads to 4 MiB, sniffs an allowed raster, and returns a
 data URL. Extensions cannot invoke this or generic local-path activation.
+
+### Extension configuration ownership
+
+Tools groups operations by package and offers built-in/saved setups inside the
+preview-card workspace. One host parameter form serves manual runs and setup
+editing. The bounded `parameterUi` declaration selects labels, controls and
+primitive equality visibility; Rust validates the same rules independently.
+
+Extension settings own General, Saved setups and Automation. Automation rules
+reference setups and cache resolved parameters, labels and views for the capture
+transaction. Saved edits refresh rule snapshots atomically; accepted intents
+and jobs remain immutable. Deleted/incompatible setups disable rules. Pins,
+setups and rules stay local. Durable output storage and WIT execution are unchanged.
+
+The shared setup/configuration workspace uses the app's themed Radix controls.
+An optional `setupSelectorParameter` explicitly binds one enum field to setup
+selection; it does not hide other setup-supplied parameters. The schema owns
+valid values, presentation metadata owns labels/control hints, offline availability
+owns input eligibility, and capability grants own host services. Saved setups and
+durable jobs store validated values independently of form layout. Future bounded
+operators or remote option providers extend the form and capability boundaries;
+no expressions, remote options, or additional permissions are implied today.
+
+Result tabs show queued, running, waiting, failed and completed status with compact
+icons. Progress is not placed in the preview toolbar. Persisted status refreshes
+on events and every two seconds while the preview is visible; background updates
+preserve the active view. Opening a result tab shows details and host controls.
+
+Automation rules select either all accepted copied clips (`application: null`)
+or one exact source application. Application identity remains an optional capture
+observation, not a wildcard string. An enabled exact-app rule overrides the
+all-clips rule for the same package/activation. Manifest input/application filters
+still intersect with user rules. Unknown sources match only all-clips rules.
+Automation affects future external captures, never startup history or promotion.
+Future rule conditions can extend host eligibility without changing guest inputs,
+saved setups or durable execution.

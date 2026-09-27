@@ -32,7 +32,7 @@ Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
 Release notes must explain incompatible-schema resets; packaging is not a reason
 to add compatibility reads.
 
-Extension API v3 releases must certify durable Rewrite jobs across restart, exact source-application attribution, source deletion, package update/uninstall, and explicit promotion. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
+Extension API v3.2 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The fresh database baseline is version 15 and requires an explicit reset. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
 
 ## Build and publication
 
@@ -69,9 +69,9 @@ settings, or release artifacts are configured correctly.
 | `VITE_SUPABASE_URL`                                               | Production Auth/API origin                          |
 | `VITE_SUPABASE_PUBLISHABLE_KEY`                                   | Public client key; never a secret/service-role key  |
 | `VITE_NEXT_PUBLIC_SITE_URL`                                       | Production site and hosted callback origin          |
-| `SENTRY_AUTH_TOKEN`                                               | Private release/source-map upload token              |
-| `SENTRY_DSN`, `VITE_SENTRY_DSN`                                  | Public desktop ingestion DSN                         |
-| `SENTRY_RELEASE`, `VITE_SENTRY_RELEASE`                          | Identical `clipsx-desktop@<version>+<sha>` identity  |
+| `SENTRY_AUTH_TOKEN`                                               | Private release/source-map upload token             |
+| `SENTRY_DSN`, `VITE_SENTRY_DSN`                                   | Public desktop ingestion DSN                        |
+| `SENTRY_RELEASE`, `VITE_SENTRY_RELEASE`                           | Identical `clipsx-desktop@<version>+<sha>` identity |
 | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater signing secrets                             |
 | Embedded updater `pubkey` and endpoint                            | Installed client's trust root and metadata location |
 
@@ -144,10 +144,12 @@ Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Use their package-validation
 workflows and confirm the production catalog/approval sync. App CI does not
 publish extension releases.
-The desktop release preflight requires a nonempty, signed v3 registry whose
+The desktop release preflight requires a nonempty, signed v3.2 registry whose
 published raw index and signatures match the reviewed registry revision. Merge
 the six immutable package releases, reviewed metadata, and protected signed
-publication before creating a desktop release candidate. A source merge alone
+publication before creating a desktop release candidate. Merge the host contract
+and package tool before publishing extension archives, but release the desktop
+app last. A source merge alone
 does not make a package visible in Discover.
 
 ## Native clipboard sequence

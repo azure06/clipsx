@@ -178,8 +178,8 @@ impl RegistryIndex {
         let mut entries = BTreeMap::new();
         for package in &index.packages {
             ExtensionManifest::parse(format!(
-                "schemaVersion = 3\ncontractRevision = 1\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
-                package.package_id, package.version, "^3.0", package.display_name
+                "schemaVersion = 3\ncontractRevision = 3\npackageId = \"{}\"\nversion = \"{}\"\napiVersion = \"{}\"\ndisplayName = \"{}\"\n[[contributions]]\nid = \"placeholder\"\nkind = \"detector\"\ndisplayName = \"placeholder\"\nemitsFacetIds = [\"placeholder\"]\n",
+                package.package_id, package.version, "^3.2", package.display_name
             ).as_bytes())?;
             if package.sha256.len() != 64
                 || !package
@@ -190,7 +190,7 @@ impl RegistryIndex {
                 bail!("registry package checksum is invalid");
             }
             validate_release_url(&package.release_url)?;
-            if package.api_version != "^3.0" {
+            if package.api_version != "^3.2" {
                 bail!("registry package uses an unsupported extension API");
             }
             validate_marketplace_metadata(package)?;
@@ -945,7 +945,7 @@ mod tests {
 
     #[test]
     fn registry_requires_reviewed_marketplace_metadata_and_hashed_icons() {
-        let valid = r#"{"schemaVersion":4,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"^3.0","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-light.png","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"dark":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-dark.png","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"portableSettings":[],"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"revocations":[]}"#;
+        let valid = r#"{"schemaVersion":4,"packages":[{"packageId":"clipsx.example","version":"1.0.0","apiVersion":"^3.2","displayName":"Example","releaseUrl":"https://github.com/a/b/releases/download/v1/example.clipsx","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publisher":{"id":"clipsx","displayName":"ClipsX","verified":true},"categories":["Productivity"],"tags":["clipboard"],"publishedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-02T00:00:00Z","archiveSizeBytes":1024,"license":"MIT","iconAssets":{"light":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-light.png","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"dark":{"url":"https://raw.githubusercontent.com/azure06/clipsx-registry/main/icons/example-dark.png","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}},"portableSettings":[],"permissionFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"revocations":[]}"#;
         assert!(RegistryIndex::parse(valid.as_bytes()).is_ok());
         let missing_publisher = valid.replacen(
             "\"publisher\":{\"id\":\"clipsx\",\"displayName\":\"ClipsX\",\"verified\":true},",

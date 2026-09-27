@@ -63,10 +63,29 @@ pub enum ExecutionClass {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ResultLifetime {
+pub enum ResultView {
     #[default]
-    Temporary,
-    SourceClip,
+    ResultOnly,
+    Compare,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultControl {
+    Copy,
+    Paste,
+    SaveAsClip,
+    Regenerate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransformerSetup {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default = "empty_object")]
+    pub parameters: Value,
+    pub default_view: Option<ResultView>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,24 +116,12 @@ pub struct ExtensionActivation {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionEffect {
-    Preview,
     Copy,
-    Paste,
-    SaveAsClip,
     OpenHttpsUrl,
     Notification,
     OpenDialog,
     ComposeEmail,
     DialPhone,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionDisposition {
-    Preview,
-    Copy,
-    Paste,
-    SaveAsClip,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,18 +133,8 @@ pub enum ActionDisposition {
 pub enum ActionHandler {
     Guest,
     Dialog,
-    ComposeEmail {
-        facet_value_pointer: String,
-    },
-    DialPhone {
-        facet_value_pointer: String,
-    },
-    TransformerPreset {
-        transformer_id: String,
-        #[serde(default = "empty_object")]
-        parameters: Value,
-        disposition: ActionDisposition,
-    },
+    ComposeEmail { facet_value_pointer: String },
+    DialPhone { facet_value_pointer: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -231,18 +228,19 @@ pub struct ManifestContribution {
     pub handler: Option<ActionHandler>,
     #[serde(default = "empty_object")]
     pub parameter_schema: Value,
+    #[serde(default)]
+    pub parameter_ui: Vec<super::ParameterField>,
+    pub setup_selector_parameter: Option<String>,
     /// Maximum representation bytes the host may copy into this contribution.
     /// Packages that intentionally process larger local assets opt in here.
     #[serde(default = "default_extension_input_bytes")]
     pub input_limit_bytes: usize,
-    /// Transformer contributions default to appearing in the host's generic
-    /// Transform menu. Set to `false` when the transformer exists only to
-    /// back one or more `TransformerPreset` actions that already cover its
-    /// full parameter space, so the operation isn't offered twice.
-    #[serde(default = "default_true")]
-    pub expose_in_menu: bool,
     #[serde(default)]
-    pub result_lifetime: ResultLifetime,
+    pub setups: Vec<TransformerSetup>,
+    #[serde(default)]
+    pub default_view: ResultView,
+    #[serde(default)]
+    pub result_controls: Vec<ResultControl>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +254,7 @@ pub struct ThemedIconAssets {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionPermissions {
     pub http: Vec<HttpPermission>,
+    pub external_writes: Vec<HttpPermission>,
     pub external_navigation: Vec<ExternalNavigationPermission>,
     pub credentials: Vec<CredentialPermission>,
     #[serde(default)]
@@ -282,6 +281,8 @@ pub struct HttpPermission {
     pub max_request_bytes: u64,
     pub max_response_bytes: u64,
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub idempotency_header: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,9 +336,6 @@ fn default_version() -> String {
 fn default_icon_scale() -> f32 {
     1.0
 }
-fn default_true() -> bool {
-    true
-}
 fn default_extension_input_bytes() -> usize {
     1024 * 1024
 }
@@ -387,7 +385,9 @@ impl ExtensionManifest {
             bail!("unsupported extension schema; build this package for Extension API v3");
         }
         if value.get("contractRevision").is_none() {
-            bail!("obsolete extension package; rebuild with Extension API v3 contractRevision = 1");
+            bail!(
+                "obsolete extension package; rebuild with Extension API v3.2 contractRevision = 3"
+            );
         }
         let manifest: Self = toml::from_str(source)
             .context("extension manifest is not valid Extension API v3 TOML")?;
@@ -402,8 +402,10 @@ impl ExtensionManifest {
         if self.schema_version != 3 {
             bail!("unsupported extension manifest schema; expected schemaVersion = 3");
         }
-        if self.contract_revision != 1 {
-            bail!("unsupported Extension API v3 contract revision; expected contractRevision = 1");
+        if self.contract_revision != 3 {
+            bail!(
+                "unsupported Extension API v3.2 contract revision; expected contractRevision = 3"
+            );
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -474,17 +476,13 @@ impl ExtensionManifest {
             for matcher in &activation.matchers {
                 matcher.validate()?;
             }
-            let transformer = self
-                .contributions
+            self.contributions
                 .iter()
                 .find(|item| {
                     item.id == activation.transformer_id
                         && item.kind == ContributionKind::Transformer
                 })
                 .context("activation references an unknown transformer")?;
-            if transformer.result_lifetime != ResultLifetime::SourceClip {
-                bail!("automatic activations require a source_clip transformer");
-            }
             if !self.permissions.background_clip_created || !self.permissions.selected_input {
                 bail!("automatic activations require selected_input and background_clip_created permissions");
             }
@@ -521,6 +519,38 @@ impl ExtensionManifest {
     }
 
     fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
+        super::parameters::validate_ui(&contribution.parameter_schema, &contribution.parameter_ui)?;
+        super::parameters::validate_setup_selector(contribution)?;
+        if contribution.kind == ContributionKind::Transformer {
+            if contribution.setups.len() > 32 || contribution.result_controls.len() > 4 {
+                bail!("transformer setup or result control limit exceeded");
+            }
+            let mut setup_ids = BTreeSet::new();
+            for setup in &contribution.setups {
+                valid_id(&setup.id, "transformer setup")?;
+                if !setup_ids.insert(&setup.id)
+                    || setup.display_name.trim().is_empty()
+                    || setup.display_name.len() > 80
+                    || !setup.parameters.is_object()
+                {
+                    bail!("transformer setup is invalid");
+                }
+                let mut partial_schema = contribution.parameter_schema.clone();
+                if let Some(object) = partial_schema.as_object_mut() {
+                    object.remove("required");
+                }
+                validate_parameters(&partial_schema, &setup.parameters)?;
+            }
+            let unique_controls: BTreeSet<_> = contribution.result_controls.iter().collect();
+            if unique_controls.len() != contribution.result_controls.len() {
+                bail!("transformer result controls must be unique");
+            }
+        } else if !contribution.setups.is_empty()
+            || !contribution.result_controls.is_empty()
+            || contribution.default_view != ResultView::ResultOnly
+        {
+            bail!("only transformers may declare result presentation");
+        }
         let has_matcher = contribution
             .matchers
             .iter()
@@ -560,18 +590,6 @@ impl ExtensionManifest {
                 }
                 if contribution.placements.is_empty() {
                     bail!("action contributions require at least one placement");
-                }
-                if let Some(ActionHandler::TransformerPreset { transformer_id, .. }) =
-                    &contribution.handler
-                {
-                    valid_id(transformer_id, "transformer reference")?;
-                    let valid = self.contributions.iter().any(|candidate| {
-                        candidate.id == *transformer_id
-                            && candidate.kind == ContributionKind::Transformer
-                    });
-                    if !valid {
-                        bail!("action references an unknown local transformer");
-                    }
                 }
                 if matches!(contribution.handler, Some(ActionHandler::Dialog))
                     && (!contribution.effects.contains(&ActionEffect::OpenDialog)
@@ -627,9 +645,6 @@ impl ExtensionManifest {
         if contribution.kind != ContributionKind::Action && !contribution.placements.is_empty() {
             bail!("only action contributions may declare action placement");
         }
-        if contribution.kind != ContributionKind::Transformer && !contribution.expose_in_menu {
-            bail!("only transformer contributions may set exposeInMenu to false");
-        }
         if contribution.ui_surfaces.is_empty() != contribution.ui_entry.is_none() {
             bail!("custom UI requires both uiEntry and at least one UI surface");
         }
@@ -643,6 +658,7 @@ impl ExtensionManifest {
         }
         if contribution.execution == ExecutionClass::CapabilityBacked
             && self.permissions.http.is_empty()
+            && self.permissions.external_writes.is_empty()
             && self.permissions.providers.is_empty()
         {
             bail!("capability-backed contributions require an HTTP or provider permission declaration");
@@ -682,6 +698,7 @@ impl ExtensionManifest {
 
     fn validate_permissions(&self) -> Result<()> {
         if self.permissions.http.len() > 16
+            || self.permissions.external_writes.len() > 16
             || self.permissions.credentials.len() > 16
             || self.permissions.external_navigation.len() > 16
             || self.permissions.providers.len() > 8
@@ -712,9 +729,22 @@ impl ExtensionManifest {
         {
             bail!("extension requests an unsupported provider capability");
         }
-        let allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        let allowed_methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
         let mut origins = BTreeSet::new();
-        for permission in &self.permissions.http {
+        let mut read_origins = BTreeSet::new();
+        let mut write_origins = BTreeSet::new();
+        for (permission, write) in self
+            .permissions
+            .http
+            .iter()
+            .map(|item| (item, false))
+            .chain(
+                self.permissions
+                    .external_writes
+                    .iter()
+                    .map(|item| (item, true)),
+            )
+        {
             let parsed =
                 Url::parse(&permission.origin).context("HTTP permission origin is invalid")?;
             if parsed.scheme() != "https"
@@ -730,6 +760,23 @@ impl ExtensionManifest {
                     .methods
                     .iter()
                     .any(|method| !allowed_methods.contains(&method.as_str()))
+                || (!write
+                    && permission
+                        .methods
+                        .iter()
+                        .any(|method| !matches!(method.as_str(), "GET" | "HEAD")))
+                || (write
+                    && permission
+                        .methods
+                        .iter()
+                        .any(|method| matches!(method.as_str(), "GET" | "HEAD")))
+                || permission
+                    .idempotency_header
+                    .as_deref()
+                    .is_some_and(|name| {
+                        !valid_credential_header(name) || name.eq_ignore_ascii_case("authorization")
+                    })
+                || (!write && permission.idempotency_header.is_some())
                 || permission.max_response_bytes == 0
                 || permission.max_response_bytes > MAX_HTTP_RESPONSE_BYTES
                 || permission.max_request_bytes == 0
@@ -745,10 +792,16 @@ impl ExtensionManifest {
                         || pattern.matches('*').count() > 1
                         || (pattern.contains('*') && !pattern.ends_with('*'))
                 })
-                || !origins.insert(permission.origin.to_ascii_lowercase())
+                || !(if write {
+                    &mut write_origins
+                } else {
+                    &mut read_origins
+                })
+                .insert(permission.origin.to_ascii_lowercase())
             {
                 bail!("HTTP permissions require unique exact HTTPS origins, approved methods, and bounded responses");
             }
+            origins.insert(permission.origin.to_ascii_lowercase());
         }
         let mut credentials = BTreeSet::new();
         for credential in &self.permissions.credentials {
@@ -883,14 +936,6 @@ pub fn validate_parameters(schema: &Value, parameters: &Value) -> Result<()> {
     validate_schema_value(schema, parameters)
 }
 
-pub fn normalized_parameters(schema: &Value, parameters: &Value) -> Result<Value> {
-    validate_parameter_schema(schema)?;
-    let mut normalized = parameters.clone();
-    apply_schema_defaults(schema, &mut normalized);
-    validate_parameters(schema, &normalized)?;
-    Ok(normalized)
-}
-
 pub fn validate_setting_value(setting: &ExtensionSetting, value: &Value) -> Result<()> {
     if serde_json::to_vec(value)?.len() > 16 * 1024 {
         bail!("extension setting exceeds 16 KiB");
@@ -915,7 +960,7 @@ pub fn validate_state_value(schema: &Value, value: &Value) -> Result<()> {
     validate_schema_value(schema, value)
 }
 
-fn apply_schema_defaults(schema: &Value, value: &mut Value) {
+pub(crate) fn apply_schema_defaults(schema: &Value, value: &mut Value) {
     if let (Some(properties), Some(values)) = (
         schema.get("properties").and_then(Value::as_object),
         value.as_object_mut(),
@@ -1224,10 +1269,10 @@ mod tests {
     fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
         ExtensionManifest {
             schema_version: 3,
-            contract_revision: 1,
+            contract_revision: 3,
             package_id: "example.colors".into(),
             version: "1.0.0".into(),
-            api_version: "^3.0".into(),
+            api_version: "^3.2".into(),
             display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
@@ -1272,9 +1317,12 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_schema: empty_object(),
+            parameter_ui: Vec::new(),
+            setup_selector_parameter: None,
             input_limit_bytes: 1024 * 1024,
-            expose_in_menu: true,
-            result_lifetime: ResultLifetime::Temporary,
+            setups: vec![],
+            default_view: ResultView::ResultOnly,
+            result_controls: vec![],
         }
     }
 
@@ -1282,6 +1330,27 @@ mod tests {
     fn obsolete_schema_is_rejected_with_upgrade_message() {
         let error = ExtensionManifest::parse(b"schemaVersion = 1").unwrap_err();
         assert!(error.to_string().contains("Extension API v3"));
+    }
+
+    #[test]
+    fn v32_rejects_retired_transformer_fields_and_preset_actions() {
+        let base = "schemaVersion = 3\ncontractRevision = 3\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.2\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
+        assert!(ExtensionManifest::parse(base.as_bytes()).is_ok());
+        for retired in ["resultLifetime = \"temporary\"", "exposeInMenu = false"] {
+            let text = format!("{base}{retired}\n");
+            assert!(ExtensionManifest::parse(text.as_bytes()).is_err());
+        }
+        let preset = format!("{base}[[contributions]]\nid = \"business\"\nkind = \"action\"\ndisplayName = \"Business\"\nhandler = {{ kind = \"transformer_preset\", transformerId = \"rewrite\", disposition = \"preview\" }}\n");
+        assert!(ExtensionManifest::parse(preset.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn result_presentations_are_rejected_by_v32() {
+        let base = "schemaVersion = 3\ncontractRevision = 3\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.2\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
+        assert!(
+            ExtensionManifest::parse(format!("{base}resultPresentations = []\n").as_bytes())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1333,16 +1402,24 @@ mod tests {
     fn permissions_require_exact_https_origins() {
         let mut value = manifest(contribution(ContributionKind::Transformer));
         value.contributions[0].execution = ExecutionClass::CapabilityBacked;
-        value.permissions.http.push(HttpPermission {
+        value.permissions.external_writes.push(HttpPermission {
             origin: "https://translation.googleapis.com".into(),
             path_patterns: vec!["/language/translate/*".into()],
             methods: vec!["POST".into()],
             max_request_bytes: 1_048_576,
             max_response_bytes: 1_048_576,
             timeout_ms: 10_000,
+            idempotency_header: None,
         });
         assert!(value.validate().is_ok());
-        value.permissions.http[0].origin = "http://localhost:8080".into();
+        value.permissions.external_writes[0].methods = vec!["GET".into()];
+        assert!(value.validate().is_err());
+        value.permissions.external_writes[0].methods = vec!["POST".into()];
+        value.permissions.external_writes[0].idempotency_header = Some("authorization".into());
+        assert!(value.validate().is_err());
+        value.permissions.external_writes[0].idempotency_header = Some("Idempotency-Key".into());
+        assert!(value.validate().is_ok());
+        value.permissions.external_writes[0].origin = "http://localhost:8080".into();
         assert!(value.validate().is_err());
     }
 
@@ -1352,10 +1429,11 @@ mod tests {
         value.permissions.http.push(HttpPermission {
             origin: "https://api.example.com".into(),
             path_patterns: vec!["/v1/*".into()],
-            methods: vec!["POST".into()],
+            methods: vec!["GET".into()],
             max_request_bytes: 1024,
             max_response_bytes: 2048,
             timeout_ms: 1_000,
+            idempotency_header: None,
         });
         value.permissions.credentials.push(CredentialPermission {
             id: "api-key".into(),

@@ -132,7 +132,6 @@ describe('V2ViewPanel resolver boundary', () => {
         expect.objectContaining({ rendererId: 'builtin.text' })
       )
     })
-    expect(invokeMock).not.toHaveBeenCalledWith('create_transform_preview', expect.anything())
   })
 
   it('refreshes only the render model after artifact completion', async () => {
@@ -245,7 +244,7 @@ describe('V2ViewPanel resolver boundary', () => {
     expect(unlistenMock.mock.calls.length).toBeGreaterThan(callsBeforeUnmount)
   })
 
-  it('shows a recoverable host error when a custom child view fails to start', async () => {
+  it('closes inactive custom views, reopens on return, and reports load failures', async () => {
     let stateListener:
       | ((event: {
           payload: {
@@ -286,9 +285,10 @@ describe('V2ViewPanel resolver boundary', () => {
       toJSON: () => ({}),
     })
 
-    render(
+    const customView = (visible: boolean) => (
       <ExtensionCustomView
         clipId="clip-1"
+        visible={visible}
         view={{
           id: 'extension-view',
           rendererId: 'sample.renderer',
@@ -308,6 +308,7 @@ describe('V2ViewPanel resolver boundary', () => {
         }}
       />
     )
+    const mounted = render(customView(true))
     expect(screen.getByText('Loading Sample viewer…')).toBeInTheDocument()
     await waitFor(() => expect(stateListener).not.toBeNull())
     await waitFor(() =>
@@ -315,6 +316,27 @@ describe('V2ViewPanel resolver boundary', () => {
         'open_extension_custom_view',
         expect.objectContaining({ rendererId: 'sample.renderer' })
       )
+    )
+
+    mounted.rerender(customView(false))
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('close_extension_custom_view', {
+        label: 'extension-1',
+        token: 'token-1',
+      })
+    )
+    const opensWhileHidden = invokeMock.mock.calls.filter(
+      ([command]) => command === 'open_extension_custom_view'
+    ).length
+    mounted.rerender(customView(false))
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'open_extension_custom_view')
+    ).toHaveLength(opensWhileHidden)
+    mounted.rerender(customView(true))
+    await waitFor(() =>
+      expect(
+        invokeMock.mock.calls.filter(([command]) => command === 'open_extension_custom_view')
+      ).toHaveLength(opensWhileHidden + 1)
     )
 
     act(() => {

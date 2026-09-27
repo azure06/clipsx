@@ -57,16 +57,25 @@ CREATE TABLE extension_automation_rules (
     package_id TEXT NOT NULL,
     rule_id TEXT NOT NULL,
     activation_id TEXT NOT NULL,
-    app_platform TEXT NOT NULL CHECK (app_platform IN ('windows', 'macos', 'linux_x11')),
-    app_id TEXT NOT NULL CHECK (length(app_id) BETWEEN 1 AND 256),
-    app_display_name TEXT NOT NULL CHECK (length(app_display_name) BETWEEN 1 AND 256),
+    app_platform TEXT CHECK (app_platform IS NULL OR app_platform IN ('windows', 'macos', 'linux_x11')),
+    app_id TEXT CHECK (app_id IS NULL OR length(app_id) BETWEEN 1 AND 256),
+    app_display_name TEXT CHECK (app_display_name IS NULL OR length(app_display_name) BETWEEN 1 AND 256),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    setup_kind TEXT NOT NULL DEFAULT 'builtin' CHECK (setup_kind IN ('builtin', 'saved')),
+    setup_ref TEXT NOT NULL DEFAULT 'default' CHECK (length(setup_ref) BETWEEN 1 AND 120),
+    setup_label TEXT NOT NULL DEFAULT '' CHECK (length(setup_label) <= 120),
+    default_view TEXT NOT NULL DEFAULT 'result_only' CHECK (default_view IN ('result_only', 'compare')),
+    reason_code TEXT,
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
     revision INTEGER NOT NULL CHECK (revision >= 0),
     updated_at INTEGER NOT NULL,
+    CHECK ((app_platform IS NULL AND app_id IS NULL AND app_display_name IS NULL) OR (app_platform IS NOT NULL AND app_id IS NOT NULL AND app_display_name IS NOT NULL)),
     PRIMARY KEY (package_id, rule_id),
     UNIQUE (package_id, activation_id, app_platform, app_id)
 );
+
+CREATE UNIQUE INDEX extension_automation_all_clips
+    ON extension_automation_rules(package_id, activation_id) WHERE app_platform IS NULL;
 
 CREATE TABLE extension_package_state (
     package_id TEXT NOT NULL,
@@ -77,6 +86,20 @@ CREATE TABLE extension_package_state (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (package_id, state_key)
 );
+
+CREATE TABLE extension_transform_setups (
+    id TEXT PRIMARY KEY NOT NULL,
+    package_id TEXT NOT NULL,
+    transformer_id TEXT NOT NULL,
+    label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 80),
+    parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json) AND length(parameters_json) <= 16384),
+    default_view TEXT NOT NULL CHECK (default_view IN ('result_only', 'compare')),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX extension_transform_setups_by_transformer
+    ON extension_transform_setups(package_id, transformer_id, updated_at DESC);
 
 CREATE TABLE extension_activation_events (
     event_id TEXT NOT NULL,
@@ -93,6 +116,8 @@ CREATE TABLE extension_activation_events (
     configuration_revision INTEGER NOT NULL CHECK (configuration_revision >= 0),
     grant_revision INTEGER NOT NULL CHECK (grant_revision >= 0),
     rule_id TEXT NOT NULL,
+    setup_label TEXT NOT NULL DEFAULT '',
+    default_view TEXT NOT NULL DEFAULT 'result_only',
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
     status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'skipped', 'failed')),
     reason_code TEXT,
@@ -112,7 +137,14 @@ CREATE TABLE extension_jobs (
     package_sha256 TEXT NOT NULL CHECK (length(package_sha256) = 64),
     input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
+    settings_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(settings_json) AND length(settings_json) <= 65536),
+    automation_rule_id TEXT,
+    inventory_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(inventory_json) AND length(inventory_json) <= 16384),
+    setup_id TEXT REFERENCES extension_transform_setups(id) ON DELETE SET NULL,
+    display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 120),
+    default_view TEXT NOT NULL CHECK (default_view IN ('result_only', 'compare')),
     parameter_sha256 TEXT NOT NULL CHECK (length(parameter_sha256) = 64),
+    result_controls_json TEXT NOT NULL CHECK (json_valid(result_controls_json)),
     app_platform TEXT CHECK (app_platform IS NULL OR app_platform IN ('windows', 'macos', 'linux_x11')),
     app_id TEXT CHECK (app_id IS NULL OR length(app_id) BETWEEN 1 AND 256),
     app_display_name TEXT CHECK (app_display_name IS NULL OR length(app_display_name) BETWEEN 1 AND 256),
@@ -121,10 +153,10 @@ CREATE TABLE extension_jobs (
     state_revision INTEGER NOT NULL CHECK (state_revision >= 0),
     provider_revision INTEGER NOT NULL CHECK (provider_revision >= 0),
     priority INTEGER NOT NULL CHECK (priority IN (0, 1, 2)),
-    result_lifetime TEXT NOT NULL CHECK (result_lifetime IN ('temporary', 'source_clip')),
     dedupe_key TEXT NOT NULL CHECK (length(dedupe_key) = 64),
     regeneration_nonce TEXT,
-    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'waiting_provider', 'completed', 'failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'waiting_provider', 'waiting_write_review', 'completed', 'failed', 'cancelled')),
+    view_json TEXT CHECK (view_json IS NULL OR (json_valid(view_json) AND length(view_json) <= 16384)),
     reason_code TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     transient_retry_count INTEGER NOT NULL DEFAULT 0 CHECK (transient_retry_count BETWEEN 0 AND 3),
@@ -139,18 +171,39 @@ CREATE TABLE extension_jobs (
 );
 
 CREATE UNIQUE INDEX extension_jobs_active_dedupe ON extension_jobs(dedupe_key)
-    WHERE regeneration_nonce IS NULL AND status IN ('pending', 'running', 'waiting_provider', 'completed');
+    WHERE regeneration_nonce IS NULL AND status IN ('pending', 'running', 'waiting_provider', 'waiting_write_review', 'completed');
 CREATE UNIQUE INDEX extension_jobs_request_id ON extension_jobs(request_id) WHERE request_id IS NOT NULL;
 CREATE INDEX extension_jobs_queue ON extension_jobs(status, priority, retry_at, requested_at, id);
 CREATE INDEX extension_jobs_source ON extension_jobs(source_clip_id, package_id, created_at DESC);
 
+-- A step is recorded before calling a broker. Completed responses allow the
+-- guest to continue without replaying a remote write after restart.
+CREATE TABLE extension_job_steps (
+    job_id TEXT NOT NULL REFERENCES extension_jobs(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 15),
+    step_id TEXT NOT NULL CHECK (length(step_id) BETWEEN 1 AND 80),
+    kind TEXT NOT NULL CHECK (kind IN ('read', 'model_call', 'write')),
+    request_json TEXT NOT NULL CHECK (json_valid(request_json) AND length(request_json) <= 1048576),
+    state_json TEXT NOT NULL CHECK (json_valid(state_json) AND length(state_json) <= 65536),
+    response_json TEXT CHECK (response_json IS NULL OR (json_valid(response_json) AND length(response_json) <= 1048576)),
+    idempotency_key TEXT NOT NULL,
+    dispatch_claim INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'sending', 'completed', 'unknown')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (job_id, ordinal),
+    UNIQUE (job_id, step_id)
+);
+
 CREATE TABLE extension_result_outputs (
     job_id TEXT NOT NULL REFERENCES extension_jobs(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 7),
+    output_id TEXT NOT NULL CHECK (length(output_id) BETWEEN 1 AND 80),
     artifact_id TEXT NOT NULL UNIQUE REFERENCES artifact_records(id) ON DELETE CASCADE,
     format_key TEXT NOT NULL CHECK (length(format_key) BETWEEN 1 AND 256),
     mime_type TEXT NOT NULL CHECK (length(mime_type) BETWEEN 1 AND 256),
-    PRIMARY KEY (job_id, ordinal)
+    PRIMARY KEY (job_id, ordinal),
+    UNIQUE (job_id, output_id)
 );
 
 CREATE TABLE extension_result_promotions (

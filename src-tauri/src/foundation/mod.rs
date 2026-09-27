@@ -14,7 +14,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 15;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,6 +319,10 @@ mod tests {
             inspect_database(&roots.database()).await.unwrap(),
             SchemaState::Ready
         );
+        // Reopening must accept both the metadata and migration checksums.
+        // A successful first creation alone can conceal a reset loop.
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
     }
     #[tokio::test]
     async fn rejects_legacy_database() {

@@ -30,23 +30,21 @@ async fn enqueue_capture_intents(
     is_new_clip: bool,
     captured_at: i64,
 ) -> Result<()> {
-    let (Some(platform), Some(app_id)) = (
-        source_platform(snapshot.source_app_id.as_deref()),
-        snapshot.source_app_id.as_deref(),
-    ) else {
-        return Ok(());
-    };
+    let platform = source_platform(snapshot.source_app_id.as_deref());
+    let app_id = platform.and(snapshot.source_app_id.as_deref());
     let event_id = new_id();
-    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND r.app_platform=? AND r.app_id=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,r.setup_label,r.default_view,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND ((r.app_platform=? AND r.app_id=?) OR (r.app_platform IS NULL AND NOT EXISTS(SELECT 1 FROM extension_automation_rules exact WHERE exact.package_id=r.package_id AND exact.activation_id=r.activation_id AND exact.enabled=1 AND exact.app_platform=? AND exact.app_id=?))) AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
         .bind(event_id)
         .bind(clip_id)
         .bind(captured_at)
         .bind(is_new_clip)
         .bind(platform)
         .bind(app_id)
-        .bind(snapshot.source_app_name.as_deref())
+        .bind(platform.and(snapshot.source_app_name.as_deref()))
         .bind(captured_at)
         .bind(captured_at)
+        .bind(platform)
+        .bind(app_id)
         .bind(platform)
         .bind(app_id)
         .execute(&mut **tx)
@@ -158,40 +156,6 @@ impl HistoryRepository {
     ) -> Result<(String, bool)> {
         self.capture_inner(snapshot, settings, false).await
     }
-    /// Explicitly saved transformation output is deliberately distinct even if
-    /// the produced bytes already exist in history.
-    pub async fn capture_forced(
-        &self,
-        snapshot: CapturedSnapshot,
-        settings: &CaptureSettings,
-        provenance: &TransformProvenance,
-    ) -> Result<String> {
-        let source: (String, String, Option<String>) = sqlx::query_as(
-            "SELECT c.capture_sha256,r.format_key,r.canonical_mime_type \
-             FROM clip_items c JOIN clip_representations r ON r.clip_id=c.id \
-             WHERE c.id=? AND r.id=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready'",
-        )
-        .bind(&provenance.source_clip_id)
-        .bind(&provenance.source_representation_id)
-        .fetch_one(&self.pool)
-        .await?;
-        let (id, _) = self.capture_inner(snapshot, settings, true).await?;
-        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,source_capture_sha256,source_format_key,source_mime_type,transformer_id,transformer_version,parameter_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-            .bind(&id)
-            .bind(&provenance.source_clip_id)
-            .bind(&provenance.source_representation_id)
-            .bind(source.0)
-            .bind(source.1)
-            .bind(source.2)
-            .bind(&provenance.transformer_id)
-            .bind(&provenance.transformer_version)
-            .bind(&provenance.parameter_sha256)
-            .bind(now_ms())
-            .execute(&self.pool)
-            .await?;
-        Ok(id)
-    }
-
     /// Promote a completed, clip-owned result and its provenance in one transaction.
     pub async fn promote_extension_result(&self, job_id: &str, request_id: &str) -> Result<String> {
         if request_id.is_empty() || request_id.len() > 120 {
@@ -2229,20 +2193,21 @@ mod tests {
                 payload: CapturedPayload::Text("saved output".into()),
             }],
         };
-        let saved_id = repo
-            .capture_forced(
-                saved,
-                &CaptureSettings::default(),
-                &TransformProvenance {
-                    source_clip_id: source_id.clone(),
-                    source_representation_id: source_representation.clone(),
-                    transformer_id: "test.transform".into(),
-                    transformer_version: "1".into(),
-                    parameter_sha256: "a".repeat(64),
-                },
-            )
+        let (saved_id, _) = repo
+            .capture(saved, &CaptureSettings::default())
             .await
             .unwrap();
+        let source_hash: String =
+            sqlx::query_scalar("SELECT capture_sha256 FROM clip_items WHERE id=?")
+                .bind(&source_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO clip_transform_provenance(clip_id,source_clip_id,source_representation_id,source_capture_sha256,source_format_key,source_mime_type,transformer_id,transformer_version,parameter_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+            .bind(&saved_id).bind(&source_id).bind(&source_representation)
+            .bind(source_hash).bind("windows:PNG").bind("image/png")
+            .bind("test.transform").bind("1").bind("a".repeat(64)).bind(now_ms())
+            .execute(&repo.pool).await.unwrap();
 
         let artifact_relative = "managed/derived/test-artifact";
         let artifact_path = repo.managed_root.join(artifact_relative);
@@ -2543,7 +2508,7 @@ mod tests {
             .unwrap();
         let now = now_ms();
         let checksum = "a".repeat(64);
-        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.0','developer',?,'packages/rewrite',1,?,?)")
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','2.0.0','^3.2','developer',?,'packages/rewrite',1,?,?)")
             .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
             .execute(&repo.pool).await.unwrap();
@@ -2553,6 +2518,8 @@ mod tests {
             sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite',?,'rewrite-on-capture','windows',?,?,1,'{}',0,?)")
                 .bind(rule).bind(app).bind(rule).bind(now).execute(&repo.pool).await.unwrap();
         }
+        sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.unwrap();
+        assert!(sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all-duplicate','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.is_err());
         let snapshot = |name: &str, app: &str| CapturedSnapshot {
             token: 1,
             source_app_name: Some(name.into()),
@@ -2589,5 +2556,51 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(events.contains(&("exe:outlook.exe".into(), 1)));
         assert!(events.contains(&("exe:slack.exe".into(), 0)));
+        let exact: Vec<String> = sqlx::query_scalar(
+            "SELECT rule_id FROM extension_activation_events WHERE source_clip_id=?",
+        )
+        .bind(&clip_id)
+        .fetch_all(&repo.pool)
+        .await
+        .unwrap();
+        assert!(!exact.contains(&"all".into()));
+        let mut unknown = snapshot("Unknown", "exe:unknown.exe");
+        unknown.source_app_id = None;
+        repo.capture(unknown, &CaptureSettings::default())
+            .await
+            .unwrap();
+        let all: (Option<String>, Option<String>, String) = sqlx::query_as("SELECT app_platform,app_id,rule_id FROM extension_activation_events WHERE rule_id='all'")
+            .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(all, (None, None, "all".into()));
+        repo.capture(
+            snapshot("Chrome", "exe:chrome.exe"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM extension_activation_events WHERE rule_id='all'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+        sqlx::query("UPDATE extension_automation_rules SET enabled=0 WHERE rule_id='all'")
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        repo.capture(
+            snapshot("Chrome", "exe:chrome.exe"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM extension_activation_events WHERE rule_id='all'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
     }
 }

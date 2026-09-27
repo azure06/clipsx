@@ -20,11 +20,15 @@ import { ExtensionsHelpDialog } from './extensions/ExtensionsHelpDialog'
 import { PackageDetailView } from './extensions/PackageDetail'
 import type { CatalogEntry, CoreUtility, ExtensionCatalog, PackageDetail } from './extensions/types'
 
+import { useUIStore } from '../../stores/uiStore'
+
 type InstalledFilter = 'all' | 'enabled' | 'disabled' | 'updates' | 'attention'
 const timeLabel = (value: number | null) =>
   value ? new Date(value).toLocaleString() : 'Not checked yet'
 
 export const Plugins = () => {
+  const settingsRequest = useUIStore(state => state.extensionSettingsRequest)
+  const clearSettingsRequest = useUIStore(state => state.clearExtensionSettingsRequest)
   const [destination, setDestination] = useState<ExtensionsDestination>('installed')
   const [catalog, setCatalog] = useState<ExtensionCatalog | null>(null)
   const [utilities, setUtilities] = useState<CoreUtility[]>([])
@@ -73,6 +77,9 @@ export const Plugins = () => {
     },
     [loadPackageDetail]
   )
+  useEffect(() => {
+    if (settingsRequest) void selectPackage(settingsRequest.packageId)
+  }, [settingsRequest, selectPackage])
   useEffect(() => {
     void load()
   }, [load])
@@ -227,10 +234,13 @@ export const Plugins = () => {
         )}
         {detail && selectedId ? (
           <PackageDetailView
+            key={selectedId}
+            request={settingsRequest}
             packageId={selectedId}
             detail={detail}
             busy={busy}
             onClose={() => {
+              clearSettingsRequest()
               setSelectedId(null)
               setDetail(null)
             }}
