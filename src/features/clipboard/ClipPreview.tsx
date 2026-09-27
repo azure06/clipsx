@@ -518,6 +518,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
           <V2ViewPanel
             key={clip.id}
             clipId={clip.id}
+            visible={!selectedResultId}
             onPresentation={handlePresentation}
             onTabControls={handleTabControls}
             onTransformControls={handleTransformControls}

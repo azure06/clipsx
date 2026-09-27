@@ -29,9 +29,11 @@ type ExtensionCustomViewState = {
 export const ExtensionCustomView = ({
   clipId,
   view,
+  visible = true,
 }: {
   clipId: string
   view: ClipViewDescriptor
+  visible?: boolean
 }) => {
   const container = React.useRef<HTMLDivElement>(null)
   const { appliedTheme } = useTheme()
@@ -45,6 +47,7 @@ export const ExtensionCustomView = ({
   const isReady = readyScope === scope
 
   useEffect(() => {
+    if (!visible) return
     let disposed = false
     let session: ExtensionCustomViewSession | null = null
     let observer: ResizeObserver | null = null
@@ -190,7 +193,17 @@ export const ExtensionCustomView = ({
         })
       }
     }
-  }, [appliedTheme, clipId, locale, revision, scope, view.facetId, view.rendererId, view.sourceId])
+  }, [
+    appliedTheme,
+    clipId,
+    locale,
+    revision,
+    scope,
+    view.facetId,
+    view.rendererId,
+    view.sourceId,
+    visible,
+  ])
 
   return (
     <div
@@ -418,11 +431,13 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
 
 export const V2ViewPanel = ({
   clipId,
+  visible = true,
   onPresentation,
   onTabControls,
   onTransformControls,
 }: {
   clipId: string
+  visible?: boolean
   onPresentation?: (presentation: ClipPresentation | null) => void
   onTabControls?: (info: ViewTabControls | null) => void
   onTransformControls?: (controls: TransformControls | null) => void
@@ -692,7 +707,7 @@ export const V2ViewPanel = ({
             onRetry={() => void retryOcr()}
           />
         ) : view?.presentationKind === 'extension_ui' ? (
-          <ExtensionCustomView clipId={clipId} view={view} />
+          <ExtensionCustomView clipId={clipId} view={view} visible={visible} />
         ) : (
           <RenderModelView appliedTheme={appliedTheme} presentation={presentation} />
         )}
