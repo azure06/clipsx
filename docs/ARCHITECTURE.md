@@ -90,7 +90,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v3`, version 14. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 15. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion
@@ -478,10 +478,16 @@ durable jobs store validated values independently of form layout. Future bounded
 operators or remote option providers extend the form and capability boundaries;
 no expressions, remote options, or additional permissions are implied today.
 
-Clip preview shows a compact extension activity indicator beside Tools and status
-icons on result tabs. Running, queued, waiting and failed jobs remain discoverable
-without selecting a result. Opening the indicator is explicit and background
-updates preserve the active view. Persisted job status is refreshed on events and
-every two seconds while the preview is visible, so automatic enqueue/running
-transitions do not depend on the worker's completion event. Status refresh errors
-show a retry control. Completed result tabs remain the durable record.
+Result tabs show queued, running, waiting, failed and completed status with compact
+icons. Progress is not placed in the preview toolbar. Persisted status refreshes
+on events and every two seconds while the preview is visible; background updates
+preserve the active view. Opening a result tab shows details and host controls.
+
+Automation rules select either all accepted copied clips (`application: null`)
+or one exact source application. Application identity remains an optional capture
+observation, not a wildcard string. An enabled exact-app rule overrides the
+all-clips rule for the same package/activation. Manifest input/application filters
+still intersect with user rules. Unknown sources match only all-clips rules.
+Automation affects future external captures, never startup history or promotion.
+Future rule conditions can extend host eligibility without changing guest inputs,
+saved setups or durable execution.

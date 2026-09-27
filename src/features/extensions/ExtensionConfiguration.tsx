@@ -20,7 +20,7 @@ type SourceApplication = { platform: string; id: string; displayName: string }
 export type AutomationRule = {
   id: string
   activationId: string
-  application: SourceApplication
+  application: SourceApplication | null
   enabled: boolean
   setupKind: 'builtin' | 'saved'
   setupRef: string
@@ -324,7 +324,7 @@ export function AutomationEditor({
       detail.activations[0]?.id ??
       ''
   )
-  const [applicationId, setApplicationId] = useState('')
+  const [applicationId, setApplicationId] = useState('all')
   const [setupRef, setSetupRef] = useState(
     request?.setupRef ? `${request.setupKind}:${request.setupRef}` : ''
   )
@@ -339,9 +339,6 @@ export function AutomationEditor({
     setAutomation(rules)
     setApplications(apps)
     setSetups(saved.filter(item => item.packageId === packageId))
-    setApplicationId(
-      current => current || (apps[0] ? `${apps[0].platform}\u0000${apps[0].id}` : '')
-    )
   }, [packageId])
   useEffect(() => {
     void refresh().catch(reason => setError(String(reason)))
@@ -376,7 +373,8 @@ export function AutomationEditor({
               old.id === rule.id &&
               old.enabled &&
               old.setupKind === rule.setupKind &&
-              old.setupRef === rule.setupRef
+              old.setupRef === rule.setupRef &&
+              JSON.stringify(old.application) === JSON.stringify(rule.application)
           ))
     )
     if (newlyEnabled.length) {
@@ -400,7 +398,7 @@ export function AutomationEditor({
         .join(', ')
       if (
         !window.confirm(
-          `Allow ${detail.package?.displayName ?? packageId} to process ${formats} copied from ${newlyEnabled.map(rule => rule.application.displayName).join(', ')} using ${capabilities || 'local processing'} and store attached results? Automatic work never copies or pastes.`
+          `Allow ${detail.package?.displayName ?? packageId} to process ${formats} copied from ${newlyEnabled.map(rule => rule.application?.displayName ?? 'all applications, including unknown sources').join(', ')} using ${capabilities || 'local processing'} and store attached results? Automatic work never copies or pastes.`
         )
       )
         return
@@ -470,19 +468,23 @@ export function AutomationEditor({
         }))}
       />
       <Select
-        label="Source application"
+        label="Copied content"
         className={controlClass}
         value={applicationId}
         onChange={setApplicationId}
         placeholder="Choose an observed application"
-        options={applications.map(item => ({
-          value: `${item.platform}\u0000${item.id}`,
-          label: item.displayName,
-        }))}
+        options={[
+          { value: 'all', label: 'All copied clips' },
+          ...applications.map(item => ({
+            value: `${item.platform}\u0000${item.id}`,
+            label: `From ${item.displayName}`,
+          })),
+        ]}
       />
       {!applications.length && (
         <p className="text-[11px] text-slate-500">
-          Copy something from an application first so ClipsX can observe its identity.
+          All copied clips works without application identity. Copy from an application to add a
+          specific source rule.
         </p>
       )}
       <Select
@@ -532,16 +534,17 @@ export function AutomationEditor({
           size="sm"
           disabled={busy || !applicationId || !selected?.available}
           onClick={() => {
-            const application = applications.find(
-              item => `${item.platform}\u0000${item.id}` === applicationId
-            )
-            if (!application || !selected) return
+            const application =
+              applicationId === 'all'
+                ? null
+                : applications.find(item => `${item.platform}\u0000${item.id}` === applicationId)
+            if (application === undefined || !selected) return
             const split = setupRef.indexOf(':')
             const existing = automation.rules.find(
               rule =>
                 rule.activationId === activationId &&
-                rule.application.platform === application.platform &&
-                rule.application.id === application.id
+                (rule.application?.platform ?? null) === (application?.platform ?? null) &&
+                (rule.application?.id ?? null) === (application?.id ?? null)
             )
             const rule: AutomationRule = {
               id: existing?.id ?? crypto.randomUUID(),
@@ -568,7 +571,7 @@ export function AutomationEditor({
             className="flex items-center gap-3 rounded-lg border border-slate-200/70 bg-white/50 p-3 text-xs dark:border-white/10 dark:bg-white/[.025]"
           >
             <Switch
-              ariaLabel={`Enable ${rule.application.displayName} rule`}
+              ariaLabel={`Enable ${rule.application?.displayName ?? 'all copied clips'} rule`}
               checked={rule.enabled}
               disabled={busy || !!rule.reasonCode}
               size="sm"
@@ -579,7 +582,9 @@ export function AutomationEditor({
               }
             />
             <span className="min-w-0 flex-1">
-              <span className="block font-semibold">{rule.application.displayName}</span>
+              <span className="block font-semibold">
+                {rule.application?.displayName ?? 'All copied clips'}
+              </span>
               <span className="mt-1 block text-[11px] text-slate-500">
                 {rule.setupLabel}
                 {rule.reasonCode ? ` · ${humanLabel(rule.reasonCode)}` : ''}

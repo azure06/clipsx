@@ -23,7 +23,7 @@ pub struct SourceApplication {
 pub struct ApplicationRule {
     pub id: String,
     pub activation_id: String,
-    pub application: SourceApplication,
+    pub application: Option<SourceApplication>,
     pub enabled: bool,
     #[serde(default, skip_deserializing)]
     pub parameters: serde_json::Value,
@@ -238,17 +238,17 @@ pub(crate) async fn enqueue(
         .capture_application
         .as_ref()
         .map(|app| app.platform.clone())
-        .or_else(|| row.get(0));
+        .or_else(|| if priority == 1 { None } else { row.get(0) });
     let app_id: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.id.clone())
-        .or_else(|| row.get(1));
+        .or_else(|| if priority == 1 { None } else { row.get(1) });
     let app_name: Option<String> = request
         .capture_application
         .as_ref()
         .map(|app| app.display_name.clone())
-        .or_else(|| row.get(2));
+        .or_else(|| if priority == 1 { None } else { row.get(2) });
     let display_label = request
         .display_label
         .as_deref()
@@ -938,7 +938,11 @@ mod tests {
             request_id: Some(request_id.into()),
             regenerate: false,
             invocation_token: None,
-            capture_application: None,
+            capture_application: Some(SourceApplication {
+                platform: "windows".into(),
+                id: "exe:outlook.exe".into(),
+                display_name: "Outlook".into(),
+            }),
             automation_rule_id: None,
             settings_snapshot_json: String::new(),
             settings_snapshot_revision: None,

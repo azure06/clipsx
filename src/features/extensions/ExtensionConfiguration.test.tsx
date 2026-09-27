@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SavedSetupsEditor } from './ExtensionConfiguration'
+import { AutomationEditor, SavedSetupsEditor } from './ExtensionConfiguration'
 import type { PackageDetail } from '../settings/extensions/types'
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -126,5 +126,51 @@ describe('saved setup configuration', () => {
         expect.objectContaining({ id: null, expectedRevision: null, label: 'Technical copy' })
       )
     )
+  })
+})
+
+describe('all copied clips automation', () => {
+  it('can save a completed setup without requiring an observed application', async () => {
+    invoke.mockReset()
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === 'get_extension_automation' ? { revision: 0, rules: [] } : [])
+    )
+    const previous = Object.getOwnPropertyDescriptor(window, 'confirm')
+    Object.defineProperty(window, 'confirm', { configurable: true, value: vi.fn(() => true) })
+    const user = userEvent.setup()
+    render(
+      <AutomationEditor
+        packageId="example"
+        detail={{
+          ...detail,
+          activations: [{ id: 'on-copy', event: 'clip_created', transformerId: 'rewrite' }],
+          transformers: detail.transformers.map(item => ({ ...item, localId: 'rewrite' })),
+        }}
+        onChanged={() => Promise.resolve()}
+      />
+    )
+    expect(await screen.findByRole('combobox', { name: 'Copied content' })).toHaveTextContent(
+      'All copied clips'
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Automation setup' }))
+    await user.click(screen.getByRole('option', { name: 'Business' }))
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'set_extension_automation',
+        expect.objectContaining({
+          rules: [
+            expect.objectContaining({
+              application: null,
+              setupKind: 'builtin',
+              setupRef: 'business',
+              enabled: true,
+            }),
+          ],
+        })
+      )
+    )
+    if (previous) Object.defineProperty(window, 'confirm', previous)
+    else Reflect.deleteProperty(window, 'confirm')
   })
 })

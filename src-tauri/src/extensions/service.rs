@@ -3902,11 +3902,13 @@ impl ExtensionService {
                 Ok(super::ApplicationRule {
                     id: row.get(0),
                     activation_id: row.get(1),
-                    application: super::SourceApplication {
-                        platform: row.get(2),
-                        id: row.get(3),
-                        display_name: row.get(4),
-                    },
+                    application: row.get::<Option<String>, _>(2).map(|platform| {
+                        super::SourceApplication {
+                            platform,
+                            id: row.get(3),
+                            display_name: row.get(4),
+                        }
+                    }),
                     enabled: row.get::<i64, _>(5) != 0,
                     parameters: serde_json::from_str(&row.get::<String, _>(6))?,
                     revision: row.get(7),
@@ -3952,11 +3954,14 @@ impl ExtensionService {
             if !rule_ids.insert(&rule.id) {
                 bail!("automation rule IDs must be unique");
             }
-            valid_rule_application(&rule.application)?;
+            if let Some(application) = &rule.application {
+                valid_rule_application(application)?;
+            }
             if !unique.insert((
                 &rule.activation_id,
-                &rule.application.platform,
-                &rule.application.id,
+                rule.application
+                    .as_ref()
+                    .map(|app| (&app.platform, &app.id)),
             )) {
                 bail!("automation rules must be unique per activation and application");
             }
@@ -4015,7 +4020,7 @@ impl ExtensionService {
         let has_enabled_rules = rules.iter().any(|rule| rule.enabled);
         for rule in rules {
             sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,setup_kind,setup_ref,setup_label,default_view,reason_code,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.platform).bind(rule.application.id).bind(rule.application.display_name).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).execute(&mut *tx).await?;
+                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.as_ref().map(|app| &app.platform)).bind(rule.application.as_ref().map(|app| &app.id)).bind(rule.application.as_ref().map(|app| &app.display_name)).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).execute(&mut *tx).await?;
         }
         if has_enabled_rules {
             for (kind, value) in [("background_clip_created", "clip.created")] {
@@ -4058,7 +4063,7 @@ impl ExtensionService {
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,updated_at=excluded.updated_at")
             .bind(package_id).bind(next).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider','waiting_write_review') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)))")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(next)
@@ -4077,22 +4082,25 @@ impl ExtensionService {
             let package_id: String = event.get(1);
             let activation_id: String = event.get(2);
             let source_clip_id: String = event.get(3);
-            let application = super::SourceApplication {
-                platform: event.get(4),
-                id: event.get(5),
-                display_name: event
-                    .get::<Option<String>, _>(6)
-                    .unwrap_or_else(|| "Application".into()),
-            };
+            let application =
+                event
+                    .get::<Option<String>, _>(4)
+                    .map(|platform| super::SourceApplication {
+                        platform,
+                        id: event.get(5),
+                        display_name: event
+                            .get::<Option<String>, _>(6)
+                            .unwrap_or_else(|| "Application".into()),
+                    });
             let checksum: String = event.get(7);
             let _configuration_revision: i64 = event.get(8);
             let grant_revision: i64 = event.get(9);
             let rule_id: String = event.get(10);
             let parameters_json: String = event.get(11);
             let is_new_clip = event.get::<i64, _>(12) != 0;
-            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND r.app_platform=? AND r.app_id=? AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
                 .bind(&package_id).bind(&checksum).bind(&rule_id).bind(&activation_id)
-                .bind(&application.platform).bind(&application.id).bind(grant_revision)
+                .bind(application.as_ref().map(|app| &app.platform)).bind(application.as_ref().map(|app| &app.id)).bind(grant_revision)
                 .fetch_optional(&repo.pool).await?;
             let mut reason = "ineligible";
             if let Some(active) = active {
@@ -4105,8 +4113,9 @@ impl ExtensionService {
                     {
                         let app_matches = activation.applications.is_empty()
                             || activation.applications.iter().any(|selector| {
-                                selector.platform == application.platform
-                                    && selector.id == application.id
+                                application.as_ref().is_some_and(|app| {
+                                    selector.platform == app.platform && selector.id == app.id
+                                })
                             });
                         if app_matches {
                             if let Some(transformer) = package
@@ -4173,11 +4182,7 @@ impl ExtensionService {
                                             "isNewClip": is_new_clip,
                                             "settings": self.package_settings(repo, &package_id).await?,
                                             "formats": format_inventory(&clip.representations),
-                                            "sourceApplication": package.manifest.permissions.source_application.then(|| serde_json::json!({
-                                                "platform": &application.platform,
-                                                "id": &application.id,
-                                                "displayName": &application.display_name,
-                                            })),
+                                            "sourceApplication": if package.manifest.permissions.source_application { application.as_ref() } else { None },
                                         }).to_string();
                                         let Ok(prepared_input) =
                                             representation(input, transformer.input_limit_bytes)
@@ -4224,7 +4229,7 @@ impl ExtensionService {
                                             request_id: None,
                                             regenerate: false,
                                             invocation_token: None,
-                                            capture_application: Some(application.clone()),
+                                            capture_application: application.clone(),
                                             automation_rule_id: Some(rule_id.clone()),
                                             settings_snapshot_json: String::new(),
                                             settings_snapshot_revision: None,
@@ -5106,10 +5111,14 @@ mod tests {
         let rule = super::super::ApplicationRule {
             id: "outlook-rule".into(),
             activation_id: "on-copy".into(),
-            application: super::super::SourceApplication {
-                platform: "windows".into(),
-                id: "exe:outlook.exe".into(),
-                display_name: "Outlook".into(),
+            application: if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+                None
+            } else {
+                Some(super::super::SourceApplication {
+                    platform: "windows".into(),
+                    id: "exe:outlook.exe".into(),
+                    display_name: "Outlook".into(),
+                })
             },
             enabled: true,
             setup_kind: "saved".into(),
@@ -5127,7 +5136,11 @@ mod tests {
         let capture = || crate::history::CapturedSnapshot {
             token: 1,
             source_app_name: Some("Outlook".into()),
-            source_app_id: Some("exe:outlook.exe".into()),
+            source_app_id: if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+                None
+            } else {
+                Some("exe:outlook.exe".into())
+            },
             format_observations: vec![],
             representations: vec![CapturedRepresentation {
                 format_key: "mime:text/plain".into(),
@@ -5176,6 +5189,10 @@ mod tests {
         assert_eq!(snapshots[0].get::<String, _>(2), "compare");
         assert_eq!(snapshots[1].get::<i64, _>(3), 0);
         assert!(snapshots[1].get::<String, _>(0).contains("Be detailed"));
+        if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+            // A later canonical observation must not replace an unknown captured source.
+            sqlx::query("UPDATE clip_items SET source_app_platform='windows',source_app_id='exe:slack.exe',source_app_name='Slack' WHERE id=?").bind(&clip).execute(&repo.pool).await.unwrap();
+        }
         service
             .enqueue_capture_automations(&repo, &clip)
             .await
@@ -5186,6 +5203,19 @@ mod tests {
             2,
             "editing the setup must not fence out an already accepted capture"
         );
+        if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
+            let identified: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM extension_jobs WHERE source_clip_id=? AND app_id IS NOT NULL",
+            )
+            .bind(&clip)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                identified, 0,
+                "unknown capture identity must remain immutable"
+            );
+        }
         let old = jobs
             .iter()
             .find(|job| job.display_label == "Rewrite · Technical")

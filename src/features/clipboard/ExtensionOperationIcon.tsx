@@ -13,11 +13,34 @@ export type PinnedOperation = {
 
 export const ExtensionOperationIcon = ({ operation }: { operation: PinnedOperation }) => {
   if (operation.icon || operation.iconSvg) {
-    return <ExtensionIcon name={operation.icon} light={operation.iconSvg} dark={operation.iconSvgDark} scale={operation.iconScale} />
+    return (
+      <span
+        aria-hidden="true"
+        className="flex h-4 w-4 shrink-0 items-center justify-center overflow-hidden"
+      >
+        <ExtensionIcon
+          name={operation.icon}
+          light={operation.iconSvg}
+          dark={operation.iconSvgDark}
+          scale={operation.iconScale}
+        />
+      </span>
+    )
   }
   const words = operation.label.match(/[\p{L}\p{N}]+/gu) ?? []
-  const monogram = words.length > 1
-    ? words.slice(0, 2).map(word => word[0]).join('')
-    : operation.label.slice(0, 2)
-  return <span aria-hidden="true" className="font-mono text-[10px] font-bold tracking-tight">{monogram.toUpperCase()}</span>
+  const monogram =
+    words.length > 1
+      ? words
+          .slice(0, 2)
+          .map(word => word[0])
+          .join('')
+      : operation.label.slice(0, 2)
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-4 w-4 shrink-0 items-center justify-center font-mono text-[10px] font-bold tracking-tight"
+    >
+      {monogram.toUpperCase()}
+    </span>
+  )
 }

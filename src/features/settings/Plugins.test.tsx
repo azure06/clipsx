@@ -140,6 +140,8 @@ describe('Rewrite automation declaration', () => {
     )
     fireEvent.click(await screen.findByRole('tab', { name: 'Automation' }))
     const user = userEvent.setup()
+    await user.click(await screen.findByRole('combobox', { name: 'Copied content' }))
+    await user.click(await screen.findByRole('option', { name: `From ${app.displayName}` }))
     await user.click(await screen.findByRole('combobox', { name: 'Automation setup' }))
     await user.click(await screen.findByRole('option', { name: 'Business' }))
     const add = screen.getByRole('button', { name: 'Add rule' })

@@ -30,23 +30,21 @@ async fn enqueue_capture_intents(
     is_new_clip: bool,
     captured_at: i64,
 ) -> Result<()> {
-    let (Some(platform), Some(app_id)) = (
-        source_platform(snapshot.source_app_id.as_deref()),
-        snapshot.source_app_id.as_deref(),
-    ) else {
-        return Ok(());
-    };
+    let platform = source_platform(snapshot.source_app_id.as_deref());
+    let app_id = platform.and(snapshot.source_app_id.as_deref());
     let event_id = new_id();
-    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,r.setup_label,r.default_view,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND r.app_platform=? AND r.app_id=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,r.setup_label,r.default_view,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND ((r.app_platform=? AND r.app_id=?) OR (r.app_platform IS NULL AND NOT EXISTS(SELECT 1 FROM extension_automation_rules exact WHERE exact.package_id=r.package_id AND exact.activation_id=r.activation_id AND exact.enabled=1 AND exact.app_platform=? AND exact.app_id=?))) AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
         .bind(event_id)
         .bind(clip_id)
         .bind(captured_at)
         .bind(is_new_clip)
         .bind(platform)
         .bind(app_id)
-        .bind(snapshot.source_app_name.as_deref())
+        .bind(platform.and(snapshot.source_app_name.as_deref()))
         .bind(captured_at)
         .bind(captured_at)
+        .bind(platform)
+        .bind(app_id)
         .bind(platform)
         .bind(app_id)
         .execute(&mut **tx)
@@ -2520,6 +2518,8 @@ mod tests {
             sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite',?,'rewrite-on-capture','windows',?,?,1,'{}',0,?)")
                 .bind(rule).bind(app).bind(rule).bind(now).execute(&repo.pool).await.unwrap();
         }
+        sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.unwrap();
+        assert!(sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all-duplicate','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.is_err());
         let snapshot = |name: &str, app: &str| CapturedSnapshot {
             token: 1,
             source_app_name: Some(name.into()),
@@ -2556,5 +2556,51 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(events.contains(&("exe:outlook.exe".into(), 1)));
         assert!(events.contains(&("exe:slack.exe".into(), 0)));
+        let exact: Vec<String> = sqlx::query_scalar(
+            "SELECT rule_id FROM extension_activation_events WHERE source_clip_id=?",
+        )
+        .bind(&clip_id)
+        .fetch_all(&repo.pool)
+        .await
+        .unwrap();
+        assert!(!exact.contains(&"all".into()));
+        let mut unknown = snapshot("Unknown", "exe:unknown.exe");
+        unknown.source_app_id = None;
+        repo.capture(unknown, &CaptureSettings::default())
+            .await
+            .unwrap();
+        let all: (Option<String>, Option<String>, String) = sqlx::query_as("SELECT app_platform,app_id,rule_id FROM extension_activation_events WHERE rule_id='all'")
+            .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(all, (None, None, "all".into()));
+        repo.capture(
+            snapshot("Chrome", "exe:chrome.exe"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM extension_activation_events WHERE rule_id='all'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
+        sqlx::query("UPDATE extension_automation_rules SET enabled=0 WHERE rule_id='all'")
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        repo.capture(
+            snapshot("Chrome", "exe:chrome.exe"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM extension_activation_events WHERE rule_id='all'",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 2);
     }
 }

@@ -22,7 +22,7 @@ import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import { useClipExtensionJobs } from './useClipExtensionJobs'
-import { ExtensionJobActivity, ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -112,7 +112,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
   })
   const [enabledPackages, setEnabledPackages] = useState<Set<string>>(() => new Set())
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
-  const { jobs, error: jobsError, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
+  const { jobs, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
   const [toolbarScroll, setToolbarScroll] = useState({
     canScrollLeft: false,
@@ -331,7 +331,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                             setToolsOpen(true)
                           }
                         }}
-                        className="shrink-0 rounded-md p-1.5 text-violet-600 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-35 dark:text-violet-300"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-violet-600 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-35 dark:text-violet-300"
                       >
                         <ExtensionOperationIcon operation={operation} />
                       </button>
@@ -352,15 +352,6 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 >
                   <Sparkles className="h-4 w-4" />
                 </button>
-                <ExtensionJobActivity
-                  jobs={jobs}
-                  error={jobsError}
-                  onRetry={() => void refreshJobs()}
-                  onSelect={id => {
-                    setSelectedResultId(id)
-                    setToolsOpen(false)
-                  }}
-                />
                 <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
                 {currentPresentation && (
                   <div className="shrink-0">

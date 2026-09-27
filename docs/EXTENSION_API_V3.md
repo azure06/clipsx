@@ -4,7 +4,7 @@ ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
 `schemaVersion = 3`, `contractRevision = 3`, `apiVersion = "^3.2"`, and
 `clipsx:extension@3.2.0`. The host rejects other contract revisions. A fresh
-local database at schema version 14 is required; ClipsX asks for an explicit
+local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
 ## One transformer path
@@ -152,8 +152,8 @@ remain plain validated values without component names or form state.
 ## Capture automation
 
 An activation targets one transformer and declares representation matchers
-for `clip_created`. A device-local, user-enabled application rule selects an
-exact platform/application ID and a built-in or saved setup. The host resolves
+for `clip_created`. A device-local, user-enabled rule selects all copied clips
+or an exact platform/application ID, and a built-in or saved setup. The host resolves
 and validates its parameters; rules do not expose a second parameter editor. The manifest filter and rule
 intersect. Every accepted external capture occurrence is considered, including
 a repeated copy of an existing clip. The host commits an activation intent
@@ -233,3 +233,10 @@ Release archives are immutable. Registry metadata must match the archive's
 identity, SHA-256 digest, and permission fingerprint; a protected signer
 publishes the catalog index and signature together. The desktop app installs
 only releases compatible with this contract.
+
+User automation rules may select all copied clips with `application: null`, or
+one exact safe source application. When both are enabled for an activation, the
+exact rule takes precedence. All-clips rules also cover unknown application
+identity, but remain subject to manifest representation/application filters and
+background consent. Their label, parameters and default view are snapshotted at
+capture like exact-app rules. Enabling automation does not process old history.

@@ -57,9 +57,9 @@ CREATE TABLE extension_automation_rules (
     package_id TEXT NOT NULL,
     rule_id TEXT NOT NULL,
     activation_id TEXT NOT NULL,
-    app_platform TEXT NOT NULL CHECK (app_platform IN ('windows', 'macos', 'linux_x11')),
-    app_id TEXT NOT NULL CHECK (length(app_id) BETWEEN 1 AND 256),
-    app_display_name TEXT NOT NULL CHECK (length(app_display_name) BETWEEN 1 AND 256),
+    app_platform TEXT CHECK (app_platform IS NULL OR app_platform IN ('windows', 'macos', 'linux_x11')),
+    app_id TEXT CHECK (app_id IS NULL OR length(app_id) BETWEEN 1 AND 256),
+    app_display_name TEXT CHECK (app_display_name IS NULL OR length(app_display_name) BETWEEN 1 AND 256),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     setup_kind TEXT NOT NULL DEFAULT 'builtin' CHECK (setup_kind IN ('builtin', 'saved')),
     setup_ref TEXT NOT NULL DEFAULT 'default' CHECK (length(setup_ref) BETWEEN 1 AND 120),
@@ -69,9 +69,13 @@ CREATE TABLE extension_automation_rules (
     parameters_json TEXT NOT NULL CHECK (json_valid(parameters_json)),
     revision INTEGER NOT NULL CHECK (revision >= 0),
     updated_at INTEGER NOT NULL,
+    CHECK ((app_platform IS NULL AND app_id IS NULL AND app_display_name IS NULL) OR (app_platform IS NOT NULL AND app_id IS NOT NULL AND app_display_name IS NOT NULL)),
     PRIMARY KEY (package_id, rule_id),
     UNIQUE (package_id, activation_id, app_platform, app_id)
 );
+
+CREATE UNIQUE INDEX extension_automation_all_clips
+    ON extension_automation_rules(package_id, activation_id) WHERE app_platform IS NULL;
 
 CREATE TABLE extension_package_state (
     package_id TEXT NOT NULL,

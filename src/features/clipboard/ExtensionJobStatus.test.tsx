@@ -1,62 +1,37 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
-import { ExtensionJobActivity, jobStatusLabel } from './ExtensionJobStatus'
-import type { ExtensionJob } from './useClipExtensionJobs'
+import { render } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { ExtensionOperationIcon } from './ExtensionOperationIcon'
 
-const job = (status: ExtensionJob['status']) =>
-  ({ jobId: status, displayLabel: 'Rewrite · Business', status, reasonCode: null }) as ExtensionJob
-
-describe('extension job activity', () => {
-  it('shows automatic running work without opening its tab, and opens details explicitly', () => {
-    const select = vi.fn()
-    render(
-      <ExtensionJobActivity
-        jobs={[job('pending'), job('running')]}
-        error={null}
-        onSelect={select}
-        onRetry={vi.fn()}
-      />
+describe('compact extension indicators', () => {
+  it('labels running, failed and waiting result states', () => {
+    expect(jobStatusLabel({ status: 'running', reasonCode: null })).toBe('Running')
+    expect(jobStatusLabel({ status: 'failed', reasonCode: null })).toBe('Failed')
+    expect(jobStatusLabel({ status: 'waiting_provider', reasonCode: null })).toBe(
+      'Waiting for model'
     )
-    expect(screen.getByRole('status')).toHaveTextContent('Running')
-    expect(screen.getByRole('status')).toHaveTextContent('+1')
-    expect(select).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button'))
-    expect(select).toHaveBeenCalledWith('running')
+    expect(jobStatusLabel({ status: 'waiting_write_review', reasonCode: null })).toBe(
+      'Needs delivery review'
+    )
+    const { container } = render(
+      <ExtensionJobStatusIcon job={{ status: 'running', reasonCode: null }} />
+    )
+    expect(container.querySelector('svg')).toHaveClass('animate-spin')
   })
-  it('keeps failure and waiting states visible, with readable labels', () => {
-    const { rerender } = render(
-      <ExtensionJobActivity
-        jobs={[job('failed')]}
-        error={null}
-        onSelect={vi.fn()}
-        onRetry={vi.fn()}
-      />
-    )
-    expect(screen.getByRole('status')).toHaveTextContent('Failed')
-    rerender(
-      <ExtensionJobActivity
-        jobs={[job('waiting_provider')]}
-        error={null}
-        onSelect={vi.fn()}
-        onRetry={vi.fn()}
-      />
-    )
-    expect(screen.getByRole('status')).toHaveTextContent('Waiting for model')
-    expect(jobStatusLabel(job('waiting_write_review'))).toBe('Needs delivery review')
-  })
-  it('does not label completed or cancelled jobs as ongoing and offers status refresh on error', () => {
-    const retry = vi.fn()
-    const { rerender } = render(
-      <ExtensionJobActivity
-        jobs={[job('completed'), job('cancelled')]}
-        error={null}
-        onSelect={vi.fn()}
-        onRetry={retry}
-      />
-    )
-    expect(screen.queryByRole('status')).toBeNull()
-    rerender(<ExtensionJobActivity jobs={[]} error="offline" onSelect={vi.fn()} onRetry={retry} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Status unavailable · Retry' }))
-    expect(retry).toHaveBeenCalledOnce()
+  it('bounds both supplied icons and fallback marks to the same slot', () => {
+    const operation = {
+      id: 'x',
+      packageId: 'x',
+      label: 'Ask ChatGPT',
+      kind: 'action' as const,
+      icon: null,
+      iconSvg: 'data:image/svg+xml,<svg/>',
+      iconSvgDark: null,
+      iconScale: 1.85,
+    }
+    const { container, rerender } = render(<ExtensionOperationIcon operation={operation} />)
+    expect(container.firstChild).toHaveClass('h-4', 'w-4', 'overflow-hidden')
+    rerender(<ExtensionOperationIcon operation={{ ...operation, iconSvg: null }} />)
+    expect(container.firstChild).toHaveClass('h-4', 'w-4')
   })
 })
