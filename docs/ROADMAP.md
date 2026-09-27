@@ -25,14 +25,14 @@ disablement and uninstall. Verify saved setups, built-in presets, multiple typed
 outputs, Compare resizing, result controls, and the single Tools entry point.
 Publish reviewed immutable v3.2 package archives and signed registry metadata
 only after these tests pass. The host requires an explicit reset to database
-version 14 and shows only current-contract releases in Discover.
+version 15 and shows only current-contract releases in Discover.
 
 ### Local review before publication
 
-Checkpoint the host locally, then build and manually install Rewrite. After user
-approval, checkpoint that package and repeat for Base64, Ask AI, Data Tools, JWT
-Inspector and Mermaid individually. Run one consolidated validation after these
-checks; do not use cloud CI or publication to discover basic behaviour failures.
+Local package behavior must be reviewed before consolidated release validation.
+The [extension development workflow](../.agents/skills/clipsx-extension-development/SKILL.md)
+describes the focused build and checkpoint procedure. Installed-platform
+certification requirements remain in [RELEASE.md](RELEASE.md).
 
 ### 1. Complete extension catalog sync and smoke test
 
@@ -91,28 +91,17 @@ draft and repeat the affected certification checks.
 - [ ] Verify a previously installed signed build discovers and installs the
       published update.
 
-## How the automated release works
+## Release process
 
-- Merging to `main` runs CI. It does **not** publish an application release.
-- A manual workflow run builds inspectable candidates but does not publish.
-- After the version in `src-tauri/tauri.conf.json` is set, pushing the matching
-  `v<version>` tag runs the release matrix and creates a **draft** GitHub Release.
-- Platform signing/notarization happens in those jobs once the required GitHub
-  secrets and Tauri configuration are present.
-- The draft is published only after the same artifacts pass installed-platform
-  testing. The website is finalized afterward so its URLs refer to real public
-  release assets.
-
-Do not rotate or lose the Tauri updater signing key after release. New releases
-must use the same key expected by installed clients unless a deliberate key
-rotation mechanism is shipped first.
+Workflow triggers, candidate artifacts, signing and publication requirements are
+documented in [RELEASE.md](RELEASE.md).
 
 ## After the first release
 
 - Add release-artifact content inspection, enforceable bundle-size budgets,
   stronger reproducibility checks, and automated updater rollback drills.
-- Add bounded host-rendered tabs, code blocks, tables, key/value lists, and
-  comparison layouts to the extension render-model contract.
+- Extend the existing bounded result tabs and comparison layouts with additional
+  host-rendered views when concrete package requirements justify them.
 - Continue UI polish, copy improvements, performance work, additional platform
   coverage, and feedback-driven features as normal versioned releases.
 - Add capabilities currently outside the first-release contract only after they
