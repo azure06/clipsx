@@ -22,6 +22,7 @@ import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import { useClipExtensionJobs } from './useClipExtensionJobs'
+import { ExtensionJobActivity, ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -111,7 +112,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
   })
   const [enabledPackages, setEnabledPackages] = useState<Set<string>>(() => new Set())
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
-  const { jobs, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
+  const { jobs, error: jobsError, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
   const [toolbarScroll, setToolbarScroll] = useState({
     canScrollLeft: false,
@@ -351,6 +352,15 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 >
                   <Sparkles className="h-4 w-4" />
                 </button>
+                <ExtensionJobActivity
+                  jobs={jobs}
+                  error={jobsError}
+                  onRetry={() => void refreshJobs()}
+                  onSelect={id => {
+                    setSelectedResultId(id)
+                    setToolsOpen(false)
+                  }}
+                />
                 <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
                 {currentPresentation && (
                   <div className="shrink-0">
@@ -427,11 +437,14 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                     setSelectedResultId(job.jobId)
                     setToolsOpen(false)
                   }}
-                  className="max-w-40 truncate px-2.5 py-1"
-                  title={`${job.displayLabel} · ${job.status}`}
+                  className="flex max-w-56 items-center gap-1.5 px-2.5 py-1"
+                  title={`${job.displayLabel} · ${jobStatusLabel(job)}`}
                 >
-                  {job.displayLabel}
-                  {job.status !== 'completed' ? ` · ${job.status.replaceAll('_', ' ')}` : ''}
+                  <ExtensionJobStatusIcon job={job} />
+                  <span className="truncate">
+                    {job.displayLabel}
+                    {job.status !== 'completed' ? ` · ${jobStatusLabel(job)}` : ''}
+                  </span>
                 </button>
                 <button
                   type="button"

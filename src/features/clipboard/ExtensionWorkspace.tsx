@@ -1,7 +1,7 @@
+import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Check,
-  ChevronDown,
   ClipboardPaste,
   Copy,
   Database,
@@ -299,8 +299,12 @@ export function ExtensionResultTab({
     >
       <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-200/70 bg-white/55 px-2 py-1 text-xs dark:border-white/10 dark:bg-white/[.025]">
         {job.status !== 'completed' && (
-          <span className="mr-auto shrink-0 px-1 text-[11px] font-medium capitalize text-slate-500">
-            {job.status.replaceAll('_', ' ')}
+          <span
+            role="status"
+            className="mr-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-medium text-slate-500"
+          >
+            <ExtensionJobStatusIcon job={job} />
+            {jobStatusLabel(job)}
             {job.reasonCode ? ` · ${job.reasonCode.replaceAll('_', ' ')}` : ''}
           </span>
         )}
@@ -493,14 +497,10 @@ export function ExtensionResultTab({
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
           <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
-            <ChevronDown
-              className={`h-5 w-5 ${['pending', 'running', 'waiting_provider'].includes(job.status) ? 'animate-pulse' : ''}`}
-            />
+            <ExtensionJobStatusIcon job={job} />
           </span>
           <p className="text-sm font-semibold capitalize text-slate-700 dark:text-slate-200">
-            {job.status === 'waiting_write_review'
-              ? 'Delivery needs review'
-              : job.status.replaceAll('_', ' ')}
+            {jobStatusLabel(job)}
           </p>
           {job.status === 'waiting_write_review' ? (
             <p className="mt-1 max-w-sm text-xs text-slate-500">

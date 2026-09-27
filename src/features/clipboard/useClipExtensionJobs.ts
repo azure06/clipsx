@@ -44,6 +44,7 @@ export function useClipExtensionJobs(clipId: string) {
   const [jobs, setJobs] = useState<ExtensionJob[]>([])
   const [error, setError] = useState<string | null>(null)
   const sequence = useRef(0)
+  const inFlight = useRef(false)
   const refresh = useCallback(async () => {
     const current = ++sequence.current
     try {
@@ -58,7 +59,18 @@ export function useClipExtensionJobs(clipId: string) {
   }, [clipId])
 
   useEffect(() => {
+    setJobs([])
+    setError(null)
     void refresh()
+    // Automatic enqueue/running transitions can precede the completion event.
+    // Poll persisted state without overlapping requests or relying on events alone.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden' || inFlight.current) return
+      inFlight.current = true
+      void refresh().finally(() => {
+        inFlight.current = false
+      })
+    }, 2000)
     const configurationChanged = () => {
       void refresh()
     }
@@ -72,6 +84,7 @@ export function useClipExtensionJobs(clipId: string) {
       else unlisten = stop
     })
     return () => {
+      window.clearInterval(timer)
       window.removeEventListener('clipsx-extension-permissions-changed', configurationChanged)
       disposed = true
       sequence.current += 1

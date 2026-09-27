@@ -477,3 +477,11 @@ owns input eligibility, and capability grants own host services. Saved setups an
 durable jobs store validated values independently of form layout. Future bounded
 operators or remote option providers extend the form and capability boundaries;
 no expressions, remote options, or additional permissions are implied today.
+
+Clip preview shows a compact extension activity indicator beside Tools and status
+icons on result tabs. Running, queued, waiting and failed jobs remain discoverable
+without selecting a result. Opening the indicator is explicit and background
+updates preserve the active view. Persisted job status is refreshed on events and
+every two seconds while the preview is visible, so automatic enqueue/running
+transitions do not depend on the worker's completion event. Status refresh errors
+show a retry control. Completed result tabs remain the durable record.
