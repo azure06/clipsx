@@ -1,3 +1,4 @@
+import { failureMessage } from './failures'
 import { invoke } from '@tauri-apps/api/core'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ArrowLeft, Pin, Play, Search, Trash2, X } from 'lucide-react'
@@ -74,7 +75,7 @@ export function ExtensionTools({
     []
   )
   useEffect(() => {
-    void refresh().catch(reason => setError(String(reason)))
+    void refresh().catch(reason => setError(failureMessage(reason)))
   }, [refresh])
   const entries = useMemo<Entry[]>(
     () => [
@@ -273,7 +274,7 @@ export function ExtensionTools({
       window.dispatchEvent(new Event('clipsx-extension-permissions-changed'))
       if (automation) navigateAutomation('saved', saved.id)
     } catch (reason) {
-      setError(String(reason))
+      setError(failureMessage(reason))
     } finally {
       setBusy(false)
     }
@@ -316,7 +317,7 @@ export function ExtensionTools({
       })
       onQueued(result.jobId)
     } catch (reason) {
-      setError(String(reason))
+      setError(failureMessage(reason))
     } finally {
       setBusy(false)
     }
@@ -599,7 +600,7 @@ export function ExtensionTools({
                             choose(transformer)
                             window.dispatchEvent(new Event('clipsx-extension-permissions-changed'))
                           })
-                          .catch(reason => setError(String(reason)))
+                          .catch(reason => setError(failureMessage(reason)))
                       }}
                     >
                       <Trash2 className="h-4 w-4" />

@@ -313,6 +313,41 @@ describe('one durable transformation path', () => {
     useUIStore.getState().clearExtensionSettingsRequest()
   })
 
+  it('restores a failed job explanation and links waiting jobs to generation settings', () => {
+    const job: ExtensionJob = {
+      jobId: 'failed-job',
+      clipId: 'clip-1',
+      sourceId: 'source-1',
+      packageId: transformer.packageId,
+      transformerId: transformer.id,
+      transformerVersion: '2.0.0',
+      displayLabel: 'Rewrite · Business',
+      defaultView: 'result_only',
+      status: 'failed',
+      reasonCode: 'context_overflow',
+      parameters: {},
+      resultControls: [],
+      outputs: [],
+      view: null,
+      completedWrites: 0,
+    }
+    const props = { presentation: null, canRegenerate: true, onChanged: vi.fn(), onQueued: vi.fn() }
+    const mounted = render(<ExtensionResultTab job={job} {...props} />)
+    expect(screen.getByText(/model reported insufficient context/)).toBeInTheDocument()
+    expect(screen.queryByText('context overflow')).not.toBeInTheDocument()
+    mounted.unmount()
+    render(
+      <ExtensionResultTab
+        job={{ ...job, status: 'waiting_provider', reasonCode: 'model_unavailable' }}
+        {...props}
+      />
+    )
+    expect(screen.getByText(/selected model is unavailable/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Local Text Generation' }))
+    expect(useUIStore.getState().activeView).toBe('intelligence')
+    useUIStore.getState().setActiveView('clips')
+  })
+
   it('shows only controls declared by the transformer for a completed result', () => {
     const job: ExtensionJob = {
       jobId: 'job-1',

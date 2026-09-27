@@ -1,13 +1,8 @@
 import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { describeFailure, failureMessage } from '../extensions/failures'
+import { FailureNotice } from '../extensions/FailureNotice'
 import { invoke } from '@tauri-apps/api/core'
-import {
-  Check,
-  ClipboardPaste,
-  Copy,
-  Database,
-  GripVertical,
-  RotateCcw,
-} from 'lucide-react'
+import { Check, ClipboardPaste, Copy, Database, GripVertical, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { copyClipboardOutput, pasteClipboardOutput } from '../../shared/clipboardOutput'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
@@ -184,7 +179,7 @@ export function ExtensionResultTab({
         if (alive) setOutput(value)
       })
       .catch(reason => {
-        if (alive) setError(String(reason))
+        if (alive) setError(failureMessage(reason))
       })
     return () => {
       alive = false
@@ -219,7 +214,7 @@ export function ExtensionResultTab({
         if (alive) setOtherOutputs(Object.fromEntries(entries))
       })
       .catch(reason => {
-        if (alive) setError(String(reason))
+        if (alive) setError(failureMessage(reason))
       })
     return () => {
       alive = false
@@ -233,7 +228,7 @@ export function ExtensionResultTab({
         if (alive) setSource(value)
       })
       .catch(reason => {
-        if (alive) setError(String(reason))
+        if (alive) setError(failureMessage(reason))
       })
     return () => {
       alive = false
@@ -266,7 +261,7 @@ export function ExtensionResultTab({
       await task()
       onChanged()
     } catch (reason) {
-      setError(String(reason))
+      setError(failureMessage(reason))
     } finally {
       setBusy(false)
     }
@@ -301,11 +296,11 @@ export function ExtensionResultTab({
         {job.status !== 'completed' && (
           <span
             role="status"
+            title={job.reasonCode ? describeFailure(job.reasonCode).message : undefined}
             className="mr-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-medium text-slate-500"
           >
             <ExtensionJobStatusIcon job={job} />
             {jobStatusLabel(job)}
-            {job.reasonCode ? ` · ${job.reasonCode.replaceAll('_', ' ')}` : ''}
           </span>
         )}
         {job.status === 'completed' && (
@@ -508,10 +503,8 @@ export function ExtensionResultTab({
               the destination before starting a new run.
             </p>
           ) : (
-            job.reasonCode && (
-              <p className="mt-1 max-w-xs text-xs text-slate-500">
-                {job.reasonCode.replaceAll('_', ' ')}
-              </p>
+            (job.reasonCode || job.status === 'failed' || job.status === 'waiting_provider') && (
+              <FailureNotice reason={job.reasonCode} packageId={job.packageId} />
             )
           )}
           {job.completedWrites > 0 && (

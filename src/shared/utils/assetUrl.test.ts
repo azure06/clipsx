@@ -17,8 +17,6 @@ describe('artifactFileUrl', () => {
   })
 
   it('uses the registered scheme on macOS and Linux', () => {
-    expect(artifactFileUrl('file-id', 'linux')).toBe(
-      'clipsx-artifact://localhost/file-id'
-    )
+    expect(artifactFileUrl('file-id', 'linux')).toBe('clipsx-artifact://localhost/file-id')
   })
 })

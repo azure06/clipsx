@@ -207,9 +207,7 @@ export type RenderModel =
   | { kind: 'key_value'; entries: [string, string][] }
   | {
       kind: 'image'
-      source:
-        | { kind: 'managed'; assetId: string }
-        | { kind: 'artifact_file'; fileId: string }
+      source: { kind: 'managed'; assetId: string } | { kind: 'artifact_file'; fileId: string }
       ocr: OcrPresentation
     }
   | { kind: 'html'; sanitizedHtml: string }

@@ -203,6 +203,24 @@ fences out late results. Interrupted jobs are recovered with bounded attempts;
 provider unavailability waits and transient failures retry with bounded backoff.
 Computation can repeat after a crash, but a job commits at most one output set.
 
+Host failures preserve a safe reason separately from recovery policy. Input-size
+and reported model-context limits fail without retry; missing configuration or
+models wait; connection failures, provider timeouts, rate limits and server
+errors use bounded retries. Guest execution deadlines are terminal. Retry
+exhaustion retains the cause in `reason_code` as `retry_exhausted:<code>`.
+Result tabs restore explanations from SQLite and link to generation settings or
+permissions where appropriate. Action and scheduling IPC reject with structured
+`{ code, recovery }` host failures, never raw provider or guest error messages.
+
+Ollama generation enforces the existing 256 KiB prompt bound and requires a
+completed stream. Explicit stream errors and invalid/incomplete responses cannot
+produce successful partial results. Reported context errors remain distinct from
+host size limits; ClipsX does not infer them from clip length. Output-token-limit
+completion still reaches the extension as `completionReason: "length"`; it may
+accept or reject that output. A rejection can explain that the preceding model
+response reached its output limit. None of these errors authorize replay of a
+confirmed or uncertain external write.
+
 Outputs reuse artifact text and managed-file storage. Copy and Paste reconstruct
 the complete output bundle. Binary previews use opaque host URLs. Promotion
 creates a separate canonical clip with provenance in one transaction and

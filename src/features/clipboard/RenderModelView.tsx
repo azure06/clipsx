@@ -371,9 +371,10 @@ const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }
   const sourceKey = model.source.kind === 'managed' ? model.source.assetId : model.source.fileId
   const [failedAssetId, setFailedAssetId] = useState<string | null>(null)
   const failed = failedAssetId === sourceKey
-  const sourceUrl = model.source.kind === 'managed'
-    ? managedAssetUrl(model.source.assetId)
-    : artifactFileUrl(model.source.fileId)
+  const sourceUrl =
+    model.source.kind === 'managed'
+      ? managedAssetUrl(model.source.assetId)
+      : artifactFileUrl(model.source.fileId)
 
   return (
     <div

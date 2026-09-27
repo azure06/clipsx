@@ -2,7 +2,7 @@ import { create } from 'zustand'
 type ViewType = 'clips' | 'extensions' | 'intelligence' | 'settings'
 export type ExtensionSettingsRequest = {
   packageId: string
-  section: 'setups' | 'automation'
+  section: 'setups' | 'automation' | 'permissions'
   setupKind?: 'builtin' | 'saved'
   setupRef?: string
   transformerId?: string

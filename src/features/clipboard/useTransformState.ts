@@ -1,3 +1,4 @@
+import { failureCode, failureMessage } from '../extensions/failures'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useCallback, useEffect, useState } from 'react'
@@ -224,7 +225,7 @@ export const useTransformState = ({
       } catch (error) {
         window.dispatchEvent(
           new CustomEvent('clipsx-extension-action-notification', {
-            detail: { level: 'error', message: String(error) },
+            detail: { level: 'error', message: failureMessage(error), code: failureCode(error) },
           })
         )
       }

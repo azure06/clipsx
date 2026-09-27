@@ -4,7 +4,7 @@ import type { ExtensionJob } from './useClipExtensionJobs'
 export function jobStatusLabel(job: Pick<ExtensionJob, 'status' | 'reasonCode'>) {
   switch (job.status) {
     case 'pending':
-      return job.reasonCode === 'provider_retry' ? 'Retry scheduled' : 'Queued'
+      return job.reasonCode && job.reasonCode !== 'restart_recovery' ? 'Retry scheduled' : 'Queued'
     case 'running':
       return 'Running'
     case 'waiting_provider':

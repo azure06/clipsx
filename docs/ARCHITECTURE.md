@@ -44,6 +44,21 @@ Extensions receive only approved input and broker capabilities. Extension API v3
 
 ## Diagnostics and error reporting
 
+Provider, extension runtime, job scheduling and interactive actions share typed
+host failures. A stable reason identifies the problem; an independent recovery
+policy determines stop, wait, retry or cancellation. Jobs persist safe reason
+codes, and the frontend maps them to reviewed explanations and next actions.
+Wrapped failures retain their type instead of being classified from formatted
+strings. Unknown failures stay explicitly unknown. Provider failures do not
+contribute to guest quarantine, and delivery-review fencing remains independent
+of failure presentation.
+
+Text-generation diagnostics persist safe categories and reviewed messages rather
+than provider response bodies. Reading legacy generation diagnostics replaces
+stored raw messages with the reviewed description for their existing code;
+other capabilities are untouched. Error presentation excludes input, prompts,
+credentials, endpoint URLs and arbitrary provider/guest text.
+
 The desktop has two independent diagnostic paths. A local Rust logger always
 writes curated `info`, `warn`, and `error` events to Tauri's application log
 directory. Verbose diagnostics adds allowlisted `debug` events until the user
