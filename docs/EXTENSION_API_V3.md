@@ -31,7 +31,16 @@ layout (`single`, `split` or `stack`) and one or two panels referencing the exac
 input or a named output:
 
 ```json
-{"tabs":[{"id":"compare","label":"Compare","layout":"split","panels":[{"source":"input"},{"source":"output","outputId":"rewritten"}]}]}
+{
+  "tabs": [
+    {
+      "id": "compare",
+      "label": "Compare",
+      "layout": "split",
+      "panels": [{ "source": "input" }, { "source": "output", "outputId": "rewritten" }]
+    }
+  ]
+}
 ```
 
 ClipsX renders typed content and always retains an Output preview fallback.
@@ -117,6 +126,28 @@ required rules before saving or enqueueing. A built-in setup is immutable;
 saving edited values creates a user setup. Saved edits require the expected
 revision. A setup with missing required values must be completed and saved
 before automation can select it.
+
+A transformer may declare `setupSelectorParameter = "preset"`. This explicitly
+binds the setup selector to a declared primitive enum parameter. Every built-in
+setup must supply a valid value, and together they must cover every enum choice.
+The bound field cannot have a visibility condition. Other parameters remain
+editable even when their values came from a setup; transformers without this
+metadata keep their ordinary enum controls.
+
+The shared configuration workspace uses themed Radix selectors for grouped
+built-in and saved setups. The bound parameter remains in the complete validated
+values but is omitted from the parameter form. Saved setups show their defining
+choice as read-only help. Select a different built-in setup to change that
+choice and save a new configuration. Switching setups replaces the draft after
+confirmation when it has unsaved changes. The name field appears only when
+creating a setup or saving another copy.
+
+Condition evaluation and control selection live in dedicated form modules.
+Unsupported metadata is rejected. Future bounded condition operators or controls
+must extend those modules and host validation together. Remote option providers
+would require an explicit host capability; a control hint never permits network
+access. These capabilities are not currently implemented. Stored parameters
+remain plain validated values without component names or form state.
 
 ## Capture automation
 

@@ -159,13 +159,13 @@ HTML/rich text, tables, trees, key/value data, images, files, documents,
 semantic views, and errors. Custom extension UI follows the
 [extension contract](EXTENSION_API_V3.md).
 
-| User action             | Source and result                                                    |
-| ----------------------- | -------------------------------------------------------------------- |
-| Copy / Original         | Reconstruct explicitly supported captured formats                    |
-| Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters  |
-| Transform               | Validate parameters; enqueue one durable clip-owned result job        |
-| Save transformed result | New canonical clip with provenance; source unchanged                 |
-| Share                   | Explicit host-owned disclosure of supported source content           |
+| User action             | Source and result                                                   |
+| ----------------------- | ------------------------------------------------------------------- |
+| Copy / Original         | Reconstruct explicitly supported captured formats                   |
+| Copy plain text         | Offered only for ready `text/plain`; copies exact stored characters |
+| Transform               | Validate parameters; enqueue one durable clip-owned result job      |
+| Save transformed result | New canonical clip with provenance; source unchanged                |
+| Share                   | Explicit host-owned disclosure of supported source content          |
 
 Copy plain text never substitutes OCR or rendered/extension content.
 Self-writes use a consumable native change token before readback; the snapshot
@@ -468,3 +468,12 @@ reference setups and cache resolved parameters, labels and views for the capture
 transaction. Saved edits refresh rule snapshots atomically; accepted intents
 and jobs remain immutable. Deleted/incompatible setups disable rules. Pins,
 setups and rules stay local. Durable output storage and WIT execution are unchanged.
+
+The shared setup/configuration workspace uses the app's themed Radix controls.
+An optional `setupSelectorParameter` explicitly binds one enum field to setup
+selection; it does not hide other setup-supplied parameters. The schema owns
+valid values, presentation metadata owns labels/control hints, offline availability
+owns input eligibility, and capability grants own host services. Saved setups and
+durable jobs store validated values independently of form layout. Future bounded
+operators or remote option providers extend the form and capability boundaries;
+no expressions, remote options, or additional permissions are implied today.

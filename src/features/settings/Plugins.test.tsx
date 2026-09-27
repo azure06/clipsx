@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Plugins } from './Plugins'
@@ -138,9 +139,9 @@ describe('Rewrite automation declaration', () => {
       />
     )
     fireEvent.click(await screen.findByRole('tab', { name: 'Automation' }))
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Automation setup' }), {
-      target: { value: 'builtin:business' },
-    })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('combobox', { name: 'Automation setup' }))
+    await user.click(await screen.findByRole('option', { name: 'Business' }))
     const add = screen.getByRole('button', { name: 'Add rule' })
     await waitFor(() => expect(add).toBeEnabled())
     fireEvent.click(add)

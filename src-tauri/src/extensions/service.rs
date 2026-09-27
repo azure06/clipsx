@@ -383,6 +383,7 @@ impl ExtensionService {
                     label: item.display_name.clone(),
                     parameter_schema: item.parameter_schema.clone(),
                     parameter_ui: item.parameter_ui.clone(),
+                    setup_selector_parameter: item.setup_selector_parameter.clone(),
                     setups: item.setups.clone(),
                     default_view: item.default_view,
                     provider_available,
@@ -1368,6 +1369,7 @@ impl ExtensionService {
                 icon_scale: item.declaration.icon_scale,
                 parameter_schema: item.declaration.parameter_schema,
                 parameter_ui: item.declaration.parameter_ui,
+                setup_selector_parameter: item.declaration.setup_selector_parameter,
                 package_label: item.package_label,
                 input_limit_bytes: item.declaration.input_limit_bytes,
                 timeout_ms: if item.declaration.execution == ExecutionClass::CapabilityBacked {
@@ -5425,6 +5427,7 @@ mod tests {
             effects: vec![],
             handler: None,
             parameter_ui: vec![],
+            setup_selector_parameter: None,
             parameter_schema: json!({}),
             input_limit_bytes: 1024 * 1024,
             setups: vec![],

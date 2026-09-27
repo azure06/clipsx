@@ -27,6 +27,7 @@ pub struct TransformerDescriptor {
     pub icon_scale: f32,
     pub parameter_schema: Value,
     pub parameter_ui: Vec<crate::extensions::ParameterField>,
+    pub setup_selector_parameter: Option<String>,
     pub package_label: String,
     pub input_limit_bytes: usize,
     pub timeout_ms: u64,

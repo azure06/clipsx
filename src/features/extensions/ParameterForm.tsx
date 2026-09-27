@@ -1,9 +1,10 @@
 import { useId } from 'react'
-import { Switch } from '../../shared/components/ui'
+import { Select, Switch } from '../../shared/components/ui'
 import {
   controlClass,
   humanLabel,
   parameterFields,
+  parameterControl,
   properties,
   visibleField,
   type ParameterField,
@@ -16,7 +17,9 @@ export function ParameterForm({
   values,
   errors = {},
   onChange,
+  hiddenFields = [],
 }: {
+  hiddenFields?: readonly string[]
   schema: ParameterSchema
   fields?: ParameterField[]
   values: Record<string, unknown>
@@ -27,7 +30,7 @@ export function ParameterForm({
   return (
     <div className="grid gap-3">
       {parameterFields(schema, fields)
-        .filter(field => visibleField(field, values))
+        .filter(field => !hiddenFields.includes(field.field) && visibleField(field, values))
         .map(field => {
           const definition = properties(schema)[field.field] ?? {}
           const value = values[field.field]
@@ -38,15 +41,7 @@ export function ParameterForm({
               if (!visibleField(dependent, result)) delete result[dependent.field]
             onChange(result)
           }
-          const control =
-            field.control ??
-            (Array.isArray(definition['enum'])
-              ? 'select'
-              : definition['type'] === 'boolean'
-                ? 'checkbox'
-                : definition['type'] === 'number' || definition['type'] === 'integer'
-                  ? 'number'
-                  : 'text')
+          const control = parameterControl(field, definition)
           const error = errors[field.field]
           const describedBy =
             `${field.description ? `${id}-help ` : ''}${error ? `${id}-error` : ''}`.trim() ||
@@ -60,25 +55,19 @@ export function ParameterForm({
                 {field.label}
               </label>
               {control === 'select' ? (
-                <select
+                <Select
                   id={id}
-                  aria-invalid={!!error}
-                  aria-describedby={describedBy}
+                  ariaInvalid={!!error}
+                  ariaDescribedBy={describedBy}
                   className={controlClass}
                   value={value === undefined ? '' : JSON.stringify(value)}
-                  onChange={event =>
-                    change(
-                      event.target.value ? (JSON.parse(event.target.value) as unknown) : undefined
-                    )
-                  }
-                >
-                  <option value="">Choose…</option>
-                  {((definition['enum'] as unknown[]) ?? []).map(option => (
-                    <option key={JSON.stringify(option)} value={JSON.stringify(option)}>
-                      {humanLabel(String(option))}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Choose…"
+                  onChange={next => change(JSON.parse(next) as unknown)}
+                  options={((definition['enum'] as unknown[]) ?? []).map(option => ({
+                    value: JSON.stringify(option),
+                    label: humanLabel(String(option)),
+                  }))}
+                />
               ) : control === 'checkbox' ? (
                 <Switch id={id} checked={value === true} onChange={change} size="sm" />
               ) : control === 'textarea' ? (

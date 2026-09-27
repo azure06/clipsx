@@ -134,6 +134,7 @@ pub struct TransformerConfiguration {
     pub label: String,
     pub parameter_schema: serde_json::Value,
     pub parameter_ui: Vec<ParameterField>,
+    pub setup_selector_parameter: Option<String>,
     pub setups: Vec<TransformerSetup>,
     pub default_view: ResultView,
     pub provider_available: bool,

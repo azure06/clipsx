@@ -230,6 +230,7 @@ pub struct ManifestContribution {
     pub parameter_schema: Value,
     #[serde(default)]
     pub parameter_ui: Vec<super::ParameterField>,
+    pub setup_selector_parameter: Option<String>,
     /// Maximum representation bytes the host may copy into this contribution.
     /// Packages that intentionally process larger local assets opt in here.
     #[serde(default = "default_extension_input_bytes")]
@@ -519,6 +520,7 @@ impl ExtensionManifest {
 
     fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
         super::parameters::validate_ui(&contribution.parameter_schema, &contribution.parameter_ui)?;
+        super::parameters::validate_setup_selector(contribution)?;
         if contribution.kind == ContributionKind::Transformer {
             if contribution.setups.len() > 32 || contribution.result_controls.len() > 4 {
                 bail!("transformer setup or result control limit exceeded");
@@ -1316,6 +1318,7 @@ mod tests {
             handler: None,
             parameter_schema: empty_object(),
             parameter_ui: Vec::new(),
+            setup_selector_parameter: None,
             input_limit_bytes: 1024 * 1024,
             setups: vec![],
             default_view: ResultView::ResultOnly,

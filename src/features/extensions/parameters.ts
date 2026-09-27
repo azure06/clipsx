@@ -108,6 +108,7 @@ export type TransformerConfiguration = {
   label: string
   parameterSchema: ParameterSchema
   parameterUi?: ParameterField[]
+  setupSelectorParameter?: string | null
   setups: Array<{
     id: string
     displayName: string
@@ -117,3 +118,25 @@ export type TransformerConfiguration = {
   defaultView: 'result_only' | 'compare'
   providerAvailable: boolean
 }
+
+// Presentation stays independent of schema validation and execution eligibility.
+export const parameterControl = (field: ParameterField, schema: ParameterSchema) =>
+  field.control ??
+  (Array.isArray(schema['enum'])
+    ? 'select'
+    : schema['type'] === 'boolean'
+      ? 'checkbox'
+      : schema['type'] === 'number' || schema['type'] === 'integer'
+        ? 'number'
+        : 'text')
+export const sameParameters = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+  const canonical = (values: Record<string, unknown>) =>
+    JSON.stringify(values, (_key, value: unknown) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+        : value
+    )
+  return canonical(left) === canonical(right)
+}
+export const allowSetupChange = (dirty: boolean) =>
+  !dirty || window.confirm('Discard your unsaved changes and choose another setup?')

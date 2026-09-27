@@ -1,13 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { Button, Switch } from '../../shared/components/ui'
+import { Button, Select, Switch } from '../../shared/components/ui'
 import { useUIStore } from '../../stores/uiStore'
 import type { ExtensionSettingsRequest } from '../../stores/uiStore'
 import type { PackageDetail } from '../settings/extensions/types'
-import { ParameterForm } from './ParameterForm'
+import { SetupConfiguration } from './SetupConfiguration'
 import {
   cleanParameters,
+  allowSetupChange,
+  sameParameters,
   controlClass,
   humanLabel,
   parameterErrors,
@@ -38,12 +40,24 @@ export function SavedSetupsEditor({
   detail: PackageDetail
   onChanged: () => Promise<void>
 }) {
+  const first = detail.transformers[0]
   const [setups, setSetups] = useState<SavedSetup[]>([])
-  const [selectedId, setSelectedId] = useState('')
-  const [transformerId, setTransformerId] = useState(detail.transformers[0]?.id ?? '')
-  const [values, setValues] = useState<Record<string, unknown>>({})
+  const [transformerId, setTransformerId] = useState(first?.id ?? '')
+  const [reference, setReference] = useState(first?.setups[0]?.id ?? 'default')
+  const [values, setValues] = useState<Record<string, unknown>>(() =>
+    first
+      ? cleanParameters(
+          first.parameterSchema,
+          first.parameterUi ?? [],
+          first.setups[0]?.parameters ?? {}
+        )
+      : {}
+  )
+  const [view, setView] = useState<'result_only' | 'compare'>(
+    first?.setups[0]?.defaultView ?? first?.defaultView ?? 'result_only'
+  )
   const [name, setName] = useState('')
-  const [view, setView] = useState<'result_only' | 'compare'>('result_only')
+  const [copyMode, setCopyMode] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -59,34 +73,60 @@ export function SavedSetupsEditor({
   useEffect(() => {
     void refresh().catch(reason => setError(String(reason)))
   }, [refresh])
-  const selected = setups.find(item => item.id === selectedId)
   const transformer = detail.transformers.find(item => item.id === transformerId)
-  const choose = (id: string) => {
-    const saved = setups.find(item => item.id === id)
-    setSelectedId(id)
-    setName(saved?.label ?? '')
-    setValues(saved?.parameters ?? {})
-    setView(saved?.defaultView ?? 'result_only')
+  const selected = reference.startsWith('saved:')
+    ? setups.find(item => item.id === reference.slice(6))
+    : undefined
+  const builtin = transformer?.setups.find(item => item.id === reference)
+  const baseline = transformer
+    ? cleanParameters(
+        transformer.parameterSchema,
+        transformer.parameterUi ?? [],
+        selected?.parameters ?? builtin?.parameters ?? {}
+      )
+    : {}
+  const dirty =
+    !sameParameters(values, baseline) ||
+    view !== (selected?.defaultView ?? builtin?.defaultView ?? transformer?.defaultView) ||
+    ((!selected || copyMode) && !!name.trim())
+  const choose = (next: string, operation = transformer) => {
+    if (!operation) return
+    const saved = next.startsWith('saved:')
+      ? setups.find(item => item.id === next.slice(6))
+      : undefined
+    const base = operation.setups.find(item => item.id === next)
+    setTransformerId(operation.id)
+    setReference(next)
+    setValues(
+      cleanParameters(
+        operation.parameterSchema,
+        operation.parameterUi ?? [],
+        saved?.parameters ?? base?.parameters ?? {}
+      )
+    )
+    setView(saved?.defaultView ?? base?.defaultView ?? operation.defaultView)
+    setName('')
+    setCopyMode(false)
     setErrors({})
     setError(null)
-    if (saved) setTransformerId(saved.transformerId)
   }
-  const save = async (copy: boolean) => {
+  const save = async () => {
     if (!transformer) return
     const next = parameterErrors(transformer.parameterSchema, transformer.parameterUi ?? [], values)
     setErrors(next)
-    if (Object.keys(next).length || !name.trim()) {
-      if (!name.trim()) setError('Enter a setup name.')
+    const label = selected && !copyMode ? selected.label : name.trim()
+    if (Object.keys(next).length || !label) {
+      if (!label) setError('Enter a setup name.')
       return
     }
     setBusy(true)
     setError(null)
     try {
       const saved = await invoke<SavedSetup>('save_extension_transform_setup', {
-        id: !copy ? (selected?.id ?? null) : null,
-        expectedRevision: !copy ? (selected?.revision ?? null) : null,
+        id: selected && !copyMode ? selected.id : null,
+        expectedRevision: selected && !copyMode ? selected.revision : null,
         transformerId,
-        label: name.trim(),
+        label,
         parameters: cleanParameters(
           transformer.parameterSchema,
           transformer.parameterUi ?? [],
@@ -95,8 +135,32 @@ export function SavedSetupsEditor({
         defaultView: view,
       })
       await refresh()
-      setSelectedId(saved.id)
-      setName(saved.label)
+      setReference(`saved:${saved.id}`)
+      setValues(saved.parameters)
+      setView(saved.defaultView)
+      setName('')
+      setCopyMode(false)
+      changed()
+      await onChanged()
+    } catch (reason) {
+      setError(String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async (setup: SavedSetup) => {
+    if (
+      !window.confirm(
+        'Delete this setup? Its automation rules will be disabled. Existing results stay available.'
+      )
+    )
+      return
+    setBusy(true)
+    setError(null)
+    try {
+      await invoke('delete_extension_transform_setup', { id: setup.id })
+      await refresh()
+      if (selected?.id === setup.id) choose(transformer?.setups[0]?.id ?? 'default')
       changed()
       await onChanged()
     } catch (reason) {
@@ -111,122 +175,117 @@ export function SavedSetupsEditor({
         Saved setups are reusable choices. Changes apply to future automatic runs; existing results
         stay unchanged.
       </p>
-      <label className="grid gap-1.5 text-xs font-semibold">
-        Saved setup
-        <select
-          aria-label="Saved setup"
+      {detail.transformers.length > 1 && (
+        <Select
+          label="Operation"
+          value={transformerId}
+          disabled={busy}
           className={controlClass}
-          value={selectedId}
-          onChange={event => choose(event.target.value)}
-        >
-          <option value="">Create a setup</option>
-          {setups.map(item => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-              {!item.available ? ' — unavailable' : ''}
-            </option>
-          ))}
-        </select>
-      </label>
-      {selected && !selected.available && (
-        <p
-          role="alert"
-          className="rounded-lg bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
-        >
-          This setup is incompatible with the installed operation. You can delete it or create
-          another setup.
-        </p>
+          options={detail.transformers.map(item => ({ value: item.id, label: item.label }))}
+          onChange={id => {
+            if (allowSetupChange(dirty)) {
+              const operation = detail.transformers.find(item => item.id === id)
+              choose(operation?.setups[0]?.id ?? 'default', operation)
+            }
+          }}
+        />
       )}
-      {!selected && (
-        <label className="grid gap-1.5 text-xs font-semibold">
-          Operation
-          <select
-            className={controlClass}
-            value={transformerId}
-            onChange={event => {
-              setTransformerId(event.target.value)
-              setValues({})
-              setErrors({})
-            }}
-          >
-            {detail.transformers.map(item => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {transformer && (!selected || selected.available) && (
+      {transformer ? (
         <>
-          <label className="grid gap-1.5 text-xs font-semibold">
-            Setup name
-            <input
-              className={controlClass}
-              value={name}
-              maxLength={80}
-              onChange={event => setName(event.target.value)}
-            />
-          </label>
-          <ParameterForm
-            schema={transformer.parameterSchema}
-            fields={transformer.parameterUi}
+          <SetupConfiguration
+            transformer={transformer}
+            setups={setups.filter(item => item.transformerId === transformer.id)}
+            reference={reference}
             values={values}
+            view={view}
             errors={errors}
+            disabled={busy}
+            onSelect={next => {
+              if (allowSetupChange(dirty)) choose(next)
+            }}
             onChange={next => {
               setValues(next)
               setErrors({})
             }}
+            onViewChange={setView}
           />
-          <label className="grid gap-1.5 text-xs font-semibold">
-            Initial result view
-            <select
-              className={controlClass}
-              value={view}
-              onChange={event => setView(event.target.value as typeof view)}
+          {(!selected || copyMode) && (
+            <label className="grid gap-1.5 text-xs font-semibold">
+              Setup name
+              <input
+                className={controlClass}
+                value={name}
+                maxLength={80}
+                onChange={event => setName(event.target.value)}
+              />
+            </label>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={busy || (selected && !selected.available)}
+              onClick={() => void save()}
             >
-              <option value="result_only">Result</option>
-              <option value="compare">Compare</option>
-            </select>
-          </label>
-          <div className="flex gap-2">
-            <Button size="sm" disabled={busy} onClick={() => void save(false)}>
-              {selected ? 'Save changes' : 'Save setup'}
+              {selected && !copyMode ? 'Save changes' : 'Save setup'}
             </Button>
-            {selected && (
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => void save(true)}>
-                Save as another setup
+            {selected && !copyMode && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => {
+                    setCopyMode(true)
+                    setName('')
+                  }}
+                >
+                  Save as another setup
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void remove(selected)}
+                >
+                  Delete setup
+                </Button>
+              </>
+            )}
+            {copyMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCopyMode(false)
+                  setName('')
+                }}
+              >
+                Cancel
               </Button>
             )}
           </div>
         </>
+      ) : (
+        <p className="text-xs text-slate-500">
+          This extension has no configurable transformations.
+        </p>
       )}
-      {selected && (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={() => {
-            if (
-              !window.confirm(
-                'Delete this setup? Its automation rules will be disabled. Existing results stay available.'
-              )
-            )
-              return
-            setBusy(true)
-            void invoke('delete_extension_transform_setup', { id: selected.id })
-              .then(async () => {
-                choose('')
-                await refresh()
-                changed()
-                await onChanged()
-              })
-              .catch(reason => setError(String(reason)))
-              .finally(() => setBusy(false))
-          }}
-        >
-          Delete setup
-        </Button>
+      {setups.some(item => !item.available) && (
+        <div className="grid gap-2">
+          <p className="text-xs font-semibold text-slate-500">Unavailable setups</p>
+          {setups
+            .filter(item => !item.available)
+            .map(item => (
+              <div key={item.id} className="flex items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1">
+                  {item.label} — incompatible with the installed operation
+                </span>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => void remove(item)}>
+                  Delete {item.label}
+                </Button>
+              </div>
+            ))}
+        </div>
       )}
       {error && (
         <p role="alert" className="text-xs text-red-600">
@@ -394,73 +453,64 @@ export function AutomationEditor({
         Choose which copied content starts an operation. Rules reuse a setup; they do not maintain
         separate parameter fields. Results stay attached to the source clip.
       </p>
-      <label className="grid gap-1.5 text-xs font-semibold">
-        Operation
-        <select
-          aria-label="Automation operation"
-          className={controlClass}
-          value={activationId}
-          onChange={event => {
-            setActivationId(event.target.value)
-            setSetupRef('')
-          }}
-        >
-          {detail.activations.map(item => (
-            <option key={item.id} value={item.id}>
-              {detail.transformers.find(transformer => transformer.localId === item.transformerId)
-                ?.label ?? humanLabel(item.transformerId)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1.5 text-xs font-semibold">
-        Source application
-        <select
-          aria-label="Source application"
-          className={controlClass}
-          value={applicationId}
-          onChange={event => setApplicationId(event.target.value)}
-        >
-          <option value="">Choose an observed application</option>
-          {applications.map(item => (
-            <option key={`${item.platform}:${item.id}`} value={`${item.platform}\u0000${item.id}`}>
-              {item.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        label="Operation"
+        ariaLabel="Automation operation"
+        className={controlClass}
+        value={activationId}
+        onChange={id => {
+          setActivationId(id)
+          setSetupRef('')
+        }}
+        options={detail.activations.map(item => ({
+          value: item.id,
+          label:
+            detail.transformers.find(transformer => transformer.localId === item.transformerId)
+              ?.label ?? humanLabel(item.transformerId),
+        }))}
+      />
+      <Select
+        label="Source application"
+        className={controlClass}
+        value={applicationId}
+        onChange={setApplicationId}
+        placeholder="Choose an observed application"
+        options={applications.map(item => ({
+          value: `${item.platform}\u0000${item.id}`,
+          label: item.displayName,
+        }))}
+      />
       {!applications.length && (
         <p className="text-[11px] text-slate-500">
           Copy something from an application first so ClipsX can observe its identity.
         </p>
       )}
-      <label className="grid gap-1.5 text-xs font-semibold">
-        Setup
-        <select
-          aria-label="Automation setup"
-          className={controlClass}
-          value={setupRef}
-          onChange={event => setSetupRef(event.target.value)}
-        >
-          <option value="">Choose a setup</option>
-          <optgroup label="Built-in setups">
-            {builtin.map(item => (
-              <option key={item.value} value={item.value} disabled={!item.available}>
-                {item.label}
-                {!item.available ? ' — configure and save first' : ''}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Saved setups">
-            {saved.map(item => (
-              <option key={item.value} value={item.value} disabled={!item.available}>
-                {item.label}
-                {!item.available ? ' — unavailable' : ''}
-              </option>
-            ))}
-          </optgroup>
-        </select>
-      </label>
+      <Select
+        label="Setup"
+        ariaLabel="Automation setup"
+        className={controlClass}
+        value={setupRef}
+        onChange={setSetupRef}
+        placeholder="Choose a setup"
+        groups={[
+          {
+            label: 'Built-in setups',
+            options: builtin.map(item => ({
+              value: item.value,
+              label: item.label + (!item.available ? ' — configure and save first' : ''),
+              disabled: !item.available,
+            })),
+          },
+          {
+            label: 'Saved setups',
+            options: saved.map(item => ({
+              value: item.value,
+              label: item.label + (!item.available ? ' — unavailable' : ''),
+              disabled: !item.available,
+            })),
+          },
+        ]}
+      />
       {transformer?.providerAvailable === false && (
         <p
           role="alert"

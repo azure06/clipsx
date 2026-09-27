@@ -242,7 +242,7 @@ describe('one durable transformation path', () => {
       </Dialog.Root>
     )
     await screen.findByRole('button', { name: 'Manage automation' })
-    expect(screen.getByRole('combobox', { name: 'Setup' })).toHaveValue('saved:saved-technical')
+    expect(screen.getByRole('combobox', { name: 'Setup' })).toHaveTextContent('Technical')
     fireEvent.click(screen.getByRole('button', { name: 'Manage automation' }))
     expect(useUIStore.getState().extensionSettingsRequest).toMatchObject({
       packageId: transformer.packageId,

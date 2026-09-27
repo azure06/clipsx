@@ -6,9 +6,11 @@ import { Button } from '../../shared/components/ui'
 import { useUIStore } from '../../stores/uiStore'
 import { ExtensionOperationIcon, type PinnedOperation } from '../clipboard/ExtensionOperationIcon'
 import type { ContextAction, Transformer } from '../clipboard/useTransformState'
-import { ParameterForm } from './ParameterForm'
+import { SetupConfiguration } from './SetupConfiguration'
 import {
   cleanParameters,
+  allowSetupChange,
+  sameParameters,
   controlClass,
   humanLabel,
   parameterErrors,
@@ -29,8 +31,6 @@ type Entry = {
   action?: ContextAction
   icon: PinnedOperation
 }
-const same = (left: Record<string, unknown>, right: Record<string, unknown>) =>
-  JSON.stringify(Object.entries(left).sort()) === JSON.stringify(Object.entries(right).sort())
 
 export function ExtensionTools({
   clipId,
@@ -218,7 +218,7 @@ export function ExtensionTools({
     ? cleanParameters(transformer.parameterSchema, transformer.parameterUi ?? [], values)
     : {}
   const dirty =
-    !same(clean, baseline) ||
+    !sameParameters(clean, baseline) ||
     defaultView !==
       (selection?.saved?.defaultView ?? builtin?.defaultView ?? transformer?.defaultView)
   const identity = selection?.saved
@@ -453,60 +453,6 @@ export function ExtensionTools({
           </div>
         ) : (
           <div className="grid gap-4">
-            <div className="flex items-end gap-2">
-              <label className="grid min-w-0 flex-1 gap-1.5 text-xs font-semibold">
-                Setup
-                <select
-                  aria-label="Setup"
-                  className={controlClass}
-                  value={
-                    selection?.saved ? `saved:${selection.saved.id}` : (selection?.builtinId ?? '')
-                  }
-                  onChange={event => choose(transformer, event.target.value || undefined)}
-                >
-                  {!transformer.setups.length && <option value="">Default</option>}
-                  <optgroup label="Built-in setups">
-                    {transformer.setups
-                      .filter(setup => transformer.setupAvailability[setup.id]?.state !== 'hidden')
-                      .map(setup => (
-                        <option key={setup.id} value={setup.id}>
-                          {setup.displayName}
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="Saved setups">
-                    {setups
-                      .filter(
-                        setup =>
-                          setup.transformerId === transformer.id &&
-                          transformer.setupAvailability[`saved:${setup.id}`]?.state !== 'hidden'
-                      )
-                      .map(setup => (
-                        <option
-                          key={setup.id}
-                          value={`saved:${setup.id}`}
-                          disabled={!setup.available}
-                        >
-                          {setup.label}
-                          {!setup.available ? ' — unavailable' : ''}
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
-              </label>
-              {pin && onTogglePin && (
-                <button
-                  type="button"
-                  aria-label={`${pinnedIds.includes(pin.id) ? 'Unpin' : 'Pin'} ${label}`}
-                  disabled={dirty}
-                  title={dirty ? 'Save these choices before pinning them' : `Pin ${label}`}
-                  onClick={() => onTogglePin(pin)}
-                  className={`rounded-lg p-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40 ${pinnedIds.includes(pin.id) ? 'text-amber-500' : 'text-slate-500'}`}
-                >
-                  <Pin className="h-4 w-4" />
-                </button>
-              )}
-            </div>
             {!transformer.providerAvailable && (
               <p
                 role="alert"
@@ -535,27 +481,51 @@ export function ExtensionTools({
                 {decision.reason}
               </p>
             )}
-            <ParameterForm
-              schema={transformer.parameterSchema}
-              fields={transformer.parameterUi}
+            <SetupConfiguration
+              transformer={{
+                ...transformer,
+                setups: transformer.setups.filter(
+                  setup => transformer.setupAvailability[setup.id]?.state !== 'hidden'
+                ),
+              }}
+              setups={setups.filter(
+                setup =>
+                  setup.transformerId === transformer.id &&
+                  transformer.setupAvailability[`saved:${setup.id}`]?.state !== 'hidden'
+              )}
+              reference={
+                selection?.saved
+                  ? `saved:${selection.saved.id}`
+                  : (selection?.builtinId ?? 'default')
+              }
               values={values}
+              view={defaultView}
               errors={errors}
+              disabled={busy}
+              onSelect={reference => {
+                if (allowSetupChange(dirty))
+                  choose(transformer, reference === 'default' ? undefined : reference)
+              }}
               onChange={next => {
                 setValues(next)
                 setErrors({})
               }}
+              onViewChange={setDefaultView}
+              accessory={
+                pin && onTogglePin ? (
+                  <button
+                    type="button"
+                    aria-label={`${pinnedIds.includes(pin.id) ? 'Unpin' : 'Pin'} ${label}`}
+                    disabled={dirty}
+                    title={dirty ? 'Save these choices before pinning them' : `Pin ${label}`}
+                    onClick={() => onTogglePin(pin)}
+                    className={`rounded-lg p-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40 ${pinnedIds.includes(pin.id) ? 'text-amber-500' : 'text-slate-500'}`}
+                  >
+                    <Pin className="h-4 w-4" />
+                  </button>
+                ) : undefined
+              }
             />
-            <label className="grid gap-1.5 text-xs font-semibold">
-              Initial result view
-              <select
-                className={controlClass}
-                value={defaultView}
-                onChange={event => setDefaultView(event.target.value as typeof defaultView)}
-              >
-                <option value="result_only">Result</option>
-                <option value="compare">Compare</option>
-              </select>
-            </label>
             {saveMode ? (
               <div className="grid gap-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
                 <p className="text-[11px] text-slate-500">

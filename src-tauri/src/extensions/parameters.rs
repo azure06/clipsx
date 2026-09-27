@@ -104,6 +104,54 @@ pub(crate) fn validate_ui(schema: &Value, fields: &[ParameterField]) -> Result<(
     Ok(())
 }
 
+pub(crate) fn validate_setup_selector(
+    contribution: &super::manifest::ManifestContribution,
+) -> Result<()> {
+    let Some(name) = &contribution.setup_selector_parameter else {
+        return Ok(());
+    };
+    if contribution.kind != super::manifest::ContributionKind::Transformer {
+        bail!("setup selector binding is only supported on transformers");
+    }
+    let definition = properties(&contribution.parameter_schema)?
+        .get(name)
+        .context("setup selector references an undeclared parameter")?;
+    let values = definition
+        .get("enum")
+        .and_then(Value::as_array)
+        .context("setup selector must reference a primitive enum parameter")?;
+    if values.is_empty()
+        || !matches!(
+            definition.get("type").and_then(Value::as_str),
+            Some("string" | "boolean" | "number" | "integer")
+        )
+        || contribution
+            .parameter_ui
+            .iter()
+            .any(|field| field.field == *name && field.when.is_some())
+    {
+        bail!("setup selector must be an unconditional primitive enum parameter");
+    }
+    for setup in &contribution.setups {
+        let value = setup
+            .parameters
+            .get(name)
+            .context("every built-in setup must supply its selector parameter")?;
+        if !values.contains(value) {
+            bail!("built-in setup has an invalid selector value");
+        }
+    }
+    if values.iter().any(|value| {
+        !contribution
+            .setups
+            .iter()
+            .any(|setup| setup.parameters.get(name) == Some(value))
+    }) {
+        bail!("built-in setups must cover every selector choice");
+    }
+    Ok(())
+}
+
 pub(crate) fn normalize(
     schema: &Value,
     fields: &[ParameterField],
@@ -161,6 +209,27 @@ mod tests {
             }],
         )
     }
+    #[test]
+    fn setup_selector_requires_a_declared_covered_primitive_enum() {
+        let mut contribution: super::super::manifest::ManifestContribution = serde_json::from_value(serde_json::json!({
+            "id":"rewrite", "kind":"transformer", "displayName":"Rewrite",
+            "setupSelectorParameter":"preset", "parameterSchema":{"type":"object","properties":{"preset":{"type":"string","enum":["business","custom"]}}},
+            "setups":[{"id":"business","displayName":"Business","parameters":{"preset":"business"}},{"id":"custom","displayName":"Custom","parameters":{"preset":"custom"}}]
+        })).unwrap();
+        validate_setup_selector(&contribution).unwrap();
+        contribution.setup_selector_parameter = Some("missing".into());
+        assert!(validate_setup_selector(&contribution).is_err());
+        contribution.setup_selector_parameter = Some("preset".into());
+        contribution.setups[1].parameters = serde_json::json!({});
+        assert!(validate_setup_selector(&contribution).is_err());
+        contribution.setups[1].parameters = serde_json::json!({"preset":"invalid"});
+        assert!(validate_setup_selector(&contribution).is_err());
+        contribution.setups.pop();
+        assert!(validate_setup_selector(&contribution).is_err());
+        contribution.setup_selector_parameter = None;
+        validate_setup_selector(&contribution).unwrap();
+    }
+
     #[test]
     fn conditions_remove_inactive_values_and_require_visible_values() {
         let (schema, fields) = fixture();

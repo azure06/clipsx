@@ -18,6 +18,7 @@ export type Transformer = {
   iconSvgDark?: string | null
   iconScale?: number
   version: string
+  setupSelectorParameter?: string | null
   parameterSchema: Record<string, unknown>
   parameterUi?: import('../extensions/parameters').ParameterField[]
   execution: 'local' | 'capability_backed'

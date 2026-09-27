@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ExternalLink, KeyRound, RotateCcw, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button } from '../../../shared/components/ui/Button'
+import { Button, Select } from '../../../shared/components/ui'
 import { Switch } from '../../../shared/components/ui/Switch'
 import { ShortcutRecorder } from '../Settings'
 import type { PackageDetail, UpdateMode } from './types'
@@ -514,16 +514,18 @@ export const PackageDetailView = ({
             <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
               <Zap className="h-3.5 w-3.5 text-violet-500" />
               Automatic updates
-              <select
+              <Select
+                ariaLabel="Automatic updates"
                 value={mode}
-                className="ml-auto rounded-lg border border-slate-200 bg-white/70 px-2 py-1 text-xs dark:border-white/15 dark:bg-slate-900/60"
+                className="ml-auto text-xs"
                 disabled={installed?.source === 'developer' || operationBusy}
-                onChange={event => void setUpdateMode(event.target.value as UpdateMode)}
-              >
-                <option value="inherit">Use global preference</option>
-                <option value="enabled">Always install safe updates</option>
-                <option value="disabled">Never auto-update</option>
-              </select>
+                onChange={next => void setUpdateMode(next)}
+                options={[
+                  { value: 'inherit', label: 'Use global preference' },
+                  { value: 'enabled', label: 'Always install safe updates' },
+                  { value: 'disabled', label: 'Never auto-update' },
+                ]}
+              />
             </label>
             <p className="mt-2 text-[10px] leading-4 text-slate-500">
               {detail.autoUpdateEligible

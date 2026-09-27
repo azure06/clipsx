@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { ParameterForm } from './ParameterForm'
 import { cleanParameters, parameterErrors, type ParameterField } from './parameters'
@@ -57,16 +58,19 @@ describe('shared parameter form', () => {
     expect(screen.queryByLabelText('Target language')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Custom instruction')).not.toBeInTheDocument()
   })
-  it('requires visible values and clears inactive fields when the controlling choice changes', () => {
+  it('requires visible values and clears inactive fields when the controlling choice changes', async () => {
+    const user = userEvent.setup()
     render(<Form />)
     const preset = screen.getByLabelText('Writing style')
-    fireEvent.change(preset, { target: { value: JSON.stringify('custom') } })
+    await user.click(preset)
+    await user.click(await screen.findByRole('option', { name: 'Custom' }))
     const instruction = screen.getByRole('textbox', { name: 'Custom instruction' })
     expect(instruction.tagName).toBe('TEXTAREA')
     expect(instruction).toHaveAttribute('aria-invalid', 'true')
     expect(instruction).toHaveAccessibleDescription('Custom instruction is required.')
     fireEvent.change(instruction, { target: { value: 'Be concise' } })
-    fireEvent.change(preset, { target: { value: JSON.stringify('translate') } })
+    await user.click(preset)
+    await user.click(await screen.findByRole('option', { name: 'Translate' }))
     expect(screen.queryByLabelText('Custom instruction')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Target language').tagName).toBe('INPUT')
     expect(screen.getByTestId('values')).not.toHaveTextContent('custom_instruction')
