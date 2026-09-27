@@ -40,7 +40,7 @@ flowchart LR
 | Providers            | Host-owned OCR, embedding, generation contracts and adapters  | `providers/`                 |
 
 Rust owns every clipboard write; the webview never uses the browser clipboard.
-Extensions receive only approved input and broker capabilities. Extension API v3.1 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
+Extensions receive only approved input and broker capabilities. Extension API v3.2 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
 
 ## Diagnostics and error reporting
 
@@ -90,7 +90,7 @@ native selectors, codecs, priorities, limits, settings gates, and write support.
 Adapters alone interpret UTI, OLE, and other native identifiers; never guess them.
 SQLite has no generic clipboard-payload BLOB or JSON metadata bag.
 
-The local schema is `clipsx-local-v3`, version 12. Incompatible pre-release
+The local schema is `clipsx-local-v3`, version 13. Incompatible pre-release
 databases require explicit reset; there are no compatibility reads or dual schemas.
 
 ### Capture, recovery, deletion

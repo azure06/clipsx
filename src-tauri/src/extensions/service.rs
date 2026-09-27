@@ -57,7 +57,6 @@ pub struct ContextActionDescriptor {
     pub icon_scale: f32,
     pub placements: Vec<String>,
     pub effects: Vec<String>,
-    pub transform_preset: bool,
     pub execution: String,
     pub available: bool,
     pub unavailable_reason: Option<String>,
@@ -104,6 +103,7 @@ pub struct ActiveContribution {
     pub declaration: ManifestContribution,
     pub external_navigation_origins: Vec<String>,
     pub http_permissions: Vec<super::manifest::HttpPermission>,
+    pub write_permissions: Vec<super::manifest::HttpPermission>,
     pub credential_permissions: Vec<super::manifest::CredentialPermission>,
     pub providers: Vec<String>,
     pub package_relative_path: std::path::PathBuf,
@@ -283,7 +283,7 @@ impl ExtensionService {
             for release in index
                 .packages
                 .iter()
-                .filter(|release| release.api_version == "^3.1")
+                .filter(|release| release.api_version == "^3.2")
             {
                 let replace = latest
                     .get(&release.package_id)
@@ -916,6 +916,7 @@ impl ExtensionService {
                         .map(|permission| permission.origin.clone())
                         .collect(),
                     http_permissions: package.manifest.permissions.http.clone(),
+                    write_permissions: package.manifest.permissions.external_writes.clone(),
                     credential_permissions: package.manifest.permissions.credentials.clone(),
                     providers: package.manifest.permissions.providers.clone(),
                     package_relative_path: package.relative_path.clone(),
@@ -1247,19 +1248,75 @@ impl ExtensionService {
     pub async fn transformer_descriptors_for(
         &self,
         repo: &HistoryRepository,
-        input: &CapturedRepresentation,
+        clip_id: &str,
+        preferred_source_id: &str,
     ) -> Result<Vec<crate::contributions::transformer::TransformerDescriptor>> {
+        let detail = repo.detail(clip_id).await?;
+        let inventory = format_inventory(&detail.representations);
+        let mut candidates = detail.representations.iter().collect::<Vec<_>>();
+        candidates.sort_by_key(|item| {
+            (
+                item.id != preferred_source_id,
+                item.capture_priority,
+                item.ordinal,
+            )
+        });
         let mut descriptors = Vec::new();
         for item in self
             .active_contributions(repo, ContributionKind::Transformer)
             .await?
-            .into_iter()
-            .filter(|item| accepts(&item.declaration, input, None))
         {
+            let mut sources = Vec::new();
+            for candidate in &candidates {
+                if candidate.byte_length < 0
+                    || candidate.byte_length as usize > item.declaration.input_limit_bytes
+                {
+                    continue;
+                }
+                let (source, _) = repo.source_representation(clip_id, &candidate.id).await?;
+                if accepts(&item.declaration, &source, None) {
+                    sources.push((candidate.id.clone(), source));
+                }
+            }
+            let Some((selected_source_id, _)) = sources.first() else {
+                continue;
+            };
+            let selected_source_id = selected_source_id.clone();
+            let settings = self.package_settings(repo, &item.package_id).await?;
+            let context_json = serde_json::json!({
+                "origin": "selection",
+                "settings": settings,
+                "formats": inventory,
+            })
+            .to_string();
+            let mut setup_availability = std::collections::BTreeMap::new();
+            for setup in &item.declaration.setups {
+                let decision = self
+                    .assess_transform_sources(&item, &sources, &context_json, &setup.parameters)
+                    .await?;
+                setup_availability.insert(setup.id.clone(), decision);
+            }
+            for row in sqlx::query("SELECT id,parameters_json FROM extension_transform_setups WHERE package_id=? AND transformer_id=?")
+                .bind(&item.package_id).bind(&item.id).fetch_all(&repo.pool).await? {
+                let parameters: serde_json::Value = serde_json::from_str(&row.get::<String, _>(1))?;
+                let decision = self.assess_transform_sources(&item, &sources, &context_json, &parameters).await?;
+                setup_availability.insert(format!("saved:{}", row.get::<String, _>(0)), decision);
+            }
+            let custom_availability = self
+                .assess_transform_sources(&item, &sources, &context_json, &serde_json::json!({}))
+                .await?;
+            if custom_availability.state == "hidden"
+                && setup_availability
+                    .values()
+                    .all(|value| value.state == "hidden")
+            {
+                continue;
+            }
             let consent_required = self.consent_required(repo, &item).await?;
             let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
             descriptors.push(crate::contributions::transformer::TransformerDescriptor {
                 id: item.id,
+                source_id: selected_source_id,
                 package_id: item.package_id.clone(),
                 version: item.version,
                 label: item.declaration.display_name,
@@ -1290,9 +1347,51 @@ impl ExtensionService {
                     .iter()
                     .any(|provider| provider == "generation.text")
                     || crate::providers::generation::available(repo).await?,
+                setup_availability,
+                custom_availability,
             });
         }
         Ok(descriptors)
+    }
+
+    async fn assess_transform_sources(
+        &self,
+        item: &ActiveContribution,
+        sources: &[(String, CapturedRepresentation)],
+        context_json: &str,
+        parameters: &serde_json::Value,
+    ) -> Result<crate::contributions::transformer::OperationAvailabilityDescriptor> {
+        use crate::contributions::transformer::OperationAvailabilityDescriptor;
+        for (source_id, source) in sources {
+            let decision = self
+                .runtime
+                .assess(
+                    &item.sha256,
+                    &item.local_id,
+                    representation(source.clone(), item.declaration.input_limit_bytes)?,
+                    context_json.to_owned(),
+                    parameters.to_string(),
+                )
+                .await;
+            let (state, reason) = match decision {
+                Ok(super::OperationAvailability::Hidden) => continue,
+                Ok(super::OperationAvailability::Ready) => ("ready", None),
+                Ok(super::OperationAvailability::Disabled(reason)) => {
+                    ("disabled", Some(reason.chars().take(120).collect()))
+                }
+                Err(_) => ("disabled", Some("Availability check failed".into())),
+            };
+            return Ok(OperationAvailabilityDescriptor {
+                state: state.into(),
+                reason,
+                source_id: Some(source_id.clone()),
+            });
+        }
+        Ok(OperationAvailabilityDescriptor {
+            state: "hidden".into(),
+            reason: None,
+            source_id: None,
+        })
     }
 
     pub async fn list_transform_setups(
@@ -1492,7 +1591,6 @@ impl ExtensionService {
             };
             let consent_required = self.consent_required(repo, &item).await?;
             let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-            let transform_preset = false;
             actions.push(ContextActionDescriptor {
                 shortcut: shortcuts.get(&item.id).cloned(),
                 id: item.id,
@@ -1520,7 +1618,6 @@ impl ExtensionService {
                     .map(action_effect_name)
                     .map(str::to_string)
                     .collect(),
-                transform_preset,
                 execution: execution_name(item.declaration.execution).into(),
                 available,
                 unavailable_reason,
@@ -1551,7 +1648,6 @@ impl ExtensionService {
             .map(|item| {
                 let available = true;
                 let (icon_svg, icon_svg_dark) = self.contribution_icons(&item);
-                let transform_preset = false;
                 ContextActionDescriptor {
                     shortcut: shortcuts.get(&item.id).cloned(),
                     id: item.id,
@@ -1579,7 +1675,6 @@ impl ExtensionService {
                         .map(action_effect_name)
                         .map(str::to_string)
                         .collect(),
-                    transform_preset,
                     execution: execution_name(item.declaration.execution).into(),
                     available,
                     unavailable_reason: None,
@@ -1734,9 +1829,17 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == action_id)
             .context("extension action is not installed and enabled")?;
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
         if contribution.external_navigation_origins.is_empty()
             && contribution.http_permissions.is_empty()
+            && contribution.write_permissions.is_empty()
             && contribution.providers.is_empty()
+            && !package_permissions.source_application
+            && !package_permissions.package_state
         {
             bail!("extension action has no grantable external-data permission");
         }
@@ -1759,6 +1862,11 @@ impl ExtensionService {
                 .execute(&mut *transaction)
                 .await?;
         }
+        for permission in &contribution.write_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'external_write', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
         for provider in &contribution.providers {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id)
@@ -1767,6 +1875,24 @@ impl ExtensionService {
                 .bind(now_ms())
                 .execute(&mut *transaction)
                 .await?;
+        }
+        for (required, kind, value) in [
+            (
+                package_permissions.source_application,
+                "source_application",
+                "normalized",
+            ),
+            (
+                package_permissions.package_state,
+                "package_state",
+                "declared",
+            ),
+        ] {
+            if required {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(&contribution.extension_id).bind(&contribution.sha256).bind(kind).bind(value).bind(now_ms())
+                    .execute(&mut *transaction).await?;
+            }
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&contribution.package_id).bind(now_ms()).execute(&mut *transaction).await?;
@@ -1837,9 +1963,19 @@ impl ExtensionService {
             .into_iter()
             .find(|item| item.id == transformer_id)
             .context("extension transformer is not installed and enabled")?;
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
         let mut transaction = repo.pool.begin().await?;
         for permission in &contribution.http_permissions {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'http', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
+                .execute(&mut *transaction).await?;
+        }
+        for permission in &contribution.write_permissions {
+            sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'external_write', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id).bind(&contribution.sha256).bind(&permission.origin).bind(now_ms())
                 .execute(&mut *transaction).await?;
         }
@@ -1847,6 +1983,24 @@ impl ExtensionService {
             sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?, 'provider', ?, ?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
                 .bind(&contribution.extension_id).bind(&contribution.sha256).bind(provider).bind(now_ms())
                 .execute(&mut *transaction).await?;
+        }
+        for (required, kind, value) in [
+            (
+                package_permissions.source_application,
+                "source_application",
+                "normalized",
+            ),
+            (
+                package_permissions.package_state,
+                "package_state",
+                "declared",
+            ),
+        ] {
+            if required {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(&contribution.extension_id).bind(&contribution.sha256).bind(kind).bind(value).bind(now_ms())
+                    .execute(&mut *transaction).await?;
+            }
         }
         sqlx::query("INSERT INTO extension_package_revisions(package_id,grant_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
             .bind(&contribution.package_id).bind(now_ms()).execute(&mut *transaction).await?;
@@ -2324,8 +2478,6 @@ impl ExtensionService {
             .execute(&mut *tx).await?;
         sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,updated_at) VALUES(?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=extension_package_revisions.configuration_revision+1,updated_at=excluded.updated_at")
             .bind(package_id).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='settings_changed',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
-            .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -2715,9 +2867,17 @@ impl ExtensionService {
             .declaration
             .effects
             .contains(&ActionEffect::OpenHttpsUrl);
-        let needs_http = !contribution.http_permissions.is_empty();
+        let needs_http =
+            !contribution.http_permissions.is_empty() || !contribution.write_permissions.is_empty();
         let needs_provider = !contribution.providers.is_empty();
-        if !needs_navigation && !needs_http && !needs_provider {
+        let package_permissions = self
+            .store
+            .load(&contribution.package_relative_path)?
+            .manifest
+            .permissions;
+        let needs_source = package_permissions.source_application;
+        let needs_state = package_permissions.package_state;
+        if !needs_navigation && !needs_http && !needs_provider && !needs_source && !needs_state {
             return Ok(false);
         }
         if needs_navigation && contribution.external_navigation_origins.is_empty() {
@@ -2742,10 +2902,16 @@ impl ExtensionService {
                 .http_permissions
                 .iter()
                 .any(|permission| !grants.contains(&("http".into(), permission.origin.clone())))
+            || contribution.write_permissions.iter().any(|permission| {
+                !grants.contains(&("external_write".into(), permission.origin.clone()))
+            })
             || contribution
                 .providers
                 .iter()
-                .any(|provider| !grants.contains(&("provider".into(), provider.clone()))))
+                .any(|provider| !grants.contains(&("provider".into(), provider.clone())))
+            || (needs_source
+                && !grants.contains(&("source_application".into(), "normalized".into())))
+            || (needs_state && !grants.contains(&("package_state".into(), "declared".into()))))
     }
 
     async fn runtime_broker_context(
@@ -2791,6 +2957,9 @@ impl ExtensionService {
         Ok(super::runtime::RuntimeBrokerContext {
             repo: repo.clone(),
             http_permissions: contribution.http_permissions.clone(),
+            write_permissions: contribution.write_permissions.clone(),
+            extension_id: contribution.extension_id.clone(),
+            package_sha256: contribution.sha256.clone(),
             injected_headers,
             protected_secrets,
             generation_allowed: contribution
@@ -2903,7 +3072,9 @@ impl ExtensionService {
                     id: facet.id,
                     payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
                 }),
-                "{}".into(),
+                self.package_settings(repo, &contribution.package_id)
+                    .await?
+                    .to_string(),
             )
             .await;
         match state {
@@ -3233,11 +3404,10 @@ impl ExtensionService {
         error: &anyhow::Error,
         quarantine_after_repeated_failures: bool,
     ) -> Result<()> {
-        let message = format!("{error:#}").chars().take(512).collect::<String>();
         let code = super::runtime::runtime_error_code(error);
         let now = now_ms();
         sqlx::query("INSERT INTO extension_contribution_runtime_state(extension_id,contribution_id,consecutive_failures,last_error_code,last_error_message,last_failed_at,updated_at) VALUES(?,?,1,?,?,?,?) ON CONFLICT(extension_id,contribution_id) DO UPDATE SET consecutive_failures=consecutive_failures+1,last_error_code=excluded.last_error_code,last_error_message=excluded.last_error_message,last_failed_at=excluded.last_failed_at,updated_at=excluded.updated_at")
-            .bind(&contribution.extension_id).bind(&contribution.id).bind(code).bind(&message).bind(now).bind(now).execute(&repo.pool).await?;
+            .bind(&contribution.extension_id).bind(&contribution.id).bind(code).bind("Extension execution failed").bind(now).bind(now).execute(&repo.pool).await?;
         let failures: i64 = sqlx::query_scalar("SELECT consecutive_failures FROM extension_contribution_runtime_state WHERE extension_id=? AND contribution_id=?")
             .bind(&contribution.extension_id).bind(&contribution.id).fetch_one(&repo.pool).await?;
         if should_quarantine(quarantine_after_repeated_failures, failures) {
@@ -3306,7 +3476,15 @@ impl ExtensionService {
             &request.parameters,
         )?;
         request.result_controls = contribution.declaration.result_controls.clone();
-        request.result_presentations = contribution.declaration.result_presentations.clone();
+        let settings_revision: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT configuration_revision FROM extension_package_revisions WHERE package_id=?),0)")
+            .bind(&contribution.package_id).fetch_one(&repo.pool).await?;
+        request.settings_snapshot_json = self
+            .package_settings(repo, &contribution.package_id)
+            .await?
+            .to_string();
+        request.settings_snapshot_revision = Some(settings_revision);
+        let detail = repo.detail(&request.clip_id).await?;
+        request.inventory_json = serde_json::to_string(&format_inventory(&detail.representations))?;
         if let Some(setup_id) = request.setup_id.as_deref() {
             let row = sqlx::query("SELECT package_id,transformer_id,label,parameters_json,default_view FROM extension_transform_setups WHERE id=?")
                 .bind(setup_id).fetch_optional(&repo.pool).await?
@@ -3359,6 +3537,21 @@ impl ExtensionService {
                 super::ResultView::ResultOnly => "result_only".into(),
                 super::ResultView::Compare => "compare".into(),
             });
+        let (source, _) = repo
+            .source_representation(&request.clip_id, &request.source_id)
+            .await?;
+        if !accepts(&contribution.declaration, &source, None) {
+            bail!("transformer input does not match its declaration");
+        }
+        let availability = self.runtime.assess(&contribution.sha256, &contribution.local_id,
+            representation(source, contribution.declaration.input_limit_bytes)?,
+            serde_json::json!({ "origin": if background { "background" } else { "manual" },
+                "settings": serde_json::from_str::<serde_json::Value>(&request.settings_snapshot_json)?,
+                "formats": serde_json::from_str::<serde_json::Value>(&request.inventory_json)?,
+            }).to_string(), request.parameters.to_string()).await?;
+        if !matches!(availability, super::OperationAvailability::Ready) {
+            bail!("operation is unavailable for this input and parameters");
+        }
         if !background && contribution.declaration.execution == ExecutionClass::CapabilityBacked {
             self.consume_invocation(
                 &contribution,
@@ -3388,6 +3581,7 @@ impl ExtensionService {
         &self,
         repo: &HistoryRepository,
         job_id: &str,
+        claim: i64,
         package_id: &str,
         package_sha256: &str,
         contribution_id: &str,
@@ -3425,7 +3619,7 @@ impl ExtensionService {
             bail!("extension job source no longer matches transformer");
         }
         let app_row = sqlx::query(
-            "SELECT app_platform,app_id,app_display_name FROM extension_jobs WHERE id=?",
+            "SELECT app_platform,app_id,app_display_name,settings_json,inventory_json FROM extension_jobs WHERE id=?",
         )
         .bind(job_id)
         .fetch_optional(&repo.pool)
@@ -3435,14 +3629,10 @@ impl ExtensionService {
                 .bind(package_id)
                 .fetch_one(&repo.pool)
                 .await?;
-        let source_allowed = self
-            .store
-            .load(Path::new(&package_path))?
-            .manifest
-            .permissions
-            .source_application;
+        let package = self.store.load(Path::new(&package_path))?;
+        let source_allowed = package.manifest.permissions.source_application;
         let source_application = if source_allowed {
-            app_row.and_then(|row| {
+            app_row.as_ref().and_then(|row| {
                 Some(serde_json::json!({
                     "platform": row.get::<Option<String>,_>(0)?,
                     "id": row.get::<Option<String>,_>(1)?,
@@ -3452,95 +3642,118 @@ impl ExtensionService {
         } else {
             None
         };
+        let settings: serde_json::Value =
+            serde_json::from_str(&app_row.as_ref().context("job missing")?.get::<String, _>(3))?;
+        let inventory: serde_json::Value =
+            serde_json::from_str(&app_row.as_ref().context("job missing")?.get::<String, _>(4))?;
+        let mut package_state = serde_json::Map::new();
+        let mut existing_state = std::collections::BTreeMap::new();
+        if package.manifest.permissions.package_state {
+            for row in sqlx::query(
+                "SELECT state_key,value_json FROM extension_package_state WHERE package_id=?",
+            )
+            .bind(package_id)
+            .fetch_all(&repo.pool)
+            .await?
+            {
+                let key: String = row.get(0);
+                let value: String = row.get(1);
+                package_state.insert(key.clone(), serde_json::from_str(&value)?);
+                existing_state.insert(key, value);
+            }
+        }
         let context_json = serde_json::json!({
             "operationId": job_id,
             "origin": if background { "background" } else { "manual" },
             "sourceApplication": source_application,
+            "settings": settings,
+            "formats": inventory,
+            "packageState": package_state,
         })
         .to_string();
-        let mut staged_state = None;
-        let broker = if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
-            let mut broker = self.runtime_broker_context(repo, &contribution).await?;
-            broker.generation_cancellation = cancellation;
-            if broker.state_allowed {
-                let mut tx = repo.pool.begin().await?;
-                let expected_revision: i64 =
-                    sqlx::query_scalar("SELECT state_revision FROM extension_jobs WHERE id=?")
-                        .bind(job_id)
-                        .fetch_one(&mut *tx)
-                        .await?;
-                let current_revision: i64 = sqlx::query_scalar(
-                    "SELECT COALESCE((SELECT state_revision FROM extension_package_revisions WHERE package_id=?),0)",
-                )
-                .bind(package_id)
-                .fetch_one(&mut *tx)
-                .await?;
-                if current_revision != expected_revision {
-                    bail!("state_conflict");
-                }
-                let rows = sqlx::query(
-                    "SELECT state_key,value_json FROM extension_package_state WHERE package_id=?",
-                )
-                .bind(package_id)
-                .fetch_all(&mut *tx)
-                .await?;
-                tx.commit().await?;
-                let snapshot = rows
-                    .into_iter()
-                    .map(|row| (row.get(0), row.get(1)))
-                    .collect();
-                let stage = std::sync::Arc::new(tokio::sync::Mutex::new(
-                    super::runtime::StagedPackageState {
-                        snapshot,
-                        writes: Default::default(),
-                    },
-                ));
-                broker.staged_state = Some(stage.clone());
-                staged_state = Some(stage);
-            }
-            if background {
-                broker.http_permissions.clear();
-                broker.injected_headers.clear();
-                broker.protected_secrets.clear();
-            }
-            Some(broker)
-        } else {
-            None
-        };
-        let generation_failure = broker
-            .as_ref()
-            .map(|context| context.generation_failure.clone());
-        let outputs = self
-            .runtime
-            .transform(
-                &contribution.sha256,
-                &contribution.local_id,
-                representation(input, contribution.declaration.input_limit_bytes)?,
-                context_json,
-                serde_json::to_string(&parameters)?,
-                broker,
-            )
-            .await;
-        match outputs {
-            Ok(outputs) => {
+        let mut broker = self.runtime_broker_context(repo, &contribution).await?;
+        broker.generation_cancellation = cancellation;
+        if contribution.declaration.execution == ExecutionClass::Local {
+            broker.http_permissions.clear();
+            broker.write_permissions.clear();
+            broker.generation_allowed = false;
+        }
+        let state_schemas = broker.state_schemas.clone();
+        let state_allowed = broker.state_allowed;
+        let result = super::flow::run(
+            repo,
+            &self.runtime,
+            job_id,
+            claim,
+            &contribution.sha256,
+            &contribution.local_id,
+            representation(input, contribution.declaration.input_limit_bytes)?,
+            context_json,
+            serde_json::to_string(&parameters)?,
+            broker,
+        )
+        .await;
+        match result {
+            Ok(result) => {
                 self.success(repo, &contribution).await?;
-                let state_writes = if let Some(stage) = staged_state {
-                    stage.lock().await.writes.clone()
-                } else {
-                    Default::default()
-                };
+                let state_writes: std::collections::BTreeMap<String, Option<String>> = result
+                    .state_writes_json
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?
+                    .unwrap_or_default();
+                if !state_allowed && !state_writes.is_empty() {
+                    bail!("package state permission is absent");
+                }
+                for (key, value) in &state_writes {
+                    let schema = state_schemas
+                        .get(key)
+                        .context("package state key is undeclared")?;
+                    if let Some(value) = value {
+                        if value.len() > 8192 {
+                            bail!("package state value exceeds host limit");
+                        }
+                        super::manifest::validate_state_value(
+                            schema,
+                            &serde_json::from_str(value)?,
+                        )?;
+                        existing_state.insert(key.clone(), value.clone());
+                    } else {
+                        existing_state.remove(key);
+                    }
+                }
+                if existing_state.len() > 64
+                    || existing_state
+                        .iter()
+                        .map(|(key, value)| key.len() + value.len())
+                        .sum::<usize>()
+                        > 128 * 1024
+                {
+                    bail!("package state quota exceeded");
+                }
+                if result.view_json.as_ref().is_some_and(|view| {
+                    view.len() > 16_384 || serde_json::from_str::<serde_json::Value>(view).is_err()
+                }) {
+                    bail!("extension result view is invalid");
+                }
                 Ok(super::jobs::DurableExecution {
-                    outputs: extension_outputs(outputs)?,
+                    output_ids: result
+                        .outputs
+                        .iter()
+                        .map(|output| output.id.clone())
+                        .collect(),
+                    outputs: extension_outputs(result.outputs)?,
                     state_writes,
+                    view_json: result.view_json,
                 })
             }
             Err(error) => {
-                if let Some(failure) = generation_failure {
-                    if let Some(kind) = *failure.lock().await {
-                        return Err(super::runtime::GenerationFailureError(kind).into());
-                    }
+                if error
+                    .downcast_ref::<super::flow::GuestExecutionError>()
+                    .is_some()
+                {
+                    self.failure(repo, &contribution, &error, true).await?;
                 }
-                self.failure(repo, &contribution, &error, true).await?;
                 Err(error)
             }
         }
@@ -3691,10 +3904,15 @@ impl ExtensionService {
                     .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2))
                     .bind(kind).bind(value).bind(now_ms()).execute(&mut *tx).await?;
             }
+            for provider in &package.manifest.permissions.providers {
+                sqlx::query("INSERT INTO extension_permission_grants(extension_id,package_sha256,permission_kind,permission_value,granted_at) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET granted_at=excluded.granted_at")
+                    .bind(package_row.get::<String,_>(0)).bind(package_row.get::<String,_>(2))
+                    .bind("provider").bind(provider).bind(now_ms()).execute(&mut *tx).await?;
+            }
         }
-        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,grant_revision=extension_package_revisions.grant_revision+1,updated_at=excluded.updated_at")
+        sqlx::query("INSERT INTO extension_package_revisions(package_id,configuration_revision,grant_revision,updated_at) VALUES(?,?,1,?) ON CONFLICT(package_id) DO UPDATE SET configuration_revision=excluded.configuration_revision,updated_at=excluded.updated_at")
             .bind(package_id).bind(next).bind(now_ms()).execute(&mut *tx).await?;
-        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='configuration_changed',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND status IN ('pending','running','waiting_provider')")
+        sqlx::query("UPDATE extension_jobs SET status='cancelled',reason_code='automation_rule_disabled',completed_at=?,updated_at=?,claim_generation=claim_generation+1 WHERE package_id=? AND automation_rule_id IS NOT NULL AND status IN ('pending','running','waiting_provider') AND NOT EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=extension_jobs.package_id AND a.rule_id=extension_jobs.automation_rule_id AND a.enabled=1 AND a.app_platform=extension_jobs.app_platform AND a.app_id=extension_jobs.app_id)")
             .bind(now_ms()).bind(now_ms()).bind(package_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(next)
@@ -3808,6 +4026,8 @@ impl ExtensionService {
                                             "operationId": &event_id,
                                             "origin": "background",
                                             "isNewClip": is_new_clip,
+                                            "settings": self.package_settings(repo, &package_id).await?,
+                                            "formats": format_inventory(&clip.representations),
                                             "sourceApplication": package.manifest.permissions.source_application.then(|| serde_json::json!({
                                                 "platform": &application.platform,
                                                 "id": &application.id,
@@ -3820,9 +4040,9 @@ impl ExtensionService {
                                             reason = "input_too_large";
                                             break;
                                         };
-                                        let prepared = self
+                                        let assessed = self
                                             .runtime
-                                            .prepare_transform(
+                                            .assess(
                                                 &checksum,
                                                 &activation.transformer_id,
                                                 prepared_input,
@@ -3830,32 +4050,23 @@ impl ExtensionService {
                                                 parameters_json.clone(),
                                             )
                                             .await;
-                                        let Some(prepared_json) = (match prepared {
-                                            Ok(value) => value,
+                                        let ready = match assessed {
+                                            Ok(super::OperationAvailability::Ready) => true,
+                                            Ok(
+                                                super::OperationAvailability::Hidden
+                                                | super::OperationAvailability::Disabled(_),
+                                            ) => false,
                                             Err(_) => {
                                                 reason = "prepare_failed";
                                                 break;
                                             }
-                                        }) else {
+                                        };
+                                        if !ready {
                                             reason = "guest_skipped";
                                             break;
-                                        };
-                                        if prepared_json.len() > 64 * 1024 {
-                                            reason = "invalid_parameters";
-                                            break;
                                         }
-                                        let Ok(parameters) = serde_json::from_str(&prepared_json)
-                                        else {
-                                            reason = "invalid_parameters";
-                                            break;
-                                        };
-                                        let Ok(parameters) = super::manifest::normalized_parameters(
-                                            &transformer.parameter_schema,
-                                            &parameters,
-                                        ) else {
-                                            reason = "invalid_parameters";
-                                            break;
-                                        };
+                                        let parameters: serde_json::Value =
+                                            serde_json::from_str(&parameters_json)?;
                                         let request = super::EnqueueExtensionJob {
                                             clip_id: source_clip_id.clone(),
                                             source_id: representation_detail.id.clone(),
@@ -3869,11 +4080,14 @@ impl ExtensionService {
                                             regenerate: false,
                                             invocation_token: None,
                                             capture_application: Some(application.clone()),
+                                            automation_rule_id: Some(rule_id.clone()),
+                                            settings_snapshot_json: String::new(),
+                                            settings_snapshot_revision: None,
+                                            inventory_json: String::new(),
                                             setup_id: None,
                                             display_label: None,
                                             default_view: None,
                                             result_controls: Vec::new(),
-                                            result_presentations: Vec::new(),
                                         };
                                         if self
                                             .enqueue_durable_transform(repo, request, true)
@@ -4205,6 +4419,24 @@ fn validate_phone_number(value: &str) -> Result<()> {
     Ok(())
 }
 
+fn format_inventory(
+    representations: &[crate::history::RepresentationDetail],
+) -> Vec<serde_json::Value> {
+    representations
+        .iter()
+        .map(|item| {
+            serde_json::json!({
+                "formatKey": item.format_key,
+                "mimeType": item.canonical_mime_type,
+                "storageKind": item.storage_kind,
+                "byteLength": item.byte_length,
+                "capabilityId": item.capability_id,
+                "formatFamily": item.format_family,
+            })
+        })
+        .collect()
+}
+
 fn extension_outputs(
     outputs: Vec<super::ExtensionOutputRepresentation>,
 ) -> Result<Vec<CapturedRepresentation>> {
@@ -4229,10 +4461,7 @@ fn extension_outputs(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    if outputs.is_empty()
-        || outputs.len() > 8
-        || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES
-    {
+    if outputs.len() > 8 || outputs.iter().map(payload_bytes).sum::<usize>() > MAX_OUTPUT_BYTES {
         bail!("extension output exceeds host limits");
     }
     Ok(outputs)
@@ -4605,6 +4834,28 @@ fn append_bounded_chunk(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn format_inventory_excludes_content_and_host_identifiers() {
+        let representation: crate::history::RepresentationDetail = serde_json::from_value(serde_json::json!({
+            "id":"opaque-source", "formatKey":"mime:text/plain", "canonicalMimeType":"text/plain",
+            "nativeType":null, "storageKind":"text", "ordinal":0, "capturePriority":1,
+            "byteLength":12, "textValue":"private-text", "fileReferences":["private-path"],
+            "binaryFileId":"private-file", "sha256":"private-hash", "capabilityId":"text", "formatFamily":"text"
+        })).unwrap();
+        let inventory = super::format_inventory(&[representation]);
+        let serialized = serde_json::to_string(&inventory).unwrap();
+        assert_eq!(inventory[0]["byteLength"], 12);
+        assert_eq!(inventory[0].as_object().unwrap().len(), 6);
+        for secret in [
+            "opaque-source",
+            "private-text",
+            "private-path",
+            "private-file",
+            "private-hash",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
+    }
     use super::*;
 
     #[test]
@@ -4780,7 +5031,6 @@ mod tests {
             setups: vec![],
             default_view: crate::extensions::ResultView::ResultOnly,
             result_controls: vec![],
-            result_presentations: vec![],
         }
     }
 

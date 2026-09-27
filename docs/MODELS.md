@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations). Runtime boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 9 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 13 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
 
 ## Data flow
 
@@ -251,6 +251,7 @@ flowchart TB
 | `extension_update_preferences` | Configuration | Stores the package-specific automatic-update override. | Extension update settings | Stable package preference retained independently from installed bytes. |
 | `extension_package_settings` | Configuration | Stores manifest-declared non-secret settings by stable package and setting IDs. | Extension settings service after manifest/type validation | Retained across uninstall/reinstall; package bytes do not own it. |
 | `extension_jobs` / `extension_result_outputs` | Operational / derived | Durable manual and automatic transformation work, setup/display snapshots, controls, and ordered links to typed artifact payloads. | Shared extension coordinator | Owned by the source clip. Completed output remains readable after package removal; unfinished work is cancelled. |
+| `extension_job_steps` | Operational | Bounded requests, continuations, responses and dispatch claims for ordered read/model/write steps. | Shared operation executor | Completed writes are never replayed; uncertain non-idempotent delivery pauses for review. |
 | `extension_activation_events` | Operational | Durable capture-occurrence intents, including immutable safe application context. | Capture and extension activation dispatcher | Cascades with the source clip and is pruned after terminal processing. |
 | `extension_automation_rules` | Configuration | Device-local exact application rules for declared activations. | Host settings UI | Retained but inactive while a package is absent or unauthorized. |
 | `extension_package_state` | Configuration | Small, declared, quota-limited package key/value state. | Capability broker | Retained across updates and disablement, deleted on uninstall, never synchronized. |

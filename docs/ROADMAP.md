@@ -1,6 +1,6 @@
 # ClipsX roadmap
 
-The Extension API v3.1 transformation-tab implementation requires installed-host
+The Extension API v3.2 transformation-tab implementation requires installed-host
 certification and coordinated package publication before release. Work that can
 wait belongs under **After the first release**.
 
@@ -10,7 +10,7 @@ release is produced, and what waits until afterward.
 
 ## Before the first release
 
-### Extension API v3.1 certification
+### Extension API v3.2 certification
 
 Test facet-constrained activation against current detection results before
 certifying the release. Durable text and binary outputs use artifact storage;
@@ -23,13 +23,20 @@ macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
 deduplication, restart recovery, source deletion, and retained results after
 disablement and uninstall. Verify saved setups, built-in presets, multiple typed
 outputs, Compare resizing, result controls, and the single Tools entry point.
-Publish reviewed immutable v3.1 package archives and signed registry metadata
+Publish reviewed immutable v3.2 package archives and signed registry metadata
 only after these tests pass. The host requires an explicit reset to database
-version 12 and shows only current-contract releases in Discover.
+version 13 and shows only current-contract releases in Discover.
+
+### Local review before publication
+
+Checkpoint the host locally, then build and manually install Rewrite. After user
+approval, checkpoint that package and repeat for Base64, Ask AI, Data Tools, JWT
+Inspector and Mermaid individually. Run one consolidated validation after these
+checks; do not use cloud CI or publication to discover basic behaviour failures.
 
 ### 1. Complete extension catalog sync and smoke test
 
-Merge the reviewed host v3.1 contract and package tool before publishing new
+Merge the reviewed host v3.2 contract and package tool before publishing new
 packages. Rebuild and publish six immutable 2.0.0 extension archives, replace
 the reviewed registry metadata with their exact generated records, and publish
 the signed index and signature pair. Verify the public catalog, registry-to-web

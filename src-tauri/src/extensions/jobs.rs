@@ -61,9 +61,15 @@ pub struct EnqueueExtensionJob {
     #[serde(skip)]
     pub result_controls: Vec<super::ResultControl>,
     #[serde(skip)]
-    pub result_presentations: Vec<super::manifest::ResultPresentation>,
-    #[serde(skip)]
     pub capture_application: Option<SourceApplication>,
+    #[serde(skip)]
+    pub automation_rule_id: Option<String>,
+    #[serde(skip)]
+    pub settings_snapshot_json: String,
+    #[serde(skip)]
+    pub settings_snapshot_revision: Option<i64>,
+    #[serde(skip)]
+    pub inventory_json: String,
     #[serde(default)]
     pub regenerate: bool,
 }
@@ -93,13 +99,64 @@ pub struct ExtensionJobSummary {
     pub default_view: String,
     pub outputs: Vec<ExtensionOutputDescriptor>,
     pub result_controls: Vec<super::ResultControl>,
-    pub result_presentations: Vec<super::manifest::ResultPresentation>,
+    pub view: Option<ResultViewDescription>,
+    pub completed_writes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultViewDescription {
+    pub tabs: Vec<ResultViewTab>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultViewTab {
+    pub id: String,
+    pub label: String,
+    pub layout: String,
+    pub panels: Vec<ResultViewPanel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "source",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ResultViewPanel {
+    Input,
+    Output { output_id: String },
+}
+
+fn validate_view(value: &str, output_ids: &[String]) -> Result<ResultViewDescription> {
+    if value.len() > 16_384 {
+        bail!("result view exceeds host limit");
+    }
+    let view: ResultViewDescription = serde_json::from_str(value)?;
+    if view.tabs.is_empty() || view.tabs.len() > 4 {
+        bail!("result view tab count is invalid");
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for tab in &view.tabs {
+        if tab.id.is_empty() || tab.id.len() > 64 || tab.label.is_empty() || tab.label.len() > 80 || !ids.insert(&tab.id)
+            || !matches!(tab.layout.as_str(), "single" | "split" | "stack")
+            || tab.panels.is_empty() || tab.panels.len() > 2
+            || (tab.layout == "single" && tab.panels.len() != 1)
+            || (tab.layout != "single" && tab.panels.len() != 2)
+            || tab.panels.iter().any(|panel| matches!(panel, ResultViewPanel::Output { output_id } if !output_ids.contains(output_id))) {
+            bail!("result view contains an invalid tab or panel");
+        }
+    }
+    Ok(view)
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionOutputDescriptor {
     pub ordinal: i64,
+    pub output_id: String,
     pub mime_type: String,
     pub byte_length: i64,
     pub has_rendered_view: bool,
@@ -107,7 +164,9 @@ pub struct ExtensionOutputDescriptor {
 
 pub(crate) struct DurableExecution {
     pub outputs: Vec<CapturedRepresentation>,
+    pub output_ids: Vec<String>,
     pub state_writes: std::collections::BTreeMap<String, Option<String>>,
+    pub view_json: Option<String>,
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {
@@ -195,6 +254,12 @@ pub(crate) async fn enqueue(
     let parameters_json = canonical_json(&request.parameters);
     let parameter_sha = digest(&[&parameters_json]);
     let settings_revision = revision(repo, package_id, "configuration_revision").await?;
+    if request
+        .settings_snapshot_revision
+        .is_some_and(|expected| expected != settings_revision)
+    {
+        bail!("extension settings changed while scheduling");
+    }
     let grant_revision = revision(repo, package_id, "grant_revision").await?;
     let state_revision = revision(repo, package_id, "state_revision").await?;
     let provider_revision = provider_revision(repo).await?;
@@ -251,10 +316,10 @@ pub(crate) async fn enqueue(
     let id = new_id();
     let now = now_ms();
     let nonce = request.regenerate.then(new_id);
-    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,setup_id,display_label,default_view,parameter_sha256,result_controls_json,result_presentations_json,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
+    sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,settings_json,inventory_json,automation_rule_id,setup_id,display_label,default_view,parameter_sha256,result_controls_json,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
         .bind(&id).bind(request.request_id).bind(&request.clip_id).bind(&request.source_id)
         .bind(package_id).bind(&request.transformer_id).bind(contribution_version).bind(package_sha256)
-        .bind(input_sha).bind(parameters_json).bind(request.setup_id).bind(display_label).bind(default_view).bind(parameter_sha).bind(serde_json::to_string(&request.result_controls)?).bind(serde_json::to_string(&request.result_presentations)?).bind(app_platform).bind(app_id).bind(app_name)
+        .bind(input_sha).bind(parameters_json).bind(if request.settings_snapshot_json.is_empty() { "{}" } else { &request.settings_snapshot_json }).bind(if request.inventory_json.is_empty() { "[]" } else { &request.inventory_json }).bind(request.automation_rule_id).bind(request.setup_id).bind(display_label).bind(default_view).bind(parameter_sha).bind(serde_json::to_string(&request.result_controls)?).bind(app_platform).bind(app_id).bind(app_name)
         .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority)
         .bind(dedupe).bind(nonce).bind(now).bind(now).bind(now).execute(&repo.pool).await?;
     Ok(ExtensionJobResult {
@@ -319,7 +384,7 @@ async fn cleanup_expired(repo: &HistoryRepository) -> Result<()> {
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "DELETE FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<?",
+        "DELETE FROM extension_jobs WHERE status IN ('failed','cancelled') AND completed_at<? AND NOT EXISTS(SELECT 1 FROM extension_job_steps s WHERE s.job_id=extension_jobs.id AND s.kind='write' AND s.status IN ('completed','unknown'))",
     )
     .bind(terminal_cutoff)
     .execute(&mut *tx)
@@ -378,7 +443,7 @@ pub(crate) async fn run_next(
                 _ = watcher_cancel.cancelled() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
             }
-            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
                 .bind(&watcher_job).fetch_optional(&watcher_repo.pool).await.unwrap_or(None);
             if active != Some(claim) {
                 watcher_cancel.cancel();
@@ -390,6 +455,7 @@ pub(crate) async fn run_next(
         .execute_durable_transform(
             repo,
             &job_id,
+            claim,
             &package_id,
             &package_sha,
             &contribution_id,
@@ -462,14 +528,42 @@ async fn persist_outputs(
 ) -> Result<()> {
     let DurableExecution {
         outputs,
+        output_ids,
         state_writes,
+        view_json,
     } = execution;
-    if outputs.is_empty() || outputs.len() > 8 {
+    if let Some(view) = &view_json {
+        validate_view(view, &output_ids)?;
+    }
+    if outputs.len() > 8 {
         bail!("durable extension output count is invalid");
+    }
+    if output_ids.len() != outputs.len()
+        || output_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != outputs.len()
+        || output_ids.iter().any(|id| {
+            id.is_empty()
+                || id.len() > 80
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+    {
+        bail!("operation output identities are invalid");
+    }
+    if outputs.is_empty() {
+        let completed_writes: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_job_steps WHERE job_id=? AND kind='write' AND status='completed'")
+            .bind(job_id).fetch_one(&repo.pool).await?;
+        if completed_writes == 0 {
+            bail!("operation produced neither output nor a completed write");
+        }
     }
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
-    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.settings_revision=COALESCE(p.configuration_revision,0) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
             .bind(job_id)
             .bind(claim)
             .fetch_optional(&mut *tx)
@@ -507,8 +601,8 @@ async fn persist_outputs(
                 bail!("file-list output cannot be attached to an extension job")
             }
         }
-        sqlx::query("INSERT INTO extension_result_outputs(job_id,ordinal,artifact_id,format_key,mime_type) VALUES(?,?,?,?,?)")
-            .bind(job_id).bind(ordinal as i64).bind(artifact_id).bind(output.format_key)
+        sqlx::query("INSERT INTO extension_result_outputs(job_id,ordinal,output_id,artifact_id,format_key,mime_type) VALUES(?,?,?,?,?,?)")
+            .bind(job_id).bind(ordinal as i64).bind(&output_ids[ordinal]).bind(artifact_id).bind(output.format_key)
             .bind(output.canonical_mime_type.unwrap_or_else(|| "text/plain".into())).execute(&mut *tx).await?;
     }
     if !state_writes.is_empty() {
@@ -540,8 +634,8 @@ async fn persist_outputs(
             }
         }
     }
-    sqlx::query("UPDATE extension_jobs SET status='completed',completed_at=?,updated_at=?,reason_code=NULL WHERE id=? AND claim_generation=? AND status='running'")
-        .bind(now).bind(now).bind(job_id).bind(claim).execute(&mut *tx).await?;
+    sqlx::query("UPDATE extension_jobs SET status='completed',view_json=?,completed_at=?,updated_at=?,reason_code=NULL WHERE id=? AND claim_generation=? AND status='running'")
+        .bind(view_json).bind(now).bind(now).bind(job_id).bind(claim).execute(&mut *tx).await?;
     tx.commit().await?;
     let _ = clip_id;
     Ok(())
@@ -563,17 +657,20 @@ pub(crate) async fn list(
     repo: &HistoryRepository,
     clip_id: &str,
 ) -> Result<Vec<ExtensionJobSummary>> {
-    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,j.display_label,j.default_view,j.result_controls_json,j.result_presentations_json FROM extension_jobs j WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
+    let rows = sqlx::query("SELECT j.id,j.source_clip_id,j.source_representation_id,j.package_id,j.contribution_id,j.contribution_version,j.status,j.reason_code,j.parameters_json,j.created_at,j.completed_at,j.display_label,j.default_view,j.result_controls_json,j.view_json FROM extension_jobs j WHERE j.source_clip_id=? ORDER BY j.created_at DESC,j.id DESC")
         .bind(clip_id).fetch_all(&repo.pool).await?;
     let mut summaries = Vec::with_capacity(rows.len());
     for row in rows {
         let job_id: String = row.get(0);
-        let outputs = sqlx::query("SELECT o.ordinal,o.mime_type,COALESCE(t.utf8_byte_length,b.byte_length) FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id WHERE o.job_id=? ORDER BY o.ordinal")
+        let completed_writes: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_job_steps WHERE job_id=? AND kind='write' AND status='completed'")
+            .bind(&job_id).fetch_one(&repo.pool).await?;
+        let outputs = sqlx::query("SELECT o.ordinal,o.mime_type,COALESCE(t.utf8_byte_length,b.byte_length),o.output_id FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id WHERE o.job_id=? ORDER BY o.ordinal")
             .bind(&job_id).fetch_all(&repo.pool).await?
             .into_iter().map(|output| {
                 let mime_type: String = output.get(1);
                 ExtensionOutputDescriptor {
                     ordinal: output.get(0),
+                    output_id: output.get(3),
                     has_rendered_view: matches!(mime_type.as_str(), "text/html" | "application/json" | "text/markdown" | "text/csv" | "text/tab-separated-values" | "text/typescript" | "application/yaml" | "application/x-yaml" | "application/toml") || mime_type.starts_with("image/"),
                     mime_type,
                     byte_length: output.get(2),
@@ -595,7 +692,12 @@ pub(crate) async fn list(
             default_view: row.get(12),
             outputs,
             result_controls: serde_json::from_str(&row.get::<String, _>(13))?,
-            result_presentations: serde_json::from_str(&row.get::<String, _>(14))?,
+            view: row
+                .get::<Option<String>, _>(14)
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()?,
+            completed_writes,
         }));
     }
     summaries.into_iter().collect()
@@ -815,7 +917,7 @@ mod tests {
                 .unwrap();
         let checksum = "a".repeat(64);
         let now = now_ms();
-        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.1','developer',?,'packages/rewrite',1,?,?)")
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','1.0.0','^3.2','developer',?,'packages/rewrite',1,?,?)")
             .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
             .execute(&repo.pool).await.unwrap();
@@ -828,19 +930,14 @@ mod tests {
             regenerate: false,
             invocation_token: None,
             capture_application: None,
+            automation_rule_id: None,
+            settings_snapshot_json: String::new(),
+            settings_snapshot_revision: None,
+            inventory_json: String::new(),
             setup_id: None,
             display_label: None,
             default_view: None,
             result_controls: Vec::new(),
-            result_presentations: vec![super::super::manifest::ResultPresentation {
-                id: "review".into(),
-                display_name: "Review".into(),
-                layout: super::super::manifest::ResultLayout::Stack,
-                modules: vec![
-                    super::super::manifest::ResultModule::Output,
-                    super::super::manifest::ResultModule::Input,
-                ],
-            }],
         };
         let first = enqueue(
             &repo,
@@ -865,7 +962,7 @@ mod tests {
         assert_eq!(first.job_id, second.job_id);
         assert!(second.reused);
         let retained = list(&repo, &clip_id).await.unwrap();
-        assert_eq!(retained[0].result_presentations[0].id, "review");
+        assert!(retained[0].view.is_none());
         sqlx::query("UPDATE extension_jobs SET status='running',claim_generation=1 WHERE id=?")
             .bind(&first.job_id)
             .execute(&repo.pool)
@@ -878,6 +975,7 @@ mod tests {
             &clip_id,
             &source_id,
             DurableExecution {
+                output_ids: vec!["rewritten".into()],
                 outputs: vec![CapturedRepresentation {
                     format_key: "mime:text/plain".into(),
                     canonical_mime_type: Some("text/plain".into()),
@@ -889,6 +987,7 @@ mod tests {
                 state_writes: [("last_preset".into(), Some("\"business\"".into()))]
                     .into_iter()
                     .collect(),
+                view_json: None,
             },
         )
         .await
@@ -925,6 +1024,7 @@ mod tests {
             &clip_id,
             &source_id,
             DurableExecution {
+                output_ids: vec!["image".into()],
                 outputs: vec![CapturedRepresentation {
                     format_key: "mime:image/png".into(),
                     canonical_mime_type: Some("image/png".into()),
@@ -934,6 +1034,7 @@ mod tests {
                     payload: CapturedPayload::Binary(vec![137, 80, 78, 71]),
                 }],
                 state_writes: Default::default(),
+                view_json: None,
             },
         )
         .await

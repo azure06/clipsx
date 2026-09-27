@@ -9,6 +9,7 @@ import { useClipboardStore } from '../../stores/clipboardStore'
 
 export type Transformer = {
   id: string
+  sourceId: string
   packageId: string
   label: string
   icon?: string | null
@@ -25,6 +26,8 @@ export type Transformer = {
   defaultView: 'result_only' | 'compare'
   resultControls: Array<'copy' | 'paste' | 'save_as_clip' | 'regenerate'>
   providerAvailable: boolean
+  setupAvailability: Record<string, { state: 'hidden' | 'disabled' | 'ready'; reason: string | null; sourceId?: string | null }>
+  customAvailability: { state: 'hidden' | 'disabled' | 'ready'; reason: string | null; sourceId?: string | null }
 }
 
 export type ContextAction = {
@@ -85,7 +88,7 @@ export const useTransformState = ({
     window.addEventListener('clipsx-extension-permissions-changed', refresh)
     let alive = true
     const listeners: Array<() => void> = []
-    for (const eventName of ['extension-catalog-updated', 'extensions-changed']) {
+    for (const eventName of ['extension-catalog-updated', 'extensions-changed', 'generation-provider-status-changed']) {
       void listen(eventName, refresh).then(stop => {
         if (alive) listeners.push(stop)
         else stop()

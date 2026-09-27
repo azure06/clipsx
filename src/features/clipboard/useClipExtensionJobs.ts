@@ -11,17 +11,13 @@ export type ExtensionJob = {
   transformerVersion: string
   displayLabel: string
   defaultView: 'result_only' | 'compare'
-  status: 'pending' | 'running' | 'waiting_provider' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'waiting_provider' | 'waiting_write_review' | 'completed' | 'failed' | 'cancelled'
   reasonCode: string | null
   parameters: Record<string, unknown>
   resultControls: Array<'copy' | 'paste' | 'save_as_clip' | 'regenerate'>
-  resultPresentations: Array<{
-    id: string
-    displayName: string
-    layout: 'single' | 'split' | 'stack'
-    modules: Array<'input' | 'output'>
-  }>
-  outputs: Array<{ ordinal: number; mimeType: string; byteLength: number; hasRenderedView: boolean }>
+  view: { tabs: Array<{ id: string; label: string; layout: 'single' | 'split' | 'stack'; panels: Array<{ source: 'input' } | { source: 'output'; outputId: string }> }> } | null
+  completedWrites: number
+  outputs: Array<{ ordinal: number; outputId: string; mimeType: string; byteLength: number; hasRenderedView: boolean }>
 }
 
 export function useClipExtensionJobs(clipId: string) {

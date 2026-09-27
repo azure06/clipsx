@@ -1,50 +1,51 @@
-# Extension API v3.1
+# Extension API v3.2
 
 ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
-`schemaVersion = 3`, `contractRevision = 2`, `apiVersion = "^3.1"`, and
-`clipsx:extension@3.1.0`. The host rejects other contract revisions. A fresh
-local database at schema version 12 is required; ClipsX asks for an explicit
+`schemaVersion = 3`, `contractRevision = 3`, `apiVersion = "^3.2"`, and
+`clipsx:extension@3.2.0`. The host rejects other contract revisions. A fresh
+local database at schema version 13 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
 ## One transformer path
 
-A transformer receives one host-selected representation, validated parameters,
-bounded invocation context, and only its declared broker capabilities. It
-returns one to eight typed output representations, up to 14 MiB combined.
-Every run is a SQLite-backed extension job. Successful outputs are stored as
-clip-owned artifacts, and each job appears as a tab alongside the source
-clip's Text, HTML, and other views. The tab survives navigation, restart,
-package disablement, update, and uninstall. Deleting the source removes its
-jobs and outputs. A result is not a canonical history entry until the user
-chooses **Save as new clip**.
+On clip selection, ClipsX matches operations against the whole clip, preferring
+the active representation and otherwise selecting a matching format deterministically.
+Each setup gets an offline `assess` check: hidden, disabled with a reason, or ready.
+The guest sees one matching representation and a format inventory (MIME, size,
+storage kind), never every format's bytes or other history. Checks cannot use
+network, models, package state or output effects. Tools and pins share decisions.
 
-```text
-Tools → transformer/setup → parameter form → Run
-      → host job → guest transform → artifact outputs → clip result tab
-Capture rule → same job executor, without clipboard or paste effects
+A run is one durable job. The pure `advance` export returns a next step or
+completion. The host executes the step and calls `advance` with the saved
+continuation and previous response. READ, MODEL_CALL and WRITE can occur in
+whatever order the operation needs. Navigation and dialogs remain interactive.
+
+Completion returns up to eight named typed outputs, 14 MiB combined, or no
+output for an operation with a confirmed external write. Results belong to the
+source clip and remain readable after restart or package removal. Only explicit
+Save as new clip creates canonical history.
+
+Optional completion `view-json` describes up to four tabs. Each has an ID, label,
+layout (`single`, `split` or `stack`) and one or two panels referencing the exact
+input or a named output:
+
+```json
+{"tabs":[{"id":"compare","label":"Compare","layout":"split","panels":[{"source":"input"},{"source":"output","outputId":"rewritten"}]}]}
 ```
 
-The transformer declares up to four named result presentations. Each composes
-the host-provided `input` and `output` modules as `single`, `split`, or `stack`.
-The host renders each typed output, including HTML and source views; the
-extension chooses the available arrangements and their labels. `input` is
-always the exact representation supplied to the transformer. Presentation
-declarations are snapshotted on the job so tabs survive uninstall. Guests
-cannot replace the source bytes or inject markup into host controls. Without
-a declaration, the host offers Result and Compare. The guest may declare
-which of Copy, Paste, Save as new clip, and Regenerate the host should show.
-Cancel, Retry, and Delete follow job state and are host controls. Paste obeys
-ClipsX's normal paste policy. Automatic jobs never copy, paste, or promote.
+ClipsX renders typed content and always retains an Output preview fallback.
+The host owns result controls. Automatic work never copies or pastes. The job
+snapshots its view, labels and controls, so they survive uninstall.
 
 ## Manifest
 
 ```toml
 schemaVersion = 3
-contractRevision = 2
+contractRevision = 3
 packageId = "example.rewriter"
 version = "2.0.0"
-apiVersion = "^3.1"
+apiVersion = "^3.2"
 displayName = "Rewriter"
 
 [permissions]
@@ -59,18 +60,6 @@ execution = "capability_backed"
 parameterSchema = { type = "object", properties = { preset = { type = "string", enum = ["business", "casual"] } }, required = ["preset"], additionalProperties = false }
 defaultView = "compare"
 resultControls = ["copy", "paste", "save_as_clip", "regenerate"]
-
-[[contributions.resultPresentations]]
-id = "result"
-displayName = "Rewrite"
-layout = "single"
-modules = ["output"]
-
-[[contributions.resultPresentations]]
-id = "compare"
-displayName = "Compare"
-layout = "split"
-modules = ["input", "output"]
 
 [[contributions.setups]]
 id = "business"
@@ -93,7 +82,7 @@ The manifest also supports detectors, source renderers, non-transform actions,
 capture activations, package settings, and declared package state. A non-
 transform action may open a declared HTTPS destination, notify, or open a
 declared dialog. Transformer preset actions, action output dispositions,
-`resultLifetime`, and `exposeInMenu` are not part of v3.1.
+`resultLifetime`, and `exposeInMenu` are not part of v3.2.
 
 ## Capture automation
 
@@ -110,9 +99,8 @@ creates another run.
 Source application IDs are normalized platform-specific keys, not publisher
 proof and not the paste destination. Missing identity does not stop capture
 or manual use; it prevents exact-app automation. Browser-hosted sites remain
-the browser application. The optional `prepare-transform` export may skip
-or refine validated parameters without HTTP, generation, state writes, or
-output effects. Facet-constrained activations wait for current detection
+the browser application. The same offline `assess` check evaluates the selected
+input and validated parameters without effects. Facet-constrained activations wait for current detection
 before disclosing input.
 
 Background observation requires a separate checksum-bound grant and enabled
@@ -125,7 +113,7 @@ Workers do not prompt for consent.
 
 SQLite owns job state and deduplication. The coordinator executes one extension
 transformation at a time, favors manual jobs, and periodically admits background
-jobs. It revalidates source fingerprints, package checksum, grants, configuration,
+jobs. It revalidates source fingerprints, package checksum, live grants, enabled app rules,
 state, and provider assignment before execution and completion. Cancellation
 fences out late results. Interrupted jobs are recovered with bounded attempts;
 provider unavailability waits and transient failures retry with bounded backoff.
@@ -137,8 +125,19 @@ creates a separate canonical clip with provenance in one transaction and
 accepts an idempotency key. Source deletion cascades through unfinished work
 and attached artifacts; completed bytes survive package removal.
 
-The WIT broker exposes bounded structured generation requests, declared HTTPS,
-and declared package state keys. The host owns provider assignment, credentials,
+A job freezes validated settings values, parameters, source, application and
+package version. Editing settings changes future runs. Revocation remains live.
+
+Before a write, the host journals its stable step ID and exact request. It saves
+the response before continuing. Reliable idempotent destinations reuse the same
+key on recovery. Interrupted non-idempotent delivery pauses as
+`waiting_write_review`, never automatically resends, and displays partial outcomes.
+Reads/model calls may repeat. Runs have a 125-second deadline, up to sixteen
+steps and bounded request, response and continuation sizes.
+
+Operations request host steps for model calls and HTTPS; direct mutating HTTPS
+is rejected. Interactive actions retain the read broker. Package state writes
+are validated and committed with successful jobs. The host owns provider assignment, credentials,
 admission, and cancellation. Guests have no ambient history, filesystem, SQL,
 clipboard, shell, or threads. Package state is device-local, schema validated,
 quota bound, and committed with successful jobs. Rich settings and automation

@@ -1020,14 +1020,9 @@ async fn list_transformer_contributions(
     state: State<'_, AppState>,
 ) -> Result<Vec<transformers::TransformerDescriptor>, String> {
     let _ = presentation_kind;
-    let (source, _) = state
-        .history
-        .source_representation(&clip_id, &source_id)
-        .await
-        .map_err(|error| error.to_string())?;
     state
         .extensions
-        .transformer_descriptors_for(&state.history, &source)
+        .transformer_descriptors_for(&state.history, &clip_id, &source_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1088,11 +1083,14 @@ async fn enqueue_existing_extension_job(
         regenerate: true,
         invocation_token: Some(invocation_token),
         capture_application: None,
+        automation_rule_id: None,
+        settings_snapshot_json: String::new(),
+        settings_snapshot_revision: None,
+        inventory_json: String::new(),
         setup_id: None,
         display_label: Some(row.get(4)),
         default_view: Some(row.get(5)),
         result_controls: Vec::new(),
-        result_presentations: Vec::new(),
     };
     enqueue_extension_transform(request, app, state).await
 }

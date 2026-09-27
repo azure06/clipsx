@@ -7,8 +7,17 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 14 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OperationAvailabilityDescriptor {
+    pub state: String,
+    pub reason: Option<String>,
+    pub source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransformerDescriptor {
     pub id: String,
+    pub source_id: String,
     pub package_id: String,
     pub version: String,
     pub label: String,
@@ -27,4 +36,6 @@ pub struct TransformerDescriptor {
     pub default_view: crate::extensions::ResultView,
     pub result_controls: Vec<crate::extensions::ResultControl>,
     pub provider_available: bool,
+    pub setup_availability: std::collections::BTreeMap<String, OperationAvailabilityDescriptor>,
+    pub custom_availability: OperationAvailabilityDescriptor,
 }

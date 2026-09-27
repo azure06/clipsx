@@ -69,30 +69,6 @@ pub enum ResultView {
     Compare,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ResultLayout {
-    Single,
-    Split,
-    Stack,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ResultModule {
-    Input,
-    Output,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ResultPresentation {
-    pub id: String,
-    pub display_name: String,
-    pub layout: ResultLayout,
-    pub modules: Vec<ResultModule>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultControl {
@@ -262,8 +238,6 @@ pub struct ManifestContribution {
     pub default_view: ResultView,
     #[serde(default)]
     pub result_controls: Vec<ResultControl>,
-    #[serde(default)]
-    pub result_presentations: Vec<ResultPresentation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +251,7 @@ pub struct ThemedIconAssets {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionPermissions {
     pub http: Vec<HttpPermission>,
+    pub external_writes: Vec<HttpPermission>,
     pub external_navigation: Vec<ExternalNavigationPermission>,
     pub credentials: Vec<CredentialPermission>,
     #[serde(default)]
@@ -303,6 +278,8 @@ pub struct HttpPermission {
     pub max_request_bytes: u64,
     pub max_response_bytes: u64,
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub idempotency_header: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,7 +383,7 @@ impl ExtensionManifest {
         }
         if value.get("contractRevision").is_none() {
             bail!(
-                "obsolete extension package; rebuild with Extension API v3.1 contractRevision = 2"
+                "obsolete extension package; rebuild with Extension API v3.2 contractRevision = 3"
             );
         }
         let manifest: Self = toml::from_str(source)
@@ -422,9 +399,9 @@ impl ExtensionManifest {
         if self.schema_version != 3 {
             bail!("unsupported extension manifest schema; expected schemaVersion = 3");
         }
-        if self.contract_revision != 2 {
+        if self.contract_revision != 3 {
             bail!(
-                "unsupported Extension API v3.1 contract revision; expected contractRevision = 2"
+                "unsupported Extension API v3.2 contract revision; expected contractRevision = 3"
             );
         }
         valid_id(&self.package_id, "package")?;
@@ -540,31 +517,8 @@ impl ExtensionManifest {
 
     fn validate_contribution(&self, contribution: &ManifestContribution) -> Result<()> {
         if contribution.kind == ContributionKind::Transformer {
-            if contribution.setups.len() > 32
-                || contribution.result_controls.len() > 4
-                || contribution.result_presentations.len() > 4
-            {
-                bail!("transformer setup, result control, or presentation limit exceeded");
-            }
-            let mut presentation_ids = BTreeSet::new();
-            for presentation in &contribution.result_presentations {
-                valid_id(&presentation.id, "result presentation")?;
-                if !presentation_ids.insert(&presentation.id)
-                    || presentation.display_name.trim().is_empty()
-                    || presentation.display_name.len() > 40
-                    || presentation.modules.is_empty()
-                    || presentation.modules.len() > 2
-                    || presentation
-                        .modules
-                        .iter()
-                        .filter(|module| **module == ResultModule::Output)
-                        .count()
-                        != 1
-                    || (presentation.layout == ResultLayout::Single)
-                        != (presentation.modules.len() == 1)
-                {
-                    bail!("transformer result presentation is invalid");
-                }
+            if contribution.setups.len() > 32 || contribution.result_controls.len() > 4 {
+                bail!("transformer setup or result control limit exceeded");
             }
             let mut setup_ids = BTreeSet::new();
             for setup in &contribution.setups {
@@ -588,7 +542,6 @@ impl ExtensionManifest {
             }
         } else if !contribution.setups.is_empty()
             || !contribution.result_controls.is_empty()
-            || !contribution.result_presentations.is_empty()
             || contribution.default_view != ResultView::ResultOnly
         {
             bail!("only transformers may declare result presentation");
@@ -700,6 +653,7 @@ impl ExtensionManifest {
         }
         if contribution.execution == ExecutionClass::CapabilityBacked
             && self.permissions.http.is_empty()
+            && self.permissions.external_writes.is_empty()
             && self.permissions.providers.is_empty()
         {
             bail!("capability-backed contributions require an HTTP or provider permission declaration");
@@ -739,6 +693,7 @@ impl ExtensionManifest {
 
     fn validate_permissions(&self) -> Result<()> {
         if self.permissions.http.len() > 16
+            || self.permissions.external_writes.len() > 16
             || self.permissions.credentials.len() > 16
             || self.permissions.external_navigation.len() > 16
             || self.permissions.providers.len() > 8
@@ -769,9 +724,22 @@ impl ExtensionManifest {
         {
             bail!("extension requests an unsupported provider capability");
         }
-        let allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        let allowed_methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
         let mut origins = BTreeSet::new();
-        for permission in &self.permissions.http {
+        let mut read_origins = BTreeSet::new();
+        let mut write_origins = BTreeSet::new();
+        for (permission, write) in self
+            .permissions
+            .http
+            .iter()
+            .map(|item| (item, false))
+            .chain(
+                self.permissions
+                    .external_writes
+                    .iter()
+                    .map(|item| (item, true)),
+            )
+        {
             let parsed =
                 Url::parse(&permission.origin).context("HTTP permission origin is invalid")?;
             if parsed.scheme() != "https"
@@ -787,6 +755,23 @@ impl ExtensionManifest {
                     .methods
                     .iter()
                     .any(|method| !allowed_methods.contains(&method.as_str()))
+                || (!write
+                    && permission
+                        .methods
+                        .iter()
+                        .any(|method| !matches!(method.as_str(), "GET" | "HEAD")))
+                || (write
+                    && permission
+                        .methods
+                        .iter()
+                        .any(|method| matches!(method.as_str(), "GET" | "HEAD")))
+                || permission
+                    .idempotency_header
+                    .as_deref()
+                    .is_some_and(|name| {
+                        !valid_credential_header(name) || name.eq_ignore_ascii_case("authorization")
+                    })
+                || (!write && permission.idempotency_header.is_some())
                 || permission.max_response_bytes == 0
                 || permission.max_response_bytes > MAX_HTTP_RESPONSE_BYTES
                 || permission.max_request_bytes == 0
@@ -802,10 +787,16 @@ impl ExtensionManifest {
                         || pattern.matches('*').count() > 1
                         || (pattern.contains('*') && !pattern.ends_with('*'))
                 })
-                || !origins.insert(permission.origin.to_ascii_lowercase())
+                || !(if write {
+                    &mut write_origins
+                } else {
+                    &mut read_origins
+                })
+                .insert(permission.origin.to_ascii_lowercase())
             {
                 bail!("HTTP permissions require unique exact HTTPS origins, approved methods, and bounded responses");
             }
+            origins.insert(permission.origin.to_ascii_lowercase());
         }
         let mut credentials = BTreeSet::new();
         for credential in &self.permissions.credentials {
@@ -1281,10 +1272,10 @@ mod tests {
     fn manifest(contribution: ManifestContribution) -> ExtensionManifest {
         ExtensionManifest {
             schema_version: 3,
-            contract_revision: 2,
+            contract_revision: 3,
             package_id: "example.colors".into(),
             version: "1.0.0".into(),
-            api_version: "^3.1".into(),
+            api_version: "^3.2".into(),
             display_name: "Colors".into(),
             description: String::new(),
             license: String::new(),
@@ -1333,7 +1324,6 @@ mod tests {
             setups: vec![],
             default_view: ResultView::ResultOnly,
             result_controls: vec![],
-            result_presentations: vec![],
         }
     }
 
@@ -1344,8 +1334,8 @@ mod tests {
     }
 
     #[test]
-    fn v31_rejects_retired_transformer_fields_and_preset_actions() {
-        let base = "schemaVersion = 3\ncontractRevision = 2\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.1\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
+    fn v32_rejects_retired_transformer_fields_and_preset_actions() {
+        let base = "schemaVersion = 3\ncontractRevision = 3\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.2\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
         assert!(ExtensionManifest::parse(base.as_bytes()).is_ok());
         for retired in ["resultLifetime = \"temporary\"", "exposeInMenu = false"] {
             let text = format!("{base}{retired}\n");
@@ -1356,22 +1346,12 @@ mod tests {
     }
 
     #[test]
-    fn result_presentations_have_bounded_host_modules() {
-        let mut value = contribution(ContributionKind::Transformer);
-        value.result_presentations = vec![ResultPresentation {
-            id: "review".into(),
-            display_name: "Review".into(),
-            layout: ResultLayout::Stack,
-            modules: vec![ResultModule::Output, ResultModule::Input],
-        }];
-        assert!(manifest(value.clone()).validate().is_ok());
-        value.result_presentations[0].modules = vec![ResultModule::Input];
-        assert!(manifest(value.clone()).validate().is_err());
-        value.result_presentations[0].modules = vec![ResultModule::Output, ResultModule::Input];
-        value
-            .result_presentations
-            .push(value.result_presentations[0].clone());
-        assert!(manifest(value).validate().is_err());
+    fn result_presentations_are_rejected_by_v32() {
+        let base = "schemaVersion = 3\ncontractRevision = 3\npackageId = \"example.tools\"\nversion = \"2.0.0\"\napiVersion = \"^3.2\"\ndisplayName = \"Tools\"\n[[contributions]]\nid = \"rewrite\"\nkind = \"transformer\"\ndisplayName = \"Rewrite\"\n";
+        assert!(
+            ExtensionManifest::parse(format!("{base}resultPresentations = []\n").as_bytes())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1423,16 +1403,24 @@ mod tests {
     fn permissions_require_exact_https_origins() {
         let mut value = manifest(contribution(ContributionKind::Transformer));
         value.contributions[0].execution = ExecutionClass::CapabilityBacked;
-        value.permissions.http.push(HttpPermission {
+        value.permissions.external_writes.push(HttpPermission {
             origin: "https://translation.googleapis.com".into(),
             path_patterns: vec!["/language/translate/*".into()],
             methods: vec!["POST".into()],
             max_request_bytes: 1_048_576,
             max_response_bytes: 1_048_576,
             timeout_ms: 10_000,
+            idempotency_header: None,
         });
         assert!(value.validate().is_ok());
-        value.permissions.http[0].origin = "http://localhost:8080".into();
+        value.permissions.external_writes[0].methods = vec!["GET".into()];
+        assert!(value.validate().is_err());
+        value.permissions.external_writes[0].methods = vec!["POST".into()];
+        value.permissions.external_writes[0].idempotency_header = Some("authorization".into());
+        assert!(value.validate().is_err());
+        value.permissions.external_writes[0].idempotency_header = Some("Idempotency-Key".into());
+        assert!(value.validate().is_ok());
+        value.permissions.external_writes[0].origin = "http://localhost:8080".into();
         assert!(value.validate().is_err());
     }
 
@@ -1442,10 +1430,11 @@ mod tests {
         value.permissions.http.push(HttpPermission {
             origin: "https://api.example.com".into(),
             path_patterns: vec!["/v1/*".into()],
-            methods: vec!["POST".into()],
+            methods: vec!["GET".into()],
             max_request_bytes: 1024,
             max_response_bytes: 2048,
             timeout_ms: 1_000,
+            idempotency_header: None,
         });
         value.permissions.credentials.push(CredentialPermission {
             id: "api-key".into(),

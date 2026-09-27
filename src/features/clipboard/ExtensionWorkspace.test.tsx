@@ -15,6 +15,7 @@ vi.mock('../../shared/hooks/useTheme', () => ({
 
 const transformer: Transformer = {
   id: 'infiniti.rewrite/rewrite',
+  sourceId: 'source-1',
   packageId: 'infiniti.rewrite',
   label: 'Rewrite',
   version: '2.0.0',
@@ -27,6 +28,8 @@ const transformer: Transformer = {
   defaultView: 'result_only',
   resultControls: ['copy', 'regenerate'],
   providerAvailable: true,
+  setupAvailability: { business: { state: 'ready', reason: null } },
+  customAvailability: { state: 'ready', reason: null },
 }
 
 describe('one durable transformation path', () => {
@@ -63,6 +66,21 @@ describe('one durable transformation path', () => {
     expect(onTogglePin).toHaveBeenCalledWith(expect.objectContaining({ id: `setup:${transformer.id}:business`, packageId: transformer.packageId, label: 'Business' }))
   })
 
+  it('hides an irrelevant setup and runs the eligible setup with its matched source', async () => {
+    const eligible: Transformer = { ...transformer, sourceId: 'text-source',
+      setups: [...transformer.setups, { id: 'casual', displayName: 'Casual', parameters: { preset: 'casual' } }],
+      setupAvailability: { business: { state: 'ready', reason: null, sourceId: 'text-source' }, casual: { state: 'hidden', reason: null } },
+      customAvailability: { state: 'hidden', reason: null },
+    }
+    const onQueued = vi.fn()
+    render(<Dialog.Root open><Dialog.Content><ExtensionTools clipId="clip-1" sourceId="html-source" transformers={[eligible]} actions={[]} runAction={vi.fn()} onClose={vi.fn()} onQueued={onQueued} /></Dialog.Content></Dialog.Root>)
+    expect(screen.queryByRole('button', { name: /Casual/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Business/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(onQueued).toHaveBeenCalledWith('job-1'))
+    expect(invokeMock).toHaveBeenCalledWith('enqueue_extension_transform', expect.objectContaining({ request: expect.objectContaining({ sourceId: 'text-source' }) }))
+  })
+
   it('drops pins for uninstalled packages but retains disabled package preferences', () => {
     const pin: PinnedOperation = {
       id: `setup:${transformer.id}:business`, packageId: transformer.packageId,
@@ -84,7 +102,7 @@ describe('one durable transformation path', () => {
       jobId: 'job-1', clipId: 'clip-1', sourceId: 'source-1', packageId: transformer.packageId,
       transformerId: transformer.id, transformerVersion: '2.0.0', displayLabel: 'Rewrite · Business',
       defaultView: 'result_only', status: 'completed', reasonCode: null, parameters: { preset: 'business' },
-      resultControls: ['copy', 'regenerate'], resultPresentations: [], outputs: [],
+      resultControls: ['copy', 'regenerate'], outputs: [], view: null, completedWrites: 0,
     }
     render(<ExtensionResultTab job={job} presentation={null} canRegenerate onChanged={vi.fn()} onQueued={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Copy result' })).toBeInTheDocument()
@@ -98,8 +116,8 @@ describe('one durable transformation path', () => {
       jobId: 'job-2', clipId: 'clip-1', sourceId: 'source-1', packageId: transformer.packageId,
       transformerId: transformer.id, transformerVersion: '2.0.0', displayLabel: 'Rewrite · Business',
       defaultView: 'compare', status: 'completed', reasonCode: null, parameters: { preset: 'business' },
-      resultControls: [], outputs: [],
-      resultPresentations: [{ id: 'review', displayName: 'Review', layout: 'stack', modules: ['output', 'input'] }],
+      resultControls: [], outputs: [{ ordinal: 0, outputId: 'rewritten', mimeType: 'text/plain', byteLength: 8, hasRenderedView: false }],
+      view: { tabs: [{ id: 'review', label: 'Review', layout: 'stack', panels: [{ source: 'output', outputId: 'rewritten' }, { source: 'input' }] }] }, completedWrites: 0,
     }
     render(<ExtensionResultTab job={job} presentation={null} canRegenerate onChanged={vi.fn()} onQueued={vi.fn()} />)
     expect(screen.getByText('Original')).toBeInTheDocument()
@@ -112,7 +130,7 @@ describe('one durable transformation path', () => {
       jobId: 'job-split', clipId: 'clip-1', sourceId: 'source-1', packageId: transformer.packageId,
       transformerId: transformer.id, transformerVersion: '2.0.0', displayLabel: 'Rewrite · Business',
       defaultView: 'compare', status: 'completed', reasonCode: null, parameters: {},
-      resultControls: [], resultPresentations: [], outputs: [],
+      resultControls: [], outputs: [{ ordinal: 0, outputId: 'rewritten', mimeType: 'text/plain', byteLength: 8, hasRenderedView: false }], view: null, completedWrites: 0,
     }
     render(<ExtensionResultTab job={job} presentation={null} canRegenerate onChanged={vi.fn()} onQueued={vi.fn()} />)
     const container = screen.getByTestId('extension-result-split')

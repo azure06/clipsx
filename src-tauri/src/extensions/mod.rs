@@ -2,6 +2,7 @@
 //! WebAssembly and receive no ambient host capabilities.
 
 mod broker;
+mod flow;
 pub(crate) mod jobs;
 mod manifest;
 mod packages;
@@ -31,7 +32,8 @@ pub use packages::{
 pub use runtime::{
     ExtensionActionResult, ExtensionActionState, ExtensionCompactModel, ExtensionContent,
     ExtensionFacet, ExtensionLeadingVisual, ExtensionOutputRepresentation, ExtensionRenderModel,
-    ExtensionRepresentation, ExtensionRuntime, RuntimeErrorCode,
+    ExtensionRepresentation, ExtensionRuntime, OperationAvailability, OperationComplete,
+    OperationProgress, RuntimeErrorCode, StepCall, StepKind,
 };
 pub use service::{
     ActionInvocation, ActionOutcome, BridgeOutcome, BridgeRequest, ContextActionDescriptor,
@@ -40,7 +42,7 @@ pub use service::{
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "3.1.0";
+pub const API_VERSION: &str = "3.2.0";
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 pub const OFFICIAL_REGISTRY_SIGNATURES_URL: &str =

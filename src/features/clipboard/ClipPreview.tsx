@@ -235,8 +235,12 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
               >
                 {pinnedOperations.filter(operation => enabledPackages.has(operation.packageId)).map(operation => {
                   const action = operation.kind === 'action' ? transformControls?.actions.find(item => `action:${item.id}` === operation.id) : null
-                  const available = operation.kind !== 'action' || Boolean(action?.available)
-                  return <button type="button" key={operation.id} aria-label={operation.label} title={available ? operation.label : action?.unavailableReason ?? 'Unavailable for this clip'} disabled={!available} onClick={() => {
+                  const transformer = transformControls?.items.find(item => operation.id.startsWith(`setup:${item.id}:`) || operation.id === `custom:${item.id}` || operation.id in item.setupAvailability)
+                  const decision = transformer ? operation.id.startsWith('custom:') ? transformer.customAvailability : transformer.setupAvailability[operation.id.startsWith('setup:') ? operation.id.slice(`setup:${transformer.id}:`.length) : operation.id] : null
+                  if (operation.kind === 'transformer' && (!decision || decision.state === 'hidden')) return null
+                  const available = operation.kind === 'action' ? Boolean(action?.available) : Boolean(transformer?.providerAvailable && decision?.state === 'ready')
+                  const reason = action?.unavailableReason ?? decision?.reason ?? (transformer?.providerAvailable === false ? 'Configure Local Text Generation' : 'Unavailable for this clip')
+                  return <button type="button" key={operation.id} aria-label={operation.label} title={available ? operation.label : reason} disabled={!available} onClick={() => {
                     if (action) void transformControls?.runAction(action.id)
                     else { setRequestedOperationId(operation.id); setToolsOpen(true) }
                   }} className="shrink-0 rounded-md p-1.5 text-violet-600 hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-35 dark:text-violet-300"><ExtensionOperationIcon operation={operation} /></button>

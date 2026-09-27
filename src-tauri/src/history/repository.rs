@@ -2510,7 +2510,7 @@ mod tests {
             .unwrap();
         let now = now_ms();
         let checksum = "a".repeat(64);
-        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','2.0.0','^3.1','developer',?,'packages/rewrite',1,?,?)")
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,enabled,installed_at,updated_at) VALUES('extension-1','example.rewrite','2.0.0','^3.2','developer',?,'packages/rewrite',1,?,?)")
             .bind(&checksum).bind(now).bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_runtime_state(extension_id,status) VALUES('extension-1','ready')")
             .execute(&repo.pool).await.unwrap();

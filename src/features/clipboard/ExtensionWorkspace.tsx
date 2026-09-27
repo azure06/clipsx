@@ -113,19 +113,26 @@ export function ExtensionResultTab({
   const { appliedTheme } = useTheme()
   const [ordinal, setOrdinal] = useState(0)
   const [raw, setRaw] = useState(false)
-  const presentations = job.resultPresentations?.length ? job.resultPresentations : [
-    { id: 'result', displayName: 'Result', layout: 'single' as const, modules: ['output' as const] },
-    { id: 'compare', displayName: 'Compare', layout: 'split' as const, modules: ['input' as const, 'output' as const] },
+  const presentations = useMemo(() => {
+    const views = job.view?.tabs.length ? job.view.tabs.map(tab => ({
+    id: tab.id, displayName: tab.label, layout: tab.layout, panels: tab.panels.map(panel => panel.source === 'input' ? panel : { source: 'output' as const, ordinal: job.outputs.find(output => output.outputId === panel.outputId)?.ordinal ?? 0 }),
+  })) : [
+    { id: 'result', displayName: 'Result', layout: 'single' as const, panels: [{ source: 'output' as const, ordinal }] },
+    { id: 'compare', displayName: 'Compare', layout: 'split' as const, panels: [{ source: 'input' as const }, { source: 'output' as const, ordinal }] },
   ]
-  const initialView = () => presentations.find(view => view.id === job.defaultView || (job.defaultView === 'result_only' && view.layout === 'single') || (job.defaultView === 'compare' && view.modules.includes('input')))?.id ?? presentations[0]!.id
+    if (job.view?.tabs.length) views.push({ id: 'host-result', displayName: 'Output preview', layout: 'single', panels: [{ source: 'output', ordinal }] })
+    return views
+  }, [job.view, job.outputs, ordinal])
+  const initialView = () => presentations.find(view => view.id === job.defaultView || (job.defaultView === 'result_only' && view.layout === 'single') || (job.defaultView === 'compare' && view.panels.some(panel => panel.source === 'input')))?.id ?? presentations[0]!.id
   const [viewId, setViewId] = useState(initialView)
   const view = presentations.find(item => item.id === viewId) ?? presentations[0]!
-  const needsInput = view.modules.includes('input')
+  const needsInput = view.panels.some(panel => panel.source === 'input')
   const [ratio, setRatio] = useState(() => {
     const stored = Number(localStorage.getItem('clipsx.transformCompareRatio'))
     return Number.isFinite(stored) && stored >= 25 && stored <= 75 ? stored : 50
   })
   const [output, setOutput] = useState<RenderModel | null>(null)
+  const [otherOutputs, setOtherOutputs] = useState<Record<number, RenderModel>>({})
   const [source, setSource] = useState<RenderModel | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -150,6 +157,16 @@ export function ExtensionResultTab({
     return () => { alive = false }
   }, [job.jobId, job.status, selectedOrdinal, raw])
   useEffect(() => {
+    if (job.status !== 'completed') return
+    const ordinals = [...new Set(view.panels.filter((panel): panel is { source: 'output'; ordinal: number } => panel.source === 'output').map(panel => panel.ordinal))]
+      .filter(value => value !== selectedOrdinal)
+    let alive = true
+    void Promise.all(ordinals.map(async value => [value, await invoke<RenderModel>('render_extension_result_output', { jobId: job.jobId, ordinal: value, raw })] as const))
+      .then(entries => { if (alive) setOtherOutputs(Object.fromEntries(entries)) })
+      .catch(reason => { if (alive) setError(String(reason)) })
+    return () => { alive = false }
+  }, [job.jobId, job.status, selectedOrdinal, raw, view.panels])
+  useEffect(() => {
     if (job.status !== 'completed' || !needsInput) return
     let alive = true
     void invoke<RenderModel>('render_extension_result_source', { jobId: job.jobId })
@@ -158,15 +175,16 @@ export function ExtensionResultTab({
     return () => { alive = false }
   }, [job.jobId, job.status, needsInput])
 
-  const outputPresentation = useMemo(() => output && presentation ? {
-    ...presentation,
-    activeView: {
-      ...presentation.activeView,
-      presentationKind: selectedOutput?.mimeType === 'application/json' && !raw ? 'json' : presentation.activeView.presentationKind,
-    },
-    model: output,
-  } : null, [output, presentation, raw, selectedOutput?.mimeType])
   const sourcePresentation = useMemo(() => source && presentation ? { ...presentation, model: source } : null, [presentation, source])
+  const presentationFor = (panel: { source: 'input' } | { source: 'output'; ordinal: number }) => {
+    if (panel.source === 'input') return sourcePresentation
+    const model = panel.ordinal === selectedOrdinal ? output : otherOutputs[panel.ordinal]
+    if (!model || !presentation) return null
+    const mime = job.outputs.find(item => item.ordinal === panel.ordinal)?.mimeType
+    return { ...presentation, activeView: { ...presentation.activeView,
+      presentationKind: mime === 'application/json' && !raw ? 'json' : presentation.activeView.presentationKind,
+    }, model }
+  }
   const operation = async (task: () => Promise<unknown>) => {
     setBusy(true)
     setError(null)
@@ -174,6 +192,7 @@ export function ExtensionResultTab({
     finally { setBusy(false) }
   }
   const regenerate = async () => {
+    if (job.completedWrites > 0 && !window.confirm('This run already changed an external destination. Starting again may repeat that change. Continue?')) return
     const invocation = await invoke<{ token: string }>('issue_extension_transformer_invocation', {
       transformerId: job.transformerId, clipId: job.clipId, sourceId: job.sourceId,
     })
@@ -199,26 +218,26 @@ export function ExtensionResultTab({
           {job.resultControls.includes('save_as_clip') && <button type="button" title="Save as new clip" aria-label="Save as new clip" disabled={busy} onClick={() => void operation(() => invoke('promote_extension_result', { jobId: job.jobId, requestId: crypto.randomUUID() }))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"><Database className="h-4 w-4" /></button>}
           {job.resultControls.includes('regenerate') && <button type="button" title={canRegenerate ? 'Regenerate result' : 'Install this transformer to regenerate'} aria-label="Regenerate result" disabled={busy || !canRegenerate} onClick={() => void operation(regenerate)} className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"><RotateCcw className="h-4 w-4" /></button>}
         </>}
-        {job.status === 'failed' && <button type="button" disabled={busy || !canRegenerate} onClick={() => void operation(regenerate)}>Retry</button>}
+        {job.status === 'failed' && job.completedWrites === 0 && <button type="button" disabled={busy || !canRegenerate} onClick={() => void operation(regenerate)}>Retry</button>}
         {['pending', 'running', 'waiting_provider'].includes(job.status) && <button type="button" disabled={busy} onClick={() => void operation(() => invoke('cancel_extension_job', { jobId: job.jobId }))}>Cancel</button>}
       </div>
-      {job.status === 'completed' ? <>
+      {job.status === 'completed' && job.outputs.length === 0 ? <div className="flex flex-1 flex-col items-center justify-center p-6 text-center"><Check className="mb-3 h-7 w-7 text-emerald-500" /><p className="text-sm font-semibold text-slate-800 dark:text-slate-100">External change completed</p><p className="mt-1 text-xs text-slate-500">{job.completedWrites} confirmed step{job.completedWrites === 1 ? '' : 's'}</p></div> : job.status === 'completed' ? <>
         <div ref={splitRef} data-testid="extension-result-split" className={`flex min-h-0 flex-1 flex-col ${view.layout === 'split' ? 'md:grid' : ''}`} style={view.layout === 'split' ? { gridTemplateColumns: `minmax(0, ${ratio}fr) 8px minmax(0, ${100 - ratio}fr)` } : undefined}>
-          {view.modules.map((module, index) => <div key={`${view.id}:${index}`} className="contents">
+          {view.panels.map((panel, index) => <div key={`${view.id}:${index}`} className="contents">
             {index > 0 && view.layout === 'split' && <ResultSplitDivider ratio={ratio} onChange={setRatio} containerRef={splitRef} />}
             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden border-b border-slate-200/60 dark:border-white/10">
-              {view.modules.length > 1 && <span className="pointer-events-none absolute right-2 top-2 z-10 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">{module === 'input' ? 'Original' : 'Result'}</span>}
-              {(module === 'input' ? sourcePresentation : outputPresentation) && <RenderModelView appliedTheme={appliedTheme} presentation={(module === 'input' ? sourcePresentation : outputPresentation)!} />}
+              {view.panels.length > 1 && <span className="pointer-events-none absolute right-2 top-2 z-10 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">{panel.source === 'input' ? 'Original' : job.outputs.length > 1 ? (job.outputs.find(item => item.ordinal === panel.ordinal)?.outputId ?? 'Result') : 'Result'}</span>}
+              {presentationFor(panel) && <RenderModelView appliedTheme={appliedTheme} presentation={presentationFor(panel)!} />}
             </div>
           </div>)}
         </div>
-      </> : <div className="flex flex-1 flex-col items-center justify-center p-6 text-center"><span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-300"><ChevronDown className={`h-5 w-5 ${['pending', 'running', 'waiting_provider'].includes(job.status) ? 'animate-pulse' : ''}`} /></span><p className="text-sm font-semibold capitalize text-slate-700 dark:text-slate-200">{job.status.replaceAll('_', ' ')}</p>{job.reasonCode && <p className="mt-1 max-w-xs text-xs text-slate-500">{job.reasonCode.replaceAll('_', ' ')}</p>}</div>}
+      </> : <div className="flex flex-1 flex-col items-center justify-center p-6 text-center"><span className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-300"><ChevronDown className={`h-5 w-5 ${['pending', 'running', 'waiting_provider'].includes(job.status) ? 'animate-pulse' : ''}`} /></span><p className="text-sm font-semibold capitalize text-slate-700 dark:text-slate-200">{job.status === 'waiting_write_review' ? 'Delivery needs review' : job.status.replaceAll('_', ' ')}</p>{job.status === 'waiting_write_review' ? <p className="mt-1 max-w-sm text-xs text-slate-500">The remote change may have succeeded before ClipsX could record the response. Check the destination before starting a new run.</p> : job.reasonCode && <p className="mt-1 max-w-xs text-xs text-slate-500">{job.reasonCode.replaceAll('_', ' ')}</p>}{job.completedWrites > 0 && <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">{job.completedWrites} external change{job.completedWrites === 1 ? '' : 's'} recorded before this stopped.</p>}</div>}
       {error && <p role="alert" className="px-4 py-2 text-xs text-red-600">{error}</p>}
     </section>
   )
 }
 
-type ToolSelection = { transformer: Transformer; fixed: Record<string, unknown>; label: string; setup?: SavedTransformSetup }
+type ToolSelection = { transformer: Transformer; fixed: Record<string, unknown>; label: string; setup?: SavedTransformSetup; sourceId?: string | null }
 
 type ToolOperation = PinnedOperation & {
   subtitle: string
@@ -269,6 +288,7 @@ export function ExtensionTools({
     setError(null)
     try {
       const transformer = selection.transformer
+      const selectedSourceId = selection.sourceId || transformer.sourceId || sourceId
       if (transformer.consentRequired && !grantedPackages.has(transformer.packageId ?? transformer.id)) {
         const approved = window.confirm(`${transformer.label} will use its declared provider or network capability with this clip. Allow this package release?`)
         if (!approved) return
@@ -277,10 +297,10 @@ export function ExtensionTools({
         window.dispatchEvent(new Event('clipsx-extension-permissions-changed'))
       }
       const invocation = transformer.execution === 'capability_backed'
-        ? await invoke<{ token: string }>('issue_extension_transformer_invocation', { transformerId: transformer.id, clipId, sourceId })
+        ? await invoke<{ token: string }>('issue_extension_transformer_invocation', { transformerId: transformer.id, clipId, sourceId: selectedSourceId })
         : null
       const result = await invoke<{ jobId: string }>('enqueue_extension_transform', { request: {
-        clipId, sourceId, transformerId: transformer.id, parameters: values,
+        clipId, sourceId: selectedSourceId, transformerId: transformer.id, parameters: values,
         setupId: selection.setup?.id ?? null, defaultView, requestId: crypto.randomUUID(),
         invocationToken: invocation?.token ?? null,
       } })
@@ -303,32 +323,33 @@ export function ExtensionTools({
       })
       choose({ ...selection, setup: saved, label: saved.label })
       refreshSetups()
+      window.dispatchEvent(new Event('clipsx-extension-permissions-changed'))
     } catch (reason) { setError(String(reason)) }
     finally { setBusy(false) }
   }
   const fields = useMemo(() => selection ? parameterProperties(selection.transformer.parameterSchema ?? {}) : {}, [selection])
   const operations = useMemo<ToolOperation[]>(() => [
     ...transformers.flatMap(transformer => [
-      ...transformer.setups.map(setup => ({
+      ...transformer.setups.filter(setup => transformer.setupAvailability[setup.id]?.state !== 'hidden').map(setup => ({
         id: `setup:${transformer.id}:${setup.id}`, label: setup.displayName, kind: 'transformer' as const,
         packageId: transformer.packageId,
         subtitle: transformer.label, icon: transformer.icon ?? null, iconSvg: transformer.iconSvg ?? null, iconSvgDark: transformer.iconSvgDark ?? null, iconScale: transformer.iconScale ?? 1,
-        available: transformer.providerAvailable, reason: transformer.providerAvailable ? null : 'Configure Local Text Generation',
-        selection: { transformer, fixed: setup.parameters, label: setup.displayName },
+        available: transformer.providerAvailable && transformer.setupAvailability[setup.id]?.state !== 'disabled', reason: transformer.setupAvailability[setup.id]?.reason ?? (transformer.providerAvailable ? null : 'Configure Local Text Generation'),
+        selection: { transformer, fixed: setup.parameters, label: setup.displayName, sourceId: transformer.setupAvailability[setup.id]?.sourceId },
       })),
-      ...setups.filter(saved => saved.transformerId === transformer.id).map(saved => ({
+      ...setups.filter(saved => saved.transformerId === transformer.id && transformer.setupAvailability[`saved:${saved.id}`]?.state !== 'hidden').map(saved => ({
         id: `saved:${saved.id}`, label: saved.label, kind: 'transformer' as const,
         packageId: transformer.packageId,
         subtitle: `${transformer.label} · Saved setup`, icon: transformer.icon ?? null, iconSvg: transformer.iconSvg ?? null, iconSvgDark: transformer.iconSvgDark ?? null, iconScale: transformer.iconScale ?? 1,
-        available: saved.available && transformer.providerAvailable,
-        reason: !saved.available ? 'This setup is incompatible with the installed version' : transformer.providerAvailable ? null : 'Configure Local Text Generation',
-        selection: { transformer, fixed: {}, label: saved.label, setup: saved },
+        available: saved.available && transformer.providerAvailable && transformer.setupAvailability[`saved:${saved.id}`]?.state !== 'disabled',
+        reason: !saved.available ? 'This setup is incompatible with the installed version' : transformer.setupAvailability[`saved:${saved.id}`]?.reason ?? (transformer.providerAvailable ? null : 'Configure Local Text Generation'),
+        selection: { transformer, fixed: {}, label: saved.label, setup: saved, sourceId: transformer.setupAvailability[`saved:${saved.id}`]?.sourceId },
       })),
-      { id: `custom:${transformer.id}`, label: `Custom ${transformer.label}`, kind: 'transformer' as const,
+      ...(transformer.customAvailability.state === 'hidden' ? [] : [{ id: `custom:${transformer.id}`, label: `Custom ${transformer.label}`, kind: 'transformer' as const,
         packageId: transformer.packageId,
         subtitle: transformer.label, icon: transformer.icon ?? null, iconSvg: transformer.iconSvg ?? null, iconSvgDark: transformer.iconSvgDark ?? null, iconScale: transformer.iconScale ?? 1,
-        available: transformer.providerAvailable, reason: transformer.providerAvailable ? null : 'Configure Local Text Generation',
-        selection: { transformer, fixed: {}, label: transformer.label } },
+        available: transformer.providerAvailable && transformer.customAvailability.state !== 'disabled', reason: transformer.customAvailability.reason ?? (transformer.providerAvailable ? null : 'Configure Local Text Generation'),
+        selection: { transformer, fixed: {}, label: transformer.label, sourceId: transformer.customAvailability.sourceId } }]),
     ]),
     ...actions.map(action => ({
       id: `action:${action.id}`, label: action.label, kind: 'action' as const,

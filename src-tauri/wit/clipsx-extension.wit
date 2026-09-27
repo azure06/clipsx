@@ -1,4 +1,4 @@
-package clipsx:extension@3.1.0;
+package clipsx:extension@3.2.0;
 
 interface types {
   enum guest-error-code { unsupported, invalid-input, invalid-parameters, failed }
@@ -44,9 +44,17 @@ interface types {
     error(string),
   }
 
-  record output-representation { format-key: string, mime-type: string, content: output-content }
+  record output-representation { id: string, format-key: string, mime-type: string, content: output-content }
   variant output-content { text(string), binary(list<u8>) }
-  variant prepare-decision { skip(string), run(string) }
+  variant operation-availability { hidden, disabled(string), ready }
+  enum step-kind { read, model-call, write }
+  record step-call { id: string, kind: step-kind, request-json: string, state-json: string }
+  record operation-complete {
+    outputs: list<output-representation>,
+    view-json: option<string>,
+    state-writes-json: option<string>,
+  }
+  variant operation-progress { skip(string), call(step-call), complete(operation-complete) }
 
   variant action-state { hidden, disabled(string), enabled }
   variant action-result {
@@ -73,12 +81,12 @@ interface broker {
 
 world extension {
   import broker;
-  use types.{representation, facet, render-model, compact-model, output-representation, prepare-decision, action-result, action-state, guest-error};
+  use types.{representation, facet, render-model, compact-model, operation-availability, operation-progress, action-result, action-state, guest-error};
   export detect: func(contribution-id: string, input: representation) -> result<list<facet>, guest-error>;
   export render-detail: func(contribution-id: string, input: representation, facet: option<facet>) -> result<render-model, guest-error>;
   export render-compact: func(contribution-id: string, input: representation, facet: option<facet>) -> result<compact-model, guest-error>;
-  export prepare-transform: func(contribution-id: string, input: representation, context-json: string, parameters-json: string) -> result<prepare-decision, guest-error>;
-  export transform: func(contribution-id: string, input: representation, context-json: string, parameters-json: string) -> result<list<output-representation>, guest-error>;
+  export assess: func(contribution-id: string, input: representation, context-json: string, parameters-json: string) -> result<operation-availability, guest-error>;
+  export advance: func(contribution-id: string, input: representation, context-json: string, parameters-json: string, state-json: string, previous-response-json: option<string>) -> result<operation-progress, guest-error>;
   export run-action: func(contribution-id: string, input: representation, facet: option<facet>, parameters-json: string) -> result<action-result, guest-error>;
   export action-state: func(contribution-id: string, input: representation, facet: option<facet>, settings-json: string) -> result<action-state, guest-error>;
 }
