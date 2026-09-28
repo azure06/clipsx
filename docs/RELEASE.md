@@ -141,16 +141,24 @@ Tests establish only the behaviour they exercise. Old test counts and developer
 timings are not certification of the current release.
 
 Extension build/publication belongs to `clipsx-extensions`; reviewed signed
-catalog publication belongs to `clipsx-registry`. Use their package-validation
-workflows and confirm the production catalog/approval sync. App CI does not
-publish extension releases.
+catalog publication belongs to `clipsx-registry`. Follow their repository release
+skills and [extension release procedure](https://github.com/azure06/clipsx-extensions/blob/main/RELEASE.md)
+and [registry operations](https://github.com/azure06/clipsx-registry/blob/main/OPERATIONS.md).
+Extension PRs prepare affected packages once; their merge publishes those exact
+candidate bytes and opens a registry metadata PR. Trusted registry automation
+validates and signs the catalog in that same PR. Merging it activates the signed
+catalog, then verifies the public URLs and reconciles portable-setting approvals.
+Human merge is the approval at each repository; routine publication has no manual
+dispatch or additional signing PR. App CI does not publish extension releases.
 The desktop release preflight requires a nonempty, signed v3.2 registry whose
 published raw index and signatures match the reviewed registry revision. Merge
-the six immutable package releases, reviewed metadata, and protected signed
-publication before creating a desktop release candidate. Merge the host contract
+the immutable package releases and complete signed metadata PR before creating a
+desktop release candidate. Merge the host contract
 and package tool before publishing extension archives, but release the desktop
-app last. A source merge alone
-does not make a package visible in Discover.
+app last. The extension-source merge publishes archives; the subsequent registry
+merge makes them visible in Discover. Keep both release repositories pinned to
+the same reviewed host-tool commit. Its `validate-registry` command shares
+Discover's catalog parser rather than approximating the desktop contract.
 
 ## Native clipboard sequence
 

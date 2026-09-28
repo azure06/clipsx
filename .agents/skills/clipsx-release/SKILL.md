@@ -12,11 +12,14 @@ description: Prepare explicit ClipsX release-readiness reviews, packaging, insta
 2. Separate local behavior review, consolidated checks, artifact production,
    installed-platform certification and publication. Use existing commands and
    workflows rather than creating another release script.
-3. When extensions are involved, verify the reviewed host tooling used to build
-   and validate packages, immutable extension assets, exact registry metadata,
-   and the signed catalog/signature pair. Confirm the applicable rollout order:
-   host tooling first, extension archives, registry publication, desktop release
-   last. A source merge alone does not publish an installable archive.
+3. Route extension publication to the
+   [extension release skill](https://github.com/azure06/clipsx-extensions/blob/main/.agents/skills/clipsx-extension-release/SKILL.md)
+   and registry publication to the
+   [registry publication skill](https://github.com/azure06/clipsx-registry/blob/main/.agents/skills/clipsx-registry-publication/SKILL.md)
+   in their own repositories. Verify reviewed host tooling first, exact immutable
+   extension archives next, then the complete signed registry PR. Source merges
+   publish checked package bytes; registry merges activate the catalog. The
+   desktop release remains last and retains installed-platform certification.
 4. Apply the public platform matrix, signing, recovery and evidence requirements
    from the release document. Record the candidate revision and artifact identity,
    demonstrated results, pending checks and blockers. Do not claim native-platform

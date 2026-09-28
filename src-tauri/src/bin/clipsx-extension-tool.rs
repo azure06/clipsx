@@ -13,6 +13,9 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 const API_VERSION: &str = "3.2.0";
 #[allow(dead_code)]
+#[path = "../extensions/catalog.rs"]
+mod catalog;
+#[allow(dead_code)]
 #[path = "../extensions/manifest.rs"]
 mod manifest;
 #[allow(dead_code)]
@@ -23,6 +26,14 @@ use parameters::ParameterField;
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     match args.as_slice() {
+        [_, command, input] if command == "validate-registry" => {
+            let index = catalog::RegistryIndex::parse(&fs::read(input)?)?;
+            if index.packages.is_empty() {
+                bail!("publication catalog must not be empty");
+            }
+            println!("valid host catalog: {} packages", index.packages.len());
+            Ok(())
+        }
         [_, command, input] if command == "validate" => validate(Path::new(input)),
         [_, command, input] if command == "inspect" => inspect(Path::new(input)),
         [_, command, input] if command == "test" => test_package(Path::new(input)),
@@ -36,7 +47,7 @@ fn main() -> Result<()> {
             registry_entry(Path::new(input), release_url)
         }
         _ => bail!(
-            "usage: clipsx-extension-tool scaffold <directory> <package-id> | pack <directory> <package.clipsx> | validate|inspect|test <package.clipsx> | registry-entry <package.clipsx> <github-release-url>"
+            "usage: clipsx-extension-tool scaffold <directory> <package-id> | pack <directory> <package.clipsx> | validate-registry <index.json> | validate|inspect|test <package.clipsx> | registry-entry <package.clipsx> <github-release-url>"
         ),
     }
 }
@@ -213,6 +224,12 @@ fn registry_entry(path: &Path, release_url: &str) -> Result<()> {
             "apiVersion": manifest.api_version,
             "displayName": manifest.display_name,
             "description": manifest.description,
+            "license": manifest.license,
+            "contributions": manifest.contributions.iter().map(|c| c.id.clone()).collect::<Vec<_>>(),
+            "httpOrigins": manifest.permissions.http.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(),
+            "externalNavigationOrigins": manifest.permissions.external_navigation.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(),
+            "credentialLabels": manifest.permissions.credentials.iter().map(|p| p.label.clone()).collect::<Vec<_>>(),
+            "providers": manifest.permissions.providers,
             "releaseUrl": release_url,
             "sha256": hex_digest(&archive),
             "archiveSizeBytes": archive.len(),
