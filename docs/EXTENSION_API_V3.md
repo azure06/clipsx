@@ -249,7 +249,11 @@ rules remain device-local; only reviewed primitive settings are portable.
 
 Keep the package's WIT copy equal to the host WIT. Use
 `clipsx-extension-tool pack`, `validate`, `inspect`, and `test` on the exact
-archive. First-party packages live in
+archive. `registry-entry <archive> <release-url>` exports technical catalog
+metadata, including string origin lists and reviewed portable-setting
+declarations. `validate-registry <index.json>` uses Discover's actual catalog
+parser and rejects an empty publication catalog; signature and archive verification
+remain separate registry gates. First-party packages live in
 [`clipsx-extensions`](https://github.com/azure06/clipsx-extensions).
 Release archives are immutable. Registry metadata must match the archive's
 identity, SHA-256 digest, and permission fingerprint; a protected signer

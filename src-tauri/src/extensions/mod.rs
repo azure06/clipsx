@@ -2,6 +2,7 @@
 //! WebAssembly and receive no ambient host capabilities.
 
 mod broker;
+mod catalog;
 mod flow;
 pub(crate) mod jobs;
 mod manifest;
