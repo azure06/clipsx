@@ -93,61 +93,49 @@ body,
   }
 }
 
-/* Rotating gradient ring — signals a background result refresh (see
-   resultsStale in clipboardStore) while the previous list stays visible
-   underneath it, instead of clearing/replacing it. */
-.loading-ring {
+/* The gradient tail follows the actual rounded perimeter at a constant speed,
+   regardless of the search field's aspect ratio. */
+.search-loading-beam {
+  --search-beam-tail: #3b82f6;
+  --search-beam-head: #a78bfa;
   position: absolute;
   inset: 0;
   z-index: 20;
-  overflow: hidden;
-  border-radius: 0.625rem;
-  padding: 1.5px;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
+  fill: none;
+  overflow: visible;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--search-beam-head) 20%, transparent));
 }
 
-.loading-ring::before {
-  content: '';
-  position: absolute;
-  inset: -50%;
-  animation: loading-ring-spin 1.6s linear infinite;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    transparent 250deg,
-    #3b82f6 300deg,
-    #a78bfa 345deg,
-    transparent 360deg
-  );
+.search-loading-beam rect {
+  width: calc(100% - 2px);
+  height: calc(100% - 2px);
+  stroke-width: 2;
+  stroke-linecap: butt;
+  stroke-dasharray: 0.26 99.74;
+  animation: search-loading-beam-travel 2s linear infinite;
 }
 
-.dark .loading-ring::before {
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    transparent 250deg,
-    #60a5fa 300deg,
-    #c4b5fd 345deg,
-    transparent 360deg
-  );
+.dark .search-loading-beam {
+  --search-beam-tail: #60a5fa;
+  --search-beam-head: #a78bfa;
 }
 
-@keyframes loading-ring-spin {
+@keyframes search-loading-beam-travel {
   to {
-    transform: rotate(360deg);
+    stroke-dashoffset: -100;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loading-ring::before {
+  .search-loading-beam rect {
     animation: none;
+    stroke-dasharray: none;
+  }
+
+  .search-loading-beam rect:not(:last-child) {
+    display: none;
   }
 }

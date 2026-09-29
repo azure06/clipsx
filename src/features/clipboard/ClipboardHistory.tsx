@@ -619,7 +619,6 @@ export const ClipboardHistory = memo(function ClipboardHistory({
         aria-busy={loading || (resultsStale && !error)}
         className="relative flex min-h-0 flex-1 flex-col"
       >
-        {resultsStale && !error && <div aria-hidden="true" className="loading-ring" />}
         {renderContent()}
       </div>
     </div>

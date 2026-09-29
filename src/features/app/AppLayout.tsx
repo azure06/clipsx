@@ -548,6 +548,7 @@ export const AppLayout = () => {
                     sourceOutcomes={searchSourceOutcomes}
                     placeholder="Search clips or ask a question…"
                     isRecalling={recall.isRunning}
+                    recallElapsedSeconds={recall.elapsedSeconds}
                     recallShortcut={formatShortcut(
                       commandShortcut('core.recall', { modifiers: ['primary'], key: 'Enter' })
                     )}

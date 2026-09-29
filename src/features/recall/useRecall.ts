@@ -56,9 +56,11 @@ const emptyTurn = (requestId: string, question: string): RecallTurn => ({
 export function useRecall() {
   const [turns, setTurns] = useState<RecallTurn[]>([])
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [scope, setScope] = useState<RecallScope | null>(null)
   const [expired, setExpired] = useState(false)
   const sessionIdRef = useRef(newId())
+  const requestStartedAtRef = useRef(0)
   const scopeRef = useRef<RecallScope | null>(null)
   const expiryRef = useRef<number | undefined>(undefined)
 
@@ -92,6 +94,16 @@ export function useRecall() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!activeRequestId) return
+    const updateElapsed = () => {
+      setElapsedSeconds(Math.floor((Date.now() - requestStartedAtRef.current) / 1000))
+    }
+    updateElapsed()
+    const interval = window.setInterval(updateElapsed, 1000)
+    return () => window.clearInterval(interval)
+  }, [activeRequestId])
+
   const updateTurn = useCallback((requestId: string, update: (turn: RecallTurn) => RecallTurn) => {
     setTurns(current => current.map(turn => (turn.requestId === requestId ? update(turn) : turn)))
   }, [])
@@ -119,6 +131,8 @@ export function useRecall() {
       setExpired(false)
       touchExpiry()
       const requestId = newId()
+      requestStartedAtRef.current = Date.now()
+      setElapsedSeconds(0)
       setActiveRequestId(requestId)
       setTurns(current => [...current, emptyTurn(requestId, trimmed)].slice(-10))
       const onEvent = new Channel<RecallEvent>()
@@ -239,6 +253,7 @@ export function useRecall() {
     turns,
     activeRequestId,
     isRunning: activeRequestId !== null,
+    elapsedSeconds,
     scope,
     expired,
     startRoot: (question: string, nextScope: RecallScope, sourceClipIds?: string[]) =>
