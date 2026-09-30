@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
+use crate::app::telemetry::{self, Stage};
 use crate::foundation::ManagedFileStore;
 use crate::history::{
     new_id, now_ms, safe_relative, CapturedPayload, CapturedRepresentation, HistoryRepository,
@@ -461,6 +462,7 @@ pub(crate) async fn run_next(
             }
         }
     });
+    let mut execution_telemetry = None;
     let execution = extensions
         .execute_durable_transform(
             repo,
@@ -473,6 +475,7 @@ pub(crate) async fn run_next(
             parameters,
             background,
             cancellation.clone(),
+            &mut execution_telemetry,
         )
         .await;
     cancellation.cancel();
@@ -481,11 +484,31 @@ pub(crate) async fn run_next(
             if let Err(error) =
                 persist_outputs(repo, &job_id, claim, &clip_id, &source_id, execution).await
             {
-                record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?;
+                let failure = OperationFailure::from_error(&error);
+                if record_failure(repo, &job_id, claim, failure).await? {
+                    if let Some(snapshot) = &execution_telemetry {
+                        telemetry::report_extension(
+                            &snapshot.context,
+                            Stage::OutputPersistence,
+                            failure.code,
+                            snapshot.state,
+                        );
+                    }
+                }
             }
         }
         Err(error) => {
-            record_failure(repo, &job_id, claim, OperationFailure::from_error(&error)).await?
+            let failure = OperationFailure::from_error(&error);
+            if record_failure(repo, &job_id, claim, failure).await? {
+                if let Some(snapshot) = &execution_telemetry {
+                    telemetry::report_extension(
+                        &snapshot.context,
+                        Stage::Execution,
+                        failure.code,
+                        snapshot.state,
+                    );
+                }
+            }
         }
     }
     Ok(Some((job_id, clip_id)))
@@ -496,7 +519,7 @@ pub(super) async fn record_failure(
     job_id: &str,
     claim: i64,
     failure: OperationFailure,
-) -> Result<()> {
+) -> Result<bool> {
     let reason = failure.code.as_str();
     match failure.recovery {
         Recovery::Wait => {
@@ -507,27 +530,29 @@ pub(super) async fn record_failure(
             let retries: Option<i64> = sqlx::query_scalar("SELECT transient_retry_count FROM extension_jobs WHERE id=? AND claim_generation=? AND status='running'")
                 .bind(job_id).bind(claim).fetch_optional(&repo.pool).await?;
             let Some(retries) = retries else {
-                return Ok(());
+                return Ok(false);
             };
             if let Some(delay) = [5_000_i64, 15_000, 60_000].get(retries as usize) {
                 sqlx::query("UPDATE extension_jobs SET status='pending',transient_retry_count=transient_retry_count+1,reason_code=?,retry_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
                     .bind(reason).bind(now_ms()+*delay).bind(now_ms()).bind(job_id).bind(claim).execute(&repo.pool).await?;
             } else {
                 // Keep the specific cause without introducing a schema column or raw text.
-                finish(
+                return finish(
                     repo,
                     job_id,
                     claim,
                     "failed",
                     Some(&format!("retry_exhausted:{reason}")),
                 )
-                .await?;
+                .await;
             }
         }
-        Recovery::Cancel => finish(repo, job_id, claim, "cancelled", Some(reason)).await?,
-        Recovery::Stop => finish(repo, job_id, claim, "failed", Some(reason)).await?,
+        Recovery::Cancel => {
+            finish(repo, job_id, claim, "cancelled", Some(reason)).await?;
+        }
+        Recovery::Stop => return finish(repo, job_id, claim, "failed", Some(reason)).await,
     }
-    Ok(())
+    Ok(false)
 }
 
 async fn persist_outputs(
@@ -660,10 +685,10 @@ async fn finish(
     claim: i64,
     status: &str,
     reason: Option<&str>,
-) -> Result<()> {
-    sqlx::query("UPDATE extension_jobs SET status=?,reason_code=?,completed_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
-        .bind(status).bind(reason).bind(now_ms()).bind(now_ms()).bind(id).bind(claim).execute(&repo.pool).await?;
-    Ok(())
+) -> Result<bool> {
+    let changed = sqlx::query("UPDATE extension_jobs SET status=?,reason_code=?,completed_at=?,updated_at=? WHERE id=? AND claim_generation=? AND status='running'")
+        .bind(status).bind(reason).bind(now_ms()).bind(now_ms()).bind(id).bind(claim).execute(&repo.pool).await?.rows_affected();
+    Ok(changed > 0)
 }
 
 pub(crate) async fn list(

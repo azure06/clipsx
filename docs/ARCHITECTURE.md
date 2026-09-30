@@ -73,6 +73,32 @@ UUID, verified email, bounded display name, and controlled auth-provider tag.
 Signed-out desktop events use a random installation ID and short support code.
 Disabling reporting takes effect in both layers without disabling local logs.
 
+The main webview bootstraps reporting through a restricted host command before
+rendering. Reports use the host's app version, release, environment, OS/version,
+architecture, and webview engine/version; unavailable versions are omitted.
+Webview reporting remains disabled until the saved policy and runtime metadata
+are available. The host retains a control-character-free user-agent, bounded to
+1,024 characters. Both SDKs include it in runtime context and a reconstructed
+User-Agent-only request header for Sentry's browser enrichment; no other request
+information survives sanitization.
+
+Extension reports carry host-snapshotted package ID/name/version/checksum,
+registry/local source, contribution ID/version/kind, execution stage, classified
+reason, and extension/provider/host origin. Package and contribution versions
+are independent. Immediate operations report at the service boundary; durable
+jobs report only after an authoritative terminal failure transition. Custom-view
+failures report through validated host sessions. Extension metadata is local to
+each event and never attached to unrelated app crashes. Expected cancellations,
+input/permission/configuration failures, and transient provider retries do not
+create error reports. Identical events are suppressed for 60 seconds in a
+256-entry in-memory cache; changed packages and quarantine transitions can
+report separately. Issue fingerprints omit versions so regressions can be
+compared across releases. Neither reporting nor suppression changes execution,
+retry, or quarantine policy.
+
+Component validation failures are attributed once to the package; contribution
+fields are omitted because no contribution has executed yet.
+
 Neither path admits clipboard or OCR content, search queries, notes, tags,
 Vault data, arbitrary URLs, query strings, file paths, window titles, secrets,
 tokens, request bodies, screenshots, databases, or indexes. Manual diagnostic

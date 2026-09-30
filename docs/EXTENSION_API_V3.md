@@ -7,6 +7,25 @@ sandboxed detail/dialog UI assets. The current contract is
 local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
+## Error reporting
+
+When the user enables desktop error reports, the host attributes unexpected
+extension failures to the validated package and contribution that executed.
+Reports distinguish installed package version from contribution version and
+include the failure stage, safe reason code, and extension/provider/host origin.
+Registry and developer-installed packages are covered; developer installs use
+the telemetry source label `local`. Metadata is snapshotted before execution or
+custom-view creation, so package changes cannot relabel an in-flight failure.
+
+Durable job reports are emitted only on an authoritative terminal failure,
+not on retries, waiting states, or cancellation. Custom-view error notifications
+must pass the existing token, webview-label, and expiry checks; their arbitrary
+message text is never sent to Sentry. Host-generated reports contain no clip
+IDs, settings, operation inputs/outputs, or bridge tokens. Extensions do not
+initialize Sentry, control reporting policy, or attach application metadata.
+Repeated identical reports are rate limited without changing failure counters,
+quarantine thresholds, job recovery, permissions, or the extension contract.
+
 ## One transformer path
 
 On clip selection, ClipsX matches operations against the whole clip, preferring

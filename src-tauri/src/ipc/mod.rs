@@ -1501,54 +1501,67 @@ async fn open_extension_custom_view(
         )
         .await
         .map_err(|error| error.to_string())?;
-    let url = url::Url::parse(&session.entry_url).map_err(|error| error.to_string())?;
-    let allowed_token = session.token.clone();
-    let bridge_token = session.token.clone();
-    let bridge_label = session.label.clone();
-    let bridge_app = app.clone();
-    let initialization_script = state
-        .extensions
-        .custom_view_initialization_script(&session.token)
-        .map_err(|error| error.to_string())?;
-    let builder = tauri::webview::WebviewBuilder::new(
-        session.label.clone(),
-        tauri::WebviewUrl::External(url),
-    )
-    // Wry focuses child WebViews by default on Windows. A preview detail view
-    // must not take history focus merely by loading; dialogs focus after ready.
-    .focused(false)
-    .initialization_script(initialization_script)
-    .incognito(true)
-    .background_color(tauri::webview::Color(0, 0, 0, 0))
-    .devtools(cfg!(debug_assertions))
-    .on_navigation(move |url| {
-        if is_extension_bridge_close_navigation(url, &bridge_token) {
-            if let Some(webview) = bridge_app.get_webview(&bridge_label) {
-                let _ = webview.close();
-            }
-            if let Some(state) = bridge_app.try_state::<AppState>() {
-                state.extensions.end_custom_view(&bridge_token);
-            }
-            if let Some(main) = bridge_app.get_webview("main") {
-                let _ = main.set_focus();
-            }
-            return false;
-        }
-        is_extension_asset_navigation(url, &allowed_token)
-    })
-    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .on_download(|_, _| false);
-    let parent = app
-        .get_window("main")
-        .ok_or_else(|| "main window is unavailable".to_string())?;
-    let child = parent
-        .add_child(
-            builder,
-            tauri::LogicalPosition::new(x, y),
-            tauri::LogicalSize::new(width, height),
+    let creation = (|| -> Result<(), String> {
+        let url = url::Url::parse(&session.entry_url).map_err(|error| error.to_string())?;
+        let allowed_token = session.token.clone();
+        let bridge_token = session.token.clone();
+        let bridge_label = session.label.clone();
+        let bridge_app = app.clone();
+        let initialization_script = state
+            .extensions
+            .custom_view_initialization_script(&session.token)
+            .map_err(|error| error.to_string())?;
+        let builder = tauri::webview::WebviewBuilder::new(
+            session.label.clone(),
+            tauri::WebviewUrl::External(url),
         )
-        .map_err(|error| error.to_string())?;
-    child.hide().map_err(|error| error.to_string())?;
+        // Wry focuses child WebViews by default on Windows. A preview detail view
+        // must not take history focus merely by loading; dialogs focus after ready.
+        .focused(false)
+        .initialization_script(initialization_script)
+        .incognito(true)
+        .background_color(tauri::webview::Color(0, 0, 0, 0))
+        .devtools(cfg!(debug_assertions))
+        .on_navigation(move |url| {
+            if is_extension_bridge_close_navigation(url, &bridge_token) {
+                if let Some(webview) = bridge_app.get_webview(&bridge_label) {
+                    let _ = webview.close();
+                }
+                if let Some(state) = bridge_app.try_state::<AppState>() {
+                    state.extensions.end_custom_view(&bridge_token);
+                }
+                if let Some(main) = bridge_app.get_webview("main") {
+                    let _ = main.set_focus();
+                }
+                return false;
+            }
+            is_extension_asset_navigation(url, &allowed_token)
+        })
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .on_download(|_, _| false);
+        let parent = app
+            .get_window("main")
+            .ok_or_else(|| "main window is unavailable".to_string())?;
+        let child = parent
+            .add_child(
+                builder,
+                tauri::LogicalPosition::new(x, y),
+                tauri::LogicalSize::new(width, height),
+            )
+            .map_err(|error| error.to_string())?;
+        child.hide().map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = creation {
+        state
+            .extensions
+            .report_custom_view_creation_failure(&session.token);
+        if let Some(webview) = app.get_webview(&session.label) {
+            let _ = webview.close();
+        }
+        state.extensions.end_custom_view(&session.token);
+        return Err(error);
+    }
     Ok(session)
 }
 
@@ -2154,6 +2167,17 @@ fn set_telemetry_identity(identity: Option<crate::app::diagnostics::TelemetryIde
 #[tauri::command]
 fn set_error_reporting_enabled(enabled: bool) {
     crate::app::diagnostics::set_error_reporting_enabled(enabled);
+}
+
+#[tauri::command]
+fn bootstrap_telemetry(
+    webview: tauri::Webview,
+    user_agent: String,
+) -> Result<crate::app::telemetry::RuntimeSnapshot, String> {
+    if webview.label() != "main" {
+        return Err("Telemetry bootstrap is restricted to the main webview".into());
+    }
+    Ok(crate::app::telemetry::bootstrap(&user_agent))
 }
 
 #[tauri::command]
@@ -3350,6 +3374,7 @@ pub(crate) fn run() {
             export_diagnostic_bundle,
             open_diagnostics_log_folder,
             set_telemetry_identity,
+            bootstrap_telemetry,
             set_error_reporting_enabled,
             set_verbose_logging_enabled,
             export_portable_settings,

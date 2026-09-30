@@ -7,6 +7,7 @@ permissions = [
   "allow-retry-settings-effects",
   "allow-write-diagnostic",
   "allow-get-diagnostics-summary",
+  "allow-bootstrap-telemetry",
   "allow-export-diagnostic-bundle",
   "allow-open-diagnostics-log-folder",
   "allow-set-telemetry-identity",

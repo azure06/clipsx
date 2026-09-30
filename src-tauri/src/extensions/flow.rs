@@ -2,7 +2,7 @@
 //! the host alone performs effects and journals each request before dispatch.
 
 use crate::failure::{FailureCode, OperationFailure};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Deserialize;
 use sqlx::Row;
@@ -303,9 +303,9 @@ pub(crate) async fn run(
     let (result, interrupted) = tokio::select! {
         result = tokio::time::timeout(std::time::Duration::from_secs(125), execution) => match result {
             Ok(result) => (result, false),
-            Err(_) => (Err(anyhow!("operation execution timeout")), true),
+            Err(_) => (Err(FailureCode::ExtensionTimeout.failure().into()), true),
         },
-        _ = cancellation.cancelled() => (Err(anyhow!("operation was cancelled")), true),
+        _ = cancellation.cancelled() => (Err(FailureCode::ProviderCancelled.failure().into()), true),
     };
     if interrupted {
         // Dropping an in-flight request cannot establish whether the remote write landed.
@@ -608,6 +608,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "waiting_write_review");
+    }
+
+    #[tokio::test]
+    async fn only_the_authoritative_terminal_transition_owns_a_report() {
+        let (_temp, repo, job, _) = fixture().await;
+        assert!(!super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ProviderTimeout.failure()
+        )
+        .await
+        .unwrap());
+        sqlx::query(
+            "UPDATE extension_jobs SET status='running',transient_retry_count=3 WHERE id=?",
+        )
+        .bind(&job)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        assert!(super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ProviderTimeout.failure()
+        )
+        .await
+        .unwrap());
+        assert!(!super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ProviderTimeout.failure()
+        )
+        .await
+        .unwrap());
+        sqlx::query("UPDATE extension_jobs SET status='running',claim_generation=2 WHERE id=?")
+            .bind(&job)
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        assert!(!super::super::jobs::record_failure(
+            &repo,
+            &job,
+            1,
+            FailureCode::ExtensionTrap.failure()
+        )
+        .await
+        .unwrap());
+        assert!(!super::super::jobs::record_failure(
+            &repo,
+            &job,
+            2,
+            FailureCode::ProviderCancelled.failure()
+        )
+        .await
+        .unwrap());
+        let status: String = sqlx::query_scalar("SELECT status FROM extension_jobs WHERE id=?")
+            .bind(&job)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
     }
 
     #[tokio::test]
