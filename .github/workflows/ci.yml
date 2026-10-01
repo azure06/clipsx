@@ -57,6 +57,9 @@ jobs:
       - name: TypeScript type-check
         run: npm run type-check
 
+      - name: Release pipeline invariants
+        run: npm run test:release
+
   # ---------------------------------------------------------------------------
   # 2. Frontend tests (vitest)
   #    Runs on all 3 platforms — UI behavior can differ per OS.
@@ -201,7 +204,9 @@ jobs:
 
       - name: Run tests
         working-directory: src-tauri
-        run: cargo test --all-features --bin clipsx
+        run: |
+          cargo test --all-features --bin clipsx
+          cargo test --locked --bin clipsx-release-verify --features release-tools
 
   # ---------------------------------------------------------------------------
   # 5. Build check (PR only)

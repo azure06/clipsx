@@ -2,7 +2,7 @@ const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 const required = (environment, name) => {
   const value = environment[name]?.trim()
-  if (!value) throw new Error(`${name} is required in .env.`)
+  if (!value) throw new Error(`${name} is required in the production environment.`)
   return value
 }
 

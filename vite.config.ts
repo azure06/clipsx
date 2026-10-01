@@ -10,7 +10,7 @@ const sentryPlugin =
         authToken: process.env.SENTRY_AUTH_TOKEN,
         org: 'infiniti-next',
         project: 'clipsx-desktop',
-        release: { name: process.env.SENTRY_RELEASE },
+        release: { name: process.env.SENTRY_RELEASE, finalize: false },
         sourcemaps: { filesToDeleteAfterUpload: ['./dist/**/*.map'] },
         telemetry: false,
       })

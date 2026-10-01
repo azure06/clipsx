@@ -1,5 +1,11 @@
 {
   "build": {
     "beforeBuildCommand": "npm run build:production"
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": null,
+      "hardenedRuntime": true
+    }
   }
 }

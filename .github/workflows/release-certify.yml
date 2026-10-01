@@ -1,0 +1,54 @@
+name: Certify candidate
+run-name: Certify candidate ${{ inputs.candidate_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: Exact finalized candidate ID
+        required: true
+        type: string
+      evidence:
+        description: HTTPS reference to installed-platform and upgrade evidence
+        required: true
+        type: string
+      all_platforms_passed:
+        description: Windows, both Mac architectures, AppImage and deb installed checks and upgrades passed
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: write
+  actions: read
+  statuses: write
+  pull-requests: write
+concurrency:
+  group: candidate-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+jobs:
+  certification:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+      - name: Build updater signature verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
+          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - name: Record immutable certification and release readiness
+        # Verification runs against final distributed bytes before recording approval.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CERTIFICATION_EVIDENCE: ${{ inputs.evidence }}
+          CERTIFY_ALL_PLATFORMS: ${{ inputs.all_platforms_passed }}
+        run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID"

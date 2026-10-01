@@ -1,0 +1,75 @@
+name: Publish certified release
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Merged release PR number for a publication or verification retry
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-production-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/') && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.publish.outputs.release-version }}
+      source-revision: ${{ steps.publish.outputs.source-revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+      - name: Install release verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
+          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - name: Publish or verify existing production release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
+        run: node scripts/release/pipeline.mjs publish
+  sentry-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.source-revision }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Record published production deployment
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: infiniti-next
+          SENTRY_PROJECT: clipsx-desktop
+          SENTRY_RELEASE: clipsx-desktop@${{ needs.publish.outputs.version }}+${{ needs.publish.outputs.source-revision }}
+        run: |
+          npx sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
+          npx sentry-cli releases finalize "$SENTRY_RELEASE"
+          node scripts/release/sentry-deploy.mjs

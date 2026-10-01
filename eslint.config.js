@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       'dist',
       'dist-ssr',
+      '.release',
       'node_modules',
       'src-tauri/target',
       'src-tauri/gen',
@@ -53,6 +54,9 @@ export default tseslint.config(
         URL: 'readonly',
         console: 'readonly',
         process: 'readonly',
+        fetch: 'readonly',
+        AbortSignal: 'readonly',
+        structuredClone: 'readonly',
       },
     },
   },
@@ -74,7 +78,10 @@ export default tseslint.config(
       'react-hooks/set-state-in-effect': 'off',
 
       // TypeScript recommended overrides
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
     },
   }
