@@ -59,8 +59,8 @@ arboard = "3.6.1"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "bmp", "gif", "tiff", "webp"] }
 url = "2.5.7"
 base64 = "0.22.1"
-minisign-verify = "0.2.5"
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+minisign-verify = "0.2.5"
 async-trait = "0.1"
 futures = "0.3"
 fs2 = "0.4"
@@ -120,5 +120,4 @@ wit-parser = "0.247.0"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
 release-tools = []

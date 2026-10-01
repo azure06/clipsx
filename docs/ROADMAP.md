@@ -1,8 +1,9 @@
 # ClipsX roadmap
 
 The Extension API v3.2 transformation-tab implementation requires installed-host
-certification and coordinated package publication before release. Work that can
-wait belongs under **After the first release**.
+certification before the desktop release. The six first-party 2.0.0 archives and
+their signed registry catalog are already published. Work that can wait belongs
+under **After the first release**.
 
 The detailed cross-platform test matrix remains in [RELEASE.md](RELEASE.md).
 This roadmap answers only three questions: what blocks the release, how the
@@ -23,26 +24,26 @@ macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
 deduplication, restart recovery, source deletion, and retained results after
 disablement and uninstall. Verify saved setups, built-in presets, multiple typed
 outputs, Compare resizing, result controls, and the single Tools entry point.
-Publish reviewed immutable v3.2 package archives and signed registry metadata
-only after these tests pass. The host requires an explicit reset to database
-version 15 and shows only current-contract releases in Discover.
+The host requires an explicit reset to database version 15 and shows only
+current-contract releases in Discover.
 
-### Local review before publication
+### Local behavior review for future package releases
 
 Local package behavior must be reviewed before consolidated release validation.
 The [extension development workflow](../.agents/skills/clipsx-extension-development/SKILL.md)
 describes the focused build and checkpoint procedure. Installed-platform
 certification requirements remain in [RELEASE.md](RELEASE.md).
 
-### 1. Complete extension catalog sync and smoke test
+### 1. Verify extension publication and installed behavior
 
-Merge the reviewed host v3.2 contract and package tool before publishing new
-packages. Rebuild and publish six immutable 2.0.0 extension archives, replace
-the reviewed registry metadata with their exact generated records, and publish
-the signed index and signature pair. Verify the public catalog, registry-to-web
-portable-setting reconciliation and readback, then test Discover and each
-package on installed desktop builds. Release the desktop app last. A source
-merge alone does not make an archive visible in Discover.
+The six immutable 2.0.0 extension archives and signed catalog are published.
+The public catalog and registry-to-web portable-setting reconciliation and
+readback have been checked. Test Discover and each package on installed desktop
+builds before releasing the desktop app. A package source merge publishes its
+checked archive; the separate signed registry merge makes it visible in Discover.
+Configure the publication GitHub App described in the extension and registry
+release guides, then verify the complete automated handoff with the next real
+versioned package release. Do not bump package versions solely to test it.
 
 ### 2. Configure production desktop signing
 
