@@ -3436,6 +3436,13 @@ pub(crate) fn run() {
             if window.label() != "main" {
                 return;
             }
+            // Tauri only re-syncs the webview's prefers-color-scheme on OS theme
+            // changes on Windows; macOS needs the same push or the glass tint's
+            // theme-mismatch CSS in styles.css never sees a live system value.
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                let _ = window.set_theme(Some(*theme));
+            }
             if let Some(host_state) = window.app_handle().try_state::<HostState>() {
                 match event {
                     tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {

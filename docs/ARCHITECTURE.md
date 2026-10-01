@@ -73,6 +73,8 @@ caching. The epoch timer continues to enforce execution deadlines.
 
 The main webview's theme provider applies the saved Light/Dark choice to the
 document; Auto follows system theme changes. The native window follows the OS.
+On macOS, the main window's OS theme-change handler forwards the new theme to
+Tauri so the webview's system color-scheme preference remains current.
 CSS compares the document's theme class with the system color-scheme preference
 and strengthens only the outer frame's background opacity when they differ:
 Light over a dark system uses 85%; Dark over a light system uses 75%.
