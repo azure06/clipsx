@@ -85,11 +85,21 @@ body,
   :root {
     --border-color: #d1d1d1;
   }
+
+  /* Dark app over a light native backdrop: strengthen only the outer tint. */
+  :root.dark .app-frame {
+    background-color: color-mix(in oklab, var(--color-slate-950) 75%, transparent);
+  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --border-color: #3d3d3d;
+  }
+
+  /* Light app over a dark native backdrop needs stronger compensation. */
+  :root.light .app-frame {
+    background-color: color-mix(in oklab, var(--color-slate-100) 85%, transparent);
   }
 }
 

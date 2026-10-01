@@ -42,6 +42,17 @@ flowchart LR
 Rust owns every clipboard write; the webview never uses the browser clipboard.
 Extensions receive only approved input and broker capabilities. Extension API v3.2 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
 
+## Desktop appearance
+
+The main webview's theme provider applies the saved Light/Dark choice to the
+document; Auto follows system theme changes. The native window follows the OS.
+CSS compares the document's theme class with the system color-scheme preference
+and strengthens only the outer frame's background opacity when they differ:
+Light over a dark system uses 85%; Dark over a light system uses 75%.
+Matching combinations retain the original 30% Light / 60% Dark opacity.
+All combinations use the original slate colors, internal surfaces and blur;
+there are no alternative palettes or additional theme state/listeners.
+
 ## Diagnostics and error reporting
 
 Provider, extension runtime, job scheduling and interactive actions share typed
