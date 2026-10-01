@@ -6,12 +6,13 @@ release. Open shipping work belongs in [ROADMAP.md](ROADMAP.md).
 
 ```mermaid
 flowchart LR
-    Revision[Reviewed revision] --> CI[Automated checks]
-    CI --> Build[Build and sign]
-    Build --> Draft[Draft artifacts]
-    Draft --> Test[Install and test each platform]
-    Test --> Publish[Publish GitHub Release]
-    Publish --> Website[Set website download URLs]
+    Revision[Push release branch] --> CI[Automated checks and builds]
+    CI --> Windows[Local SimplySign packaging]
+    Windows --> Draft[CI finalizes complete draft]
+    Draft --> Test[Install and certify every platform]
+    Test --> Merge[Merge release PR]
+    Merge --> Publish[Publish existing certified draft]
+    Publish --> Website[Website discovers downloads.json]
     Publish --> Update[Verify installed-client update]
 ```
 
@@ -36,62 +37,243 @@ Extension API v3.2 releases must certify durable Rewrite and local transformer j
 
 ## Build and publication
 
-Source: [CI](../.github/workflows/ci.yml),
-[release workflow](../.github/workflows/release.yml),
-[Tauri configuration](../src-tauri/tauri.conf.json).
+The release lifecycle is **release branch -> CI packages -> local Windows signing
+-> finalized draft -> installed certification -> merge -> publication**.
+Preparation and certification do not publish a production release.
 
-| Trigger                    | Current workflow behaviour                                 |
-| -------------------------- | ---------------------------------------------------------- |
-| Push/PR to main or develop | CI; no release publication                                 |
-| Manual release workflow    | Build candidate artifacts; no GitHub Release publication   |
-| Matching `v<version>` tag  | Preflight and four build jobs; create/upload draft release |
-| Publish draft              | Separate release decision after certification              |
+| Trigger | Result |
+| --- | --- |
+| Push `release/<version>` or manually run Prepare release candidate on that branch | Validate identity and preflight; build four targets; stage an unpublished candidate |
+| Run the local Windows helper | Sign the CI executable and NSIS installer/uninstaller, upload and automatically request finalization |
+| Finalize release candidate on main | Install/verify Windows on a disposable runner, verify complete inventory, sign final updater files, assemble draft |
+| Certify candidate on main | Record installed-test evidence and set `Release readiness` success |
+| Merge certified release PR into main | Verify merged tree and hashes, publish existing assets under `v<version>` |
+| Manually run Publish certified release with merged PR number | Retry publication/public verification without rebuilding |
 
-The matrix uses hosted Windows, Linux, and macOS runners; macOS arm64/x64 are
-separate build targets. Local hardware is still needed for installed testing.
+Ordinary merges and tag pushes do not build or publish desktop releases. All
+dispatch workflows must first exist on the default branch. Never run privileged
+readiness orchestration against PR source code.
 
-### Configuration that must be verified before shipping
+### Candidate identity and evidence
 
-| Area                     | Current source / required action                                                                                                                                                                    |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Production account build | Supply public Auth/site values below; generate and pass production CSP/config. Current release jobs do not explicitly wire these values or the production config overlay                            |
-| Windows signing          | No Authenticode signing configuration in the checked-in workflow/base config; configure and verify signed executable/installer                                                                      |
-| macOS signing            | Base config has `signingIdentity: "-"`, `hardenedRuntime: false`; configure Developer ID, hardened runtime, notarization, stapling                                                                  |
-| Updater                  | `createUpdaterArtifacts: true`, embedded public key, GitHub `latest.json` endpoint; jobs reference private-key secrets. Verify actual key availability, matching signatures, and published metadata |
-| Artifact checks          | Workflow records file inventory and hashes; this does not prove expected packages, content safety, or size budgets                                                                                  |
-| Rust application tests   | CI uses `--bin clipsx`; release jobs currently use unqualified `cargo test`. Confirm the intended tests execute on every runner, including Windows                                                  |
+Before pushing a release branch, align the npm, Cargo and Tauri stable versions
+and add `docs/releases/<version>.md`. Open a draft PR from that branch to main
+so the existing PR CI checks run while preparation and certification proceed.
+Each preparation attempt creates a separate
+`candidate-<version>-<run-id>-<run-attempt>` staging draft. Candidate identity,
+production build settings, retained updater public key, native evidence, package
+hashes and Windows input hashes are recorded in `candidate.json`.
 
-Repository source cannot prove that signing secrets, certificates, server
-settings, or release artifacts are configured correctly.
+For preparation retries, dispatch a new full run or select **Re-run all jobs**.
+Selective job retries cannot combine artifacts from different attempts. For a
+finalization retry, dispatch a fresh run for the same current candidate so its
+Windows inspection and final assembly both run again.
 
-| Build value                                                       | Purpose                                             |
-| ----------------------------------------------------------------- | --------------------------------------------------- |
-| `VITE_SUPABASE_URL`                                               | Production Auth/API origin                          |
-| `VITE_SUPABASE_PUBLISHABLE_KEY`                                   | Public client key; never a secret/service-role key  |
-| `VITE_NEXT_PUBLIC_SITE_URL`                                       | Production site and hosted callback origin          |
-| `SENTRY_AUTH_TOKEN`                                               | Private release/source-map upload token             |
-| `SENTRY_DSN`, `VITE_SENTRY_DSN`                                   | Public desktop ingestion DSN                        |
-| `SENTRY_RELEASE`, `VITE_SENTRY_RELEASE`                           | Identical `clipsx-desktop@<version>+<sha>` identity |
-| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Updater signing secrets                             |
-| Embedded updater `pubkey` and endpoint                            | Installed client's trust root and metadata location |
+A changed source revision or newer preparation attempt supersedes the old
+candidate. Signing, finalization and certification reject superseded candidates.
+Certified candidates cannot be re-finalized or receive another Windows upload.
+Changing bytes requires new finalization and certification. Draft inventory
+digests include manifests, signatures, evidence and ancillary files.
 
-The workflow also passes `TAURI_UPDATER_PUBLIC_KEY`; verify the final Tauri
-configuration rather than assuming that environment variable replaces the
-embedded key. Registry keys are separate compiled public trust roots.
+The required `Release readiness` commit status passes ordinary PRs without
+release certification. Release PRs remain pending until their exact candidate is
+certified. Main's existing CI requirements remain in force. The merged tree must
+equal the certified source tree regardless of merge method.
 
-Keep private keys in the signing environment and secure backup. Windows/Apple
-code signing, Tauri updater signing, and extension catalog signing are separate.
-Before release, verify the updater private key matches the embedded public key.
-Future clients must continue to trust updates; key rotation needs an explicit
-transition, not an arbitrary replacement.
+### Production configuration
 
-Sentry releases use `clipsx-desktop@<app-version>+<full-git-sha>`. Generate this
-once per build and use it for both native and webview SDKs, source maps, commit
-association, and deployment records. Release checkout requires full Git history.
-Keep `SENTRY_AUTH_TOKEN` in GitHub secrets and public DSNs in repository or
-environment variables. Development, tests, forks, and ordinary manual candidate
-builds do not transmit unless `CLIPSX_SENTRY_ENABLED`/`VITE_SENTRY_ENABLED` is
-explicitly set for a controlled verification build.
+Release runners use repository variables for:
+
+- `VITE_SUPABASE_URL`: production HTTPS API/Auth origin.
+- `VITE_SUPABASE_PUBLISHABLE_KEY`: public client key, never a service-role key.
+- `VITE_NEXT_PUBLIC_SITE_URL`: production HTTPS site and OAuth callback origin.
+- `SENTRY_DESKTOP_DSN`: public desktop ingestion DSN.
+- `WINDOWS_SIGNING_CERT_THUMBPRINT`: expected Authenticode certificate fingerprint.
+
+The production environment validator and generated authentication CSP run before
+every native build. Environment variables can be supplied directly in CI or
+loaded from the ignored local `.env`. macOS production builds require hardened
+runtime and real Developer ID credentials; development's ad-hoc defaults remain
+separate. Windows publishes NSIS only. Native tests explicitly select the
+application binary to avoid Windows library-test GUI linking.
+
+Keep these existing repository secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- `SENTRY_AUTH_TOKEN`.
+
+To upload validated local public production values, run
+`node --env-file=.env scripts/release/pipeline.mjs configure-public` in an
+administrator's authenticated GitHub CLI session. This uploads only the public
+variables above. It also configures the Windows fingerprint when supplied as
+`WINDOWS_SIGNING_CERT_THUMBPRINT` in the process environment.
+
+The embedded updater public key and GitHub `latest.json` endpoint are retained.
+Finalization verifies signatures using the same Minisign decoding and verification
+as the installed updater. A wrong private key fails verification; do not replace
+the installed trust key to work around a failure.
+
+### Apple credentials
+
+Create a **Developer ID Application** certificate for distribution outside the
+App Store. Export a `.p12` containing the certificate and its private key.
+Create a team App Store Connect API key with Developer access for notarization.
+In App Store Connect, open Users and Access, then Integrations and App Store
+Connect API. Under Team Keys, generate a named key with Developer access, record
+its key ID and the issuer ID, and download the `.p8` once. Retain that download
+securely. The account holder may need to request API access first.
+
+| GitHub secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | Export password |
+| `APPLE_SIGNING_IDENTITY` | Full Developer ID Application identity |
+| `APPLE_API_ISSUER` | Team API issuer ID |
+| `APPLE_API_KEY` | API key ID |
+| `APPLE_API_PRIVATE_KEY` | Downloaded `.p8` contents |
+
+Add private values directly to GitHub Secrets, never source files or chat.
+Runners create a temporary keychain and API-key file, then remove both even after
+failure. Both architectures require app signature verification, notarization,
+stapling and Gatekeeper assessment. The final DMG is also signed, notarized and
+stapled. See [Tauri's Apple signing guide](https://v2.tauri.app/distribute/sign/macos/).
+
+### Windows signing
+
+Use PowerShell on your own Windows desktop with Node 24, npm, Rust/Cargo metadata
+tools, GitHub CLI, tar, Windows SDK SignTool and SimplySign Desktop installed.
+Log into GitHub CLI and connect SimplySign in the same Windows user session.
+The certificate must be valid and available in the current-user certificate store.
+
+From the repository root:
+
+```powershell
+./scripts/release/sign-windows.ps1 -RunId <preparation-run-id> -CertificateThumbprint <40-character-thumbprint>
+```
+
+Optional `-SignToolPath` selects an SDK executable. `-WorkingDirectory` must name
+a fresh directory. The helper never deletes or reuses an existing directory.
+
+The helper downloads and verifies the exact packaging kit, restores its CI-built
+executable and frontend resources, installs locked packaging dependencies without
+lifecycle scripts, and runs `tauri bundle` rather than `tauri build`. A trusted
+SignTool wrapper timestamps and verifies each Authenticode operation. The
+installer, uninstaller and application must all be signed. The helper uploads
+the installer and dispatches Finalize release candidate on main. It does not
+need the Tauri updater private key.
+
+Finalization independently installs the package on a disposable hosted Windows
+runner, verifies certificate fingerprints and timestamps, and confirms that the
+installed executable matches the original CI image except for Authenticode's
+checksum/certificate fields. This automated inspection does not replace manual
+native behavior and upgrade certification.
+
+If upload/dispatch fails, retain the helper workspace. Retry submission with:
+
+```powershell
+node scripts/release/pipeline.mjs submit-windows <candidate-id> <installer-path> <windows-evidence-json-path>
+```
+
+Only an un-certified current candidate accepts replacement submission.
+
+### Finalization and updater manifests
+
+Finalization requires Windows NSIS, both macOS architectures, Linux AppImage and
+Debian packages. It signs and verifies final Windows/Linux packages and Mac
+updater archives, generates `SHA256SUMS`, `latest.json` and `downloads.json`,
+and preserves native verification evidence.
+
+Updater entries distinguish `windows-x86_64-nsis`, `darwin-aarch64-app`,
+`darwin-x86_64-app`, `linux-x86_64-appimage` and `linux-x86_64-deb`. Compatible
+OS/architecture fallback entries are retained. Debian upgrades require the
+appropriate privilege prompt; they must never receive an AppImage.
+
+Website manifest schema 1 contains version, intended production tag, candidate
+source revision and five download targets with architecture, format, exact
+versioned URL, SHA-256 and native signing/notarization flags. Mac website downloads
+are DMGs; Mac updater downloads are app archives. Linux native GPG signing is not
+claimed. The website validates published metadata and refreshes it at request
+time with a 30-second cache; no per-release web deployment or refresh webhook is
+needed after the capability's initial deployment.
+
+### Installed certification and publication
+
+Download the final draft packages and perform the full applicable checklist
+below on Windows, both Mac architectures and Linux/X11 for AppImage and Debian.
+Record exact artifact hashes, environments, results and an HTTPS evidence link.
+
+Run **Certify candidate** on main with the candidate ID, evidence reference and
+the explicit all-platforms confirmation. Certification binds the candidate
+descriptor and complete draft inventory hashes. Merge the release PR only when
+`Release readiness` and all normal CI checks pass.
+Certification also marks an existing matching draft release PR ready for review.
+
+Publication verifies the merged tree, certification, current build attempt and
+final signatures. It assigns the production tag to the merged commit and
+publishes the existing complete draft. No release artifact is rebuilt or
+re-signed after merge. Public manifests, file hashes and signatures are then
+checked. Sentry production deployment records are created only afterward, using
+the original candidate source revision embedded in its binaries.
+
+If publication or public verification fails, run **Publish certified release**
+on main with the merged PR number. An already-published matching release is
+verified again rather than recreated. A conflicting tag/release or an older
+version cannot replace the latest release. A previously installed public build
+must also discover and install the published update.
+
+### Private pre-publication upgrade test
+
+After finalization, start a loopback-only feed of the exact final updater bytes:
+
+```sh
+node scripts/release/pipeline.mjs upgrade-feed <candidate-id>
+```
+
+This writes `.release/PRIVATE-upgrade-fixture.conf.json` and serves only candidate
+files at `http://127.0.0.1:8787`. A different unprivileged port may be supplied
+as the final argument.
+
+Use an isolated checkout of the previous release to build/install a private
+older-version fixture with that overlay and generated production authentication
+CSP. For the first release, use an isolated checkout of the candidate itself as
+the baseline. The fixture reports version `0.0.0`, trusts the retained public key
+and checks the loopback feed. Upgrading installs the exact final candidate bytes
+and returns the application to its normal production endpoint.
+
+```sh
+npm ci
+npm run prepare:tauri-auth-csp:production
+node node_modules/@tauri-apps/cli/tauri.js build --config src-tauri/tauri.auth.csp.conf.json --config <absolute-private-fixture-overlay>
+```
+
+Never use this overlay in a shipping build or publish fixture installers. The
+insecure HTTP option exists only in this private loopback fixture. Test interrupted
+updates and recovery as well as the successful path. Stop the feed after testing.
+Use separate test user profiles/VMs to preserve real clipboard data.
+
+### Infrastructure rollout
+
+1. Merge pipeline, helper, verifier and skill changes through a normal PR.
+2. Deploy the website metadata reader once and verify its unavailable-first-release
+   state while no production manifest exists.
+3. Configure signing secrets and public build variables.
+4. After the readiness workflow is active on main, run
+   `node scripts/release/pipeline.mjs configure-readiness` using an administrator's
+   GitHub CLI session. It adds the status requirement while preserving the existing
+   ruleset. Do not enable the requirement before the workflow is deployed.
+5. Prepare a release candidate. Building and inspecting drafts does not publish
+   a production release. Complete Windows signing and real installed certification
+   before the release PR is merged.
+
+### Validation commands
+
+```sh
+npm run test:release
+cargo test --locked --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+```
+
+These checks validate release invariants and signature decoding; they do not
+establish native installed-platform certification.
 
 ### Production smoke build
 
@@ -297,4 +479,4 @@ cross-platform sign-off is recorded by this checklist.
 Publish only when the applicable checks pass, required
 [roadmap work](ROADMAP.md) is complete, and no high-severity finding remains.
 Release notes state verified platforms/features, limitations, reset implications,
-and updater compatibility. Finalize website URLs after assets are public.
+and updater compatibility. Verify website download metadata after assets are public.

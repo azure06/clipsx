@@ -54,3 +54,4 @@ Thumbs.db
 /examples/extensions/packages/*.clipsx
 
 docs/deploy.txt
+.release/

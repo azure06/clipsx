@@ -46,19 +46,19 @@ merge alone does not make an archive visible in Discover.
 
 ### 2. Configure production desktop signing
 
-The GitHub Actions release workflow already builds Windows x64, Linux x64,
-macOS arm64, and macOS x64 from one revision and creates signed Tauri updater
-artifacts. The remaining release-engineering work is platform trust signing:
+Release branch pushes prepare immutable candidates for Windows x64, Linux x64,
+macOS arm64 and macOS x64. A local SimplySign helper packages the CI-built
+Windows executable; CI verifies the installer, application and uninstaller,
+then signs updater bytes and assembles a complete staging draft.
 
-- [ ] Configure Windows Authenticode credentials and sign the executable and
-      NSIS installer.
-- [ ] Configure the Apple Developer ID certificate and notarization credentials;
-      enable hardened runtime, notarize, and staple both macOS builds instead of
-      using the current ad-hoc signature.
-- [ ] Store and back up the Tauri updater private key securely. Keep the public
-      key already embedded in the app stable so future updates remain compatible.
-- [ ] Run a manual release candidate build and inspect the produced installers,
-      updater artifacts, `latest.json`, hashes, and release contents.
+- [ ] Roll the infrastructure workflows onto main and add Release readiness to
+      the existing main ruleset using the documented additive setup command.
+- [ ] Configure public production build variables, the pinned Windows signing
+      thumbprint, Developer ID certificate and App Store Connect team API key.
+- [ ] Back up the existing updater private key and retain the embedded public key.
+- [ ] Prove Windows packaging does not recompile and verify all native signatures,
+      notarization tickets, updater signatures and final candidate hashes.
+- [ ] Deploy the website runtime download metadata capability before publication.
 
 GitHub-hosted Windows, Linux, and macOS runners can build all platforms. A
 personal Mac is not required to produce the macOS artifacts, although testing
@@ -84,12 +84,14 @@ draft and repeat the affected certification checks.
 
 ### 4. Publish
 
-- [ ] Publish the certified draft GitHub Release with Windows, macOS, Linux, and
-      updater artifacts attached.
-- [ ] Update `clipsx-web` download URLs and final release documentation to point
-      to the published artifacts, then deploy and smoke-test the final site.
-- [ ] Verify a previously installed signed build discovers and installs the
-      published update.
+- [ ] Record installed and private-fixture upgrade evidence for Windows, both Mac
+      architectures, Linux AppImage and deb using Certify candidate.
+- [ ] Merge the certified release PR. Publication verifies the merged tree and
+      draft hashes, tags the merged commit, and publishes the existing files.
+- [ ] Verify public manifests and downloads. The website reads downloads.json
+      automatically; later desktop releases require no website deployment.
+- [ ] Verify a previously installed public build discovers and installs the update
+      when one exists. Publication retries reuse the certified assets.
 
 ## Release process
 

@@ -1,0 +1,82 @@
+name: Finalize release candidate
+run-name: Finalize candidate ${{ inputs.candidate_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: Exact candidate ID printed by preparation
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: candidate-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+jobs:
+  windows-verification:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    outputs:
+      installer: ${{ steps.download.outputs.installer }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Download exact Windows submission
+        id: download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: node scripts/release/pipeline.mjs download-windows "$env:CANDIDATE_ID"
+      - name: Verify installed signed executable and uninstaller
+        env:
+          WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERT_THUMBPRINT }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          INSTALLER: ${{ steps.download.outputs.installer }}
+        run: ./scripts/release/verify-windows.ps1 -Installer $env:INSTALLER -CandidateId $env:CANDIDATE_ID
+      - uses: actions/upload-artifact@v4
+        with:
+          include-hidden-files: true
+          name: windows-verification-${{ github.run_attempt }}
+          path: .release/native-evidence-windows-x64.json
+          if-no-files-found: error
+          retention-days: 30
+  finalize:
+    needs: windows-verification
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+      - name: Install verifier dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
+          npm ci --ignore-scripts
+          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-verification-${{ github.run_attempt }}
+          path: .release
+      - name: Finalize exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/release/pipeline.mjs finalize "$CANDIDATE_ID" .release/native-evidence-windows-x64.json

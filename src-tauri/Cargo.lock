@@ -746,6 +746,7 @@ dependencies = [
  "image",
  "keyring",
  "log",
+ "minisign-verify",
  "objc",
  "pulldown-cmark",
  "reqwest 0.12.28",
