@@ -76,6 +76,43 @@ describe('App', () => {
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
   })
 
+  it('does not wait for tray labels before rendering history', async () => {
+    const invoke = invokeMock.getMockImplementation()! as (
+      command: string,
+      args?: unknown
+    ) => Promise<unknown>
+    invokeMock.mockImplementation((command: string, args: unknown) =>
+      command === 'set_tray_labels' ? new Promise(() => {}) : invoke(command, args)
+    )
+    render(<App />)
+    expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
+  })
+
+  it('applies the detected language without waiting for its settings save', async () => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: ['ja-JP'] })
+    const invoke = invokeMock.getMockImplementation()! as (
+      command: string,
+      args?: unknown
+    ) => Promise<unknown>
+    let finishSave!: (result: unknown) => void
+    const pendingSave = new Promise(resolve => {
+      finishSave = resolve
+    })
+    invokeMock.mockImplementation((command: string, args: unknown) => {
+      if (command === 'get_app_settings')
+        return Promise.resolve(v2Settings({ languageInitialized: false }))
+      if (command === 'update_app_settings') return pendingSave
+      return invoke(command, args)
+    })
+    render(<App />)
+    expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
+    expect(document.documentElement.lang).toBe('ja')
+    await act(async () => {
+      finishSave({ settings: v2Settings({ language: 'ja' }), failedEffects: [] })
+      await pendingSave
+    })
+  })
+
   it('detects and persists Japanese only for a new installation', async () => {
     Object.defineProperty(navigator, 'languages', {
       configurable: true,

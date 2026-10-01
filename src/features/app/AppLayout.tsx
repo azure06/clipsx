@@ -6,6 +6,8 @@ import {
 } from '../../shared/keyboard/commands'
 import { formatShortcut } from '../../shared/keyboard/shortcuts'
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -27,10 +29,7 @@ import { Sidebar } from '../../shared/components/Sidebar'
 import { TitleBar } from '../../shared/components/TitleBar'
 import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
-import { Settings, type SettingsTab } from '../settings/Settings'
-import { Plugins } from '../settings/Plugins'
-import { IntelligencePage } from '../intelligence/IntelligencePage'
-import { RecallWorkspace } from '../recall/RecallWorkspace'
+import type { SettingsTab } from '../settings/Settings'
 import { useRecall } from '../recall/useRecall'
 import { parseSearch } from '../search/searchQuery'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
@@ -48,6 +47,31 @@ import {
 } from '../../shared/sync/configSync'
 import { createCoalescedRefresh } from './coalescedRefresh'
 import { clampHistoryRatio, SPLITTER_WIDTH_PX } from './splitLayout'
+
+const Settings = lazy(() =>
+  import('../settings/Settings').then(module => ({ default: module.Settings }))
+)
+const Plugins = lazy(() =>
+  import('../settings/Plugins').then(module => ({ default: module.Plugins }))
+)
+const IntelligencePage = lazy(() =>
+  import('../intelligence/IntelligencePage').then(module => ({ default: module.IntelligencePage }))
+)
+const RecallWorkspace = lazy(() =>
+  import('../recall/RecallWorkspace').then(module => ({ default: module.RecallWorkspace }))
+)
+
+const ScreenLoading = () => {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="status"
+      className="flex flex-1 items-center justify-center p-6 text-sm text-slate-500 dark:text-slate-400"
+    >
+      {t('common.loading')}
+    </div>
+  )
+}
 
 export const AppLayout = () => {
   const { t } = useTranslation()
@@ -600,44 +624,49 @@ export const AppLayout = () => {
                     {(() => {
                       if (effectiveRightTab === 'recall' && recall.turns.length > 0) {
                         return (
-                          <RecallWorkspace
-                            turns={recall.turns}
-                            scopeLabel={recall.scope?.label ?? getRecallScope().label}
-                            isRunning={recall.isRunning}
-                            expired={recall.expired}
-                            onCancel={() => void recall.cancel()}
-                            onClear={() => {
-                              recall.clear()
-                              setRightTab('preview')
-                              searchBarRef.current?.focus()
-                            }}
-                            onFollowUp={question => void recall.followUp(question)}
-                            onRetry={turn =>
-                              void recall.startRoot(turn.question, recall.scope ?? getRecallScope())
-                            }
-                            onApplySources={(turn, clipIds) =>
-                              void recall.rerunWithSources(turn.question, clipIds)
-                            }
-                            onSearchAll={turn => void recall.searchAll(turn.question)}
-                            onOpenClip={clipId => {
-                              const open = async () => {
-                                if (
-                                  !useClipboardStore
-                                    .getState()
-                                    .clips.some(clip => clip.id === clipId)
-                                ) {
-                                  const detail = await invoke<{ clip: (typeof clips)[number] }>(
-                                    'get_clip_detail',
-                                    { clipId }
-                                  )
-                                  addNewClip(detail.clip)
-                                }
-                                setPreviewClipId(clipId)
+                          <Suspense fallback={<ScreenLoading />}>
+                            <RecallWorkspace
+                              turns={recall.turns}
+                              scopeLabel={recall.scope?.label ?? getRecallScope().label}
+                              isRunning={recall.isRunning}
+                              expired={recall.expired}
+                              onCancel={() => void recall.cancel()}
+                              onClear={() => {
+                                recall.clear()
                                 setRightTab('preview')
+                                searchBarRef.current?.focus()
+                              }}
+                              onFollowUp={question => void recall.followUp(question)}
+                              onRetry={turn =>
+                                void recall.startRoot(
+                                  turn.question,
+                                  recall.scope ?? getRecallScope()
+                                )
                               }
-                              void open()
-                            }}
-                          />
+                              onApplySources={(turn, clipIds) =>
+                                void recall.rerunWithSources(turn.question, clipIds)
+                              }
+                              onSearchAll={turn => void recall.searchAll(turn.question)}
+                              onOpenClip={clipId => {
+                                const open = async () => {
+                                  if (
+                                    !useClipboardStore
+                                      .getState()
+                                      .clips.some(clip => clip.id === clipId)
+                                  ) {
+                                    const detail = await invoke<{ clip: (typeof clips)[number] }>(
+                                      'get_clip_detail',
+                                      { clipId }
+                                    )
+                                    addNewClip(detail.clip)
+                                  }
+                                  setPreviewClipId(clipId)
+                                  setRightTab('preview')
+                                }
+                                void open()
+                              }}
+                            />
+                          </Suspense>
                         )
                       }
                       const displayedClip = previewClip
@@ -669,11 +698,23 @@ export const AppLayout = () => {
               </div>
             )}
 
-            {activeView === 'settings' && <Settings initialTab={settingsInitialTab} />}
+            {activeView === 'settings' && (
+              <Suspense fallback={<ScreenLoading />}>
+                <Settings initialTab={settingsInitialTab} />
+              </Suspense>
+            )}
 
-            {activeView === 'extensions' && <Plugins />}
+            {activeView === 'extensions' && (
+              <Suspense fallback={<ScreenLoading />}>
+                <Plugins />
+              </Suspense>
+            )}
 
-            {activeView === 'intelligence' && <IntelligencePage />}
+            {activeView === 'intelligence' && (
+              <Suspense fallback={<ScreenLoading />}>
+                <IntelligencePage />
+              </Suspense>
+            )}
 
             <UpdateBanner />
           </div>

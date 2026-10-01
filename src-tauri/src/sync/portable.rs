@@ -226,7 +226,9 @@ mod tests {
             data: temp.path().join("data"),
             config: temp.path().join("config"),
         };
-        let extensions = crate::extensions::ExtensionService::new(&roots).unwrap();
+        let extensions =
+            crate::extensions::ExtensionService::new(&roots, &roots.data.join("extension-cache"))
+                .unwrap();
         let text = document(json!([
             {"kind":"extension_intent","key":"example.unavailable","payload":{"enabled":true},"tombstone":false},
             {"kind":"shortcut","key":"core.copy_plain_text","payload":"Primary+J","tombstone":false}

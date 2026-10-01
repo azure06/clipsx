@@ -67,7 +67,7 @@ fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 semver = "1.0"
 toml = "0.8"
-wasmtime = { version = "47.0.3", default-features = false, features = ["async", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
+wasmtime = { version = "47.0.3", default-features = false, features = ["async", "cache", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
 wit-component = "0.247.0"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 rtf-parser = { version = "0.4.3", default-features = false }
@@ -113,6 +113,10 @@ foreign-types = "0.5"
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", features = ["open_uri"] }
 x11rb = { version = "0.13", features = ["xtest"] }
+[dev-dependencies]
+wat = "=1.247.0"
+wit-parser = "0.247.0"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

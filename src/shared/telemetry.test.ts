@@ -102,6 +102,25 @@ describe('desktop telemetry boundary', () => {
     expect(await beforeSend({ message: 'failure' }, {})).toBeNull()
   })
 
+  it.each([false, true])(
+    'honors newer settings (%s) when bootstrap resolves late',
+    async enabled => {
+      let resolve!: (value: typeof snapshot) => void
+      mocks.invoke.mockReturnValue(
+        new Promise<typeof snapshot>(done => {
+          resolve = done
+        })
+      )
+      const { telemetry, beforeSend } = await load()
+      const pending = telemetry.bootstrapTelemetry()
+      telemetry.setDesktopErrorReportingEnabled(enabled)
+      expect(await beforeSend({ message: 'before metadata' }, {})).toBeNull()
+      resolve({ ...snapshot, errorReportingEnabled: !enabled })
+      await pending
+      expect((await beforeSend({ message: 'after metadata' }, {})) !== null).toBe(enabled)
+    }
+  )
+
   it('omits unavailable runtime versions', async () => {
     const { osVersion: _os, webviewVersion: _webview, ...partial } = snapshot
     mocks.invoke.mockResolvedValue(partial)

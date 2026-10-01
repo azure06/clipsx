@@ -9,6 +9,7 @@ export type TelemetryIdentity = {
 }
 
 let reportingEnabled = false
+let settingsReportingEnabled: boolean | null = null
 
 type RuntimeSnapshot = {
   appVersion: string
@@ -30,7 +31,7 @@ export async function bootstrapTelemetry(): Promise<void> {
     runtime = await invoke<RuntimeSnapshot>('bootstrap_telemetry', {
       userAgent: navigator.userAgent,
     })
-    reportingEnabled = runtime.errorReportingEnabled
+    reportingEnabled = settingsReportingEnabled ?? runtime.errorReportingEnabled
   } catch {
     // A missing bridge or unreadable policy must never prevent the app rendering.
     reportingEnabled = false
@@ -112,6 +113,7 @@ Sentry.init({
 export const reactErrorHandler = Sentry.reactErrorHandler
 
 export function setDesktopErrorReportingEnabled(enabled: boolean): void {
+  settingsReportingEnabled = enabled
   reportingEnabled = Boolean(runtime) && enabled
 }
 

@@ -187,9 +187,14 @@ async fn detect_with_extensions(
     history: &HistoryRepository,
     extensions: &ExtensionService,
     clip_id: &str,
+    force: bool,
 ) -> anyhow::Result<()> {
     contributions::detect_clip(history, clip_id).await?;
-    extensions.detect_clip(history, clip_id).await?;
+    if force {
+        extensions.redetect_clip(history, clip_id).await?;
+    } else {
+        extensions.detect_clip(history, clip_id).await?;
+    }
     extensions
         .refresh_compact_presentations(history, clip_id)
         .await?;
@@ -975,7 +980,7 @@ async fn capture_clipboard(
             let event_app = app.clone();
             let detect_id = id.clone();
             tauri::async_runtime::spawn(async move {
-                match detect_with_extensions(&history, &extensions, &detect_id).await {
+                match detect_with_extensions(&history, &extensions, &detect_id, false).await {
                     Ok(_) => {
                         emit_clip_facets_updated(&event_app, Some(&detect_id));
                     }
@@ -2528,7 +2533,7 @@ async fn redetect_clip(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    detect_with_extensions(&state.history, &state.extensions, &clip_id)
+    detect_with_extensions(&state.history, &state.extensions, &clip_id, true)
         .await
         .map_err(|e| e.to_string())?;
     refresh_search_for_clip(&app, &state.history, &clip_id)
@@ -2556,7 +2561,7 @@ async fn redetect_history(
             .await
             .map_err(|e| e.to_string())?;
         for clip in page.items {
-            detect_with_extensions(&state.history, &state.extensions, &clip.id)
+            detect_with_extensions(&state.history, &state.extensions, &clip.id, true)
                 .await
                 .map_err(|e| e.to_string())?;
             refresh_search_for_clip(&app, &state.history, &clip.id)
@@ -3080,7 +3085,7 @@ pub(crate) fn run() {
                     let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
                     tauri::async_runtime::block_on(lifecycle.reconcile(app.handle(), &history, settings));
                 }
-                let extensions = ExtensionService::new(&roots)
+                let extensions = ExtensionService::new(&roots, &app.path().app_cache_dir()?.join("extensions"))
                     .expect("Failed to initialize ClipsX extension storage");
                 tauri::async_runtime::block_on(contributions::initialize(&history))
                     .expect("Failed to initialize ClipsX facet registry");
@@ -3129,9 +3134,11 @@ pub(crate) fn run() {
                     let _guard = lifecycle.gate.lock().await;
                     let _ = redetect_extensions.reconcile_configuration_sync(&extension_history).await;
                     drop(_guard);
-                    let _ = redetect_extensions
-                        .redetect_outdated(&extension_history)
-                        .await;
+                    match redetect_extensions.redetect_outdated(&extension_history).await {
+                        Ok(count) if count > 0 => emit_clip_facets_updated(&extension_app, None),
+                        Err(_) => crate::diagnostic!("extension.detection.recovery.failed"),
+                        _ => {}
+                    }
                 });
                 let auto_clear_history = history.clone();
                 let auto_clear_app = app.handle().clone();
@@ -3232,6 +3239,7 @@ pub(crate) fn run() {
                                         &detection_history,
                                         &detection_extensions,
                                         &id,
+                                        false,
                                     )
                                     .await
                                     {

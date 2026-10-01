@@ -42,6 +42,33 @@ flowchart LR
 Rust owns every clipboard write; the webview never uses the browser clipboard.
 Extensions receive only approved input and broker capabilities. Extension API v3.2 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
 
+## Desktop startup
+
+React mounts immediately. Telemetry bootstrap runs independently; reporting stays
+closed until authoritative policy and runtime metadata arrive. A newer settings
+choice takes precedence over a delayed bootstrap response.
+
+Storage recovery remains a gate. Once storage is ready, the webview loads saved
+settings, applies the initial language and document direction, then mounts history.
+Tray translation and initial language normalization persistence run without
+blocking that mount. Subsequent saved language changes use the same synchronization
+path. Incompatible storage shows the recovery screen before loading normal app state.
+
+History, pagination, and ordinary clipboard previews are available immediately.
+Settings, Extensions, Intelligence, and Recall load on navigation with local
+loading fallbacks. Existing detection, indexing, artifact, and transformation
+workers continue in the background.
+
+Extension discovery reads manifests and metadata only: listing packages, setups,
+icons, and view descriptors does not compile WebAssembly. After input, permission,
+and availability eligibility checks, guest calls prepare only their package.
+Installation still validates components. One shared Wasmtime engine retains the
+in-memory component cache. A single preparation mutex serializes compilation on
+blocking workers and is released before normal guest execution. Wasmtime's built-in
+persistent cache uses the app-local cache directory and owns invalidation and
+cleanup; unavailable caching emits a bounded diagnostic and runs without disk
+caching. The epoch timer continues to enforce execution deadlines.
+
 ## Desktop appearance
 
 The main webview's theme provider applies the saved Light/Dark choice to the
@@ -84,8 +111,8 @@ UUID, verified email, bounded display name, and controlled auth-provider tag.
 Signed-out desktop events use a random installation ID and short support code.
 Disabling reporting takes effect in both layers without disabling local logs.
 
-The main webview bootstraps reporting through a restricted host command before
-rendering. Reports use the host's app version, release, environment, OS/version,
+The main webview bootstraps reporting through a restricted host command independently
+of rendering. Reports use the host's app version, release, environment, OS/version,
 architecture, and webview engine/version; unavailable versions are omitted.
 Webview reporting remains disabled until the saved policy and runtime metadata
 are available. The host retains a control-character-free user-agent, bounded to
@@ -162,6 +189,20 @@ Stable native snapshot (bounded retries)
 | Delete, clear history, retention | One transactional cascade                                                  |
 | Final file reference removed     | Managed file becomes eligible for deletion                                 |
 | Derived job fails                | Preserve the captured clip; expose retry/rebuild                           |
+
+Extension detection records each detector/representation outcome in
+`content_detection_jobs`. Both `completed` (including empty results) and
+`unsupported` are terminal for the current detector version. Selector mismatches,
+oversized inputs, and guest-reported unsupported inputs atomically clear obsolete
+facets and record `unsupported`. Operational failures retain retry and quarantine
+handling.
+
+Startup recovery uses cursor batches of 100 and only the selected detector's
+unfinished representations. Completed and unsupported pairs do not call guests
+again until the detector version changes or explicit redetection forces the shared
+path. Existing installations converge when missing unsupported outcomes are first
+recorded. Compact presentations refresh only after detection state or facets change;
+the existing facet event refreshes visible history.
 
 Artifacts belong to a clip; their input references stay within that clip.
 A saved transform survives deletion of its source through nullable live links

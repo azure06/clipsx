@@ -2108,7 +2108,8 @@ mod tests {
             .await
             .unwrap();
         initialize(&repo).await.unwrap();
-        let extensions = ExtensionService::new(&roots).unwrap();
+        let extensions =
+            ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
         let (clip_id, _) = repo
             .capture(
                 CapturedSnapshot {

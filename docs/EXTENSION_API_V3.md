@@ -214,6 +214,20 @@ Workers do not prompt for consent.
 
 ## Execution, storage, and recovery
 
+Discovery reads package metadata without compiling components. Guest execution
+prepares only an eligible package; installation validation and guest availability
+checks remain required. Preparation uses the host's shared engine, in-memory cache,
+and Wasmtime's persistent cache, with a successful fallback when disk caching is
+unavailable.
+
+Detection recovery tracks detector/representation pairs and detector versions.
+Completed results, including empty facet lists, and unsupported outcomes are
+terminal. Selector mismatches, oversized inputs, and guest-reported unsupported
+inputs clear old facets in the same transaction. Startup batches only unfinished
+pairs; explicit redetection can force all pairs. Operational failures retain their
+existing retry and quarantine behavior. No package contract or execution limits
+change with this recovery policy.
+
 SQLite owns job state and deduplication. The coordinator executes one extension
 transformation at a time, favors manual jobs, and periodically admits background
 jobs. It revalidates source fingerprints, package checksum, live grants, enabled app rules,

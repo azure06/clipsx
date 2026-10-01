@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::Path,
     sync::{Arc, Mutex},
@@ -197,10 +197,10 @@ pub struct ExtensionService {
 }
 
 impl ExtensionService {
-    pub fn new(roots: &AppRoots) -> Result<Self> {
+    pub fn new(roots: &AppRoots, cache_directory: &Path) -> Result<Self> {
         Ok(Self {
             store: ExtensionPackageStore::new(roots.extensions())?,
-            runtime: ExtensionRuntime::new()?,
+            runtime: ExtensionRuntime::new(cache_directory)?,
             invocations: Arc::new(Mutex::new(HashMap::new())),
             custom_views: Arc::new(Mutex::new(HashMap::new())),
             dialog_authorizations: Arc::new(Mutex::new(HashMap::new())),
@@ -897,27 +897,11 @@ impl ExtensionService {
         Ok(())
     }
 
-    pub async fn active_contributions(
+    /// Discovery reads declarations only; guest callers prepare their matching package.
+    pub async fn contributions(
         &self,
         repo: &HistoryRepository,
         kind: ContributionKind,
-    ) -> Result<Vec<ActiveContribution>> {
-        self.contributions(repo, kind, true).await
-    }
-
-    async fn contribution_metadata(
-        &self,
-        repo: &HistoryRepository,
-        kind: ContributionKind,
-    ) -> Result<Vec<ActiveContribution>> {
-        self.contributions(repo, kind, false).await
-    }
-
-    async fn contributions(
-        &self,
-        repo: &HistoryRepository,
-        kind: ContributionKind,
-        prepare_runtime: bool,
     ) -> Result<Vec<ActiveContribution>> {
         let rows = sqlx::query("SELECT i.id,i.package_id,i.sha256,i.relative_path,i.source FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id WHERE i.enabled=1 AND s.status='ready' ORDER BY i.package_id")
             .fetch_all(&repo.pool).await?;
@@ -930,28 +914,6 @@ impl ExtensionService {
                 });
             if !has_kind {
                 continue;
-            }
-            if prepare_runtime {
-                if let (None, Some(component_path)) = (
-                    self.runtime.component(&package.sha256),
-                    package.component_path.as_ref(),
-                ) {
-                    if let Err(error) = self
-                        .runtime
-                        .validate_component(&package.sha256, component_path)
-                        .await
-                    {
-                        // Component validation belongs to the package, before any
-                        // contribution executes. Do not blame or duplicate its entries.
-                        telemetry::report_extension(
-                            &package_telemetry(&package, &row.get::<String, _>(4)),
-                            Stage::Validation,
-                            crate::failure::OperationFailure::from_error(&error).code,
-                            FailureState::default(),
-                        );
-                        return Err(error);
-                    }
-                }
             }
             for declaration in
                 package.manifest.contributions.iter().filter(|item| {
@@ -987,26 +949,101 @@ impl ExtensionService {
         Ok(values)
     }
 
+    async fn prepare_contribution(&self, contribution: &ActiveContribution) -> Result<()> {
+        if self.runtime.component(&contribution.sha256).is_some() {
+            return Ok(());
+        }
+        let package = self.store.load(&contribution.package_relative_path)?;
+        self.prepare_package(&package, &contribution.telemetry.installation_source)
+            .await
+    }
+
+    async fn prepare_package(&self, package: &super::ExtensionPackage, source: &str) -> Result<()> {
+        let path = package
+            .component_path
+            .as_ref()
+            .context("extension component is missing")?;
+        if let Err(error) = self.runtime.validate_component(&package.sha256, path).await {
+            telemetry::report_extension(
+                &package_telemetry(package, source),
+                Stage::Validation,
+                crate::failure::OperationFailure::from_error(&error).code,
+                FailureState::default(),
+            );
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub async fn detect_clip(&self, repo: &HistoryRepository, clip_id: &str) -> Result<usize> {
-        let detectors = self
-            .active_contributions(repo, ContributionKind::Detector)
-            .await?;
+        let detectors = self.contributions(repo, ContributionKind::Detector).await?;
+        self.detect_representations(repo, clip_id, &detectors, false)
+            .await
+    }
+
+    pub async fn redetect_clip(&self, repo: &HistoryRepository, clip_id: &str) -> Result<usize> {
+        let detectors = self.contributions(repo, ContributionKind::Detector).await?;
+        self.detect_representations(repo, clip_id, &detectors, true)
+            .await
+    }
+
+    async fn detect_representations(
+        &self,
+        repo: &HistoryRepository,
+        clip_id: &str,
+        detectors: &[ActiveContribution],
+        force: bool,
+    ) -> Result<usize> {
         if detectors.is_empty() {
             return Ok(0);
         }
+        let settled: HashSet<(String, String, String)> = if force {
+            HashSet::new()
+        } else {
+            sqlx::query_as("SELECT j.representation_id,j.detector_id,j.detector_version FROM content_detection_jobs j JOIN clip_representations r ON r.id=j.representation_id WHERE r.clip_id=? AND j.status IN ('completed','unsupported')")
+                .bind(clip_id).fetch_all(&repo.pool).await?.into_iter().collect()
+        };
         let detail = repo.detail(clip_id).await?;
         let mut count = 0;
         for representation_detail in detail.representations {
+            if representation_detail.storage_kind != "text" {
+                continue;
+            }
+            let unfinished = detectors
+                .iter()
+                .filter(|contribution| {
+                    !settled.contains(&(
+                        representation_detail.id.clone(),
+                        contribution.id.clone(),
+                        contribution.version.clone(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if unfinished.is_empty() {
+                continue;
+            }
             let (input, _) = repo
                 .source_representation(clip_id, &representation_detail.id)
                 .await?;
             if !matches!(input.payload, CapturedPayload::Text(_)) {
                 continue;
             }
-            for contribution in detectors.iter().filter(|item| {
-                accepts(&item.declaration, &input, None)
-                    && payload_bytes(&input) <= item.declaration.input_limit_bytes
-            }) {
+            for contribution in unfinished {
+                if !accepts(&contribution.declaration, &input, None)
+                    || payload_bytes(&input) > contribution.declaration.input_limit_bytes
+                {
+                    self.persist_detection(
+                        repo,
+                        &representation_detail.id,
+                        contribution,
+                        Vec::new(),
+                        "unsupported",
+                    )
+                    .await?;
+                    count += 1;
+                    continue;
+                }
+                self.prepare_contribution(contribution).await?;
                 let facets = self
                     .runtime
                     .detect(
@@ -1029,7 +1066,13 @@ impl ExtensionService {
                             continue;
                         }
                         if let Err(error) = self
-                            .persist_facets(repo, &representation_detail.id, contribution, facets)
+                            .persist_detection(
+                                repo,
+                                &representation_detail.id,
+                                contribution,
+                                facets,
+                                "completed",
+                            )
                             .await
                         {
                             telemetry::report_extension(
@@ -1040,6 +1083,21 @@ impl ExtensionService {
                             );
                             return Err(error);
                         }
+                        self.success(repo, contribution).await?;
+                        count += 1;
+                    }
+                    Err(error)
+                        if crate::failure::OperationFailure::from_error(&error).code
+                            == crate::failure::FailureCode::UnsupportedInput =>
+                    {
+                        self.persist_detection(
+                            repo,
+                            &representation_detail.id,
+                            contribution,
+                            Vec::new(),
+                            "unsupported",
+                        )
+                        .await?;
                         self.success(repo, contribution).await?;
                         count += 1;
                     }
@@ -1054,6 +1112,7 @@ impl ExtensionService {
     }
 
     pub async fn redetect_history(&self, repo: &HistoryRepository) -> Result<u64> {
+        let detectors = self.contributions(repo, ContributionKind::Detector).await?;
         let mut count = 0;
         let mut cursor: Option<(i64, String)> = None;
         loop {
@@ -1062,8 +1121,13 @@ impl ExtensionService {
                 break;
             }
             for (_, id) in &rows {
-                count += self.detect_clip(repo, id).await? as u64;
-                self.refresh_compact_presentations(repo, id).await?;
+                let changed = self
+                    .detect_representations(repo, id, &detectors, true)
+                    .await?;
+                if changed > 0 {
+                    self.refresh_compact_presentations(repo, id).await?;
+                }
+                count += changed as u64;
             }
             cursor = rows.last().cloned();
             tokio::task::yield_now().await;
@@ -1074,9 +1138,7 @@ impl ExtensionService {
     pub async fn redetect_outdated(&self, repo: &HistoryRepository) -> Result<u64> {
         const BATCH_SIZE: i64 = 100;
         let started = Instant::now();
-        let detectors = self
-            .contribution_metadata(repo, ContributionKind::Detector)
-            .await?;
+        let detectors = self.contributions(repo, ContributionKind::Detector).await?;
         let mut completed = 0_u64;
         for detector in detectors {
             let mut cursor: Option<(i64, String)> = None;
@@ -1094,9 +1156,18 @@ impl ExtensionService {
                 }
                 for row in &rows {
                     let clip_id: String = row.get(1);
-                    self.detect_clip(repo, &clip_id).await?;
-                    self.refresh_compact_presentations(repo, &clip_id).await?;
-                    completed += 1;
+                    let changed = self
+                        .detect_representations(
+                            repo,
+                            &clip_id,
+                            std::slice::from_ref(&detector),
+                            false,
+                        )
+                        .await?;
+                    if changed > 0 {
+                        self.refresh_compact_presentations(repo, &clip_id).await?;
+                        completed += changed as u64;
+                    }
                 }
                 let last = rows.last().context("extension detection batch is empty")?;
                 cursor = Some((last.get(0), last.get(1)));
@@ -1230,9 +1301,7 @@ impl ExtensionService {
                 .await?;
             return Ok(true);
         }
-        let renderers = self
-            .active_contributions(repo, ContributionKind::Renderer)
-            .await?;
+        let renderers = self.contributions(repo, ContributionKind::Renderer).await?;
         let Some(contribution) = renderers
             .into_iter()
             .find(|renderer| renderer.id == primary_view.renderer_id)
@@ -1265,6 +1334,7 @@ impl ExtensionService {
             .surfaces
             .contains(&RenderSurface::Compact)
         {
+            self.prepare_contribution(&contribution).await?;
             let model = self
                 .runtime
                 .render_compact(
@@ -1356,7 +1426,7 @@ impl ExtensionService {
         });
         let mut descriptors = Vec::new();
         for item in self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
         {
             let mut sources = Vec::new();
@@ -1459,6 +1529,7 @@ impl ExtensionService {
     ) -> Result<crate::contributions::transformer::OperationAvailabilityDescriptor> {
         use crate::contributions::transformer::OperationAvailabilityDescriptor;
         for (source_id, source) in sources {
+            self.prepare_contribution(item).await?;
             let decision = self
                 .runtime
                 .assess(
@@ -1495,7 +1566,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
     ) -> Result<Vec<super::SavedTransformSetup>> {
         let active = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?;
         let rows = sqlx::query("SELECT id,package_id,transformer_id,label,parameters_json,default_view,revision FROM extension_transform_setups ORDER BY updated_at DESC,id")
             .fetch_all(&repo.pool).await?;
@@ -1547,7 +1618,7 @@ impl ExtensionService {
             bail!("transform setup label or view is invalid");
         }
         let transformer = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
             .find(|item| item.id == transformer_id)
@@ -1634,7 +1705,7 @@ impl ExtensionService {
         repo: &HistoryRepository,
     ) -> Result<Vec<crate::contributions::RendererDescriptor>> {
         Ok(self
-            .active_contributions(repo, ContributionKind::Renderer)
+            .contributions(repo, ContributionKind::Renderer)
             .await?
             .into_iter()
             .map(|item| crate::contributions::RendererDescriptor {
@@ -1676,10 +1747,7 @@ impl ExtensionService {
         let shortcuts = self.action_shortcuts(repo).await?;
         let facets = crate::contributions::facets(repo, clip_id).await?;
         let mut actions = Vec::new();
-        for item in self
-            .active_contributions(repo, ContributionKind::Action)
-            .await?
-        {
+        for item in self.contributions(repo, ContributionKind::Action).await? {
             let Some((selected_source_id, source, selected_facet_id)) =
                 select_action_source(&item.declaration, source_id, facet_id, &sources, &facets)
             else {
@@ -1758,7 +1826,7 @@ impl ExtensionService {
     ) -> Result<Vec<ContextActionDescriptor>> {
         let shortcuts = self.action_shortcuts(repo).await?;
         let mut actions: Vec<_> = self
-            .active_contributions(repo, ContributionKind::Action)
+            .contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .map(|item| {
@@ -1835,7 +1903,7 @@ impl ExtensionService {
             .await
             .map_err(|_| crate::failure::FailureCode::StaleContext.failure())?;
         let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
+            .contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
@@ -1905,6 +1973,7 @@ impl ExtensionService {
                 ActionOutcome::DialPhone(facet_string_value(facet.as_ref(), &facet_value_pointer)?)
             }
             ActionHandler::Guest => {
+                self.prepare_contribution(&contribution).await?;
                 let broker =
                     if contribution.declaration.execution == ExecutionClass::CapabilityBacked {
                         Some(self.runtime_broker_context(repo, &contribution).await?)
@@ -1964,7 +2033,7 @@ impl ExtensionService {
         action_id: &str,
     ) -> Result<()> {
         let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
+            .contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id)
@@ -2050,7 +2119,7 @@ impl ExtensionService {
     ) -> Result<ActionInvocation> {
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
+            .contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id && accepts(&item.declaration, &source, facet_id))
@@ -2100,7 +2169,7 @@ impl ExtensionService {
         transformer_id: &str,
     ) -> Result<()> {
         let contribution = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
             .find(|item| item.id == transformer_id)
@@ -2159,7 +2228,7 @@ impl ExtensionService {
     ) -> Result<ActionInvocation> {
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let contribution = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
             .find(|item| item.id == transformer_id && accepts(&item.declaration, &source, None))
@@ -2224,13 +2293,10 @@ impl ExtensionService {
         }
         let (source, _) = repo.source_representation(clip_id, source_id).await?;
         let contribution = self
-            .active_contributions(repo, ContributionKind::Renderer)
+            .contributions(repo, ContributionKind::Renderer)
             .await?
             .into_iter()
-            .chain(
-                self.active_contributions(repo, ContributionKind::Action)
-                    .await?,
-            )
+            .chain(self.contributions(repo, ContributionKind::Action).await?)
             .find(|item| {
                 item.id == renderer_id
                     && accepts(&item.declaration, &source, facet_id)
@@ -2874,7 +2940,7 @@ impl ExtensionService {
         accelerator: Option<&str>,
     ) -> Result<()> {
         let contribution = self
-            .active_contributions(repo, ContributionKind::Action)
+            .contributions(repo, ContributionKind::Action)
             .await?
             .into_iter()
             .find(|item| item.id == action_id)
@@ -2993,10 +3059,7 @@ impl ExtensionService {
             return;
         }
         let mut icons = HashMap::new();
-        let Ok(contributions) = self
-            .contribution_metadata(repo, ContributionKind::Renderer)
-            .await
-        else {
+        let Ok(contributions) = self.contributions(repo, ContributionKind::Renderer).await else {
             return;
         };
         for contribution in contributions
@@ -3253,6 +3316,7 @@ impl ExtensionService {
                 "Text generation provider is not configured".into(),
             ));
         }
+        self.prepare_contribution(contribution).await?;
         let state = self
             .runtime
             .action_state(
@@ -3290,9 +3354,7 @@ impl ExtensionService {
         detail: &crate::history::ClipDetail,
         facets: &[crate::contributions::FacetDescriptor],
     ) -> Result<Vec<crate::contributions::ClipViewDescriptor>> {
-        let renderers = self
-            .active_contributions(repo, ContributionKind::Renderer)
-            .await?;
+        let renderers = self.contributions(repo, ContributionKind::Renderer).await?;
         let mut views = Vec::new();
         for representation in &detail.representations {
             let (source, _) = repo
@@ -3388,7 +3450,7 @@ impl ExtensionService {
         facet: Option<crate::contributions::FacetDescriptor>,
     ) -> Result<Option<RenderModel>> {
         let Some(contribution) = self
-            .active_contributions(repo, ContributionKind::Renderer)
+            .contributions(repo, ContributionKind::Renderer)
             .await?
             .into_iter()
             .find(|item| {
@@ -3411,12 +3473,14 @@ impl ExtensionService {
                 text: String::new(),
             }));
         }
+        let input = representation(input, contribution.declaration.input_limit_bytes)?;
+        self.prepare_contribution(&contribution).await?;
         let result = self
             .runtime
             .render_detail(
                 &contribution.sha256,
                 &contribution.local_id,
-                representation(input, contribution.declaration.input_limit_bytes)?,
+                input,
                 facet.map(|facet| super::ExtensionFacet {
                     id: facet.id,
                     payload_json: serde_json::to_string(&facet.payload).unwrap_or_default(),
@@ -3590,12 +3654,13 @@ impl ExtensionService {
         Ok(())
     }
 
-    async fn persist_facets(
+    async fn persist_detection(
         &self,
         repo: &HistoryRepository,
         representation_id: &str,
         contribution: &ActiveContribution,
         facets: Vec<super::ExtensionFacet>,
+        status: &str,
     ) -> Result<()> {
         let mut transaction = repo.pool.begin().await?;
         sqlx::query(
@@ -3630,8 +3695,8 @@ impl ExtensionService {
             sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version,payload_json,created_at) SELECT clip_id,?,?,?,?,?,? FROM clip_representations WHERE id=?")
                 .bind(&id).bind(representation_id).bind(&contribution.id).bind(&contribution.version).bind(serde_json::to_string(&payload)?).bind(now_ms()).bind(representation_id).execute(&mut *transaction).await?;
         }
-        sqlx::query("INSERT INTO content_detection_jobs(id,representation_id,detector_id,detector_version,status,attempt_count,requested_at,completed_at) VALUES(?,?,?,?, 'completed',1,?,?) ON CONFLICT(representation_id,detector_id) DO UPDATE SET detector_version=excluded.detector_version,status='completed',attempt_count=1,last_error=NULL,completed_at=excluded.completed_at")
-            .bind(new_id()).bind(representation_id).bind(&contribution.id).bind(&contribution.version).bind(now_ms()).bind(now_ms()).execute(&mut *transaction).await?;
+        sqlx::query("INSERT INTO content_detection_jobs(id,representation_id,detector_id,detector_version,status,attempt_count,requested_at,completed_at) VALUES(?,?,?,?,?,1,?,?) ON CONFLICT(representation_id,detector_id) DO UPDATE SET detector_version=excluded.detector_version,status=excluded.status,attempt_count=1,last_error=NULL,completed_at=excluded.completed_at")
+            .bind(new_id()).bind(representation_id).bind(&contribution.id).bind(&contribution.version).bind(status).bind(now_ms()).bind(now_ms()).execute(&mut *transaction).await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -3721,7 +3786,7 @@ impl ExtensionService {
         background: bool,
     ) -> Result<super::ExtensionJobResult> {
         let contribution = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
             .find(|item| item.id == request.transformer_id)
@@ -3804,8 +3869,10 @@ impl ExtensionService {
                 .failure()
                 .into());
         }
+        let input = representation(source, contribution.declaration.input_limit_bytes)?;
+        self.prepare_contribution(&contribution).await?;
         let availability = self.runtime.assess(&contribution.sha256, &contribution.local_id,
-            representation(source, contribution.declaration.input_limit_bytes)?,
+            input,
             serde_json::json!({ "origin": if background { "background" } else { "manual" },
                 "settings": serde_json::from_str::<serde_json::Value>(&request.settings_snapshot_json)?,
                 "formats": serde_json::from_str::<serde_json::Value>(&request.inventory_json)?,
@@ -3856,7 +3923,7 @@ impl ExtensionService {
         execution_telemetry: &mut Option<ExecutionTelemetry>,
     ) -> Result<super::jobs::DurableExecution> {
         let contribution = self
-            .active_contributions(repo, ContributionKind::Transformer)
+            .contributions(repo, ContributionKind::Transformer)
             .await?
             .into_iter()
             .find(|item| {
@@ -3950,6 +4017,8 @@ impl ExtensionService {
         }
         let state_schemas = broker.state_schemas.clone();
         let state_allowed = broker.state_allowed;
+        let input = representation(input, contribution.declaration.input_limit_bytes)?;
+        self.prepare_contribution(&contribution).await?;
         let result = super::flow::run(
             repo,
             &self.runtime,
@@ -3957,7 +4026,7 @@ impl ExtensionService {
             claim,
             &contribution.sha256,
             &contribution.local_id,
-            representation(input, contribution.declaration.input_limit_bytes)?,
+            input,
             context_json,
             serde_json::to_string(&parameters)?,
             broker,
@@ -4287,7 +4356,7 @@ impl ExtensionService {
             let rule_id: String = event.get(10);
             let parameters_json: String = event.get(11);
             let is_new_clip = event.get::<i64, _>(12) != 0;
-            let active = sqlx::query("SELECT i.relative_path FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
+            let active = sqlx::query("SELECT i.relative_path,i.source FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
                 .bind(&package_id).bind(&checksum).bind(&rule_id).bind(&activation_id)
                 .bind(application.as_ref().map(|app| &app.platform)).bind(application.as_ref().map(|app| &app.id)).bind(grant_revision)
                 .fetch_optional(&repo.pool).await?;
@@ -4379,6 +4448,14 @@ impl ExtensionService {
                                             reason = "input_too_large";
                                             break;
                                         };
+                                        if self
+                                            .prepare_package(&package, &active.get::<String, _>(1))
+                                            .await
+                                            .is_err()
+                                        {
+                                            reason = "prepare_failed";
+                                            break;
+                                        }
                                         let assessed = self
                                             .runtime
                                             .assess(
@@ -5302,6 +5379,286 @@ fn append_bounded_chunk(
 
 #[cfg(test)]
 mod tests {
+    async fn detection_fixture(
+        ids: &[&str],
+    ) -> (
+        tempfile::TempDir,
+        AppRoots,
+        HistoryRepository,
+        ExtensionService,
+        String,
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
+        let manifest: super::super::ExtensionManifest = serde_json::from_value(json!({
+            "schemaVersion":3, "contractRevision":3, "apiVersion":"^3.2",
+            "packageId":"example.startup", "version":"2.0.0", "displayName":"Startup fixture",
+            "contributions": ids.iter().map(|id| json!({"id":id, "kind":"detector", "displayName":id, "emitsFacetIds":["fixture"], "matchers":[{"mimeTypes":["text/plain"]}]})).collect::<Vec<_>>()
+        })).unwrap();
+        manifest.validate().unwrap();
+        let relative =
+            std::path::PathBuf::from(format!("packages/example.startup/2.0.0/{}", "a".repeat(64)));
+        let path = roots.extensions().join(&relative);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join("clipsx-extension.toml"),
+            toml::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            path.join("component.wasm"),
+            super::super::test_component::bytes(),
+        )
+        .unwrap();
+        let package = service.store.load(&relative).unwrap();
+        service
+            .persist_install(&repo, package, InstallSource::Developer, None)
+            .await
+            .unwrap();
+        let (clip_id, _) = repo
+            .capture(
+                crate::history::CapturedSnapshot {
+                    token: 1,
+                    source_app_name: None,
+                    source_app_id: None,
+                    format_observations: vec![],
+                    representations: ["text/plain", "text/html"]
+                        .into_iter()
+                        .map(|mime| CapturedRepresentation {
+                            format_key: mime.into(),
+                            canonical_mime_type: Some(mime.into()),
+                            native_type: None,
+                            platform: "windows".into(),
+                            capture_priority: 1,
+                            payload: CapturedPayload::Text("fixture".into()),
+                        })
+                        .collect(),
+                },
+                &crate::history::CaptureSettings::default(),
+            )
+            .await
+            .unwrap();
+        (temp, roots, repo, service, clip_id)
+    }
+
+    #[tokio::test]
+    async fn mixed_representations_settle_once_and_restart_does_not_execute_guests() {
+        let (_temp, roots, repo, service, _) = detection_fixture(&["detect", "unsupported"]).await;
+        assert_eq!(service.redetect_outdated(&repo).await.unwrap(), 4);
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        let statuses: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status,COUNT(*) FROM content_detection_jobs GROUP BY status ORDER BY status",
+        )
+        .fetch_all(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            statuses,
+            vec![("completed".into(), 1), ("unsupported".into(), 3)]
+        );
+        repo.pool.close().await;
+        let reopened = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let service = ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
+        assert_eq!(service.redetect_outdated(&reopened).await.unwrap(), 0);
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert!(service.runtime.component(&"a".repeat(64)).is_none());
+    }
+
+    #[tokio::test]
+    async fn detection_checks_each_version_and_preserves_explicit_force() {
+        let (_temp, _, repo, service, clip) = detection_fixture(&["detect"]).await;
+        assert_eq!(service.detect_clip(&repo, &clip).await.unwrap(), 2);
+        assert_eq!(service.detect_clip(&repo, &clip).await.unwrap(), 0);
+        assert_eq!(service.redetect_clip(&repo, &clip).await.unwrap(), 2);
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        let mut detectors = service
+            .contributions(&repo, ContributionKind::Detector)
+            .await
+            .unwrap();
+        detectors[0].version = "2.0.0".into();
+        assert_eq!(
+            service
+                .detect_representations(&repo, &clip, &detectors, false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn unsupported_inputs_clear_old_facets_without_preparing_wasm() {
+        let (_temp, _, repo, service, clip) = detection_fixture(&["detect"]).await;
+        let mut detector = service
+            .contributions(&repo, ContributionKind::Detector)
+            .await
+            .unwrap()
+            .remove(0);
+        detector.declaration.emits_facet_ids = vec!["fixture".into()];
+        let representation: String = sqlx::query_scalar("SELECT id FROM clip_representations WHERE clip_id=? AND canonical_mime_type='text/plain'").bind(&clip).fetch_one(&repo.pool).await.unwrap();
+        service
+            .persist_detection(
+                &repo,
+                &representation,
+                &detector,
+                vec![super::super::ExtensionFacet {
+                    id: "fixture".into(),
+                    payload_json: r#"{"schemaVersion":1}"#.into(),
+                }],
+                "completed",
+            )
+            .await
+            .unwrap();
+        detector.version = "2.0.0".into();
+        detector.declaration.input_limit_bytes = 1;
+        assert_eq!(
+            service
+                .detect_representations(&repo, &clip, &[detector], false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM content_clip_facets")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(service.runtime.component(&"a".repeat(64)).is_none());
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_recovery_only_calls_the_unfinished_detector_and_keeps_failures_retryable() {
+        let (_temp, _, repo, service, clip) = detection_fixture(&["detect", "trap"]).await;
+        assert_eq!(service.detect_clip(&repo, &clip).await.unwrap(), 3);
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
+        assert_eq!(service.redetect_outdated(&repo).await.unwrap(), 0);
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+        let failures: i64 = sqlx::query_scalar("SELECT consecutive_failures FROM extension_contribution_runtime_state WHERE contribution_id='example.startup/trap'").fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(failures, 2);
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM content_detection_jobs WHERE detector_id='example.startup/trap' AND status='unsupported'").fetch_one(&repo.pool).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn contribution_and_setup_discovery_does_not_prepare_components() {
+        let (_temp, _, repo, service, clip) = detection_fixture(&["detect"]).await;
+        let contributions = service
+            .contributions(&repo, ContributionKind::Detector)
+            .await
+            .unwrap();
+        assert_eq!(contributions.len(), 1);
+        assert!(service
+            .list_transform_setups(&repo)
+            .await
+            .unwrap()
+            .is_empty());
+        let detail = repo.detail(&clip).await.unwrap();
+        assert!(service
+            .renderer_views(&repo, &clip, &detail, &[])
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(service
+            .runtime
+            .component(&contributions[0].sha256)
+            .is_none());
+        assert_eq!(
+            service
+                .runtime
+                .detection_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_render_input_is_rejected_before_component_preparation() {
+        let (_temp, roots, repo, service, _) = detection_fixture(&["detect"]).await;
+        let relative =
+            std::path::PathBuf::from(format!("packages/example.startup/2.0.0/{}", "a".repeat(64)));
+        let mut manifest = service.store.load(&relative).unwrap().manifest;
+        let mut declaration = renderer(vec![ContributionMatcher {
+            mime_types: vec!["text/plain".into()],
+            ..Default::default()
+        }]);
+        declaration.input_limit_bytes = 1;
+        manifest.contributions.push(declaration);
+        manifest.validate().unwrap();
+        fs::write(
+            roots
+                .extensions()
+                .join(relative)
+                .join("clipsx-extension.toml"),
+            toml::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        let mut source = input();
+        source.canonical_mime_type = Some("text/plain".into());
+        let error = service
+            .render(&repo, "example.startup/color-card", source, None)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            crate::failure::OperationFailure::from_error(&error).code,
+            crate::failure::FailureCode::InputLimit
+        );
+        assert!(service.runtime.component(&"a".repeat(64)).is_none());
+    }
+
     fn telemetry_package() -> super::super::packages::ExtensionPackage {
         let manifest = serde_json::from_value(serde_json::json!({
             "schemaVersion": 3, "contractRevision": 3, "apiVersion": "^3.2",
@@ -5345,7 +5702,7 @@ mod tests {
             data: temp.path().join("data"),
             config: temp.path().join("config"),
         };
-        let service = ExtensionService::new(&roots).unwrap();
+        let service = ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
         let package = telemetry_package();
         let context =
             extension_telemetry(&package, &package.manifest.contributions[0], "developer");
@@ -5414,14 +5771,14 @@ mod tests {
         let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
             .await
             .unwrap();
-        let service = ExtensionService::new(&roots).unwrap();
+        let service = ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
         service.set_developer_mode(&repo, true).await.unwrap();
         service
             .install_local(&repo, Path::new(&archive))
             .await
             .unwrap();
         let mut items = service
-            .active_contributions(&repo, ContributionKind::Transformer)
+            .contributions(&repo, ContributionKind::Transformer)
             .await
             .unwrap();
         let item = items
@@ -5454,7 +5811,7 @@ mod tests {
         let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
             .await
             .unwrap();
-        let service = ExtensionService::new(&roots).unwrap();
+        let service = ExtensionService::new(&roots, &roots.data.join("extension-cache")).unwrap();
         service.set_developer_mode(&repo, true).await.unwrap();
         service
             .install_local(&repo, Path::new(&archive))

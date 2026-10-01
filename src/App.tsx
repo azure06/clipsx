@@ -1,5 +1,5 @@
 import { diagnostic } from './shared/diagnostics'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ErrorBoundary } from './shared/components/ErrorBoundary'
 import { ThemeProvider } from './shared/hooks/useTheme'
@@ -16,7 +16,7 @@ const applyAppLanguage = async (language: string) => {
   document.documentElement.lang = normalized
   document.documentElement.dir = i18n.dir(normalized)
 
-  await invoke('set_tray_labels', {
+  void invoke('set_tray_labels', {
     labels: {
       open: i18n.t('tray.open'),
       settings: i18n.t('tray.settings'),
@@ -41,58 +41,63 @@ const App = () => {
       .catch(error => setStartupError(String(error)))
   }, [])
 
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const appliedLanguage = useRef<string | null>(null)
+
   useEffect(() => {
-    if (!startupStatus) return
+    if (startupStatus?.state !== 'ready') return
     let cancelled = false
-
-    const bootstrap = async () => {
-      if (startupStatus.state !== 'ready') {
-        await applyAppLanguage('en')
-        if (!cancelled) setIsLanguageReady(true)
-        return
-      }
-      await loadSettings()
-      const loadedSettings = useSettingsStore.getState().settings
-
-      if (!loadedSettings) {
-        await applyAppLanguage('en')
-        if (!cancelled) setIsLanguageReady(true)
-        return
-      }
-
-      const detectedLanguages =
-        navigator.languages.length > 0
-          ? navigator.languages
-          : navigator.language
-            ? [navigator.language]
-            : []
-      const language = loadedSettings.language_initialized
-        ? normalizeLanguage(loadedSettings.language)
-        : detectSupportedLanguage(detectedLanguages)
-
-      if (loadedSettings.language !== language || loadedSettings.language_initialized !== true) {
-        await updateSettings({ language, language_initialized: true })
-      }
-
-      await applyAppLanguage(language)
-      if (!cancelled) setIsLanguageReady(true)
+    void loadSettings().then(() => {
+      if (!cancelled) setSettingsLoaded(true)
+    })
+    return () => {
+      cancelled = true
     }
+  }, [loadSettings, startupStatus?.state])
 
-    void bootstrap().catch(async () => {
+  useEffect(() => {
+    if (!startupStatus || (startupStatus.state === 'ready' && !settingsLoaded)) return
+    let cancelled = false
+    const detectedLanguages =
+      navigator.languages.length > 0
+        ? navigator.languages
+        : navigator.language
+          ? [navigator.language]
+          : []
+    const language =
+      startupStatus.state === 'ready' && settings
+        ? settings.language_initialized
+          ? normalizeLanguage(settings.language)
+          : detectSupportedLanguage(detectedLanguages)
+        : 'en'
+
+    const synchronizeLanguage = async () => {
+      if (appliedLanguage.current !== language) {
+        await applyAppLanguage(language)
+        if (cancelled) return
+        appliedLanguage.current = language
+      }
+      if (cancelled) return
+      setIsLanguageReady(true)
+      if (
+        startupStatus.state === 'ready' &&
+        settings &&
+        (settings.language !== language || !settings.language_initialized)
+      ) {
+        void updateSettings({ language, language_initialized: true }).catch(() => {
+          diagnostic('failed_to_initialize_application_language')
+        })
+      }
+    }
+    void synchronizeLanguage().catch(async () => {
       diagnostic('failed_to_initialize_application_language')
       await applyAppLanguage('en')
       if (!cancelled) setIsLanguageReady(true)
     })
-
     return () => {
       cancelled = true
     }
-  }, [loadSettings, startupStatus, updateSettings])
-
-  useEffect(() => {
-    if (!isLanguageReady || !settings?.language) return
-    void applyAppLanguage(settings.language)
-  }, [isLanguageReady, settings?.language])
+  }, [settings, settingsLoaded, startupStatus, updateSettings])
 
   if (startupError) {
     return (

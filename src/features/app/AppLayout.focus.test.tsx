@@ -97,6 +97,10 @@ vi.mock('../settings/Plugins', () => ({
   Plugins: () => <div data-testid="plugins-view" />,
 }))
 
+vi.mock('../intelligence/IntelligencePage', () => ({
+  IntelligencePage: () => <div data-testid="intelligence-view" />,
+}))
+
 vi.mock('./UpdateBanner', () => ({
   UpdateBanner: () => null,
 }))
@@ -343,6 +347,21 @@ describe('AppLayout search focus ownership', () => {
     expect(input).not.toHaveFocus()
 
     settingsField.remove()
+  })
+
+  it('opens lazily loaded Settings and Extensions without removing the app shell', async () => {
+    render(<AppLayout />)
+    expect(screen.getByTestId('clipboard-history')).toBeInTheDocument()
+    act(() => useUIStore.getState().setActiveView('settings'))
+    expect(await screen.findByTestId('settings-view')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar')).toBeInTheDocument()
+    act(() => useUIStore.getState().setActiveView('extensions'))
+    expect(await screen.findByTestId('plugins-view')).toBeInTheDocument()
+    act(() => useUIStore.setState({ activeView: 'intelligence' }))
+    expect(await screen.findByTestId('intelligence-view')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar')).toBeInTheDocument()
+    act(() => useUIStore.getState().setActiveView('clips'))
+    expect(screen.getByTestId('clipboard-history')).toBeInTheDocument()
   })
 
   it('does not install a duplicate clip invalidation controller in the layout', () => {
