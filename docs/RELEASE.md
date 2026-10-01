@@ -109,6 +109,9 @@ variables above. It also configures the Windows fingerprint when supplied as
 `WINDOWS_SIGNING_CERT_THUMBPRINT` in the process environment.
 
 The embedded updater public key and GitHub `latest.json` endpoint are retained.
+Only `VITE_*` variables are exposed to the frontend. Keep updater signing keys,
+their passwords and Apple credentials in GitHub Secrets; `TAURI_*` variables
+remain available to signing tools without entering the frontend environment.
 Finalization verifies signatures using the same Minisign decoding and verification
 as the installed updater. A wrong private key fails verification; do not replace
 the installed trust key to work around a failure.

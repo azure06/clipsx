@@ -44,5 +44,6 @@ export default defineConfig({
       },
     },
   },
-  envPrefix: ['VITE_', 'TAURI_'],
+  // Signing credentials use TAURI_* and must never enter the client environment.
+  envPrefix: 'VITE_',
 })
