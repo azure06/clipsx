@@ -1,60 +1,69 @@
 ---
 name: clipsx-release
-description: Prepare and operate ClipsX desktop release candidates, Windows signing, installed certification and merge-triggered publication. Excludes ordinary app fixes and extension-only publication.
+description: Build and operate ClipsX desktop release candidates, retry preparation from saved builds, sign Windows, certify installed artifacts and publish on merge. Excludes ordinary app fixes and extension publication.
 ---
 
 # ClipsX release workflow
 
 Read [release requirements](../../../docs/RELEASE.md) and
-[roadmap blockers](../../../docs/ROADMAP.md) before release work. Inspect the actual
-workflows and candidate artifacts; documentation and source checks do not prove
-installed certification.
+[roadmap blockers](../../../docs/ROADMAP.md). Inspect actual workflow runs and
+draft inventories; build success is not installed-platform certification.
 
-## Select the operation
+## Choose the operation
 
-- **Prepare:** align npm/Cargo/Tauri versions, write versioned release notes, then
-  push `release/<version>`. Preparation creates an unpublished candidate identified
-  by source revision/tree, workflow run and attempt.
-- **Windows signing:** use the documented `scripts/release/sign-windows.ps1` command
-  after the maintainer authenticates SimplySign. It signs and packages CI inputs,
-  uploads and requests finalization. Never sign only the outer installer or rebuild
-  its executable locally. Keep updater keys in CI.
-- **Finalize:** run Finalize release candidate on main for an exact candidate ID.
-  Require all platform assets and native verification evidence; signatures must
-  verify against the retained updater public key and final bytes.
-- **Certify:** collect the installed-platform and upgrade evidence required by the
-  release document. Run Certify candidate only after those checks actually pass.
-  The confirmation binds exact source and complete artifact inventory.
-- **Publish/retry:** merge the certified release PR. Publication promotes the
-  existing draft without rebuilding. For an operational failure, rerun Publish
-  certified release with the merged PR number. Do not replace conflicting tags
-  or regenerate certified artifacts.
-- **Initial setup:** follow release documentation for Apple/Windows credentials,
-  public production variables, website deployment and readiness-rule activation.
-  Enable the rule only after the workflow exists on main.
+- **Build:** align npm/Cargo/Tauri versions and release notes. Run shared app
+  preflight locally on changed app/build inputs before pushing `release/<version>`.
+  Release builds perform frontend checks/build once and native tests/optimized
+  compilation once per platform. Record the successful build ID.
+- **Prepare/retry:** execute **Prepare release candidate** from deployed trusted
+  `main` with explicit `build_run_id`. Enter `candidate_id` to resume;
+  `target=missing` preserves successes. Select a platform explicitly to replace it
+  before finalization. Corrected packaging scripts can consume older saved builds:
+  never restart application compilation/tests just to retry signing/notarization.
+  Summaries print exact IDs and next actions. `pr_number` selects the candidate;
+  automatic preparation must preserve an existing PR selection.
+- **Saved 0.1.0 rollout:** use build `36969301315`, candidate
+  `0.1.0-36969301315-1`, `target=missing`, PR `27`. The documented narrow adapter
+  verifies original artifacts/evidence, records schema migration and preserves
+  Mac/Linux bytes. Infrastructure validation must not publish or create a
+  production tag.
+- **Windows:** authenticate SimplySign and GitHub CLI, then use the documented
+  helper with **CandidateId**, not an execution-attempt guess. It packages/signs
+  the saved executable, installer and uninstaller, verifies original image identity,
+  uploads and dispatches finalization. Keep updater private keys exclusively in CI.
+- **Finalize:** dispatch **Finalize release candidate** on main for the exact ID.
+  Require every advertised platform and native evidence. Verify final signatures
+  against the retained public key. Completed retries verify existing finalized
+  files; never regenerate certified bytes.
+- **Certify:** collect real Windows, both Mac, AppImage/deb installed and private
+  upgrade-fixture evidence. Dispatch **Certify candidate** with exact ID, release
+  PR, evidence URL and explicit confirmation only after all checks pass.
+- **Publish/retry:** merge the certified release PR. Publication verifies merged
+  app inputs and publishes existing certified files. Retry **Publish certified
+  release** with merged PR number; reuse files and reject conflicting tags.
+- **Infrastructure:** change tooling through an infrastructure-only PR, run focused
+  release/workflow/PowerShell/verifier/skill checks, then deploy to main before
+  dispatch. Prove aggregate CI before replacing obsolete required check names;
+  retain readiness and unrelated protections.
 
-## Invariants
+## Identity and boundaries
 
-A source push or newer build supersedes old candidates. Changed bytes invalidate
-certification. Candidate ID, commit/tree, run/attempt, package hashes, signing
-evidence and installed evidence are the release identity. Record demonstrated
-results, pending checks and blockers; never infer certification from a source
-review, local compile, CI package inspection or a checked checkbox.
+Newer builds do not invalidate selected candidates. Compare the central app-input
+inventory with release source; docs/signing tooling may differ. Public production
+variable changes require a new build. Record build source and release-tooling
+revisions separately; immutable artifact IDs/attempt provenance are evidence,
+not a mechanism for choosing a release. Reject mixed/expired/tampered inputs.
 
-Retain the embedded Tauri updater public key and endpoint. Production manifests
-route by platform, architecture and installer format. No private fixture updater
-configuration belongs in production. Verify the public endpoint after publication.
+Finalized/certified candidates are immutable. Certification binds the selected
+PR, notes, build provenance and complete inventory. App-source mismatches block
+readiness/publication; orchestration failures must fail visibly. Never infer
+installed success from CI inspection or a checkbox without evidence.
 
-Keep detailed commands, credential requirements, recovery and certification
-checklists in [RELEASE.md](../../../docs/RELEASE.md), not duplicated here.
-Use the pipeline's existing commands; do not invent an alternate release process.
+Retain updater key/endpoint and public downloads schema 1. Loopback-only fixture
+configuration must not enter production artifacts. Verify public discovery and
+installation after publication when an older public build exists.
 
-Extension archives and registry publication remain separate. Route them to the
-[extension release skill](https://github.com/azure06/clipsx-extensions/blob/main/.agents/skills/clipsx-extension-release/SKILL.md)
-and [registry publication skill](https://github.com/azure06/clipsx-registry/blob/main/.agents/skills/clipsx-registry-publication/SKILL.md).
-Desktop certification follows their published immutable packages and signed
-catalog.
-
-Before an external mutation, use authorization already present in the task.
-Loading this skill does not itself authorize publication. Avoid adding approval
-steps when the user has already authorized the relevant action.
+Keep commands, credentials, recovery and installed checklists in
+[RELEASE.md](../../../docs/RELEASE.md). Website metadata and extension/registry
+publication remain separate. Use existing task authorization for external
+actions; this skill does not independently authorize publication.

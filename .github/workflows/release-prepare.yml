@@ -1,0 +1,225 @@
+name: Prepare release candidate
+run-name: Prepare build ${{ inputs.build_run_id || github.event.workflow_run.id }}
+on:
+  workflow_run:
+    workflows: [Build release app]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful build run ID (36969301315 for the saved 0.1.0 build)
+        required: true
+        type: string
+      candidate_id:
+        description: Existing unfinalized candidate to resume; empty creates a candidate
+        type: string
+      target:
+        description: Preserve completed outputs by default; select a platform explicitly to replace it
+        type: choice
+        default: missing
+        options: [missing, all, macos-arm64, macos-x64, linux-x64, windows-x64]
+      pr_number:
+        description: Optional release PR to select this candidate explicitly
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ${{ inputs.candidate_id && format('candidate-{0}', inputs.candidate_id) || format('prepare-build-{0}', inputs.build_run_id || github.event.workflow_run.id) }}
+  cancel-in-progress: false
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
+  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      pull-requests: write
+      statuses: write
+    outputs:
+      candidate-id: ${{ steps.select.outputs.candidate-id }}
+      matrix: ${{ steps.select.outputs.matrix }}
+      work: ${{ steps.select.outputs.work }}
+      tooling: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Select verified build and preserve completed packages
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          TARGET: ${{ inputs.target || 'missing' }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: node scripts/release/pipeline.mjs prepare "$BUILD_ID" "$CANDIDATE_ID" "$TARGET" "$PR_NUMBER"
+  package:
+    needs: select
+    if: needs.select.outputs.work == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # Draft downloads require push access. Execute only the pinned trusted recipe.
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_ID: ${{ needs.select.outputs.candidate-id }}
+      PLATFORM: ${{ matrix.platform }}
+      TARGET: ${{ matrix.target }}
+      BUNDLES: ${{ matrix.bundles }}
+      RELEASE_TRUSTED_CONFIG: .tooling/src-tauri/tauri.conf.json
+      RELEASE_TOOLING_REVISION: ${{ needs.select.outputs.tooling }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.tooling }}
+          fetch-depth: 0
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Fetch build source as data, without executing its hooks
+        shell: bash
+        run: |
+          mkdir -p .release
+          node .tooling/scripts/release/pipeline.mjs package-source "$CANDIDATE_ID"
+      - name: Restore verified frontend and compiled executable
+        shell: bash
+        run: node .tooling/scripts/release/pipeline.mjs restore "$CANDIDATE_ID" "$PLATFORM"
+      - name: Install pinned bundler without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-0 libappindicator3-1 librsvg2-2 patchelf libxdo3
+      - name: Configure Developer ID and notarization
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_API_PRIVATE_KEY" "$APPLE_API_KEY" "$APPLE_API_ISSUER"; do test -n "$value"; done
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          keychain="$RUNNER_TEMP/clipsx-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/notarization.p8"
+          chmod 600 "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notarization.p8"
+          security create-keychain -p "$password" "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notarization.p8" >> "$GITHUB_ENV"
+      - name: Package without compilation
+        if: runner.os != 'Windows'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: node node_modules/@tauri-apps/cli/tauri.js bundle --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config .release/bundle.conf.json
+      - name: Verify native packages
+        if: runner.os != 'Windows'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/$TARGET/release/bundle"
+          exec > >(tee .release/native-verification.log) 2>&1
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            codesign --verify --deep --strict "$bundle/macos/ClipsX.app"
+            details="$(codesign --display --verbose=2 "$bundle/macos/ClipsX.app" 2>&1)"
+            printf '%s\n' "$details"
+            [[ "$details" == *runtime* ]]
+            spctl --assess --verbose=4 --type execute "$bundle/macos/ClipsX.app"
+            xcrun stapler validate "$bundle/macos/ClipsX.app"
+            for dmg in "$bundle"/dmg/*.dmg; do
+              codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
+              xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --timeout 20m
+              xcrun stapler staple "$dmg"
+              xcrun stapler validate "$dmg"
+              codesign --verify --strict "$dmg"
+              spctl --assess --verbose=4 --type open --context context:primary-signature "$dmg"
+            done
+            tar -czf "$bundle/macos/ClipsX.app.tar.gz" -C "$bundle/macos" ClipsX.app
+          else
+            for deb in "$bundle"/deb/*.deb; do dpkg-deb --info "$deb"; dpkg-deb --contents "$deb"; done
+            for image in "$bundle"/appimage/*.AppImage; do test -x "$image"; done
+          fi
+          node .tooling/scripts/release/native-evidence.mjs "$PLATFORM"
+          node .tooling/scripts/release/pipeline.mjs collect "$PLATFORM" "$bundle"
+      - name: Export Windows local signing kit
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node .tooling/scripts/release/pipeline.mjs windows-kit
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Windows'
+        with:
+          name: prepared-${{ needs.select.outputs.candidate-id }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: .release/${{ matrix.platform }}/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: windows-kit-${{ needs.select.outputs.candidate-id }}-${{ github.run_attempt }}
+          path: .release/windows-kit/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remove Apple credentials
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/clipsx-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notarization.p8"
+  stage:
+    needs: [select, package]
+    if: always() && needs.select.result == 'success' && needs.select.outputs.work == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.tooling }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Retain successful outputs, including when another platform failed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ needs.select.outputs.candidate-id }}
+        run: node scripts/release/pipeline.mjs stage-prepared "$CANDIDATE_ID"
+      - name: Report preparation failure
+        env:
+          RESULT: ${{ needs.package.result }}
+        run: test "$RESULT" = success

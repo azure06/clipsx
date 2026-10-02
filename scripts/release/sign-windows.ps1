@@ -1,8 +1,8 @@
 param(
-    [Parameter(Mandatory)][ValidatePattern('^\d+$')][string]$RunId,
+    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-\d+-\d+$')][string]$CandidateId,
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{40}$')][string]$CertificateThumbprint,
     [string]$SignToolPath,
-    [string]$WorkingDirectory = (Join-Path $env:TEMP "clipsx-sign-$RunId")
+    [string]$WorkingDirectory = (Join-Path $env:TEMP "clipsx-sign-$CandidateId")
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'Run this helper on Windows.' }
@@ -32,7 +32,7 @@ $previousWork = $env:RELEASE_WORKDIR
 try {
     $env:RELEASE_WORKDIR = $work
     Push-Location $root
-    try { & node $pipeline prepare-windows $RunId; if ($LASTEXITCODE -ne 0) { throw 'Candidate retrieval failed.' } } finally { Pop-Location }
+    try { & node $pipeline prepare-windows $CandidateId; if ($LASTEXITCODE -ne 0) { throw 'Candidate retrieval failed.' } } finally { Pop-Location }
     $candidate = Get-Content -LiteralPath (Join-Path $work 'signing-candidate.json') -Raw | ConvertFrom-Json
     $kit = Join-Path $work 'windows-kit'
     $source = Join-Path $work 'source'
@@ -40,7 +40,6 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $source 'dist') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $kit 'clipsx.exe') -Destination (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx.exe')
-    Copy-Item -LiteralPath (Join-Path $kit 'clipsx-extension-tool.exe') -Destination (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx-extension-tool.exe')
     Copy-Item -LiteralPath (Join-Path $kit 'tauri.auth.csp.conf.json') -Destination (Join-Path $source 'src-tauri/tauri.auth.csp.conf.json')
     & tar -xzf (Join-Path $kit 'frontend.tar.gz') -C (Join-Path $source 'dist')
     if ($LASTEXITCODE -ne 0) { throw 'Frontend extraction failed.' }

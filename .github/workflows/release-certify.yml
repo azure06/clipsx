@@ -7,6 +7,10 @@ on:
         description: Exact finalized candidate ID
         required: true
         type: string
+      pr_number:
+        description: Release PR to certify (27 for 0.1.0)
+        required: true
+        type: string
       evidence:
         description: HTTPS reference to installed-platform and upgrade evidence
         required: true
@@ -16,6 +20,11 @@ on:
         required: true
         default: false
         type: boolean
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
+  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: write
   actions: read
@@ -31,24 +40,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-      - name: Build updater signature verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
-          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - uses: ./.github/actions/release-verifier
+
       - name: Record immutable certification and release readiness
         # Verification runs against final distributed bytes before recording approval.
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           CERTIFICATION_EVIDENCE: ${{ inputs.evidence }}
+          RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
           CERTIFY_ALL_PLATFORMS: ${{ inputs.all_platforms_passed }}
-        run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID"
+        run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"

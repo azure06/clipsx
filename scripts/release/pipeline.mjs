@@ -11,14 +11,33 @@ import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { validateProductionEnvironment } from '../production-env.mjs'
+import { checkFrontend } from './frontend.mjs'
+import {
+  appInputs,
+  inputsDigest,
+  assertAppInputs,
+  publicEnvironment,
+  assertPublicEnvironment,
+} from './inputs.mjs'
+import {
+  platforms as buildPlatforms,
+  legacyRun,
+  legacySource,
+  loadBuild,
+  restorePlatform,
+  verifyExecutable,
+  artifactRecord,
+  validateBuildDescriptor,
+  preparationTargets,
+} from './builds.mjs'
 import {
   assert,
   assertCertified,
-  assertCurrent,
   assertIdentity,
-  assertMerged,
+  assertBuildRun,
+  assertMutable,
+  selectedCandidate,
   assertManifests,
-  assertLatestRun,
   assetName,
   createManifests,
   digest,
@@ -33,7 +52,10 @@ import {
 } from './model.mjs'
 import {
   command,
-  currentRun,
+  expandZip,
+  source,
+  workflowArtifacts,
+  downloadArtifact,
   downloadAsset,
   findCandidate,
   loadCandidate,
@@ -98,7 +120,7 @@ function initialize() {
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT
   const id = `${version}-${runId}-${runAttempt}`
   const candidate = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id,
     version,
     branch,
@@ -109,6 +131,11 @@ function initialize() {
     stagingTag: `candidate-${id}`,
     createdAt: new Date().toISOString(),
     build: {
+      origin: { runId, attempt: runAttempt, sourceRevision: git(['rev-parse', 'HEAD']), branch },
+      appInputs: appInputs(),
+      appInputsSha256: inputsDigest(appInputs()),
+      publicEnvironment: publicEnvironment(),
+      recipeRevision: process.env.RELEASE_RECIPE_REVISION || git(['rev-parse', 'HEAD']),
       production: true,
       configuration: Object.fromEntries(
         [
@@ -134,6 +161,7 @@ function initialize() {
 }
 
 function collect(platform, bundleDir) {
+  checkedFrontend()
   const candidate = readJson(join(directory, 'candidate.json'))
   const destination = join(directory, platform)
   mkdirSync(destination, { recursive: true })
@@ -175,7 +203,9 @@ function collect(platform, bundleDir) {
 }
 
 function windowsKit() {
+  const frontend = checkedFrontend()
   const candidate = readJson(join(directory, 'candidate.json'))
+  candidate.build.frontend = frontend
   const kit = join(directory, 'windows-kit')
   mkdirSync(kit, { recursive: true })
   command('git', [
@@ -189,34 +219,18 @@ function windowsKit() {
     'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx.exe',
     join(kit, 'clipsx.exe')
   )
-  copyFileSync(
-    'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx-extension-tool.exe',
-    join(kit, 'clipsx-extension-tool.exe')
-  )
   copyFileSync('src-tauri/tauri.auth.csp.conf.json', join(kit, 'tauri.auth.csp.conf.json'))
   // Bundling resolves frontendDist even though the frontend is embedded in the executable.
   command('tar', ['-czf', resolve(kit, 'frontend.tar.gz'), '-C', 'dist', '.'])
-  const exe = readFileSync(join(kit, 'clipsx.exe'))
-  candidate.windowsImage = { size: exe.length, sha256: imageDigest(exe) }
   candidate.windowsImages = Object.fromEntries(
-    ['clipsx.exe', 'clipsx-extension-tool.exe'].map(file => {
+    ['clipsx.exe'].map(file => {
       const bytes = readFileSync(join(kit, file))
       return [file, { size: bytes.length, sha256: imageDigest(bytes) }]
     })
   )
-  candidate.build.publicEnvironment = Object.fromEntries(
-    [
-      'VITE_SUPABASE_URL',
-      'VITE_SUPABASE_PUBLISHABLE_KEY',
-      'VITE_NEXT_PUBLIC_SITE_URL',
-      'VITE_SENTRY_DSN',
-      'VITE_SENTRY_RELEASE',
-    ].map(name => [name, process.env[name] || ''])
-  )
   candidate.windowsKit = [
     'source.zip',
     'clipsx.exe',
-    'clipsx-extension-tool.exe',
     'tauri.auth.csp.conf.json',
     'frontend.tar.gz',
   ].map(file => record(join(kit, file)))
@@ -224,112 +238,359 @@ function windowsKit() {
   writeFileSync(join(directory, 'candidate.json'), encode(candidate))
 }
 
-function stage() {
-  const candidates = filesUnder(directory)
-    .filter(path => basename(path) === 'candidate.json')
-    .map(readJson)
-  const candidate = candidates.find(item => item.windowsKit)
-  assert(candidate, 'Missing Windows packaging kit identity')
-  assertCurrent(candidate, repoApi(`branches/${encodeURIComponent(candidate.branch)}`).commit.sha, {
-    id: candidate.runId,
-    run_attempt: candidate.runAttempt,
-    head_sha: candidate.sourceRevision,
-    conclusion: 'success',
+function checkedFrontend() {
+  const candidate = readJson(join(directory, 'candidate.json'))
+  return checkFrontend(process.cwd(), true, {
+    GITHUB_RUN_ID: candidate.build.origin.runId,
+    BUILD_RUN_ATTEMPT: candidate.build.origin.attempt,
   })
-  const platforms = filesUnder(directory)
-    .filter(path => /^platform-/.test(basename(path)))
-    .map(readJson)
-  assert(
-    platforms.length === 3 &&
-      ['macos-arm64', 'macos-x64', 'linux-x64'].every(name =>
-        filesUnder(directory).some(path => basename(path) === `platform-${name}.json`)
-      ),
-    'Incomplete CI platform inventory'
-  )
-  for (const platform of platforms) {
-    assert(platform.candidateId === candidate.id, 'Mixed candidate outputs')
-    candidate.artifacts.push(...platform.artifacts)
-    candidate.evidence.push(platform.evidence)
-  }
-  const release = repoApi('releases', 'POST', {
-    tag_name: candidate.stagingTag,
-    target_commitish: candidate.sourceRevision,
-    name: `Candidate ${candidate.id}`,
-    body: `Unpublished candidate ${candidate.id}. Windows signing and installed certification are pending.`,
-    draft: true,
-    prerelease: true,
-  })
-  const assetPaths = filesUnder(directory).filter(
-    path =>
-      candidate.artifacts.some(item => item.file === basename(path)) ||
-      candidate.evidence.some(item => item.file === basename(path))
-  )
-  upload(release, assetPaths)
-  writeAsset(release, 'candidate.json', candidate, directory)
-  writeAsset(
-    release,
-    'release-notes.md',
-    readFileSync(`docs/releases/${candidate.version}.md`, 'utf8'),
-    directory
-  )
-  output('candidate-id', candidate.id)
-  console.log(
-    `Candidate ${candidate.id} staged. Run scripts/release/sign-windows.ps1 -RunId ${candidate.runId} -CertificateThumbprint <thumbprint>.`
-  )
 }
 
+function summarize(text) {
+  console.log(text)
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${text}\n`)
+}
+function assertOrigin(candidate) {
+  assertIdentity(candidate)
+  assertAppInputs(candidate, source(candidate.sourceRevision))
+  assertBuildRun(
+    repoApi(
+      `actions/runs/${candidate.build.origin.runId}/attempts/${candidate.build.origin.attempt}`
+    ),
+    candidate.build.origin
+  )
+  assert(
+    inputsDigest(candidate.build.appInputs) === candidate.build.appInputsSha256,
+    'App inventory changed'
+  )
+  assert(
+    candidate.build.updaterPublicKey ===
+      readJson(process.env.RELEASE_TRUSTED_CONFIG || 'src-tauri/tauri.conf.json').plugins.updater
+        .pubkey,
+    'Updater public key differs from trusted configuration'
+  )
+}
 function fresh(id) {
   const release = findCandidate(id)
   const { candidate, bytes } = loadCandidate(release, directory)
-  const current = currentRun(candidate)
-  assertCurrent(candidate, current.sha, current.run)
-  assert(
-    candidate.build.updaterPublicKey ===
-      readJson('src-tauri/tauri.conf.json').plugins.updater.pubkey,
-    'Updater public key differs from trusted configuration'
-  )
+  assertOrigin(candidate)
   return { release, candidate, bytes }
 }
-
-function prepareWindows(runId) {
-  assert(/^\d+$/.test(runId), 'Invalid run ID')
-  const run = repoApi(`actions/runs/${runId}`)
+function selectForPr(candidate, release, prNumber) {
+  const pulls = prNumber
+    ? [repoApi(`pulls/${prNumber}`)]
+    : repoApi(
+        `pulls?state=open&base=main&head=${encodeURIComponent(`azure06:${candidate.branch}`)}`
+      )
+  for (const pr of pulls) {
+    assert(
+      pr.base.ref === 'main' &&
+        pr.head.ref === candidate.branch &&
+        pr.head.repo.full_name === repository,
+      'Wrong release PR'
+    )
+    // Automatic preparation does not replace a maintainer's existing selection.
+    if (!prNumber && selectedCandidate(pr.body)) continue
+    const body = (pr.body || '').replace(/\n?<!-- clipsx-release-candidate: [^\n]* -->/g, '')
+    repoApi(`pulls/${pr.number}`, 'PATCH', {
+      body: `${body}\n<!-- clipsx-release-candidate: ${candidate.id} -->`,
+    })
+    status(pr.head.sha, 'pending', `Awaiting Windows signing: ${candidate.id}`, release.html_url)
+  }
+}
+function migrateLegacy(dryRun = false) {
+  const release = findCandidate(`0.1.0-${legacyRun}-1`)
+  const { candidate } = loadCandidate(release, directory)
+  if (candidate.schemaVersion === 2) {
+    assertOrigin(candidate)
+    return { release, candidate }
+  }
+  assert(
+    candidate.schemaVersion === 1 &&
+      candidate.sourceRevision === legacySource &&
+      candidate.runId === legacyRun &&
+      String(candidate.runAttempt) === '1',
+    'Only the verified 0.1.0 build can be migrated'
+  )
+  assertMutable(candidate, release)
+  const origin = {
+    runId: legacyRun,
+    attempt: '1',
+    sourceRevision: legacySource,
+    branch: 'release/0.1.0',
+  }
+  assertBuildRun(repoApi(`actions/runs/${legacyRun}/attempts/1`), origin)
+  source(legacySource)
+  const artifacts = workflowArtifacts(legacyRun)
+  const frontend = artifacts.find(item => item.name === 'frontend-1')
+  const frontendPath = join(directory, 'legacy-frontend')
+  downloadArtifact(frontend, frontendPath)
+  const manifest = readJson(join(frontendPath, 'frontend.json'))
+  assert(
+    manifest.sourceRevision === legacySource &&
+      manifest.runId === legacyRun &&
+      manifest.runAttempt === '1',
+    'Legacy frontend identity mismatch'
+  )
+  candidate.schemaVersion = 2
+  candidate.build.origin = origin
+  candidate.build.frontendArtifact = artifactRecord(frontend)
+  candidate.build.frontend = manifest
+  candidate.build.appInputs = appInputs(legacySource)
+  candidate.build.appInputsSha256 = inputsDigest(candidate.build.appInputs)
+  candidate.build.publicEnvironment = publicEnvironment(candidate.build.publicEnvironment)
+  candidate.build.platforms = {}
+  for (const platform of Object.keys(buildPlatforms)) {
+    const artifact = artifacts.find(item => item.name === `compiled-${platform}-1`)
+    const path = join(directory, 'legacy', platform)
+    downloadArtifact(artifact, path)
+    command('tar', ['-xzf', resolve(path, 'compiled.tar.gz')])
+    const checkpoint = readJson('.release/compiled.json')
+    const binary = `src-tauri/target/${buildPlatforms[platform].target}/release/clipsx${platform === 'windows-x64' ? '.exe' : ''}`
+    verifyExecutable(
+      readFileSync(binary),
+      checkpoint,
+      candidate,
+      platform,
+      readFileSync(join(frontendPath, 'frontend.json'))
+    )
+    candidate.build.platforms[platform] = { ...checkpoint, artifact: artifactRecord(artifact) }
+  }
+  const kit = artifacts.find(item => item.name === 'windows-signing-inputs-1')
+  const kitPath = join(directory, 'legacy-kit')
+  downloadArtifact(kit, kitPath)
+  for (const file of candidate.windowsKit)
+    assert(
+      digest(readFileSync(join(kitPath, file.file))) === file.sha256,
+      'Legacy Windows kit changed'
+    )
+  candidate.windowsKitArtifact = artifactRecord(kit)
+  delete candidate.windowsImage
+  verifiedFiles(release, candidate)
+  candidate.preparation = Object.fromEntries(
+    ['macos-arm64', 'macos-x64', 'linux-x64'].map(platform => {
+      const name = `native-evidence-${platform}.json`
+      const evidence = JSON.parse(downloadAsset(release, name, directory))
+      assert(
+        evidence.candidateId === candidate.id &&
+          evidence.sourceRevision === legacySource &&
+          evidence.verified === true &&
+          evidence.runId === legacyRun,
+        'Legacy signing evidence mismatch'
+      )
+      return [
+        platform,
+        { toolingRevision: legacySource, runId: legacyRun, runAttempt: '1', evidence: name },
+      ]
+    })
+  )
+  candidate.migration = {
+    originalDescriptorSha256: digest(downloadAsset(release, 'candidate.json', directory)),
+    toolingRevision: git(['rev-parse', 'HEAD']),
+    at: new Date().toISOString(),
+  }
+  candidate.releaseNotesSha256 = digest(downloadAsset(release, 'release-notes.md', directory))
+  validateBuildDescriptor(candidate, repoApi(`actions/runs/${legacyRun}/attempts/1`), artifacts)
+  if (dryRun) writeFileSync(join(directory, 'migrated-candidate.json'), encode(candidate))
+  else writeAsset(release, 'candidate.json', candidate, directory)
+  summarize(
+    `Imported candidate ${candidate.id}. Existing Mac/Linux assets preserved. **Zero app/frontend builds.**\nNext: Windows signing.`
+  )
+  return { release, candidate }
+}
+function prepare(runId, id, target = 'missing', prNumber) {
+  if (
+    process.env.GITHUB_EVENT_NAME === 'workflow_run' &&
+    !workflowArtifacts(runId).some(item => /^build-ready-\d+$/.test(item.name))
+  ) {
+    output('work', 'false')
+    output('matrix', JSON.stringify({ include: [] }))
+    summarize(
+      'Documentation/tooling push: no application build was requested; preparation skipped.'
+    )
+    return
+  }
+  assert(
+    ['missing', 'all', ...Object.keys(buildPlatforms)].includes(target),
+    'Unknown preparation target'
+  )
+  let release, candidate
+  if (String(runId) === legacyRun && (!id || id === `0.1.0-${legacyRun}-1`))
+    ({ release, candidate } = migrateLegacy())
+  else if (id) ({ release, candidate } = fresh(id))
+  else {
+    candidate = loadBuild(runId, join(directory, 'build'))
+    candidate.runId = process.env.GITHUB_RUN_ID
+    candidate.runAttempt = process.env.GITHUB_RUN_ATTEMPT
+    candidate.id = `${candidate.version}-${candidate.runId}-${candidate.runAttempt}`
+    candidate.stagingTag = `candidate-${candidate.id}`
+    candidate.createdAt = new Date().toISOString()
+    candidate.preparation = {}
+    source(candidate.sourceRevision)
+    candidate.releaseNotesSha256 = digest(
+      command('git', ['show', `${candidate.sourceRevision}:docs/releases/${candidate.version}.md`])
+    )
+    assertIdentity(candidate)
+    release = repoApi('releases', 'POST', {
+      tag_name: candidate.stagingTag,
+      target_commitish: git(['rev-parse', 'HEAD']),
+      name: `Candidate ${candidate.id}`,
+      body: `Build ${runId}; awaiting packaging and Windows signing.`,
+      draft: true,
+      prerelease: true,
+    })
+    writeAsset(
+      release,
+      'release-notes.md',
+      command('git', ['show', `${candidate.sourceRevision}:docs/releases/${candidate.version}.md`]),
+      directory
+    )
+    writeAsset(release, 'candidate.json', candidate, directory)
+  }
+  assert(
+    String(runId) === String(candidate.build.origin.runId),
+    'Candidate belongs to another build'
+  )
+  assertMutable(candidate, release)
+  assertPublicEnvironment(candidate)
+  loadBuild(runId, join(directory, 'build'), candidate)
+  const matrix = preparationTargets(candidate, target)
+  writeFileSync(join(directory, 'candidate.json'), encode(candidate))
+  output('candidate-id', candidate.id)
+  output('matrix', JSON.stringify({ include: matrix }))
+  output('work', String(matrix.length > 0))
+  selectForPr(candidate, release, prNumber)
+  summarize(
+    `## Candidate ${candidate.id}\nBuild: ${runId}\nApp source: ${candidate.sourceRevision}\nTargets to prepare: ${matrix.map(item => item.platform).join(', ') || 'none — saved outputs reused'}\nWindows: ${release.assets.some(item => item.name === 'windows-submission.json') ? 'uploaded' : 'awaiting local signing'}\n`
+  )
+}
+function restore(id, platform) {
+  const { candidate } = fresh(id)
+  loadBuild(candidate.build.origin.runId, join(directory, 'build'), candidate)
+  writeFileSync(join(directory, 'candidate.json'), encode(candidate))
+  const frontendDir = join(directory, 'frontend')
+  downloadArtifact(candidate.build.frontendArtifact, frontendDir)
+  copyFileSync(join(frontendDir, 'frontend.json'), '.release/frontend.json')
+  command('tar', ['-xzf', resolve(frontendDir, 'frontend.tar.gz')])
+  checkedFrontend()
+  restorePlatform(candidate, platform, join(directory, 'executable'))
+}
+function stagePlatform(id, platform) {
+  const { release, candidate } = fresh(id)
+  assertMutable(candidate, release)
+  const local = readJson(join(directory, platform, `platform-${platform}.json`))
+  assert(local.candidateId === id, 'Mixed candidate platform output')
+  for (const item of [...local.artifacts, local.evidence])
+    assert(
+      digest(readFileSync(join(directory, platform, item.file))) === item.sha256,
+      'Platform output changed'
+    )
+  const names = new Set([...local.artifacts, local.evidence].map(item => item.file))
+  candidate.artifacts = candidate.artifacts.filter(item => !names.has(item.file))
+  candidate.evidence = candidate.evidence.filter(item => !names.has(item.file))
+  candidate.artifacts.push(...local.artifacts)
+  candidate.evidence.push(local.evidence)
+  candidate.preparation ||= {}
+  candidate.preparation[platform] = {
+    toolingRevision: process.env.RELEASE_TOOLING_REVISION || git(['rev-parse', 'HEAD']),
+    runId: process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+    evidence: local.evidence.file,
+  }
+  upload(
+    release,
+    [...names].map(name => join(directory, platform, name))
+  )
+  writeAsset(release, 'candidate.json', candidate, directory)
+}
+function packageSource(id) {
+  const { candidate } = fresh(id)
+  assertMutable(candidate, findCandidate(id))
+  command('git', ['init'])
+  command('git', ['remote', 'add', 'origin', `https://github.com/${repository}.git`])
+  source(candidate.sourceRevision)
+  const paths = command('git', ['ls-tree', '-r', '--name-only', candidate.sourceRevision]).split(
+    '\n'
+  )
+  assert(
+    !paths.some(path => /^(\.tooling|\.release|\.git)(\/|$)/i.test(path)),
+    'Build source overlaps trusted tooling or release workspace'
+  )
+  // The separate trusted checkout and release workspace cannot be overwritten by build source.
+  const zip = join(directory, 'source.zip')
+  command('git', ['archive', '--format=zip', '--output', zip, candidate.sourceRevision])
+  expandZip(zip, process.cwd())
+  command('git', ['read-tree', candidate.sourceRevision])
+  command('git', ['update-ref', 'HEAD', candidate.sourceRevision])
+  writeFileSync(join(directory, 'candidate.json'), encode(candidate))
+  writeFileSync(
+    join(directory, 'bundle.conf.json'),
+    encode({
+      build: { beforeBuildCommand: null, beforeBundleCommand: null },
+      bundle: { createUpdaterArtifacts: false },
+    })
+  )
+}
+function stagePrepared(id) {
+  const artifacts = workflowArtifacts(process.env.GITHUB_RUN_ID)
+  for (const platform of Object.keys(buildPlatforms)) {
+    const prefix = platform === 'windows-x64' ? `windows-kit-${id}-` : `prepared-${id}-${platform}-`
+    const artifact = artifacts
+      .filter(item => item.name.startsWith(prefix))
+      .sort((a, b) => b.id - a.id)[0]
+    if (!artifact) continue
+    const path =
+      platform === 'windows-x64' ? join(directory, 'windows-kit') : join(directory, platform)
+    downloadArtifact(artifact, path)
+    if (platform === 'windows-x64') stageWindows(id)
+    else stagePlatform(id, platform)
+  }
+  summarize(
+    `Candidate ${id}: successful outputs saved. Next: local Windows signing, then finalization and installed tests.`
+  )
+}
+function prepareWindows(id) {
+  const { release, candidate } = fresh(id)
+  assertMutable(candidate, release)
   const artifactPath = join(directory, 'windows-kit')
-  command('gh', [
-    'run',
-    'download',
-    runId,
-    '--repo',
-    repository,
-    '--name',
-    `windows-signing-inputs-${run.run_attempt}`,
-    '--dir',
-    artifactPath,
-  ])
-  const candidate = readJson(join(artifactPath, 'candidate.json'))
-  const { release } = fresh(candidate.id)
+  assert(candidate.windowsKitArtifact, 'Windows signing kit is not ready')
+  const actual = workflowArtifacts(
+    candidate.windowsKitArtifact?.runId || candidate.build.origin.runId
+  ).find(item => item.id === candidate.windowsKitArtifact?.id)
+  assert(
+    actual &&
+      !actual.expired &&
+      actual.digest === candidate.windowsKitArtifact.digest &&
+      actual.name === candidate.windowsKitArtifact.name,
+    'Windows kit missing, expired or changed'
+  )
+  downloadArtifact(actual, artifactPath)
   for (const file of candidate.windowsKit)
     assert(
       digest(readFileSync(join(artifactPath, file.file))) === file.sha256,
       `Packaging input changed: ${file.file}`
     )
-  // The staging descriptor is authoritative, not the downloaded kit's copy.
-  const staged = loadCandidate(release, directory).candidate
-  assert(
-    encode(staged.windowsKit) === encode(candidate.windowsKit) &&
-      encode(staged.windowsImage) === encode(candidate.windowsImage),
-    'Packaging inputs do not match staged candidate'
-  )
-  writeFileSync(join(directory, 'signing-candidate.json'), encode(staged))
+  writeFileSync(join(directory, 'signing-candidate.json'), encode(candidate))
   console.log(candidate.id)
+}
+function stageWindows(id) {
+  const local = readJson(join(directory, 'windows-kit', 'candidate.json'))
+  const { release, candidate } = fresh(id)
+  assertMutable(candidate, release)
+  const artifact = workflowArtifacts(process.env.GITHUB_RUN_ID)
+    .filter(item => item.name.startsWith(`windows-kit-${id}-`))
+    .sort((a, b) => b.id - a.id)[0]
+  assert(artifact && !artifact.expired, 'Windows packaging kit upload missing')
+  candidate.windowsKit = local.windowsKit
+  candidate.windowsImages = local.windowsImages
+  candidate.windowsKitArtifact = { ...artifactRecord(artifact), runId: process.env.GITHUB_RUN_ID }
+  candidate.build.frontend = local.build.frontend
+  writeAsset(release, 'candidate.json', candidate, directory)
 }
 
 function submitWindows(id, installer, evidencePath) {
   const { release, candidate } = fresh(id)
-  assert(
-    !release.assets.some(item => item.name === 'certification.json'),
-    'Certified candidates cannot be changed'
-  )
+  assertMutable(candidate, release)
   const evidence = readJson(evidencePath)
   assert(
     evidence.candidateId === id && evidence.verified === true,
@@ -379,15 +640,19 @@ function verifiedFiles(release, candidate) {
 }
 
 function verifySignature(file, signature, publicKey) {
-  command(process.env.RELEASE_VERIFIER || 'src-tauri/target/release/clipsx-release-verify', [
-    publicKey,
-    file,
-    signature,
-  ])
+  command(
+    process.env.RELEASE_VERIFIER ||
+      `tools/release-verify/target/release/clipsx-release-verify${process.platform === 'win32' ? '.exe' : ''}`,
+    [publicKey, file, signature]
+  )
 }
 
 function verifyFinalized(release, candidate) {
   validateInventory(candidate, verifiedFiles(release, candidate))
+  assert(
+    digest(downloadAsset(release, 'release-notes.md', directory)) === candidate.releaseNotesSha256,
+    'Release notes changed'
+  )
   const signatures = {}
   for (const item of candidate.artifacts.filter(item => !item.file.endsWith('.dmg'))) {
     signatures[item.file] = downloadAsset(release, `${item.file}.sig`, directory)
@@ -411,6 +676,11 @@ function verifyFinalized(release, candidate) {
 
 function finalize(id, windowsEvidencePath) {
   const { release, candidate, bytes: originalDescriptor } = fresh(id)
+  if (candidate.finalizedAt) {
+    verifyFinalized(release, candidate)
+    summarize('Finalized assets verified and reused.')
+    return
+  }
   assert(
     !release.assets.some(item => item.name === 'certification.json'),
     'Certified candidates are immutable'
@@ -437,7 +707,9 @@ function finalize(id, windowsEvidencePath) {
   const signatures = {}
   for (const item of candidate.artifacts.filter(item => !item.file.endsWith('.dmg'))) {
     const path = join(directory, item.file)
-    command('node', ['node_modules/@tauri-apps/cli/tauri.js', 'signer', 'sign', path])
+    const existing = release.assets.find(asset => asset.name === `${item.file}.sig`)
+    if (existing) downloadAsset(release, existing.name, directory)
+    else command('node', ['node_modules/@tauri-apps/cli/tauri.js', 'signer', 'sign', path])
     const signaturePath = `${path}.sig`
     verifySignature(path, signaturePath, candidate.build.updaterPublicKey)
     signatures[item.file] = readFileSync(signaturePath, 'utf8').trim()
@@ -461,6 +733,11 @@ function finalize(id, windowsEvidencePath) {
     digest(latest.bytes) === digest(originalDescriptor),
     'Candidate descriptor changed during finalization'
   )
+  candidate.finalization = {
+    toolingRevision: git(['rev-parse', 'HEAD']),
+    runId: process.env.GITHUB_RUN_ID,
+    attempt: process.env.GITHUB_RUN_ATTEMPT,
+  }
   candidate.finalizedAt = new Date().toISOString()
   writeAsset(release, 'candidate.json', candidate, directory)
   repoApi(`releases/${release.id}`, 'PATCH', { body: notes })
@@ -476,7 +753,8 @@ function completeInventory(release, candidate) {
     'latest.json',
     'downloads.json',
     'SHA256SUMS',
-    'windows-submission.json'
+    'windows-submission.json',
+    'release-notes.md'
   )
   required.push(
     ...candidate.artifacts
@@ -495,9 +773,24 @@ function completeInventory(release, candidate) {
   return inventory
 }
 
-function certify(id) {
+function certify(id, prNumber) {
+  assert(/^\d+$/.test(String(prNumber)), 'Select the release PR number')
+  const pr = repoApi(`pulls/${prNumber}`)
   const { release, candidate, bytes } = fresh(id)
   assert(candidate.finalizedAt, 'Candidate must be finalized before certification')
+  assert(
+    pr.base.ref === 'main' &&
+      pr.head.ref === candidate.branch &&
+      pr.head.repo.full_name === repository &&
+      pr.state === 'open',
+    'Wrong release PR'
+  )
+  assertAppInputs(candidate, source(pr.head.sha))
+  assertPublicEnvironment(candidate)
+  assert(
+    selectedCandidate(pr.body) === id,
+    'Select this candidate on the release PR before certifying'
+  )
   assert(
     process.env.CERTIFY_ALL_PLATFORMS === 'true',
     'Explicit installed-platform confirmation is required'
@@ -520,13 +813,16 @@ function certify(id) {
   )
   if (release.assets.some(item => item.name === 'certification.json')) {
     const existing = JSON.parse(downloadAsset(release, 'certification.json', directory))
+    assert(existing.releasePrNumber === Number(prNumber), 'Candidate was certified for another PR')
     assertCertified(candidate, existing, bytes, inventory)
-    status(candidate.sourceRevision, 'success', `Certified candidate ${id}`, release.html_url)
-    readyPullRequest(candidate)
+    status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
+    if (pr.draft) command('gh', ['pr', 'ready', String(prNumber), '--repo', repository])
     return
   }
   const certification = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    releasePrNumber: Number(prNumber),
+    appInputsSha256: candidate.build.appInputsSha256,
     candidateId: id,
     sourceRevision: candidate.sourceRevision,
     sourceTree: candidate.sourceTree,
@@ -535,56 +831,83 @@ function certify(id) {
     evidence,
     platforms: targets.map(item => item.id),
     actor: process.env.GITHUB_ACTOR,
+    toolingRevision: git(['rev-parse', 'HEAD']),
     certifiedAt: new Date().toISOString(),
   }
   writeAsset(release, 'certification.json', certification, directory)
-  status(candidate.sourceRevision, 'success', `Certified candidate ${id}`, release.html_url)
-  readyPullRequest(candidate)
-}
-
-function readyPullRequest(candidate) {
-  const pulls = repoApi(
-    `pulls?state=open&base=main&head=${encodeURIComponent(`azure06:${candidate.branch}`)}`
-  )
-  for (const pr of pulls) {
-    assert(pr.head.sha === candidate.sourceRevision, 'Release PR changed during certification')
-    if (pr.draft) command('gh', ['pr', 'ready', String(pr.number), '--repo', repository])
-  }
+  status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
+  if (pr.draft) command('gh', ['pr', 'ready', String(prNumber), '--repo', repository])
 }
 
 function readiness() {
   const event = readJson(process.env.GITHUB_EVENT_PATH)
-  const runEvent = event.workflow_run
-  if (runEvent && !runEvent.head_branch?.startsWith('release/')) return
-  const pr =
-    event.pull_request ||
-    (runEvent && {
-      head: { ref: runEvent.head_branch, sha: runEvent.head_sha, repo: runEvent.head_repository },
-      html_url: runEvent.html_url,
-    })
-  assert(pr, 'Missing pull request event')
-  if (!pr.head.ref.startsWith('release/')) {
-    status(pr.head.sha, 'success', 'No desktop release is associated with this PR', pr.html_url)
-    return
-  }
-  if (pr.head.repo.full_name !== repository) {
-    status(pr.head.sha, 'failure', 'Release candidates must come from this repository', pr.html_url)
-    return
-  }
-  try {
-    const runs = repoApi(
-      `actions/workflows/release.yml/runs?branch=${encodeURIComponent(pr.head.ref)}&per_page=1`
-    )
-    const run = runs.workflow_runs[0]
-    assert(run, 'Prepare this release candidate first')
-    const id = `${pr.head.ref.slice(8)}-${run.id}-${run.run_attempt}`
-    const { release, candidate, bytes } = fresh(id)
-    assert(candidate.sourceRevision === pr.head.sha, 'Candidate does not match PR head')
-    const certification = JSON.parse(downloadAsset(release, 'certification.json', directory))
-    assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
-    status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
-  } catch (error) {
-    status(pr.head.sha, 'pending', error.message, pr.html_url)
+  const pulls = event.pull_request
+    ? [repoApi(`pulls/${event.pull_request.number}`)]
+    : repoApi('pulls?state=open&base=main&per_page=100')
+  for (const pr of pulls) {
+    if (!pr.head.ref.startsWith('release/')) {
+      status(pr.head.sha, 'success', 'No desktop release is associated with this PR', pr.html_url)
+      continue
+    }
+    try {
+      assert(
+        pr.head.repo.full_name === repository,
+        'Release candidates must originate from this repository'
+      )
+      const id = selectedCandidate(pr.body)
+      if (!id) {
+        status(
+          pr.head.sha,
+          'pending',
+          'Build/prepare a candidate, then select it for this PR',
+          pr.html_url
+        )
+        continue
+      }
+      const { release, candidate, bytes } = fresh(id)
+      assertAppInputs(candidate, source(pr.head.sha))
+      assertPublicEnvironment(candidate)
+      // CI coverage belongs to the selected successful build, even after docs-only pushes.
+      repoApi(`statuses/${pr.head.sha}`, 'POST', {
+        state: 'success',
+        context: 'CI',
+        description: `Verified build ${candidate.build.origin.runId}; app inputs match`,
+        target_url: `https://github.com/${repository}/actions/runs/${candidate.build.origin.runId}`,
+      })
+      if (!candidate.finalizedAt) {
+        const missing = ['macos-arm64', 'macos-x64', 'linux-x64'].filter(
+          platform => !candidate.preparation?.[platform]
+        )
+        const message = missing.length
+          ? `Awaiting packaging: ${missing.join(', ')}`
+          : release.assets.some(item => item.name === 'windows-submission.json')
+            ? 'Awaiting Windows verification and finalization'
+            : 'Awaiting local Windows signing'
+        status(pr.head.sha, 'pending', message, release.html_url)
+        continue
+      }
+      if (!release.assets.some(item => item.name === 'certification.json')) {
+        status(
+          pr.head.sha,
+          'pending',
+          'Awaiting installed-platform and updater certification',
+          release.html_url
+        )
+        continue
+      }
+      const certification = JSON.parse(downloadAsset(release, 'certification.json', directory))
+      assert(
+        certification.releasePrNumber === pr.number &&
+          certification.appInputsSha256 === candidate.build.appInputsSha256,
+        'Certification belongs to another release selection'
+      )
+      assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
+      status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
+    } catch (error) {
+      status(pr.head.sha, 'failure', error.message, pr.html_url)
+      console.error(`Release PR ${pr.number}: ${error.message}`)
+      process.exitCode = 1
+    }
   }
 }
 
@@ -615,37 +938,22 @@ function publish() {
     output('source-revision', readJson(join(directory, 'candidate.json')).sourceRevision)
     return
   }
-  const drafts = releases
-    .filter(item => item.draft && item.tag_name.startsWith(`candidate-${version}-`))
-    .sort((a, b) => b.id - a.id)
-  let match
-  for (const release of drafts) {
-    const loaded = loadCandidate(release, directory)
-    if (
-      loaded.candidate.sourceRevision === pr.head.sha &&
-      release.assets.some(item => item.name === 'certification.json')
-    ) {
-      match = { release, ...loaded }
-      break
-    }
-  }
-  assert(match, 'No certified candidate exists for the merged PR')
-  const { release, candidate, bytes } = match
-  assertIdentity(candidate)
-  const latestRuns = repoApi(
-    `actions/workflows/release.yml/runs?branch=${encodeURIComponent(candidate.branch)}&per_page=1`
-  )
-  assertLatestRun(candidate, latestRuns.workflow_runs[0] || {})
-  assertMerged(candidate, git(['rev-parse', `${pr.merge_commit_sha}^{tree}`]))
-  assert(
-    candidate.build.updaterPublicKey ===
-      readJson('src-tauri/tauri.conf.json').plugins.updater.pubkey,
-    'Updater key changed'
-  )
+  const id = selectedCandidate(pr.body)
+  assert(id, 'Merged PR has no explicit candidate selection')
+  const release = releases.find(item => item.draft && item.tag_name === `candidate-${id}`)
+  assert(release, 'Selected candidate draft does not exist')
+  const { candidate, bytes } = loadCandidate(release, directory)
+  assertOrigin(candidate)
+  assertAppInputs(candidate, source(pr.merge_commit_sha))
+  assertPublicEnvironment(candidate)
   const certification = JSON.parse(downloadAsset(release, 'certification.json', directory))
+  assert(
+    certification.releasePrNumber === pr.number &&
+      certification.appInputsSha256 === candidate.build.appInputsSha256,
+    'Certification selection mismatch'
+  )
   assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
   verifyFinalized(release, candidate)
-  // Detect draft mutation during downloads before changing its publication state.
   assertCertified(
     candidate,
     certification,
@@ -663,10 +971,6 @@ function publish() {
   )
   const newer = publicReleases.some(item => compareVersions(item.tag_name.slice(1), version) >= 0)
   assert(!newer, 'Release version must be newer than published versions')
-  const latestBeforePublish = repoApi(
-    `actions/workflows/release.yml/runs?branch=${encodeURIComponent(candidate.branch)}&per_page=1`
-  )
-  assertLatestRun(candidate, latestBeforePublish.workflow_runs[0] || {})
   // Updating the draft is retryable. Do not create a tag separately from publication.
   repoApi(`releases/${release.id}`, 'PATCH', {
     tag_name: tag,
@@ -702,11 +1006,40 @@ function configureReadiness() {
     )
   assert(rules.length === 1, 'Expected exactly one active ruleset protecting main')
   const rule = rules[0]
+  writeFileSync(join(directory, 'ruleset-original.json'), encode(rule))
   const checks = rule.rules.find(item => item.type === 'required_status_checks')
   assert(checks, 'Existing main ruleset has no required-check rule')
-  if (checks.parameters.required_status_checks.some(item => item.context === 'Release readiness'))
-    return
-  checks.parameters.required_status_checks.push({ context: 'Release readiness' })
+  const proof = process.env.RELEASE_GATE_PROOF_SHA
+  assert(
+    /^[a-f0-9]{40}$/.test(proof || ''),
+    'Provide RELEASE_GATE_PROOF_SHA for a successful infrastructure CI gate'
+  )
+  const runs = repoApi(`commits/${proof}/check-runs?per_page=100`).check_runs
+  assert(
+    runs.some(
+      item =>
+        item.name === 'CI' && item.app?.slug === 'github-actions' && item.conclusion === 'success'
+    ),
+    'Replacement CI gate has not passed'
+  )
+  const obsolete = new Set([
+    'Frontend · Lint & Format',
+    'Frontend · Test (ubuntu-latest)',
+    'Frontend · Test (macos-latest)',
+    'Frontend · Test (windows-latest)',
+    'Rust · Fmt & Clippy',
+    'Rust · Test (Linux)',
+    'Rust · Test (macOS)',
+    'Rust · Test (Windows)',
+    'Build · Compile Check',
+  ])
+  checks.parameters.required_status_checks = checks.parameters.required_status_checks.filter(
+    item => !obsolete.has(item.context)
+  )
+  for (const context of ['CI', 'Release readiness'])
+    if (!checks.parameters.required_status_checks.some(item => item.context === context))
+      checks.parameters.required_status_checks.push({ context })
+  writeFileSync(join(directory, 'ruleset-before.json'), encode(rule))
   repoApi(`rulesets/${rule.id}`, 'PUT', {
     name: rule.name,
     target: rule.target,
@@ -715,7 +1048,9 @@ function configureReadiness() {
     conditions: rule.conditions,
     rules: rule.rules,
   })
-  console.log('Release readiness added. All existing rules and checks were retained.')
+  console.log(
+    'Obsolete check names replaced by proven CI. Release readiness and unrelated protections retained.'
+  )
 }
 
 function configurePublic() {
@@ -801,9 +1136,17 @@ function verifyPublished(release, pr) {
   while (tagObject.type === 'tag') tagObject = repoApi(`git/tags/${tagObject.sha}`).object
   const tagCommit = tagObject.sha
   assert(tagCommit === pr.merge_commit_sha, 'Production tag points to a different merged commit')
-  assert(candidate.sourceRevision === pr.head.sha, 'Published candidate does not match merged PR')
-  assertMerged(candidate, git(['rev-parse', `${pr.merge_commit_sha}^{tree}`]))
+  assert(
+    selectedCandidate(pr.body) === candidate.id,
+    'Published candidate differs from selected release'
+  )
+  assertAppInputs(candidate, source(pr.merge_commit_sha))
   const certification = JSON.parse(downloadAsset(release, 'certification.json', directory))
+  assert(
+    certification.releasePrNumber === pr.number &&
+      certification.appInputsSha256 === candidate.build.appInputsSha256,
+    'Published certification selection mismatch'
+  )
   assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
   verifyFinalized(release, candidate)
   const manifests = {}
@@ -888,12 +1231,29 @@ export function main(args) {
       return collect(...parameters)
     case 'windows-kit':
       return windowsKit()
-    case 'stage':
-      return stage()
+    case 'check-legacy':
+      return migrateLegacy(true)
+    case 'package-source':
+      return packageSource(...parameters)
+    case 'stage-prepared':
+      return stagePrepared(...parameters)
+    case 'prepare':
+      return prepare(...parameters)
+    case 'restore':
+      return restore(...parameters)
+    case 'stage-platform':
+      return stagePlatform(...parameters)
+    case 'stage-windows':
+      return stageWindows(...parameters)
     case 'prepare-windows':
       return prepareWindows(...parameters)
     case 'submit-windows':
       return submitWindows(...parameters)
+    case 'finalization-state': {
+      const { candidate } = fresh(process.argv[3])
+      output('finalized', String(Boolean(candidate.finalizedAt)))
+      return
+    }
     case 'download-windows':
       return downloadWindows(...parameters)
     case 'finalize':

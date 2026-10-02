@@ -2,10 +2,8 @@ import test from 'node:test'
 import nodeAssert from 'node:assert/strict'
 import {
   assertCertified,
-  assertCurrent,
-  assertMerged,
+  assertBuildRun,
   assertManifests,
-  assertLatestRun,
   assetName,
   createManifests,
   digest,
@@ -19,7 +17,7 @@ import {
 
 const fixture = () => {
   const candidate = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: '0.1.0-123-1',
     stagingTag: 'candidate-0.1.0-123-1',
     version: '0.1.0',
@@ -28,7 +26,17 @@ const fixture = () => {
     sourceTree: 'b'.repeat(40),
     runId: '123',
     runAttempt: '1',
-    build: { production: true, updaterPublicKey: 'key' },
+    build: {
+      production: true,
+      updaterPublicKey: 'key',
+      appInputsSha256: 'c'.repeat(64),
+      origin: {
+        runId: '123',
+        sourceRevision: 'a'.repeat(40),
+        branch: 'release/0.1.0',
+        attempt: '1',
+      },
+    },
     artifacts: [],
   }
   const files = new Map()
@@ -52,17 +60,31 @@ test('release identity requires matching stable versions', () => {
     validateVersion('release/0.1.0-rc.1', '0.1.0-rc.1', '0.1.0-rc.1', '0.1.0-rc.1')
   )
 })
-test('changed source, superseded run attempts and failed builds are rejected', () => {
+test('selected builds require successful repository-owned release workflow provenance', () => {
   const { candidate } = fixture()
-  const run = { id: 123, run_attempt: 1, head_sha: candidate.sourceRevision, conclusion: 'success' }
-  assertCurrent(candidate, candidate.sourceRevision, run)
-  nodeAssert.throws(() => assertCurrent(candidate, 'c'.repeat(40), run))
-  nodeAssert.throws(() =>
-    assertCurrent(candidate, candidate.sourceRevision, { ...run, run_attempt: 2 })
-  )
-  nodeAssert.throws(() =>
-    assertCurrent(candidate, candidate.sourceRevision, { ...run, conclusion: 'failure' })
-  )
+  const origin = candidate.build.origin
+  const run = {
+    id: 123,
+    run_attempt: 1,
+    head_sha: candidate.sourceRevision,
+    head_repository: { full_name: 'azure06/clipsx' },
+    head_branch: candidate.branch,
+    status: 'completed',
+    conclusion: 'success',
+    event: 'push',
+    path: '.github/workflows/release.yml',
+  }
+  assertBuildRun(run, origin)
+  nodeAssert.throws(() => assertBuildRun({ ...run, run_attempt: 2 }, origin))
+  for (const changed of [
+    { head_sha: 'c'.repeat(40) },
+    { id: 124 },
+    { conclusion: 'failure' },
+    { path: '.github/workflows/ci.yml' },
+    { event: 'pull_request' },
+    { head_repository: { full_name: 'attacker/clipsx' } },
+  ])
+    nodeAssert.throws(() => assertBuildRun({ ...run, ...changed }, origin))
 })
 test('incomplete, tampered, duplicate and unsafe inventories are rejected', () => {
   const { candidate, files } = fixture()
@@ -106,7 +128,7 @@ test('certification binds source and complete draft inventory', () => {
   const bytes = Buffer.from(encode(candidate)),
     inventory = [{ file: 'latest.json', sha256: 'c'.repeat(64), size: 20 }]
   const certification = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     candidateId: candidate.id,
     sourceRevision: candidate.sourceRevision,
     sourceTree: candidate.sourceTree,
@@ -128,8 +150,6 @@ test('certification binds source and complete draft inventory', () => {
   nodeAssert.throws(() =>
     assertCertified(candidate, { ...certification, platforms: [] }, bytes, inventory)
   )
-  assertMerged(candidate, candidate.sourceTree)
-  nodeAssert.throws(() => assertMerged(candidate, 'd'.repeat(40)))
 })
 test('signed PE image verification permits only Authenticode changes', () => {
   const original = Buffer.alloc(512)
@@ -183,14 +203,6 @@ test('manifests and checksum routing cannot drift from the certified inventory',
       'changed'
     )
   )
-})
-
-test('publication rejects a newer preparation even after the release branch is deleted', () => {
-  const { candidate } = fixture()
-  const run = { id: 123, run_attempt: 1, head_sha: candidate.sourceRevision, conclusion: 'success' }
-  assertLatestRun(candidate, run)
-  nodeAssert.throws(() => assertLatestRun(candidate, { ...run, id: 124 }))
-  nodeAssert.throws(() => assertLatestRun(candidate, { ...run, run_attempt: 2 }))
 })
 
 test('duplicate publication and verification retries reuse the existing release', () => {
