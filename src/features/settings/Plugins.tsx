@@ -26,7 +26,7 @@ import { useUIStore } from '../../stores/uiStore'
 
 type InstalledFilter = 'all' | 'enabled' | 'disabled' | 'updates' | 'attention'
 const timeLabel = (value: number | null) =>
-  value ? new Date(value).toLocaleString() : 'Not checked yet'
+  value ? new Date(value).toLocaleString(i18n.resolvedLanguage) : i18n.t('desktopUi.notCheckedYet')
 
 export const Plugins = () => {
   useTranslation()
@@ -476,8 +476,8 @@ const DiscoverView = ({
           title={i18n.t('desktopUi.extensionCatalogUnavailable')}
           text={
             refreshFailed
-              ? 'Could not load the signed registry. Check your connection and try again.'
-              : 'The signed registry has not been loaded yet.'
+              ? i18n.t('desktopUi.couldNotLoadTheSignedRegistryCheckYourConnection')
+              : i18n.t('desktopUi.theSignedRegistryHasNotBeenLoadedYet')
           }
           action={i18n.t('desktopUi.retryCatalog')}
           onAction={onRetry}
