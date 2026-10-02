@@ -299,9 +299,10 @@ mod tests {
             },
         )
         .await;
-        let PreparedShare::Files(paths) = prepare(&repository, &roots, &clip_id).await.unwrap()
-        else {
-            panic!("image should be exported as a file")
+        let paths = match prepare(&repository, &roots, &clip_id).await.unwrap() {
+            PreparedShare::Files(paths) => paths,
+            #[cfg(not(target_os = "linux"))]
+            _ => panic!("image should be exported as a file"),
         };
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].parent(), Some(roots.share_staging().as_path()));

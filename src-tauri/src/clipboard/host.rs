@@ -1650,7 +1650,10 @@ fn windows_png_to_dib_v5(png: &[u8]) -> Option<Vec<u8>> {
     dib[48..52].copy_from_slice(&0x0000_00ffu32.to_le_bytes());
     dib[52..56].copy_from_slice(&0xff00_0000u32.to_le_bytes());
     dib[56..60].copy_from_slice(&0x7352_4742u32.to_le_bytes());
-    for (source, target) in image.pixels().zip(dib[124..].chunks_exact_mut(4)) {
+    for (source, target) in image
+        .pixels()
+        .zip(dib[124..].as_chunks_mut::<4>().0.iter_mut())
+    {
         target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
     }
     Some(dib)
@@ -1926,8 +1929,10 @@ mod tests {
     fn windows_text_and_file_list_codecs_preserve_unicode_and_order() {
         let text = windows_unicode_text_bytes("hello 雪");
         let units: Vec<u16> = text
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         assert_eq!(
             String::from_utf16(&units[..units.len() - 1]).unwrap(),
@@ -1943,8 +1948,10 @@ mod tests {
         assert_eq!(u32::from_le_bytes(encoded[0..4].try_into().unwrap()), 20);
         assert_eq!(u32::from_le_bytes(encoded[16..20].try_into().unwrap()), 1);
         let units: Vec<u16> = encoded[20..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         let decoded: Vec<String> = units
             .split(|unit| *unit == 0)

@@ -136,7 +136,9 @@ fn quantized_flat_scale_qualification() {
                 let query = &query;
                 workers.push(scope.spawn(move || {
                     slice
-                        .chunks_exact(DIMENSIONS)
+                        .as_chunks::<DIMENSIONS>()
+                        .0
+                        .iter()
                         .map(|vector| {
                             vector
                                 .iter()
