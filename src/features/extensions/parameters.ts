@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 export type ParameterField = {
   field: string
   label: string
@@ -60,33 +61,35 @@ export const parameterErrors = (
     const empty =
       value === undefined || value === null || (typeof value === 'string' && !value.trim())
     if (empty && (field.required || required.includes(field.field)))
-      errors[field.field] = `${field.label} is required.`
+      errors[field.field] = i18n.t('desktopUi.fieldRequired', { label: field.label })
     else if (!empty) {
       if (definition['type'] === 'string' && typeof value !== 'string')
-        errors[field.field] = 'Enter text.'
+        errors[field.field] = i18n.t('desktopUi.enterText')
       if (
         typeof value === 'string' &&
         typeof definition['maxLength'] === 'number' &&
         [...value].length > definition['maxLength']
       )
-        errors[field.field] = `Use at most ${definition['maxLength']} characters.`
+        errors[field.field] = i18n.t('desktopUi.maximumCharacters', {
+          count: definition['maxLength'],
+        })
       if (definition['type'] === 'boolean' && typeof value !== 'boolean')
-        errors[field.field] = 'Choose Yes or No.'
+        errors[field.field] = i18n.t('desktopUi.chooseYesOrNo')
       if (definition['type'] === 'number' || definition['type'] === 'integer') {
         if (
           typeof value !== 'number' ||
           !Number.isFinite(value) ||
           (definition['type'] === 'integer' && !Number.isInteger(value))
         )
-          errors[field.field] = 'Enter a valid number.'
+          errors[field.field] = i18n.t('desktopUi.enterAValidNumber')
         else if (
           (typeof definition['minimum'] === 'number' && value < definition['minimum']) ||
           (typeof definition['maximum'] === 'number' && value > definition['maximum'])
         )
-          errors[field.field] = 'Enter a number within the allowed range.'
+          errors[field.field] = i18n.t('desktopUi.enterANumberWithinTheAllowedRange')
       }
       if (Array.isArray(definition['enum']) && !definition['enum'].includes(value))
-        errors[field.field] = 'Choose a listed value.'
+        errors[field.field] = i18n.t('desktopUi.chooseAListedValue')
     }
   }
   return errors
@@ -139,4 +142,4 @@ export const sameParameters = (left: Record<string, unknown>, right: Record<stri
   return canonical(left) === canonical(right)
 }
 export const allowSetupChange = (dirty: boolean) =>
-  !dirty || window.confirm('Discard your unsaved changes and choose another setup?')
+  !dirty || window.confirm(i18n.t('desktopUi.discardYourUnsavedChangesAndChooseAnotherSetup'))

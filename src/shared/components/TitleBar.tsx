@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 import { diagnostic } from '../diagnostics'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -78,15 +79,20 @@ export const TitleBar = () => {
       </div>
 
       {isWindows && (
-        <div className="-mr-3 ml-2 flex h-8 self-stretch" aria-label="Window controls">
+        <div
+          className="-mr-3 ml-2 flex h-8 self-stretch"
+          aria-label={i18n.t('desktopUi.windowControls')}
+        >
           <WindowControl
-            label="Minimize"
+            label={i18n.t('desktopUi.minimize')}
             glyph={'\uE921'}
             onClick={() => void getCurrentWindow().minimize()}
             onMouseDown={preventDrag}
           />
           <WindowControl
-            label={maximized ? 'Restore' : 'Maximize'}
+            label={
+              maximized ? i18n.t('desktopUi.restoreWindow') : i18n.t('desktopUi.maximizeWindow')
+            }
             glyph={maximized ? '\uE923' : '\uE922'}
             onClick={() => {
               clearSnapTimer()
@@ -97,7 +103,7 @@ export const TitleBar = () => {
             onMouseLeave={clearSnapTimer}
           />
           <WindowControl
-            label="Close"
+            label={i18n.t('desktopUi.close')}
             glyph={'\uE8BB'}
             variant="close"
             onClick={() => void getCurrentWindow().close()}
@@ -125,22 +131,25 @@ const WindowControl = ({
   onMouseDown: (event: MouseEvent<HTMLButtonElement>) => void
   onMouseEnter?: () => void
   onMouseLeave?: () => void
-}) => (
-  <button
-    type="button"
-    aria-label={label}
-    title={label}
-    onClick={onClick}
-    onMouseDown={onMouseDown}
-    onMouseEnter={onMouseEnter}
-    onMouseLeave={onMouseLeave}
-    className={`flex h-8 w-[46px] cursor-default items-center justify-center rounded-none border-0 bg-transparent p-0 text-[10px] font-light text-gray-700 shadow-none transition-colors duration-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400 dark:text-gray-200 ${
-      variant === 'close'
-        ? 'hover:bg-[#e81123] hover:text-white active:bg-[#e81123] active:opacity-80'
-        : 'hover:bg-black/10 active:bg-black/15 dark:hover:bg-white/10 dark:active:bg-white/15'
-    }`}
-    style={{ fontFamily: "'Segoe Fluent Icons', 'Segoe MDL2 Assets'" }}
-  >
-    <span aria-hidden="true">{glyph}</span>
-  </button>
-)
+}) => {
+  useTranslation()
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      onMouseDown={onMouseDown}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className={`flex h-8 w-[46px] cursor-default items-center justify-center rounded-none border-0 bg-transparent p-0 text-[10px] font-light text-gray-700 shadow-none transition-colors duration-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400 dark:text-gray-200 ${
+        variant === 'close'
+          ? 'hover:bg-[#e81123] hover:text-white active:bg-[#e81123] active:opacity-80'
+          : 'hover:bg-black/10 active:bg-black/15 dark:hover:bg-white/10 dark:active:bg-white/15'
+      }`}
+      style={{ fontFamily: "'Segoe Fluent Icons', 'Segoe MDL2 Assets'" }}
+    >
+      <span aria-hidden="true">{glyph}</span>
+    </button>
+  )
+}

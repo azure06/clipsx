@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
@@ -33,6 +35,13 @@ import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
 
 type ModelCapability = 'text_embedding' | 'text_generation'
+
+const phaseLabel = (phase: TextEmbeddingStatus['phase'] | undefined) =>
+  phase === 'checking'
+    ? i18n.t('desktopUi.checking')
+    : phase === 'validating_model'
+      ? i18n.t('desktopUi.validatingModel')
+      : i18n.t(`search.sourceState.${phase ?? 'not_configured'}`)
 type ModelDescriptor = {
   id: string
   digest: string | null
@@ -75,10 +84,10 @@ const formatBytes = (bytes: number): string => {
 
 const explainOllamaDiagnostic = (diagnostic: string): string => {
   if (/provider (is )?unavailable/.test(diagnostic)) {
-    return 'Ollama was unavailable during the last attempt. Your clips are safe; retry when Ollama is ready.'
+    return i18n.t('desktopUi.ollamaWasUnavailableDuringTheLastAttemptYourClips')
   }
   if (diagnostic === 'Ollama returned 400 Bad Request') {
-    return 'Ollama rejected a previous embedding request. Retry now; if it happens again, ClipsX will show Ollama’s specific reason. It is often an outdated Ollama version, a model that cannot create embeddings, or text that exceeds the model context.'
+    return i18n.t('desktopUi.ollamaRejectedAPreviousEmbeddingRequestRetryNowIf')
   }
   return diagnostic
 }
@@ -98,20 +107,62 @@ const intelligenceSections: Array<{
   label: string
   description: string
 }> = [
-  { id: 'overview', label: 'Overview', description: 'What is active and needs attention' },
-  { id: 'search', label: 'Search', description: 'How ClipsX finds clips' },
-  { id: 'models', label: 'Models', description: 'Local Ollama models and providers' },
-  { id: 'indexing', label: 'Indexing', description: 'Build and maintain search data' },
-  { id: 'vision', label: 'OCR & vision', description: 'Image understanding' },
+  {
+    id: 'overview',
+    get label() {
+      return i18n.t('desktopUi.overview')
+    },
+    get description() {
+      return i18n.t('desktopUi.whatIsActiveAndNeedsAttention')
+    },
+  },
+  {
+    id: 'search',
+    get label() {
+      return i18n.t('desktopUi.search')
+    },
+    get description() {
+      return i18n.t('desktopUi.howClipsxFindsClips')
+    },
+  },
+  {
+    id: 'models',
+    get label() {
+      return i18n.t('desktopUi.models')
+    },
+    get description() {
+      return i18n.t('desktopUi.localOllamaModelsAndProviders')
+    },
+  },
+  {
+    id: 'indexing',
+    get label() {
+      return i18n.t('desktopUi.indexing')
+    },
+    get description() {
+      return i18n.t('desktopUi.buildAndMaintainSearchData')
+    },
+  },
+  {
+    id: 'vision',
+    get label() {
+      return i18n.t('desktopUi.ocrVision')
+    },
+    get description() {
+      return i18n.t('desktopUi.imageUnderstanding')
+    },
+  },
 ]
 
 const indexActionLabel: Record<IndexAction, string> = {
-  reindex: 'Reindex',
-  index_missing: 'Index missing',
-  retry: 'Retry',
+  reindex: i18n.t('desktopUi.reindex'),
+  index_missing: i18n.t('desktopUi.indexMissing'),
+  retry: i18n.t('desktopUi.retry'),
 }
 
 export const IntelligencePage = () => {
+  useTranslation()
+
   const [connection, setConnection] = useState<ModelProviderConnectionStatus | null>(null)
   const [endpointDraft, setEndpointDraft] = useState(DEFAULT_OLLAMA_ENDPOINT)
   const [loadingConnection, setLoadingConnection] = useState(false)
@@ -173,7 +224,7 @@ export const IntelligencePage = () => {
       return s
     } catch (e) {
       toast({
-        title: 'Could not refresh Intelligence status',
+        title: i18n.t('desktopUi.couldNotRefreshIntelligenceStatus'),
         description: toErrorMessage(e),
         type: 'error',
       })
@@ -217,7 +268,7 @@ export const IntelligencePage = () => {
       if (lastFailureToastRef.current !== message) {
         lastFailureToastRef.current = message
         toast({
-          title: 'Meaning Search needs attention',
+          title: i18n.t('desktopUi.meaningSearchNeedsAttention'),
           description: explainOllamaDiagnostic(message),
           type: 'error',
         })
@@ -227,7 +278,7 @@ export const IntelligencePage = () => {
     const u7 = listen<string>('ocr-worker-failed', event => {
       void loadStatus()
       toast({
-        title: 'Text recognition needs attention',
+        title: i18n.t('desktopUi.textRecognitionNeedsAttention'),
         description: event.payload,
         type: 'error',
       })
@@ -252,14 +303,14 @@ export const IntelligencePage = () => {
     const label = indexActionLabel[activeIndexAction.kind]
     if (status.failedJobs > 0 || status.diagnostic) {
       toast({
-        title: `${label} completed with issues`,
+        title: i18n.t('desktopUi.actionIssues', { label }),
         description: status.diagnostic
           ? explainOllamaDiagnostic(status.diagnostic)
-          : `${status.failedJobs} job${status.failedJobs === 1 ? '' : 's'} failed.`,
+          : i18n.t('desktopUi.failedJobCount', { count: status.failedJobs }),
         type: 'warning',
       })
     } else {
-      toast({ title: `${label} complete`, type: 'success' })
+      toast({ title: i18n.t('desktopUi.actionComplete', { label }), type: 'success' })
     }
     setActiveIndexAction(null)
   }, [status, activeIndexAction, toast])
@@ -277,7 +328,10 @@ export const IntelligencePage = () => {
       setEndpointDraft(next.endpoint ?? endpointDraft)
       setEditingConnection(false)
       await loadStatus()
-      toast({ title: 'Ollama connected', type: 'success' })
+      toast({
+        title: i18n.t('desktopUi.ollamaConnected'),
+        type: 'success',
+      })
     } catch (error) {
       setConnectionError(toErrorMessage(error))
     } finally {
@@ -306,9 +360,16 @@ export const IntelligencePage = () => {
     try {
       await invoke('disable_text_embedding_provider')
       await loadStatus()
-      toast({ title: 'Meaning Search disabled', type: 'success' })
+      toast({
+        title: i18n.t('desktopUi.meaningSearchDisabled'),
+        type: 'success',
+      })
     } catch (e) {
-      toast({ title: 'Disconnect failed', description: toErrorMessage(e), type: 'error' })
+      toast({
+        title: i18n.t('desktopUi.disconnectFailed'),
+        description: toErrorMessage(e),
+        type: 'error',
+      })
     } finally {
       setDisconnecting(false)
     }
@@ -322,9 +383,16 @@ export const IntelligencePage = () => {
         model: generationModel,
       })
       setGenerationStatus(next)
-      toast({ title: 'Local text generation configured', type: 'success' })
+      toast({
+        title: i18n.t('desktopUi.localTextGenerationConfigured'),
+        type: 'success',
+      })
     } catch (e) {
-      toast({ title: 'Generation setup failed', description: toErrorMessage(e), type: 'error' })
+      toast({
+        title: i18n.t('desktopUi.generationSetupFailed'),
+        description: toErrorMessage(e),
+        type: 'error',
+      })
     } finally {
       setGenerationSaving(false)
     }
@@ -335,7 +403,10 @@ export const IntelligencePage = () => {
     try {
       await invoke('disable_text_generation_provider')
       await loadStatus()
-      toast({ title: 'Local text generation disabled', type: 'success' })
+      toast({
+        title: i18n.t('desktopUi.localTextGenerationDisabled'),
+        type: 'success',
+      })
     } finally {
       setGenerationSaving(false)
     }
@@ -352,17 +423,19 @@ export const IntelligencePage = () => {
       })
       setOcrStatus(next)
       toast({
-        title: enabled ? 'Text recognition updated' : 'Text recognition disabled',
+        title: enabled
+          ? i18n.t('desktopUi.textRecognitionUpdated')
+          : i18n.t('desktopUi.textRecognitionDisabled'),
         description:
           enabled && language !== previous.settings.language
-            ? 'Existing images are queued for recognition with the new language.'
+            ? i18n.t('desktopUi.existingImagesAreQueuedForRecognitionWithTheNew')
             : undefined,
         type: 'success',
       })
     } catch (error) {
       setOcrStatus(previous)
       toast({
-        title: 'Could not update text recognition',
+        title: i18n.t('desktopUi.couldNotUpdateTextRecognition'),
         description: toErrorMessage(error),
         type: 'error',
       })
@@ -386,7 +459,7 @@ export const IntelligencePage = () => {
       )
     } catch (e) {
       toast({
-        title: `${indexActionLabel[action]} failed`,
+        title: i18n.t('desktopUi.actionFailed', { label: indexActionLabel[action] }),
         description: toErrorMessage(e),
         type: 'error',
       })
@@ -400,14 +473,22 @@ export const IntelligencePage = () => {
   const handleRetry = () => startIndexAction('retry', 'retry_text_embedding_provider')
 
   const handleClearIndex = async () => {
-    if (!window.confirm('Reset the meaning-search index and rebuild it from your clips?')) return
+    if (!window.confirm(i18n.t('desktopUi.resetTheMeaningSearchIndexAndRebuildItFrom'))) return
     setClearingIndex(true)
     try {
       await invoke('clear_text_embedding_space', { spaceId: status?.activeSpaceId ?? '' })
       await loadStatus()
-      toast({ title: 'Index reset', description: 'Rebuilding from your clips', type: 'success' })
+      toast({
+        title: i18n.t('desktopUi.indexReset'),
+        description: i18n.t('desktopUi.rebuildingFromYourClips'),
+        type: 'success',
+      })
     } catch (e) {
-      toast({ title: 'Clear index failed', description: toErrorMessage(e), type: 'error' })
+      toast({
+        title: i18n.t('desktopUi.clearIndexFailed'),
+        description: toErrorMessage(e),
+        type: 'error',
+      })
     } finally {
       setClearingIndex(false)
     }
@@ -423,7 +504,7 @@ export const IntelligencePage = () => {
     } catch (e) {
       setSearchSettings(previous)
       toast({
-        title: 'Could not update search settings',
+        title: i18n.t('desktopUi.couldNotUpdateSearchSettings'),
         description: toErrorMessage(e),
         type: 'error',
       })
@@ -450,13 +531,13 @@ export const IntelligencePage = () => {
       toast({
         title:
           minimumSimilarityPercent === null
-            ? 'Meaning threshold disabled'
-            : `Meaning threshold set to ${minimumSimilarityPercent}%`,
+            ? i18n.t('desktopUi.meaningThresholdDisabled')
+            : i18n.t('desktopUi.thresholdSet', { percent: minimumSimilarityPercent }),
         type: 'success',
       })
     } catch (e) {
       toast({
-        title: 'Could not update meaning threshold',
+        title: i18n.t('desktopUi.couldNotUpdateMeaningThreshold'),
         description: toErrorMessage(e),
         type: 'error',
       })
@@ -482,7 +563,10 @@ export const IntelligencePage = () => {
       label: `${model.id}${model.size ? ` (${formatBytes(model.size)})` : ''}`,
     }))
     if (selected && !models.some(model => model.id === selected)) {
-      options.unshift({ value: selected, label: `${selected} (not available)` })
+      options.unshift({
+        value: selected,
+        label: i18n.t('desktopUi.modelUnavailable', { model: selected }),
+      })
     }
     return options
   }
@@ -492,7 +576,10 @@ export const IntelligencePage = () => {
   const total = status?.eligibleClips ?? 0
   const progressPct = total > 0 ? Math.round((status!.indexedClips / total) * 100) : 100
   const ocrLanguageOptions = [
-    { value: 'auto', label: 'Automatic' },
+    {
+      value: 'auto',
+      label: i18n.t('desktopUi.automatic'),
+    },
     ...(ocrStatus?.provider.languages ?? []).map(language => ({
       value: language.id,
       label: language.label,
@@ -505,7 +592,7 @@ export const IntelligencePage = () => {
   ) {
     ocrLanguageOptions.push({
       value: ocrStatus.settings.language,
-      label: `${ocrStatus.settings.language} (not installed)`,
+      label: i18n.t('desktopUi.languageNotInstalled', { language: ocrStatus.settings.language }),
     })
   }
 
@@ -528,15 +615,17 @@ export const IntelligencePage = () => {
             <Sparkles className="h-5 w-5 text-violet-500" strokeWidth={1.5} />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Intelligence</h1>
+            <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <Trans i18nKey="desktopUi.intelligence" />
+            </h1>
             <p className="text-xs text-gray-500">
-              On-device AI — semantic search, image search, and more
+              <Trans i18nKey="desktopUi.onDeviceAiSemanticSearchImageSearchAndMore" />
             </p>
           </div>
         </div>
 
         <nav
-          aria-label="Intelligence areas"
+          aria-label={i18n.t('desktopUi.intelligenceAreas')}
           role="tablist"
           className="relative flex w-full max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-300/70 bg-slate-100/80 p-1 shadow-[0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-slate-800/60 dark:shadow-[0_6px_18px_rgba(0,0,0,0.16)]"
         >
@@ -572,40 +661,42 @@ export const IntelligencePage = () => {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Your local intelligence
+                  <Trans i18nKey="desktopUi.yourLocalIntelligence" />
                 </h2>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Configure models, tune search, and maintain derived indexes without changing your
-                  clips.
+                  <Trans i18nKey="desktopUi.configureModelsTuneSearchAndMaintainDerivedIndexesWithout" />
                 </p>
               </div>
               <span className="rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm dark:bg-white/10 dark:text-slate-300">
-                {status?.phase?.replaceAll('_', ' ') ?? 'not configured'}
+                {phaseLabel(status?.phase)}
               </span>
             </div>
             <div className="mt-5 grid gap-2 sm:grid-cols-3">
               <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Meaning search
+                  <Trans i18nKey="desktopUi.meaningSearch" />
                 </p>
                 <p className="mt-1 truncate text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {status?.model ?? 'Not configured'}
+                  {status?.model ?? i18n.t('desktopUi.notConfigured')}
                 </p>
               </div>
               <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Indexed
+                  <Trans i18nKey="desktopUi.indexed" />
                 </p>
                 <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {status?.indexedClips?.toLocaleString() ?? '—'} clips
+                  {status?.indexedClips?.toLocaleString() ?? '—'}{' '}
+                  <Trans i18nKey="desktopUi.clips" />
                 </p>
               </div>
               <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Generation
+                  <Trans i18nKey="desktopUi.generation" />
                 </p>
                 <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {generationStatus?.available ? 'Available' : 'Not configured'}
+                  {generationStatus?.available
+                    ? i18n.t('desktopUi.availablee674')
+                    : i18n.t('desktopUi.notConfigured')}
                 </p>
               </div>
             </div>
@@ -622,7 +713,7 @@ export const IntelligencePage = () => {
             <div className="flex items-center gap-2">
               <BrainCircuit className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
               <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                Semantic Search
+                <Trans i18nKey="desktopUi.semanticSearch" />
               </span>
               {loadingStatus && (
                 <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-gray-400" />
@@ -636,7 +727,7 @@ export const IntelligencePage = () => {
                   ) : (
                     <Circle className="h-3 w-3" />
                   )}
-                  {status.phase.replaceAll('_', ' ')}
+                  {phaseLabel(status.phase)}
                 </span>
               )}
             </div>
@@ -652,8 +743,11 @@ export const IntelligencePage = () => {
                   <div className="flex items-center justify-between text-[10px] text-gray-500">
                     <span>
                       {indexing
-                        ? `Indexing… ${status.indexedClips.toLocaleString()} / ${total.toLocaleString()} eligible clips`
-                        : `${status.indexedClips.toLocaleString()} eligible clips indexed`}
+                        ? i18n.t('desktopUi.indexingProgress', {
+                            done: status.indexedClips.toLocaleString(i18n.resolvedLanguage),
+                            total: total.toLocaleString(i18n.resolvedLanguage),
+                          })
+                        : i18n.t('desktopUi.indexedCount', { count: status.indexedClips })}
                     </span>
                     <span className="tabular-nums font-medium">{progressPct}%</span>
                   </div>
@@ -669,7 +763,8 @@ export const IntelligencePage = () => {
                   </div>
                   {indexing && (
                     <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                      {status.pendingJobs.toLocaleString()} clips pending
+                      {status.pendingJobs.toLocaleString()}{' '}
+                      <Trans i18nKey="desktopUi.clipsPending" />
                     </p>
                   )}
                 </div>
@@ -679,16 +774,17 @@ export const IntelligencePage = () => {
                     <div className="flex items-start gap-2.5">
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold">Meaning Search needs attention</p>
+                        <p className="font-semibold">
+                          <Trans i18nKey="desktopUi.meaningSearchNeedsAttention" />
+                        </p>
                         <p className="mt-0.5 leading-5 text-amber-700/90 dark:text-amber-200/80">
                           {status.diagnostic
                             ? explainOllamaDiagnostic(status.diagnostic)
-                            : `${status.failedJobs.toLocaleString()} clip${status.failedJobs === 1 ? '' : 's'} need meaning indexing.`}
+                            : i18n.t('desktopUi.needsIndexingCount', { count: status.failedJobs })}
                         </p>
                         {status.failedJobs > 0 && (
                           <p className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-200/70">
-                            {status.failedJobs.toLocaleString()} indexing job
-                            {status.failedJobs === 1 ? '' : 's'} can be retried.
+                            {i18n.t('desktopUi.retryIndexingCount', { count: status.failedJobs })}
                           </p>
                         )}
                       </div>
@@ -700,7 +796,7 @@ export const IntelligencePage = () => {
                         {activeIndexAction?.kind === 'retry' && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        Retry now
+                        <Trans i18nKey="desktopUi.retryNow" />
                       </button>
                     </div>
                     {failedJobs.length > 0 && (
@@ -716,7 +812,8 @@ export const IntelligencePage = () => {
                           ) : (
                             <ChevronRight className="h-3 w-3" />
                           )}
-                          Show affected clips ({failedJobs.length}
+                          <Trans i18nKey="desktopUi.showAffectedClips" />
+                          {failedJobs.length}
                           {status.failedJobs > failedJobs.length ? '+' : ''})
                         </button>
                         {showAffectedClips && (
@@ -732,7 +829,7 @@ export const IntelligencePage = () => {
                                 <p className="mt-0.5 truncate text-[10px] text-slate-500 dark:text-slate-400">
                                   {job.clip.historyPreview.subtitle ??
                                     job.clip.sourceAppName ??
-                                    'Clipboard item'}
+                                    i18n.t('desktopUi.clipboardItem')}
                                 </p>
                               </div>
                             ))}
@@ -743,7 +840,7 @@ export const IntelligencePage = () => {
                     {status.diagnostic && (
                       <details className="mt-2 text-[10px] text-amber-800/75 dark:text-amber-100/65">
                         <summary className="cursor-pointer select-none hover:text-amber-950 dark:hover:text-white">
-                          Technical details
+                          <Trans i18nKey="desktopUi.technicalDetails" />
                         </summary>
                         <p className="mt-1 break-words font-mono leading-4">{status.diagnostic}</p>
                       </details>
@@ -754,21 +851,28 @@ export const IntelligencePage = () => {
                 <div className="flex flex-wrap gap-2 pt-1">
                   <div className="mr-auto grid min-w-full grid-cols-2 gap-2 pb-2 sm:min-w-0 sm:grid-cols-3">
                     <div>
-                      <p className="text-[10px] text-gray-500">Dimensions</p>
+                      <p className="text-[10px] text-gray-500">
+                        <Trans i18nKey="desktopUi.dimensions" />
+                      </p>
                       <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
                         {status.dimensions?.toLocaleString() ?? '—'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-gray-500">Disk used</p>
+                      <p className="text-[10px] text-gray-500">
+                        <Trans i18nKey="desktopUi.diskUsed" />
+                      </p>
                       <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
                         {formatBytes(status.indexBytes)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-gray-500">Rebuild space</p>
+                      <p className="text-[10px] text-gray-500">
+                        <Trans i18nKey="desktopUi.rebuildSpace" />
+                      </p>
                       <p className="text-xs font-medium text-slate-800 dark:text-slate-100">
-                        ~{formatBytes(status.estimatedRebuildBytes)} additional
+                        ~{formatBytes(status.estimatedRebuildBytes)}{' '}
+                        <Trans i18nKey="desktopUi.additional" />
                       </p>
                     </div>
                   </div>
@@ -780,7 +884,7 @@ export const IntelligencePage = () => {
                     disabled={activeIndexAction !== null || clearingIndex}
                     onClick={() => void handleReindex()}
                   >
-                    Reindex all
+                    <Trans i18nKey="desktopUi.reindexAll" />
                   </Button>
                   <Button
                     variant="outline"
@@ -790,7 +894,7 @@ export const IntelligencePage = () => {
                     disabled={activeIndexAction !== null || clearingIndex}
                     onClick={() => void handleIndexMissing()}
                   >
-                    Index missing
+                    <Trans i18nKey="desktopUi.indexMissing" />
                   </Button>
                   <Button
                     variant="destructive"
@@ -800,13 +904,11 @@ export const IntelligencePage = () => {
                     disabled={clearingIndex || activeIndexAction !== null}
                     onClick={() => void handleClearIndex()}
                   >
-                    Reset index
+                    <Trans i18nKey="desktopUi.resetIndex" />
                   </Button>
                 </div>
                 <p className="text-[10px] leading-4 text-gray-500">
-                  Keyword Search always stays on. If Meaning Search is unavailable, searches keep
-                  working with exact words. Rebuilding or resetting this derived index never deletes
-                  clipboard items.
+                  <Trans i18nKey="desktopUi.keywordSearchAlwaysStaysOnIfMeaningSearchIs" />
                 </p>
               </div>
             )}
@@ -823,17 +925,16 @@ export const IntelligencePage = () => {
               <div className="flex items-center gap-2">
                 <SlidersHorizontal className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
                 <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                  Search Configuration
+                  <Trans i18nKey="desktopUi.searchConfiguration" />
                 </span>
               </div>
 
               <div className="space-y-2">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                  Sources
+                  <Trans i18nKey="desktopUi.sources" />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Choose which independent searches contribute candidates. Indexing continues when a
-                  source is off.
+                  <Trans i18nKey="desktopUi.chooseWhichIndependentSearchesContributeCandidatesIndexingContinuesWhen" />
                 </p>
                 <div className="space-y-2 pt-1">
                   {searchSources.map(source => (
@@ -846,7 +947,9 @@ export const IntelligencePage = () => {
                           {source.label}
                         </p>
                         <p className="text-[10px] text-gray-500">
-                          {source.mandatory ? 'Always on' : source.state.replaceAll('_', ' ')}
+                          {source.mandatory
+                            ? i18n.t('desktopUi.alwaysOn')
+                            : i18n.t(`search.sourceState.${source.state}`)}
                         </p>
                       </div>
                       <Switch
@@ -866,11 +969,10 @@ export const IntelligencePage = () => {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                      Minimum meaning similarity
+                      <Trans i18nKey="desktopUi.minimumMeaningSimilarity" />
                     </div>
                     <p className="mt-1 text-xs leading-5 text-gray-500">
-                      Hide meaning-only results below this model&apos;s displayed percentage. Exact
-                      keyword matches are never filtered. Scores differ between models.
+                      <Trans i18nKey="desktopUi.hideMeaningOnlyResultsBelowThisModelSDisplayed" />
                     </p>
                   </div>
                   <Switch
@@ -887,10 +989,10 @@ export const IntelligencePage = () => {
                 {status?.minimumSimilarityPercent != null && (
                   <div className="flex flex-wrap items-end gap-2">
                     <label className="space-y-1 text-[10px] font-medium text-gray-500">
-                      Similarity percentage
+                      <Trans i18nKey="desktopUi.similarityPercentage" />
                       <div className="flex items-center rounded-lg border border-slate-300/70 bg-white/70 px-2 dark:border-white/10 dark:bg-black/10">
                         <input
-                          aria-label="Minimum meaning similarity percentage"
+                          aria-label={i18n.t('desktopUi.minimumMeaningSimilarityPercentage')}
                           type="number"
                           min={1}
                           max={100}
@@ -913,11 +1015,10 @@ export const IntelligencePage = () => {
                       }
                       onClick={() => void updateMeaningThreshold(parsedThreshold)}
                     >
-                      Apply
+                      <Trans i18nKey="desktopUi.apply" />
                     </Button>
                     <p className="basis-full text-[10px] leading-4 text-gray-500">
-                      Raise this to remove weak matches; lower it if useful synonyms disappear. No
-                      reindex is required.
+                      <Trans i18nKey="desktopUi.raiseThisToRemoveWeakMatchesLowerItIf" />
                     </p>
                   </div>
                 )}
@@ -928,11 +1029,12 @@ export const IntelligencePage = () => {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                    Advanced keyword queries
+                    <Trans i18nKey="desktopUi.advancedKeywordQueries" />
                   </div>
                   <p className="mt-1 text-xs text-gray-500">
-                    Allow raw FTS5 syntax such as <code>car OR truck</code> and <code>title*</code>.
-                    This only changes Keyword Search.
+                    <Trans i18nKey="desktopUi.allowRawFts5SyntaxSuchAs" /> <code>car OR truck</code>{' '}
+                    <Trans i18nKey="desktopUi.and" /> <code>title*</code>
+                    <Trans i18nKey="desktopUi.thisOnlyChangesKeywordSearch" />
                   </p>
                 </div>
                 <Switch
@@ -963,11 +1065,10 @@ export const IntelligencePage = () => {
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      Text recognition
+                      <Trans i18nKey="desktopUi.textRecognition" />
                     </h2>
                     <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">
-                      Read text from copied images locally. Recognition is derived data—your
-                      original image stays unchanged when the engine is unavailable or fails.
+                      <Trans i18nKey="desktopUi.readTextFromCopiedImagesLocallyRecognitionIsDerived" />
                     </p>
                   </div>
                 </div>
@@ -984,16 +1085,24 @@ export const IntelligencePage = () => {
               <div className="border-y border-slate-200/60 bg-white/35 px-5 py-3 dark:border-white/8 dark:bg-black/10">
                 <div
                   className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2"
-                  aria-label="Text recognition path"
+                  aria-label={i18n.t('desktopUi.textRecognitionPath')}
                 >
                   {[
-                    { label: 'Engine', value: ocrStatus?.provider.providerVersion ?? 'Checking…' },
-                    { label: 'Language', value: ocrStatus?.selectedLanguage ?? 'Unavailable' },
                     {
-                      label: 'Queue',
+                      label: i18n.t('desktopUi.engine'),
+                      value: ocrStatus?.provider.providerVersion ?? i18n.t('desktopUi.checking'),
+                    },
+                    {
+                      label: i18n.t('desktopUi.language'),
+                      value: ocrStatus?.selectedLanguage ?? i18n.t('desktopUi.unavailable'),
+                    },
+                    {
+                      label: i18n.t('desktopUi.queue'),
                       value: ocrStatus
-                        ? `${ocrStatus.pendingJobs + ocrStatus.runningJobs} waiting`
-                        : 'Checking…',
+                        ? i18n.t('desktopUi.waitingCount', {
+                            count: ocrStatus.pendingJobs + ocrStatus.runningJobs,
+                          })
+                        : i18n.t('desktopUi.checking'),
                     },
                   ].map((item, index) => (
                     <div key={item.label} className="contents">
@@ -1022,10 +1131,10 @@ export const IntelligencePage = () => {
                     />
                     <div>
                       <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                        Recognition language
+                        <Trans i18nKey="desktopUi.recognitionLanguage" />
                       </p>
                       <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
-                        Automatic follows your ClipsX language, then falls back to English.
+                        <Trans i18nKey="desktopUi.automaticFollowsYourClipsxLanguageThenFallsBackTo" />
                       </p>
                     </div>
                   </div>
@@ -1049,9 +1158,7 @@ export const IntelligencePage = () => {
 
                 {ocrStatus && ocrStatus.failedJobs > 0 && (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    {ocrStatus.failedJobs.toLocaleString()} image
-                    {ocrStatus.failedJobs === 1 ? '' : 's'} could not be recognized. Retry from the
-                    image’s OCR view.
+                    {i18n.t('desktopUi.failedImageCount', { count: ocrStatus.failedJobs })}
                   </p>
                 )}
               </div>
@@ -1061,15 +1168,14 @@ export const IntelligencePage = () => {
               <div className="flex items-center gap-2">
                 <ScanSearch className="h-4 w-4 text-sky-400" strokeWidth={1.5} />
                 <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                  Visual Image Search
+                  <Trans i18nKey="desktopUi.visualImageSearch" />
                 </span>
                 <span className="ml-auto rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/10">
-                  coming soon
+                  <Trans i18nKey="desktopUi.comingSoon" />
                 </span>
               </div>
               <p className="mt-2 text-xs text-gray-400">
-                Semantic search over screenshots and images — find a beach photo by searching "ocean
-                sunset".
+                <Trans i18nKey="desktopUi.semanticSearchOverScreenshotsAndImagesFindABeach" />
               </p>
             </section>
           </div>
@@ -1082,10 +1188,10 @@ export const IntelligencePage = () => {
                 <Server className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
                 <div>
                   <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    Ollama Connection
+                    <Trans i18nKey="desktopUi.ollamaConnection" />
                   </h2>
                   <p className="mt-0.5 text-[11px] text-gray-500">
-                    One local model library for every ClipsX intelligence capability.
+                    <Trans i18nKey="desktopUi.oneLocalModelLibraryForEveryClipsxIntelligenceCapability" />
                   </p>
                 </div>
                 <span
@@ -1099,12 +1205,12 @@ export const IntelligencePage = () => {
                     <Circle className="h-3 w-3" />
                   )}
                   {loadingConnection
-                    ? 'checking'
+                    ? i18n.t('desktopUi.checking')
                     : connectionReady
-                      ? 'connected'
+                      ? i18n.t('desktopUi.connectedStatus')
                       : connection?.configured
-                        ? 'unavailable'
-                        : 'not connected'}
+                        ? i18n.t('desktopUi.unavailable')
+                        : i18n.t('desktopUi.notConnectedStatus')}
                 </span>
               </div>
 
@@ -1122,10 +1228,10 @@ export const IntelligencePage = () => {
                     disabled={loadingConnection}
                     onClick={() => void loadConnection()}
                   >
-                    Refresh
+                    <Trans i18nKey="desktopUi.refresh" />
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setEditingConnection(true)}>
-                    Change
+                    <Trans i18nKey="desktopUi.change" />
                   </Button>
                 </div>
               ) : (
@@ -1133,7 +1239,7 @@ export const IntelligencePage = () => {
                   <div className="flex min-w-60 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
                     <Server className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                     <input
-                      aria-label="Ollama endpoint"
+                      aria-label={i18n.t('desktopUi.ollamaEndpoint')}
                       className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
                       placeholder={DEFAULT_OLLAMA_ENDPOINT}
                       value={endpointDraft}
@@ -1150,7 +1256,9 @@ export const IntelligencePage = () => {
                     disabled={savingConnection || !endpointDraft.trim()}
                     onClick={() => void handleSaveConnection()}
                   >
-                    {connection?.configured ? 'Use endpoint' : 'Connect'}
+                    {connection?.configured
+                      ? i18n.t('desktopUi.useEndpoint')
+                      : i18n.t('desktopUi.connect')}
                   </Button>
                   {connection?.configured && (
                     <Button
@@ -1162,7 +1270,7 @@ export const IntelligencePage = () => {
                         setEditingConnection(false)
                       }}
                     >
-                      Cancel
+                      <Trans i18nKey="desktopUi.cancel" />
                     </Button>
                   )}
                 </div>
@@ -1176,13 +1284,13 @@ export const IntelligencePage = () => {
               {connectionReady && (
                 <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
                   <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {connection.models.length} installed
+                    {connection.models.length} <Trans i18nKey="desktopUi.installed" />
                   </span>
                   <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {embeddingModels.length} embedding
+                    {embeddingModels.length} <Trans i18nKey="desktopUi.embedding" />
                   </span>
                   <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {generationModels.length} generative
+                    {generationModels.length} <Trans i18nKey="desktopUi.generative" />
                   </span>
                 </div>
               )}
@@ -1193,15 +1301,14 @@ export const IntelligencePage = () => {
                 <div className="flex items-center gap-2">
                   <BrainCircuit className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
                   <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    Semantic Search
+                    <Trans i18nKey="desktopUi.semanticSearch" />
                   </span>
                   <span className="ml-auto rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
-                    {status?.phase?.replaceAll('_', ' ') ?? 'not configured'}
+                    {phaseLabel(status?.phase)}
                   </span>
                 </div>
                 <p className="text-xs leading-5 text-gray-500">
-                  Understand meaning with an embedding model. Changing vector spaces rebuilds only
-                  the derived index.
+                  <Trans i18nKey="desktopUi.understandMeaningWithAnEmbeddingModelChangingVectorSpaces" />
                 </p>
                 <Select
                   className="w-full py-2"
@@ -1209,18 +1316,21 @@ export const IntelligencePage = () => {
                   onChange={setSelectedModel}
                   options={modelOptions(embeddingModels, selectedModel)}
                   placeholder={
-                    connectionReady ? 'Choose an embedding model' : 'Connect Ollama first'
+                    connectionReady
+                      ? i18n.t('desktopUi.chooseAnEmbeddingModel')
+                      : i18n.t('desktopUi.connectOllamaFirst')
                   }
                   disabled={!connectionReady || embeddingModels.length === 0}
                 />
                 {connectionReady && embeddingModels.length === 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    No installed model reports embedding support.
+                    <Trans i18nKey="desktopUi.noInstalledModelReportsEmbeddingSupport" />
                   </p>
                 )}
                 {selectedModel && !embeddingModels.some(model => model.id === selectedModel) && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    {selectedModel} is not available as an embedding model on this connection.
+                    {selectedModel}{' '}
+                    <Trans i18nKey="desktopUi.isNotAvailableAsAnEmbeddingModelOnThis" />
                   </p>
                 )}
                 {configError && (
@@ -1239,7 +1349,7 @@ export const IntelligencePage = () => {
                     }
                     onClick={() => void handleConnect()}
                   >
-                    {status?.enabled ? 'Update' : 'Enable'}
+                    {status?.enabled ? i18n.t('desktopUi.update') : i18n.t('desktopUi.enable')}
                   </Button>
                   {status?.enabled && (
                     <Button
@@ -1250,7 +1360,7 @@ export const IntelligencePage = () => {
                       disabled={disconnecting}
                       onClick={() => void handleDisconnect()}
                     >
-                      Disable
+                      <Trans i18nKey="desktopUi.disable" />
                     </Button>
                   )}
                   {isConfigured && status && (
@@ -1260,7 +1370,8 @@ export const IntelligencePage = () => {
                       onClick={() => setActiveSection('indexing')}
                     >
                       {status.indexedClips.toLocaleString()} /{' '}
-                      {status.eligibleClips.toLocaleString()} indexed →
+                      {status.eligibleClips.toLocaleString()}{' '}
+                      <Trans i18nKey="desktopUi.indexedfb7a" />
                     </button>
                   )}
                 </div>
@@ -1270,21 +1381,20 @@ export const IntelligencePage = () => {
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-pink-400" strokeWidth={1.5} />
                   <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    Local Text Generation
+                    <Trans i18nKey="desktopUi.localTextGeneration" />
                   </span>
                   <span
                     className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${generationStatus?.available ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
                   >
                     {generationStatus?.available
-                      ? 'available'
+                      ? i18n.t('desktopUi.available')
                       : generationStatus?.enabled
-                        ? 'needs attention'
-                        : 'not configured'}
+                        ? i18n.t('desktopUi.needsAttention')
+                        : i18n.t('desktopUi.notConfigured')}
                   </span>
                 </div>
                 <p className="text-xs leading-5 text-gray-500">
-                  Extensions can request generation without learning your endpoint or model
-                  configuration.
+                  <Trans i18nKey="desktopUi.extensionsCanRequestGenerationWithoutLearningYourEndpointOr" />
                 </p>
                 <Select
                   className="w-full py-2"
@@ -1292,19 +1402,22 @@ export const IntelligencePage = () => {
                   onChange={setGenerationModel}
                   options={modelOptions(generationModels, generationModel)}
                   placeholder={
-                    connectionReady ? 'Choose a generative model' : 'Connect Ollama first'
+                    connectionReady
+                      ? i18n.t('desktopUi.chooseAGenerativeModel')
+                      : i18n.t('desktopUi.connectOllamaFirst')
                   }
                   disabled={!connectionReady || generationModels.length === 0}
                 />
                 {connectionReady && generationModels.length === 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
-                    No installed model reports completion support.
+                    <Trans i18nKey="desktopUi.noInstalledModelReportsCompletionSupport" />
                   </p>
                 )}
                 {generationModel &&
                   !generationModels.some(model => model.id === generationModel) && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
-                      {generationModel} is not available for text generation on this connection.
+                      {generationModel}{' '}
+                      <Trans i18nKey="desktopUi.isNotAvailableForTextGenerationOnThisConnection" />
                     </p>
                   )}
                 {generationStatus?.enabled && generationStatus.diagnostic && (
@@ -1323,7 +1436,9 @@ export const IntelligencePage = () => {
                     }
                     onClick={() => void handleGenerationConnect()}
                   >
-                    {generationStatus?.enabled ? 'Update' : 'Enable'}
+                    {generationStatus?.enabled
+                      ? i18n.t('desktopUi.update')
+                      : i18n.t('desktopUi.enable')}
                   </Button>
                   {generationStatus?.enabled && (
                     <Button
@@ -1334,7 +1449,7 @@ export const IntelligencePage = () => {
                       disabled={generationSaving}
                       onClick={() => void handleGenerationDisconnect()}
                     >
-                      Disable
+                      <Trans i18nKey="desktopUi.disable" />
                     </Button>
                   )}
                 </div>

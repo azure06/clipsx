@@ -1,3 +1,4 @@
+import { useTranslation, Trans } from 'react-i18next'
 import { diagnostic } from './shared/diagnostics'
 import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -28,6 +29,8 @@ const applyAppLanguage = async (language: string) => {
 }
 
 const App = () => {
+  useTranslation()
+
   const settings = useSettingsStore(state => state.settings)
   const loadSettings = useSettingsStore(state => state.loadSettings)
   const updateSettings = useSettingsStore(state => state.updateSettings)
@@ -106,7 +109,7 @@ const App = () => {
           role="alert"
           className="max-w-lg rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-900/20 dark:text-red-400"
         >
-          Unable to inspect ClipsX storage: {startupError}
+          <Trans i18nKey="desktopUi.unableToInspectClipsxStorage" /> {startupError}
         </p>
       </main>
     )

@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import type { ReactNode } from 'react'
 import { Select } from '../../shared/components/ui'
 import { ParameterForm } from './ParameterForm'
@@ -33,6 +35,8 @@ export function SetupConfiguration({
   disabled?: boolean
   accessory?: ReactNode
 }) {
+  useTranslation()
+
   const binding = transformer.setupSelectorParameter
   const selectorValue = binding ? values[binding] : undefined
   const base =
@@ -47,24 +51,33 @@ export function SetupConfiguration({
       <div className="flex items-end gap-2">
         <div className="grid min-w-0 flex-1">
           <Select
-            label="Setup"
+            label={i18n.t('desktopUi.setup')}
             ariaLabel="Setup"
             value={reference}
             onChange={onSelect}
             disabled={disabled}
             className={controlClass}
-            placeholder="Choose a setup"
-            options={!transformer.setups.length ? [{ value: 'default', label: 'Default' }] : []}
+            placeholder={i18n.t('desktopUi.chooseASetup')}
+            options={
+              !transformer.setups.length
+                ? [
+                    {
+                      value: 'default',
+                      label: i18n.t('desktopUi.default'),
+                    },
+                  ]
+                : []
+            }
             groups={[
               {
-                label: 'Built-in setups',
+                label: i18n.t('desktopUi.builtInSetups'),
                 options: transformer.setups.map(setup => ({
                   value: setup.id,
                   label: setup.displayName,
                 })),
               },
               {
-                label: 'Saved setups',
+                label: i18n.t('desktopUi.savedSetups'),
                 options: setups.map(setup => ({
                   value: `saved:${setup.id}`,
                   label: setup.label + (!setup.available ? ' — unavailable' : ''),
@@ -86,14 +99,20 @@ export function SetupConfiguration({
         onChange={onChange}
       />
       <Select
-        label="Initial result view"
+        label={i18n.t('desktopUi.initialResultView')}
         className={controlClass}
         value={view}
         onChange={onViewChange}
         disabled={disabled}
         options={[
-          { value: 'result_only', label: 'Result' },
-          { value: 'compare', label: 'Compare' },
+          {
+            value: 'result_only',
+            label: i18n.t('desktopUi.result'),
+          },
+          {
+            value: 'compare',
+            label: i18n.t('desktopUi.compare'),
+          },
         ]}
       />
     </div>

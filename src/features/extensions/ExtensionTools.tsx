@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { failureMessage } from './failures'
 import { invoke } from '@tauri-apps/api/core'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -56,6 +58,8 @@ export function ExtensionTools({
   onTogglePin?: (operation: PinnedOperation) => void
   initialOperationId?: string | null
 }) {
+  useTranslation()
+
   const openSettings = useUIStore(state => state.openExtensionSettings)
   const setActiveView = useUIStore(state => state.setActiveView)
   const [setups, setSetups] = useState<SavedSetup[]>([])
@@ -254,7 +258,7 @@ export function ExtensionTools({
   const save = async (copy: boolean, automation = false) => {
     if (!transformer || !validate()) return
     if (!name.trim()) {
-      setError('Enter a setup name.')
+      setError(i18n.t('desktopUi.enterASetupName'))
       return
     }
     setBusy(true)
@@ -333,12 +337,12 @@ export function ExtensionTools({
     }
   }
   return (
-    <section className="flex h-full min-h-0 flex-col" aria-label="Clip tools">
+    <section className="flex h-full min-h-0 flex-col" aria-label={i18n.t('desktopUi.clipTools')}>
       <header className="flex shrink-0 items-center gap-2 border-b border-slate-200/70 bg-white/65 px-3 py-2 dark:border-white/10 dark:bg-white/[.035]">
         {packageId && (
           <button
             type="button"
-            aria-label="Back to tools"
+            aria-label={i18n.t('desktopUi.backToTools')}
             onClick={() => {
               setPackageId(null)
               setSelection(null)
@@ -352,17 +356,17 @@ export function ExtensionTools({
           {packageId
             ? (groups.find(group => group.id === packageId)?.label ??
               humanLabel(packageId.split('.').at(-1) ?? packageId))
-            : 'Tools'}
+            : i18n.t('desktopUi.tools')}
         </Dialog.Title>
         <Dialog.Close
-          aria-label="Close tools"
+          aria-label={i18n.t('desktopUi.closeTools')}
           className="rounded-lg p-2 text-slate-500 hover:bg-slate-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
         >
           <X className="h-4 w-4" />
         </Dialog.Close>
       </header>
       <Dialog.Description className="sr-only">
-        Choose an extension, configure a setup, and run it on this clip.
+        <Trans i18nKey="desktopUi.chooseAnExtensionConfigureASetupAndRunIt" />
       </Dialog.Description>
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {!packageId ? (
@@ -370,8 +374,8 @@ export function ExtensionTools({
             <label className="mb-3 flex items-center gap-2 rounded-lg border border-slate-200 px-2 dark:border-white/10">
               <Search className="h-3.5 w-3.5 text-slate-400" />
               <input
-                aria-label="Search tools"
-                placeholder="Search extensions or setups…"
+                aria-label={i18n.t('desktopUi.searchTools')}
+                placeholder={i18n.t('desktopUi.searchExtensionsOrSetups')}
                 value={query}
                 onChange={event => setQuery(event.target.value)}
                 className="h-8 min-w-0 flex-1 bg-transparent text-xs outline-none focus-visible:ring-2 focus-visible:ring-violet-400/40"
@@ -396,7 +400,7 @@ export function ExtensionTools({
                       <span className="mt-1 block text-[11px] text-slate-500">
                         {group.children.length === 1
                           ? group.children[0]?.transformer
-                            ? 'Choose a setup'
+                            ? i18n.t('desktopUi.chooseASetup')
                             : group.children[0]?.label
                           : `${group.children.length} operations`}
                       </span>
@@ -406,7 +410,7 @@ export function ExtensionTools({
               </div>
             ) : (
               <p className="py-6 text-center text-xs text-slate-500">
-                No tools match this clip or search.
+                <Trans i18nKey="desktopUi.noToolsMatchThisClipOrSearch" />
               </p>
             )}
           </>
@@ -442,7 +446,7 @@ export function ExtensionTools({
                   {entry.action && onTogglePin && (
                     <button
                       type="button"
-                      aria-label={`${pinnedIds.includes(entry.icon.id) ? 'Unpin' : 'Pin'} ${entry.label}`}
+                      aria-label={`${pinnedIds.includes(entry.icon.id) ? i18n.t('desktopUi.unpin') : i18n.t('desktopUi.pin')} ${entry.label}`}
                       onClick={() => onTogglePin(entry.icon)}
                       aria-pressed={pinnedIds.includes(entry.icon.id)}
                       className={`rounded p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 ${pinnedIds.includes(entry.icon.id) ? 'text-amber-500' : 'text-slate-500'}`}
@@ -460,7 +464,7 @@ export function ExtensionTools({
                 role="alert"
                 className="rounded-lg bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-200"
               >
-                A generation model is not configured.{' '}
+                <Trans i18nKey="desktopUi.aGenerationModelIsNotConfigured" />{' '}
                 <button
                   type="button"
                   className="underline"
@@ -469,13 +473,13 @@ export function ExtensionTools({
                     onClose()
                   }}
                 >
-                  Configure Local Text Generation
+                  <Trans i18nKey="desktopUi.configureLocalTextGeneration" />
                 </button>
               </p>
             )}
             {transformer.consentRequired && (
               <p className="text-[11px] text-slate-500">
-                Permission is required for this package release. ClipsX will ask before running.
+                <Trans i18nKey="desktopUi.permissionIsRequiredForThisPackageReleaseClipsxWill" />
               </p>
             )}
             {decision?.state === 'disabled' && (
@@ -517,9 +521,13 @@ export function ExtensionTools({
                 pin && onTogglePin ? (
                   <button
                     type="button"
-                    aria-label={`${pinnedIds.includes(pin.id) ? 'Unpin' : 'Pin'} ${label}`}
+                    aria-label={`${pinnedIds.includes(pin.id) ? i18n.t('desktopUi.unpin') : i18n.t('desktopUi.pin')} ${label}`}
                     disabled={dirty}
-                    title={dirty ? 'Save these choices before pinning them' : `Pin ${label}`}
+                    title={
+                      dirty
+                        ? i18n.t('desktopUi.saveTheseChoicesBeforePinningThem')
+                        : i18n.t('desktopUi.pinNamedTool', { label })
+                    }
                     aria-pressed={pinnedIds.includes(pin.id)}
                     onClick={() => onTogglePin(pin)}
                     className={`rounded-lg p-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40 ${pinnedIds.includes(pin.id) ? 'text-amber-500' : 'text-slate-500'}`}
@@ -533,13 +541,13 @@ export function ExtensionTools({
               <div className="grid gap-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
                 <p className="text-[11px] text-slate-500">
                   {saveMode === 'automation'
-                    ? 'Save these choices so automation can reuse them.'
-                    : 'Create a reusable setup.'}
+                    ? i18n.t('desktopUi.saveTheseChoicesSoAutomationCanReuseThem')
+                    : i18n.t('desktopUi.createAReusableSetup')}
                 </p>
                 <label className="grid gap-1.5 text-xs font-semibold">
-                  Setup name
+                  <Trans i18nKey="desktopUi.setupName" />
                   <input
-                    aria-label="Saved setup name"
+                    aria-label={i18n.t('desktopUi.savedSetupName')}
                     className={controlClass}
                     maxLength={80}
                     value={name}
@@ -554,10 +562,12 @@ export function ExtensionTools({
                       void save(saveMode === 'new' || !selection?.saved, saveMode === 'automation')
                     }
                   >
-                    {saveMode === 'automation' ? 'Save and continue' : 'Save setup'}
+                    {saveMode === 'automation'
+                      ? i18n.t('desktopUi.saveAndContinue')
+                      : i18n.t('desktopUi.saveSetup')}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setSaveMode(null)}>
-                    Cancel
+                    <Trans i18nKey="desktopUi.cancel" />
                   </Button>
                 </div>
               </div>
@@ -571,7 +581,7 @@ export function ExtensionTools({
                       disabled={busy}
                       onClick={() => void save(false)}
                     >
-                      Save changes
+                      <Trans i18nKey="desktopUi.saveChanges" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -581,16 +591,16 @@ export function ExtensionTools({
                         setName('')
                       }}
                     >
-                      Save as another setup
+                      <Trans i18nKey="desktopUi.saveAsAnotherSetup" />
                     </Button>
                     <button
                       type="button"
-                      aria-label="Delete saved setup"
+                      aria-label={i18n.t('desktopUi.deleteSavedSetup')}
                       className="rounded-lg p-2 text-slate-500 hover:text-red-600"
                       onClick={() => {
                         if (
                           !window.confirm(
-                            'Delete this setup? Its automation rules will be disabled. Existing results stay available.'
+                            i18n.t('desktopUi.deleteThisSetupItsAutomationRulesWillBeDisabled')
                           )
                         )
                           return
@@ -615,11 +625,11 @@ export function ExtensionTools({
                       setName('')
                     }}
                   >
-                    Save setup
+                    <Trans i18nKey="desktopUi.saveSetup" />
                   </Button>
                 )}
                 <Button variant="ghost" size="sm" onClick={manageAutomation}>
-                  Manage automation
+                  <Trans i18nKey="desktopUi.manageAutomation" />
                 </Button>
               </div>
             )}
@@ -628,7 +638,9 @@ export function ExtensionTools({
       </div>
       {transformer && (
         <footer className="flex shrink-0 items-center justify-between border-t border-slate-200/70 px-3 py-2 dark:border-white/10">
-          <span className="text-[11px] text-slate-500">Original clip stays unchanged</span>
+          <span className="text-[11px] text-slate-500">
+            <Trans i18nKey="desktopUi.originalClipStaysUnchanged" />
+          </span>
           <Button
             size="sm"
             leftIcon={<Play className="h-3.5 w-3.5" />}
@@ -636,7 +648,7 @@ export function ExtensionTools({
             disabled={busy || !transformer.providerAvailable || decision?.state === 'disabled'}
             onClick={() => void run()}
           >
-            Run
+            <Trans i18nKey="desktopUi.run" />
           </Button>
         </footer>
       )}

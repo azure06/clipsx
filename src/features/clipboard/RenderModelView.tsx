@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Archive,
@@ -26,7 +28,6 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useTranslation } from 'react-i18next'
 import {
   memo,
   useEffect,
@@ -174,9 +175,14 @@ const getFileIcon = (name: string): { icon: LucideIcon; chip: string } => {
   return { icon: File, chip: DEFAULT_FILE_CHIP }
 }
 
-const TextBlock = ({ children }: { children: string }) => (
-  <pre className={`${SCROLL_AREA} whitespace-pre-wrap p-4 text-sm leading-relaxed`}>{children}</pre>
-)
+const TextBlock = ({ children }: { children: string }) => {
+  useTranslation()
+  return (
+    <pre className={`${SCROLL_AREA} whitespace-pre-wrap p-4 text-sm leading-relaxed`}>
+      {children}
+    </pre>
+  )
+}
 
 const CopyableRow = ({
   label,
@@ -187,6 +193,8 @@ const CopyableRow = ({
   value: string
   clipId: string
 }) => {
+  useTranslation()
+
   const [copied, setCopied] = useState(false)
   return (
     <div
@@ -231,6 +239,8 @@ const LANG_CHIP_COLOR: Record<string, string> = {
 }
 
 const CodeView = ({ language, text }: { language: string | null; text: string }) => {
+  useTranslation()
+
   const lines = useMemo(() => text.split('\n'), [text])
   const chipColor =
     LANG_CHIP_COLOR[language?.toLowerCase() ?? ''] ?? 'bg-violet-500/15 text-violet-400'
@@ -243,8 +253,12 @@ const CodeView = ({ language, text }: { language: string | null; text: string })
             {language}
           </span>
         )}
-        <span className="text-[10px] text-slate-400">{lines.length} lines</span>
-        <span className="text-[10px] text-slate-500">{words} words</span>
+        <span className="text-[10px] text-slate-400">
+          {lines.length} <Trans i18nKey="desktopUi.lines" />
+        </span>
+        <span className="text-[10px] text-slate-500">
+          {words} <Trans i18nKey="desktopUi.words" />
+        </span>
       </div>
       <div className="custom-scrollbar flex min-h-0 flex-1 overflow-auto overscroll-contain bg-slate-950/90 font-mono text-sm">
         <div className="select-none border-r border-white/5 px-3 py-4 text-right text-slate-600">
@@ -260,52 +274,59 @@ const CodeView = ({ language, text }: { language: string | null; text: string })
   )
 }
 
-const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) => (
-  <div className="flex h-full flex-col overflow-hidden">
-    <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-white/10">
-      <div className="rounded-lg bg-emerald-500/20 p-1 text-emerald-400">
-        <FileSpreadsheet className="h-3.5 w-3.5" />
+const TableView = ({ columns, rows }: Extract<RenderModel, { kind: 'table' }>) => {
+  useTranslation()
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-white/10">
+        <div className="rounded-lg bg-emerald-500/20 p-1 text-emerald-400">
+          <FileSpreadsheet className="h-3.5 w-3.5" />
+        </div>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
+          {rows.length} <Trans i18nKey="desktopUi.rows" />
+        </span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
+          {columns.length} <Trans i18nKey="desktopUi.cols" />
+        </span>
       </div>
-      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
-        {rows.length} rows
-      </span>
-      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold dark:bg-slate-800">
-        {columns.length} cols
-      </span>
-    </div>
-    <div className="custom-scrollbar flex-1 overflow-auto overscroll-contain">
-      <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
-        <thead className="sticky top-0 z-10">
-          <tr>
-            {columns.map((column, index) => (
-              <th
-                className="border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 backdrop-blur dark:border-white/10 dark:bg-slate-800/95 dark:text-gray-400"
-                key={`${index}:${column}`}
-              >
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-          {rows.map((row, rowIndex) => (
-            <tr
-              key={rowIndex}
-              className="transition-colors hover:bg-slate-50 dark:hover:bg-white/5"
-            >
-              {columns.map((_, columnIndex) => (
-                <td className="px-3 py-2 text-gray-700 dark:text-gray-300" key={columnIndex}>
-                  {row[columnIndex] ?? ''}
-                </td>
+      <div className="custom-scrollbar flex-1 overflow-auto overscroll-contain">
+        <table className="min-w-full border-collapse text-left text-sm whitespace-nowrap">
+          <thead className="sticky top-0 z-10">
+            <tr>
+              {columns.map((column, index) => (
+                <th
+                  className="border-b border-slate-200 bg-slate-100/95 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 backdrop-blur dark:border-white/10 dark:bg-slate-800/95 dark:text-gray-400"
+                  key={`${index}:${column}`}
+                >
+                  {column}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && <p className="py-6 text-center text-sm text-gray-500">No rows</p>}
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+            {rows.map((row, rowIndex) => (
+              <tr
+                key={rowIndex}
+                className="transition-colors hover:bg-slate-50 dark:hover:bg-white/5"
+              >
+                {columns.map((_, columnIndex) => (
+                  <td className="px-3 py-2 text-gray-700 dark:text-gray-300" key={columnIndex}>
+                    {row[columnIndex] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && (
+          <p className="py-6 text-center text-sm text-gray-500">
+            <Trans i18nKey="desktopUi.noRows" />
+          </p>
+        )}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 const TreeNode = ({ value }: { value: unknown }): ReactNode => {
   if (value === null) return <span className="text-gray-500">null</span>
@@ -333,12 +354,22 @@ const TreeNode = ({ value }: { value: unknown }): ReactNode => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return <span>{String(value)}</span>
   }
-  return <span>Unsupported value</span>
+  return (
+    <span>
+      <Trans i18nKey="desktopUi.unsupportedValue" />
+    </span>
+  )
 }
 
 const KeyValueView = ({ entries, clipId }: { entries: [string, string][]; clipId: string }) => {
+  useTranslation()
+
   if (entries.length === 0) {
-    return <p className="px-4 py-8 text-center text-sm text-slate-500">No details</p>
+    return (
+      <p className="px-4 py-8 text-center text-sm text-slate-500">
+        <Trans i18nKey="desktopUi.noDetails" />
+      </p>
+    )
   }
 
   return (
@@ -400,54 +431,57 @@ const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }
 const FilesView = ({
   entries,
   clipId,
-}: Extract<RenderModel, { kind: 'files' }> & { clipId: string }) => (
-  <ul className="space-y-2 p-4">
-    {entries.map((entry, index) => {
-      const { icon: Icon, chip } = getFileIcon(entry.name)
-      const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
-      const isImage = IMAGE_EXTS.has(ext)
-      const openFile = () => void invoke('open_clip_file', { clipId, path: entry.path })
-      return (
-        <li
-          className="group flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 transition-colors hover:border-blue-300/70 hover:bg-blue-50/40 dark:border-slate-700/60 dark:bg-slate-100/5 dark:hover:border-blue-500/40 dark:hover:bg-blue-500/10"
-          key={`${index}:${entry.path}`}
-        >
-          <div
-            className="flex cursor-pointer items-center gap-3"
-            onClick={openFile}
-            role="button"
-            tabIndex={0}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') openFile()
-            }}
+}: Extract<RenderModel, { kind: 'files' }> & { clipId: string }) => {
+  useTranslation()
+  return (
+    <ul className="space-y-2 p-4">
+      {entries.map((entry, index) => {
+        const { icon: Icon, chip } = getFileIcon(entry.name)
+        const ext = entry.name.split('.').pop()?.toLowerCase() ?? ''
+        const isImage = IMAGE_EXTS.has(ext)
+        const openFile = () => void invoke('open_clip_file', { clipId, path: entry.path })
+        return (
+          <li
+            className="group flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-50/40 p-3 transition-colors hover:border-blue-300/70 hover:bg-blue-50/40 dark:border-slate-700/60 dark:bg-slate-100/5 dark:hover:border-blue-500/40 dark:hover:bg-blue-500/10"
+            key={`${index}:${entry.path}`}
           >
             <div
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105 ${chip}`}
-            >
-              <Icon className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{entry.name}</div>
-              <div className="break-all text-xs text-gray-500">{entry.path}</div>
-            </div>
-            <button
-              aria-label={`Open ${entry.name}`}
-              title="Open file"
-              className="shrink-0 rounded p-2 text-gray-400 transition-colors hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-white/10"
-              onClick={event => {
-                event.stopPropagation()
-                openFile()
+              className="flex cursor-pointer items-center gap-3"
+              onClick={openFile}
+              role="button"
+              tabIndex={0}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') openFile()
               }}
             >
-              <FolderOpen className="h-4 w-4" />
-            </button>
-          </div>
-          {isImage && <LocalFilePreview clipId={clipId} path={entry.path} name={entry.name} />}
-        </li>
-      )
-    })}
-  </ul>
-)
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105 ${chip}`}
+              >
+                <Icon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{entry.name}</div>
+                <div className="break-all text-xs text-gray-500">{entry.path}</div>
+              </div>
+              <button
+                aria-label={`Open ${entry.name}`}
+                title={i18n.t('desktopUi.openFile')}
+                className="shrink-0 rounded p-2 text-gray-400 transition-colors hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-white/10"
+                onClick={event => {
+                  event.stopPropagation()
+                  openFile()
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+              </button>
+            </div>
+            {isImage && <LocalFilePreview clipId={clipId} path={entry.path} name={entry.name} />}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
 
 const LocalFilePreview = ({
   clipId,
@@ -458,6 +492,8 @@ const LocalFilePreview = ({
   path: string
   name: string
 }) => {
+  useTranslation()
+
   const [source, setSource] = useState<string | null>(null)
   useEffect(() => {
     let active = true
@@ -508,6 +544,8 @@ const CopyButton = ({
   clipId: string
   className?: string
 }) => {
+  useTranslation()
+
   const [copied, setCopied] = useState(false)
   const handleCopy = () => {
     void copyLiteralText(text, clipId)
@@ -519,7 +557,7 @@ const CopyButton = ({
   }
   return (
     <button
-      title="Copy"
+      title={i18n.t('desktopUi.copy')}
       className={`rounded p-1 text-gray-400 transition-colors hover:bg-slate-100 dark:hover:bg-white/10 ${copied ? 'text-emerald-500' : ''} ${className}`}
       onClick={handleCopy}
     >
@@ -536,6 +574,8 @@ const MathView = ({
   model: Extract<RenderModel, { kind: 'semantic' }>
   clipId: string
 }) => {
+  useTranslation()
+
   const result = semanticScalar(model.payload, 'result') ?? semanticScalar(model.payload, 'value')
   return (
     <div className={`${SCROLL_AREA} flex flex-col gap-px p-3`}>
@@ -631,12 +671,20 @@ const SemanticView = ({
         )}
         <div className="p-3">
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            URL Structure
+            <Trans i18nKey="desktopUi.urlStructure" />
           </div>
-          {scheme && <CopyableRow label="Protocol" value={scheme} clipId={clipId} />}
-          {host && <CopyableRow label="Domain" value={host} clipId={clipId} />}
-          {path && <CopyableRow label="Path" value={path} clipId={clipId} />}
-          {fragment && <CopyableRow label="Fragment" value={`#${fragment}`} clipId={clipId} />}
+          {scheme && (
+            <CopyableRow label={i18n.t('desktopUi.protocol')} value={scheme} clipId={clipId} />
+          )}
+          {host && <CopyableRow label={i18n.t('desktopUi.domain')} value={host} clipId={clipId} />}
+          {path && <CopyableRow label={i18n.t('desktopUi.path')} value={path} clipId={clipId} />}
+          {fragment && (
+            <CopyableRow
+              label={i18n.t('desktopUi.fragment')}
+              value={`#${fragment}`}
+              clipId={clipId}
+            />
+          )}
           {queryEntries.map(([k, v]) => (
             <CopyableRow key={k} label={`?${k}`} value={v} clipId={clipId} />
           ))}
@@ -691,13 +739,17 @@ const SemanticView = ({
                 </>
               )}
             </div>
-            <span className="text-xs text-gray-500">Click to compose email</span>
+            <span className="text-xs text-gray-500">
+              <Trans i18nKey="desktopUi.clickToComposeEmail" />
+            </span>
           </div>
           <Send className="h-4 w-4 shrink-0 text-gray-400 transition-colors group-hover:text-amber-500" />
         </div>
         <div className="p-3">
-          {domain && <CopyableRow label="Domain" value={domain} clipId={clipId} />}
-          <CopyableRow label="Full" value={address} clipId={clipId} />
+          {domain && (
+            <CopyableRow label={i18n.t('desktopUi.domain')} value={domain} clipId={clipId} />
+          )}
+          <CopyableRow label={i18n.t('desktopUi.full')} value={address} clipId={clipId} />
         </div>
       </div>
     )
@@ -741,7 +793,7 @@ const SemanticView = ({
         {(safeHex || rgbStr || hslStr) && (
           <div className="p-2">
             <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-              Formats
+              <Trans i18nKey="desktopUi.formats" />
             </div>
             {safeHex && <CopyableRow label="HEX" value={safeHex.toUpperCase()} clipId={clipId} />}
             {rgbStr && <CopyableRow label="RGB" value={rgbStr} clipId={clipId} />}
@@ -765,7 +817,7 @@ const SemanticView = ({
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
             onClick={() => void invoke('start_phone_action', { number, message: false })}
           >
-            <Phone className="h-4 w-4" /> Call
+            <Phone className="h-4 w-4" /> <Trans i18nKey="desktopUi.call" />
           </button>
           <button
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
@@ -795,16 +847,18 @@ const SemanticView = ({
             className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
             onClick={() => void invoke('open_detected_path', { clipId, path })}
           >
-            Open
+            <Trans i18nKey="desktopUi.open" />
           </button>
         </div>
         <div className="p-2">
           <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            Components
+            <Trans i18nKey="desktopUi.components" />
           </div>
-          <CopyableRow label="Full path" value={path} clipId={clipId} />
-          <CopyableRow label="Directory" value={dir} clipId={clipId} />
-          {filename && <CopyableRow label="File name" value={filename} clipId={clipId} />}
+          <CopyableRow label={i18n.t('desktopUi.fullPath')} value={path} clipId={clipId} />
+          <CopyableRow label={i18n.t('desktopUi.directory')} value={dir} clipId={clipId} />
+          {filename && (
+            <CopyableRow label={i18n.t('desktopUi.fileName')} value={filename} clipId={clipId} />
+          )}
         </div>
       </div>
     )
@@ -910,10 +964,14 @@ const SemanticView = ({
               </div>
             </div>
             <div className="shrink-0 border-t border-sky-500/15 p-3">
-              <CopyableRow label="Local" value={parsed.toLocaleString(locale)} clipId={clipId} />
+              <CopyableRow
+                label={i18n.t('desktopUi.local')}
+                value={parsed.toLocaleString(locale)}
+                clipId={clipId}
+              />
               <CopyableRow label="ISO 8601" value={parsed.toISOString()} clipId={clipId} />
               <CopyableRow
-                label="Unix seconds"
+                label={i18n.t('desktopUi.unixSeconds')}
                 value={String(Math.floor(parsed.getTime() / 1000))}
                 clipId={clipId}
               />
@@ -922,7 +980,7 @@ const SemanticView = ({
           </>
         ) : (
           <div className="flex flex-1 items-center justify-center px-4 py-12 text-center text-sm text-slate-500">
-            This date could not be interpreted.
+            <Trans i18nKey="desktopUi.thisDateCouldNotBeInterpreted" />
           </div>
         )}
       </div>
@@ -956,6 +1014,8 @@ const markdownChildrenToText = (children: ReactNode): string =>
       : ''
 
 const MarkdownView = memo(function MarkdownView({ markdown }: { markdown: string }) {
+  useTranslation()
+
   const components = useMemo(
     () => ({
       pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => <>{children}</>,
@@ -1065,6 +1125,8 @@ const MarkdownView = memo(function MarkdownView({ markdown }: { markdown: string
 })
 
 const JsonView = ({ value }: { value: unknown }) => {
+  useTranslation()
+
   const jsonText = useMemo(() => JSON.stringify(value, null, 2), [value])
   const keyCount = Array.isArray(value)
     ? (value as unknown[]).length
@@ -1100,6 +1162,8 @@ export const RenderModelView = memo(function RenderModelView({
   presentation: ClipPresentation
   appliedTheme?: 'light' | 'dark'
 }) {
+  useTranslation()
+
   const model = presentation.model
   switch (model.kind) {
     case 'text':
@@ -1134,11 +1198,11 @@ export const RenderModelView = memo(function RenderModelView({
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme)}
-          title="HTML preview"
+          title={i18n.t('desktopUi.htmlPreview')}
         />
       ) : (
         <div className="flex h-full items-center justify-center p-6 text-sm text-gray-400">
-          No renderable HTML content.
+          <Trans i18nKey="desktopUi.noRenderableHtmlContent" />
         </div>
       )
     case 'rich_text':
@@ -1148,7 +1212,7 @@ export const RenderModelView = memo(function RenderModelView({
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme, true)}
-          title="Rich text preview"
+          title={i18n.t('desktopUi.richTextPreview')}
         />
       ) : (
         <TextBlock>{model.plainText}</TextBlock>
@@ -1166,7 +1230,9 @@ export const RenderModelView = memo(function RenderModelView({
           data={managedAssetUrl(model.assetId)}
           type={model.mimeType}
         >
-          <p className="p-4 text-sm">Document preview unavailable.</p>
+          <p className="p-4 text-sm">
+            <Trans i18nKey="desktopUi.documentPreviewUnavailable" />
+          </p>
         </object>
       )
     case 'semantic':
@@ -1181,13 +1247,15 @@ export const RenderModelView = memo(function RenderModelView({
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
           <FileQuestion className="h-9 w-9 text-gray-400" />
-          <strong className="text-sm">Unsupported preview</strong>
+          <strong className="text-sm">
+            <Trans i18nKey="desktopUi.unsupportedPreview" />
+          </strong>
           <span className="text-xs text-gray-500">
             {model.mimeType ?? model.nativeType ?? model.formatKey} ·{' '}
-            {model.byteLength.toLocaleString()} bytes
+            {model.byteLength.toLocaleString()} <Trans i18nKey="desktopUi.bytes" />
           </span>
           <span className="text-xs text-gray-400">
-            The original representation remains available for copy and paste.
+            <Trans i18nKey="desktopUi.theOriginalRepresentationRemainsAvailableForCopyAndPaste" />
           </span>
         </div>
       )

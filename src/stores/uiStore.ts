@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-type ViewType = 'clips' | 'extensions' | 'intelligence' | 'settings'
+type ViewType = 'clipsx' | 'extensions' | 'intelligence' | 'settings'
 export type ExtensionSettingsRequest = {
   packageId: string
   section: 'setups' | 'automation' | 'permissions'
@@ -26,7 +26,7 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>(set => ({
-  activeView: 'clips',
+  activeView: 'clipsx',
   extensionSettingsRequest: null,
   openExtensionSettings: extensionSettingsRequest =>
     set({ activeView: 'extensions', extensionSettingsRequest }),

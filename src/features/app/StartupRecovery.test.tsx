@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '../../i18n'
 import { StartupRecovery } from './StartupRecovery'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
@@ -14,6 +15,22 @@ const status = {
 
 describe('StartupRecovery', () => {
   beforeEach(() => invokeMock.mockReset())
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
+
+  it('updates Japanese labels live while keeping the reset confirmation exact', async () => {
+    render(<StartupRecovery status={status} />)
+    expect(screen.getByRole('button', { name: 'Reset local ClipsX data' })).toBeDisabled()
+    await act(async () => {
+      await i18n.changeLanguage('ja')
+    })
+    expect(screen.getByRole('heading', { name: '初期化が必要です' })).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: i18n.t('desktopUi.resetLocalClipsxData') })
+    expect(button).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/RESET CLIPSX/), { target: { value: 'RESET CLIPSX' } })
+    expect(button).toBeEnabled()
+  })
 
   it('requires the exact reset confirmation', () => {
     render(<StartupRecovery status={status} />)

@@ -1,3 +1,4 @@
+import i18n from '../../../i18n/index'
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
 import {
@@ -144,7 +145,7 @@ const ClipboardListItemComponent = ({
                 <Sparkles
                   className="h-3 w-3 shrink-0 text-violet-400"
                   strokeWidth={2}
-                  aria-label="Embedded"
+                  aria-label={i18n.t('desktopUi.embedded')}
                 />
               )}
             </div>

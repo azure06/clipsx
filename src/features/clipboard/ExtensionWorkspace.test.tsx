@@ -345,7 +345,7 @@ describe('one durable transformation path', () => {
     expect(screen.getByText(/selected model is unavailable/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Local Text Generation' }))
     expect(useUIStore.getState().activeView).toBe('intelligence')
-    useUIStore.getState().setActiveView('clips')
+    useUIStore.getState().setActiveView('clipsx')
   })
 
   it('shows only controls declared by the transformer for a completed result', () => {

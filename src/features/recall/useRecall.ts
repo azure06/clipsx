@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -269,7 +270,12 @@ export function useRecall() {
       return current
         ? start(
             question,
-            { ...current, scope: 'all', tagId: null, label: 'All history' },
+            {
+              ...current,
+              scope: 'all',
+              tagId: null,
+              label: i18n.t('desktopUi.allHistory'),
+            },
             { newThread: true }
           )
         : Promise.resolve()

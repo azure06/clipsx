@@ -320,7 +320,7 @@ describe('IntelligencePage indexing actions', () => {
         handler({ payload: 'builtin.search.semantic_text' })
       }
     })
-    await screen.findByText('ready')
+    await screen.findByText('Ready')
 
     currentStatus = readyStatus({ phase: 'degraded', diagnostic: 'provider unavailable' })
     act(() => {

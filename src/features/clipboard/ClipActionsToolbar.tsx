@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
@@ -101,6 +102,8 @@ export const ExtensionIcon = ({
   dark: string | null
   scale: number
 }) => {
+  useTranslation()
+
   if (!light) {
     const Icon =
       (
@@ -149,7 +152,7 @@ export const ClipActionsToolbar = ({
       const detail = (event as CustomEvent<{ level: string; message: string }>).detail
       if (detail) {
         toast({
-          title: 'Extension action',
+          title: i18n.t('desktopUi.extensionAction'),
           description: detail.message,
           type: detail.level === 'error' ? 'error' : 'success',
         })
@@ -229,7 +232,7 @@ export const ClipActionsToolbar = ({
             await invoke('share_clip', { clipId: presentation.id })
           } catch (error) {
             toast({
-              title: 'Could not share clip',
+              title: i18n.t('desktopUi.couldNotShareClip'),
               description: String(error),
               type: 'error',
             })
@@ -244,7 +247,7 @@ export const ClipActionsToolbar = ({
     if (extension) {
       contentActions.push({
         id: 'open-editor',
-        label: 'Open in Editor',
+        label: i18n.t('desktopUi.openInEditor'),
         icon: PenLine,
         shortcut: { modifiers: ['primary', 'shift'], key: 'O' },
         run: () => invoke('open_clip_text_in_editor', { clipId: presentation.id, extension }),
@@ -258,7 +261,7 @@ export const ClipActionsToolbar = ({
         const url = scalar(payload['href']) ?? semantic.text
         contentActions.push({
           id: 'open-url',
-          label: 'Open Link',
+          label: i18n.t('desktopUi.openLink'),
           icon: ExternalLink,
           run: () => invoke('open_external_url', { url }),
         })
@@ -266,14 +269,14 @@ export const ClipActionsToolbar = ({
         const address = scalar(payload['address']) ?? semantic.text
         contentActions.push({
           id: 'compose-email',
-          label: 'Compose Email',
+          label: i18n.t('desktopUi.composeEmail'),
           icon: Mail,
           run: () => invoke('compose_email', { address }),
         })
       } else if (kind === 'phone') {
         contentActions.push({
           id: 'call-phone',
-          label: 'Call',
+          label: i18n.t('desktopUi.call'),
           icon: Phone,
           run: () => invoke('start_phone_action', { number: semantic.text, message: false }),
         })
@@ -282,7 +285,7 @@ export const ClipActionsToolbar = ({
     if (context.onShowInspector) {
       contentActions.push({
         id: 'inspector',
-        label: 'Representations',
+        label: i18n.t('desktopUi.representations'),
         icon: Database,
         shortcut: representationsShortcut,
         run: () => context.onShowInspector?.(),
@@ -295,7 +298,7 @@ export const ClipActionsToolbar = ({
     values.push(
       {
         id: 'favorite',
-        label: 'Favorite',
+        label: i18n.t('desktopUi.favorite'),
         icon: Star,
         active: presentation.isFavorite,
         activeColor: 'bg-amber-500/10 text-amber-500 dark:text-amber-400',
@@ -305,7 +308,7 @@ export const ClipActionsToolbar = ({
       },
       {
         id: 'pin',
-        label: 'Pin / Unpin',
+        label: i18n.t('desktopUi.pinUnpin'),
         icon: Pin,
         active: presentation.isPinned,
         activeColor: 'bg-amber-500/10 text-amber-500 dark:text-amber-400',
@@ -314,7 +317,7 @@ export const ClipActionsToolbar = ({
       },
       {
         id: 'delete',
-        label: 'Delete',
+        label: i18n.t('desktopUi.delete'),
         icon: Trash2,
         shortcut: getDeleteShortcut(platform),
         separator: true,
@@ -344,6 +347,8 @@ export const ClipActionsToolbar = ({
 }
 
 const ActionButton = ({ action }: { action: ToolbarAction }) => {
+  useTranslation()
+
   const Icon = action.icon
   const shortcutLabel = action.shortcut ? formatShortcut(action.shortcut, platform) : null
   const activeClass = action.active

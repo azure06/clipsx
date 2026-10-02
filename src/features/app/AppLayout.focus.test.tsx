@@ -138,7 +138,7 @@ describe('AppLayout search focus ownership', () => {
     })
 
     useUIStore.setState({
-      activeView: 'clips',
+      activeView: 'clipsx',
       searchQuery: '',
       previewClipId: null,
       isSemanticActive: true,
@@ -360,7 +360,7 @@ describe('AppLayout search focus ownership', () => {
     act(() => useUIStore.setState({ activeView: 'intelligence' }))
     expect(await screen.findByTestId('intelligence-view')).toBeInTheDocument()
     expect(screen.getByTestId('sidebar')).toBeInTheDocument()
-    act(() => useUIStore.getState().setActiveView('clips'))
+    act(() => useUIStore.getState().setActiveView('clipsx'))
     expect(screen.getByTestId('clipboard-history')).toBeInTheDocument()
   })
 

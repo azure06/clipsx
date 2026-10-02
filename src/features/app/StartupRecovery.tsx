@@ -1,3 +1,5 @@
+import { useTranslation, Trans } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
@@ -7,6 +9,8 @@ import { Button } from '../../shared/components/ui'
 const CONFIRMATION = 'RESET CLIPSX'
 
 export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
+  useTranslation()
+
   const [confirmation, setConfirmation] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,28 +40,31 @@ export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
             <AlertTriangle className="h-4.5 w-4.5 text-amber-500" strokeWidth={1.5} />
           </div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600 dark:text-amber-400">
-            Storage recovery
+            <Trans i18nKey="desktopUi.storageRecovery" />
           </p>
         </div>
 
         <h1 className="mt-4 text-2xl font-semibold text-gray-900 dark:text-gray-100">
-          A factory reset is required
+          <Trans i18nKey="desktopUi.aFactoryResetIsRequired" />
         </h1>
         <p className="mt-3 text-sm leading-6 text-gray-600 dark:text-slate-300">{status.message}</p>
         <p className="mt-4 rounded-xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-          ClipsX will delete its local database, managed clipboard files, extension packages, and
-          saved credentials. The retired database is not migrated.
+          <Trans i18nKey="desktopUi.clipsxWillDeleteItsLocalDatabaseManagedClipboardFiles" />
         </p>
 
         <label
           className="mt-6 block text-sm font-medium text-gray-700 dark:text-gray-300"
           htmlFor="reset-confirmation"
         >
-          Type{' '}
-          <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">
-            {CONFIRMATION}
-          </span>{' '}
-          to continue
+          <Trans
+            i18nKey="desktopUi.resetConfirmation"
+            values={{ confirmation: CONFIRMATION }}
+            components={{
+              confirmation: (
+                <span className="font-mono font-semibold text-amber-600 dark:text-amber-400" />
+              ),
+            }}
+          />
         </label>
         <input
           id="reset-confirmation"
@@ -84,7 +91,7 @@ export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
           disabled={busy || confirmation !== CONFIRMATION || !status.resetAvailable}
           onClick={() => void reset()}
         >
-          {busy ? 'Resetting ClipsX…' : 'Reset local ClipsX data'}
+          {busy ? i18n.t('desktopUi.resettingClipsx') : i18n.t('desktopUi.resetLocalClipsxData')}
         </Button>
       </section>
     </main>

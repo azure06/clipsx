@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 import { diagnostic } from '../../shared/diagnostics'
 import {
   commandShortcut,
@@ -121,7 +122,7 @@ export const AppLayout = () => {
           <button
             key={tab}
             disabled={disabled}
-            title={disabled ? 'Ask a question to start a Recall session' : tab}
+            title={disabled ? i18n.t('desktopUi.askAQuestionToStartARecallSession') : tab}
             aria-label={tab}
             onClick={() => setRightTab(tab)}
             className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
@@ -178,7 +179,7 @@ export const AppLayout = () => {
   )
 
   const focusSearchBar = () => {
-    if (activeView !== 'clips') return
+    if (activeView !== 'clipsx') return
     requestAnimationFrame(() => searchBarRef.current?.focus())
   }
 
@@ -429,7 +430,7 @@ export const AppLayout = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchCommandShortcut(e, 'core.recall', { modifiers: ['primary'], key: 'Enter' })) {
         // Recall owns modified Enter in Clips. Consuming it prevents history activation/paste.
-        if (activeView !== 'clips' || e.repeat || e.isComposing) return
+        if (activeView !== 'clipsx' || e.repeat || e.isComposing) return
         const target = e.target as HTMLElement | null
         const editable = target?.matches('input, textarea, [contenteditable="true"]') ?? false
         const isMainSearch = target?.closest('[data-recall-input="main"]') != null
@@ -554,7 +555,7 @@ export const AppLayout = () => {
         <div className="flex-1 relative my-1 flex flex-col min-w-0 rounded-xl overflow-hidden mr-2 bg-slate-100/40 dark:bg-slate-100/5 backdrop-blur-xl border border-white/10 dark:border-white/10">
           <div className="flex-1 flex flex-col mx-auto w-full relative overflow-hidden max-w-lvw">
             {/* Content varies by View */}
-            {activeView === 'clips' && (
+            {activeView === 'clipsx' && (
               <div className="flex flex-col h-full p-6 overflow-hidden">
                 {/* Search Bar - Always Top */}
                 <div className="w-full max-w-4xl mx-auto shrink-0 mb-6">
@@ -570,7 +571,7 @@ export const AppLayout = () => {
                     searchSources={searchSources}
                     onToggleSource={sourceId => void handleToggleSource(sourceId)}
                     sourceOutcomes={searchSourceOutcomes}
-                    placeholder="Search clips or ask a question…"
+                    placeholder={i18n.t('desktopUi.searchClipsOrAskAQuestion')}
                     isRecalling={recall.isRunning}
                     recallElapsedSeconds={recall.elapsedSeconds}
                     recallShortcut={formatShortcut(

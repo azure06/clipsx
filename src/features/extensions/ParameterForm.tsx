@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { useId } from 'react'
 import { Select, Switch } from '../../shared/components/ui'
 import {
@@ -26,6 +28,8 @@ export function ParameterForm({
   errors?: Record<string, string>
   onChange: (values: Record<string, unknown>) => void
 }) {
+  useTranslation()
+
   const prefix = useId()
   return (
     <div className="grid gap-3">
@@ -61,7 +65,7 @@ export function ParameterForm({
                   ariaDescribedBy={describedBy}
                   className={controlClass}
                   value={value === undefined ? '' : JSON.stringify(value)}
-                  placeholder="Choose…"
+                  placeholder={i18n.t('desktopUi.choose')}
                   onChange={next => change(JSON.parse(next) as unknown)}
                   options={((definition['enum'] as unknown[]) ?? []).map(option => ({
                     value: JSON.stringify(option),

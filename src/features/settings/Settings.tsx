@@ -69,11 +69,14 @@ type ShortcutRecorderProps = {
   readonly onChange: (shortcut: string) => void
 }
 
-const KeyChip = ({ label }: { label: string }) => (
-  <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100/10 dark:bg-slate-100/10 border border-gray-300 dark:border-white/15 text-[11px] font-mono font-semibold text-gray-700 dark:text-gray-200 shadow-sm shadow-black/5">
-    {label}
-  </span>
-)
+const KeyChip = ({ label }: { label: string }) => {
+  useTranslation()
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100/10 dark:bg-slate-100/10 border border-gray-300 dark:border-white/15 text-[11px] font-mono font-semibold text-gray-700 dark:text-gray-200 shadow-sm shadow-black/5">
+      {label}
+    </span>
+  )
+}
 
 export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => {
   const { t } = useTranslation()
@@ -345,7 +348,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
     },
     {
       id: 'keyboard',
-      label: 'Keyboard',
+      label: i18n.t('desktopUi.keyboard'),
       icon: <Keyboard className="h-4 w-4" />,
       group: 'preferences',
     },
@@ -361,7 +364,12 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       icon: <Shield className="h-4 w-4" />,
       group: 'preferences',
     },
-    { id: 'sync', label: 'Sync', icon: <Cloud className="h-4 w-4" />, group: 'system' },
+    {
+      id: 'sync',
+      label: i18n.t('desktopUi.sync'),
+      icon: <Cloud className="h-4 w-4" />,
+      group: 'system',
+    },
     {
       id: 'account',
       label: t('settings.account'),
@@ -377,14 +385,14 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
   ]
 
   const tabDescriptions: Record<SettingsTab, string> = {
-    general: 'Appearance, language, and window behavior.',
-    clipboard: 'What ClipsX captures and how it returns content to other apps.',
-    keyboard: 'Global and built-in action shortcuts.',
-    storage: 'History retention and capture size limits.',
-    privacy: 'When local clipboard data is cleared.',
-    sync: 'Configuration status, devices, and conflicts.',
-    account: 'Sign in and identity for account-backed services.',
-    advanced: 'Updates, system integration, and configuration tools.',
+    general: i18n.t('desktopUi.appearanceLanguageAndWindowBehavior'),
+    clipboard: i18n.t('desktopUi.whatClipsxCapturesAndHowItReturnsContentTo'),
+    keyboard: i18n.t('desktopUi.globalAndBuiltInActionShortcuts'),
+    storage: i18n.t('desktopUi.historyRetentionAndCaptureSizeLimits'),
+    privacy: i18n.t('desktopUi.whenLocalClipboardDataIsCleared'),
+    sync: i18n.t('desktopUi.configurationStatusDevicesAndConflicts'),
+    account: i18n.t('desktopUi.signInAndIdentityForAccountBackedServices'),
+    advanced: i18n.t('desktopUi.updatesSystemIntegrationAndConfigurationTools'),
   }
 
   const themeOptions = [
@@ -542,8 +550,10 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             <>
               <SettingsSection
                 icon={<Keyboard className="h-4 w-4" />}
-                title="App shortcut"
-                description="Choose the keyboard shortcut that opens ClipsX from anywhere."
+                title={i18n.t('desktopUi.appShortcut')}
+                description={i18n.t(
+                  'desktopUi.chooseTheKeyboardShortcutThatOpensClipsxFromAnywhere'
+                )}
               >
                 <SettingRow
                   label={t('settings.globalShortcut')}
@@ -568,8 +578,8 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
 
               <SettingsSection
                 icon={<Keyboard className="h-4 w-4" />}
-                title="Built-in actions"
-                description="Choose the keys you use for actions inside ClipsX."
+                title={i18n.t('desktopUi.builtInActions')}
+                description={i18n.t('desktopUi.chooseTheKeysYouUseForActionsInsideClipsx')}
               >
                 <CommandShortcuts />
               </SettingsSection>

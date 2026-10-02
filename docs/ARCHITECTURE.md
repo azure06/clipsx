@@ -27,6 +27,14 @@ flowchart LR
 
 ## Ownership
 
+Host interface text belongs in the English and Japanese catalogs in `src/i18n/`.
+This includes accessible labels, validation messages, status labels, and recovery
+screens. Components subscribe to language changes with `useTranslation`; dynamic
+sentences use interpolation so Japanese can change word order. Keep command IDs,
+confirmation tokens, code examples, product names, and user content unchanged.
+Extension publishers own the language of package metadata and custom views.
+Catalog parity and live language switching are covered by frontend tests.
+
 | Owner                | Responsibility                                                | Code                         |
 | -------------------- | ------------------------------------------------------------- | ---------------------------- |
 | React                | Interaction and typed presentation                            | `src/`                       |

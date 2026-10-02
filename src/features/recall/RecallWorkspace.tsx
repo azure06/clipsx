@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -37,10 +39,10 @@ type Props = {
 }
 
 const withSources = (turn: RecallTurn) =>
-  `${turn.answer}\n\nSources\n${turn.sources
+  `${turn.answer}\n\n${i18n.t('desktopUi.sourcesHeading')}\n${turn.sources
     .map(
       source =>
-        `[${source.citation}] ${source.sourceAppName ?? source.sourceKind} — Copied ${new Date(source.capturedAt).toLocaleString()}\n${source.excerpt}`
+        `[${source.citation}] ${source.sourceAppName ?? source.sourceKind} — ${i18n.t('desktopUi.copiedAt', { date: new Date(source.capturedAt).toLocaleString(i18n.resolvedLanguage) })}\n${source.excerpt}`
     )
     .join('\n\n')}`
 
@@ -58,6 +60,8 @@ export function RecallWorkspace({
   onOpenClip,
   onBack,
 }: Props) {
+  useTranslation()
+
   const latest = turns.at(-1)
   const [openEvidence, setOpenEvidence] = useState<RecallEvidence | null>(null)
   const [followUp, setFollowUp] = useState('')
@@ -95,8 +99,8 @@ export function RecallWorkspace({
     return (
       <div className="flex h-full items-center justify-center rounded-2xl bg-slate-100/10 p-8 text-center text-sm text-gray-500 dark:bg-slate-100/5">
         {expired
-          ? 'This temporary Recall session expired. Ask again to start a new one.'
-          : 'Ask a question to recall something from your clipboard history.'}
+          ? i18n.t('desktopUi.thisTemporaryRecallSessionExpiredAskAgainToStart')
+          : i18n.t('desktopUi.askAQuestionToRecallSomethingFromYourClipboard')}
       </div>
     )
   }
@@ -117,7 +121,7 @@ export function RecallWorkspace({
           {onBack && (
             <button className="mb-2 flex items-center gap-1 text-xs text-gray-500" onClick={onBack}>
               <ArrowLeft className="h-3.5 w-3.5" />
-              Back to results
+              <Trans i18nKey="desktopUi.backToResults" />
             </button>
           )}
           <div className="recall-brand">
@@ -135,29 +139,35 @@ export function RecallWorkspace({
         <button
           onClick={onClear}
           className="recall-new"
-          title="New question"
-          aria-label="New question"
+          title={i18n.t('desktopUi.newQuestion')}
+          aria-label={i18n.t('desktopUi.newQuestion')}
         >
           <Plus className="h-3.5 w-3.5" />
-          <span>New</span>
+          <span>
+            <Trans i18nKey="desktopUi.new" />
+          </span>
         </button>
       </header>
 
       <div className="recall-body custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="recall-question" key={latest.requestId}>
-          <p className="recall-eyebrow">Your question</p>
+          <p className="recall-eyebrow">
+            <Trans i18nKey="desktopUi.yourQuestion" />
+          </p>
           <h2>{latest.question}</h2>
         </div>
         <div className="recall-answer-label">
           <Sparkles size={13} />
-          <span>{latest.answer ? 'Answer' : 'Working on your question'}</span>
+          <span>
+            {latest.answer ? i18n.t('desktopUi.answer') : i18n.t('desktopUi.workingOnYourQuestion')}
+          </span>
           {latest.sources.length > 0 && (
             <button
               onClick={() => setSourcesOpen(value => !value)}
               className="recall-evidence-count"
             >
               <Layers3 size={12} />
-              {latest.sources.length} sources
+              {latest.sources.length} <Trans i18nKey="desktopUi.sources878a" />
             </button>
           )}
         </div>
@@ -168,24 +178,26 @@ export function RecallWorkspace({
           >
             <span className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
             {latest.answer
-              ? 'Writing answer'
+              ? i18n.t('desktopUi.writingAnswer')
               : latest.stage === 'preparing_answer' || latest.stage === 'generating'
-                ? 'Preparing answer'
-                : 'Finding relevant clips'}
+                ? i18n.t('desktopUi.preparingAnswer')
+                : i18n.t('desktopUi.findingRelevantClips')}
           </p>
         )}
         {latest.invalidated && (
           <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-            A supporting clip changed or was deleted. This answer can’t be reused as context.
+            <Trans i18nKey="desktopUi.aSupportingClipChangedOrWasDeletedThisAnswer" />
           </p>
         )}
         {latest.contextReduced && (
           <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
-            Some lower-ranked evidence was omitted to fit this model’s context.
+            <Trans i18nKey="desktopUi.someLowerRankedEvidenceWasOmittedToFitThis" />
           </p>
         )}
         {latest.status === 'incomplete' && (
-          <p className="mb-3 text-xs font-medium text-amber-700">Incomplete answer</p>
+          <p className="mb-3 text-xs font-medium text-amber-700">
+            <Trans i18nKey="desktopUi.incompleteAnswer" />
+          </p>
         )}
         {(latest.status === 'error' || latest.status === 'no_evidence') && (
           <div className="rounded-xl bg-slate-100/70 p-4 text-sm dark:bg-white/5">
@@ -195,7 +207,7 @@ export function RecallWorkspace({
               onClick={() => onRetry(latest)}
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Retry
+              <Trans i18nKey="desktopUi.retry" />
             </button>
           </div>
         )}
@@ -211,13 +223,15 @@ export function RecallWorkspace({
                   return evidence ? (
                     <button
                       className="recall-citation rounded bg-violet-100 px-1.5 text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-200"
-                      aria-label={`Show source ${evidence.citation}`}
+                      aria-label={i18n.t('desktopUi.showSourceNumber', {
+                        number: evidence.citation,
+                      })}
                       onClick={() => setOpenEvidence(evidence)}
                     >
                       {children}
                     </button>
                   ) : (
-                    <span className="text-amber-600" title="Unresolved citation">
+                    <span className="text-amber-600" title={i18n.t('desktopUi.unresolvedCitation')}>
                       {children}
                     </span>
                   )
@@ -229,7 +243,7 @@ export function RecallWorkspace({
                       <code className={className}>{children}</code>
                       <button
                         className="absolute right-2 top-2 rounded bg-white/10 p-1 text-white"
-                        title="Copy code"
+                        title={i18n.t('desktopUi.copyCode')}
                         onClick={() =>
                           void copyLiteralText(
                             (Array.isArray(children) ? children : [children])
@@ -265,7 +279,8 @@ export function RecallWorkspace({
             >
               <span className="flex items-center gap-2">
                 <Layers3 size={14} />
-                Sources <span className="recall-count">{latest.sources.length}</span>
+                <Trans i18nKey="desktopUi.sources" />{' '}
+                <span className="recall-count">{latest.sources.length}</span>
               </span>
               <ChevronDown
                 className={`h-4 w-4 transition-transform ${sourcesOpen ? 'rotate-180' : ''}`}
@@ -282,7 +297,9 @@ export function RecallWorkspace({
                     <button
                       role="checkbox"
                       aria-checked={selected.has(source.clipId)}
-                      aria-label={`Include source ${source.citation}`}
+                      aria-label={i18n.t('desktopUi.includeSourceNumber', {
+                        number: source.citation,
+                      })}
                       onClick={() =>
                         setExcluded(current => {
                           const next = new Set(current)
@@ -314,13 +331,13 @@ export function RecallWorkspace({
                     disabled={selected.size === 0 || isRunning}
                     onClick={() => onApplySources(latest, [...selected])}
                   >
-                    Use only these clips
+                    <Trans i18nKey="desktopUi.useOnlyTheseClips" />
                   </button>
                   <button
                     className="rounded-lg px-3 py-1.5 text-xs text-gray-600 hover:bg-black/5 dark:text-gray-300"
                     onClick={() => onSearchAll(latest)}
                   >
-                    Search all history
+                    <Trans i18nKey="desktopUi.searchAllHistory" />
                   </button>
                 </div>
               </div>
@@ -335,14 +352,14 @@ export function RecallWorkspace({
               className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
             >
               <Copy className="h-3.5 w-3.5" />
-              Copy answer
+              <Trans i18nKey="desktopUi.copyAnswer" />
             </button>
             <button
               disabled={!latest.answer}
               onClick={() => void copyLiteralText(withSources(latest))}
               className="rounded-lg px-2.5 py-1.5 text-xs hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/5"
             >
-              Copy with sources
+              <Trans i18nKey="desktopUi.copyWithSources" />
             </button>
           </div>
         )}
@@ -352,16 +369,16 @@ export function RecallWorkspace({
         {isRunning && (
           <div className="recall-status-bar">
             <span className="recall-status-dot motion-safe:animate-pulse" />
-            Generating…
+            <Trans i18nKey="desktopUi.generating" />
             <button onClick={onCancel} className="recall-stop">
               <Square className="h-2.5 w-2.5 fill-current" />
-              Stop
+              <Trans i18nKey="desktopUi.stop" />
             </button>
           </div>
         )}
         <div className="recall-composer">
           <textarea
-            aria-label="Ask a follow-up"
+            aria-label={i18n.t('desktopUi.askAFollowUp')}
             data-recall-input="follow-up"
             ref={composerRef}
             value={followUp}
@@ -379,14 +396,14 @@ export function RecallWorkspace({
               }
             }}
             rows={2}
-            placeholder="Ask a follow-up…"
+            placeholder={i18n.t('desktopUi.askAFollowUpb8eb')}
             className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1 text-[13px] leading-5 outline-none placeholder:text-gray-500"
           />
           <button
             onClick={submit}
             disabled={!followUp.trim() || isRunning}
-            aria-label="Send follow-up"
-            title="Send follow-up"
+            aria-label={i18n.t('desktopUi.sendFollowUp')}
+            title={i18n.t('desktopUi.sendFollowUp')}
             className="recall-send"
           >
             <ArrowUp size={17} />
@@ -400,8 +417,8 @@ export function RecallWorkspace({
               />
             )}
             {latest.providerId
-              ? `${latest.executionLocation === 'local' ? 'On this device' : 'Remote'} · ${latest.model}`
-              : 'Temporary conversation'}
+              ? `${latest.executionLocation === 'local' ? i18n.t('desktopUi.onThisDevice') : i18n.t('desktopUi.remote')} · ${latest.model}`
+              : i18n.t('desktopUi.temporaryConversation')}
           </span>
           <kbd className="recall-key-hint">Ctrl/Cmd + Enter</kbd>
         </div>
@@ -412,15 +429,17 @@ export function RecallWorkspace({
           <div className="flex items-start justify-between">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-violet-600">
-                Evidence [{openEvidence.citation}]
+                <Trans i18nKey="desktopUi.evidence" />
+                {openEvidence.citation}]
               </p>
               <p className="mt-1 text-xs text-gray-500">
-                {openEvidence.sourceAppName ?? openEvidence.sourceKind} · Copied{' '}
+                {openEvidence.sourceAppName ?? openEvidence.sourceKind}{' '}
+                <Trans i18nKey="desktopUi.copied" />{' '}
                 {new Date(openEvidence.capturedAt).toLocaleString()}
               </p>
             </div>
             <button
-              aria-label="Close evidence"
+              aria-label={i18n.t('desktopUi.closeEvidence')}
               onClick={() => setOpenEvidence(null)}
               className="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/5"
             >
@@ -435,7 +454,7 @@ export function RecallWorkspace({
             className="mt-4 flex items-center justify-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white"
           >
             <ExternalLink className="h-4 w-4" />
-            Open clip
+            <Trans i18nKey="desktopUi.openClip" />
           </button>
         </aside>
       )}

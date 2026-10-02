@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../../i18n/index'
 import { useCallback, useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '../../../shared/components/ui'
@@ -42,6 +44,8 @@ export function ConfigurationSync({
   userId: string | null
   onOpenAccount: () => void
 }) {
+  useTranslation()
+
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [devices, setDevices] = useState<Device[]>([])
   const [recovery, setRecovery] = useState<Recovery[]>([])
@@ -95,20 +99,20 @@ export function ConfigurationSync({
     syncError || accountStatus?.quarantinedRecords || accountStatus?.pendingEffects
   )
   const statusLabel = busy
-    ? 'Updating…'
+    ? i18n.t('desktopUi.updating')
     : !userId
-      ? 'Not connected'
+      ? i18n.t('desktopUi.notConnected')
       : !status
-        ? 'Status unavailable'
+        ? i18n.t('desktopUi.statusUnavailable')
         : attention
-          ? 'Needs attention'
+          ? i18n.t('desktopUi.needsAttention')
           : enabled
-            ? 'Sync enabled'
-            : 'Sync paused'
+            ? i18n.t('desktopUi.syncEnabled')
+            : i18n.t('desktopUi.syncPaused')
   return (
     <section
       className="@container space-y-5 [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-violet-500"
-      aria-label="Configuration sync"
+      aria-label={i18n.t('desktopUi.configurationSync')}
     >
       <div className="overflow-hidden rounded-xl border border-violet-200/70 bg-linear-to-br from-violet-500/[0.08] via-white/35 to-fuchsia-500/[0.04] shadow-[0_6px_18px_rgba(15,23,42,0.04)] dark:border-violet-400/20 dark:via-white/[0.025]">
         <div className="flex flex-wrap items-start justify-between gap-4 p-5">
@@ -118,10 +122,10 @@ export function ConfigurationSync({
             </div>
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Your setup, on every device
+                <Trans i18nKey="desktopUi.yourSetupOnEveryDevice" />
               </h3>
               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Sync your preferences. Keep your clipboard local.
+                <Trans i18nKey="desktopUi.syncYourPreferencesKeepYourClipboardLocal" />
               </p>
             </div>
           </div>
@@ -136,12 +140,16 @@ export function ConfigurationSync({
         <div className="flex flex-wrap items-center justify-between gap-4 px-5 pb-5">
           <p className="max-w-sm text-xs leading-relaxed text-slate-500 dark:text-slate-400">
             {!userId
-              ? 'Sign in to bring your ClipsX setup to your other devices.'
+              ? i18n.t('desktopUi.signInToBringYourClipsxSetupToYour')
               : enabled
                 ? accountStatus?.lastSuccessAt
-                  ? `Last synced ${new Date(accountStatus.lastSuccessAt).toLocaleString()}`
-                  : 'Ready for your first sync.'
-                : 'Use your saved cloud settings to connect this device. A new cloud profile starts with your current setup.'}
+                  ? i18n.t('desktopUi.lastSyncedDate', {
+                      date: new Date(accountStatus.lastSuccessAt).toLocaleString(
+                        i18n.resolvedLanguage
+                      ),
+                    })
+                  : i18n.t('desktopUi.readyForYourFirstSync')
+                : i18n.t('desktopUi.useYourSavedCloudSettingsToConnectThisDevice')}
           </p>
           <div className="flex flex-wrap gap-2">
             {!userId ? (
@@ -150,7 +158,7 @@ export function ConfigurationSync({
                 rightIcon={<ArrowRight className="h-3.5 w-3.5" />}
                 onClick={onOpenAccount}
               >
-                Go to Account
+                <Trans i18nKey="desktopUi.goToAccount" />
               </Button>
             ) : enabled ? (
               <>
@@ -164,7 +172,7 @@ export function ConfigurationSync({
                   }
                   onClick={() => void run(() => configurationSyncScheduler.request('manual'))}
                 >
-                  Sync now
+                  <Trans i18nKey="desktopUi.syncNow" />
                 </Button>
                 <Button
                   size="sm"
@@ -173,7 +181,7 @@ export function ConfigurationSync({
                   leftIcon={<Pause className="h-3.5 w-3.5" />}
                   onClick={() => void run(() => setSyncEnabled(userId, false))}
                 >
-                  Pause
+                  <Trans i18nKey="desktopUi.pause" />
                 </Button>
               </>
             ) : (
@@ -183,7 +191,7 @@ export function ConfigurationSync({
                 leftIcon={<Cloud className="h-3.5 w-3.5" />}
                 onClick={() => void run(() => connectConfigurationSync(userId))}
               >
-                Use cloud settings
+                <Trans i18nKey="desktopUi.useCloudSettings" />
               </Button>
             )}
           </div>
@@ -196,9 +204,15 @@ export function ConfigurationSync({
               className="flex flex-wrap gap-x-5 gap-y-2 border-t border-violet-200/50 px-5 py-3 text-xs text-slate-600 dark:border-white/10 dark:text-slate-400"
               aria-live="polite"
             >
-              <span>{accountStatus.pendingRecords} pending uploads</span>
-              <span>{accountStatus.quarantinedRecords} need review</span>
-              <span>{accountStatus.pendingEffects} awaiting application</span>
+              <span>
+                {accountStatus.pendingRecords} <Trans i18nKey="desktopUi.pendingUploads" />
+              </span>
+              <span>
+                {accountStatus.quarantinedRecords} <Trans i18nKey="desktopUi.needReview" />
+              </span>
+              <span>
+                {accountStatus.pendingEffects} <Trans i18nKey="desktopUi.awaitingApplication" />
+              </span>
             </div>
           )}
       </div>
@@ -214,21 +228,21 @@ export function ConfigurationSync({
 
       <SettingsSection
         icon={<SlidersHorizontal className="h-4 w-4" />}
-        title="What travels with you"
-        description="Your preferences sync. Your content stays here."
+        title={i18n.t('desktopUi.whatTravelsWithYou')}
+        description={i18n.t('desktopUi.yourPreferencesSyncYourContentStaysHere')}
       >
         <div className="grid gap-4 @min-[480px]:grid-cols-2">
           <div className="rounded-lg bg-violet-500/5 p-3.5">
             <h4 className="mb-3 flex items-center gap-2 text-xs font-semibold text-violet-700 dark:text-violet-300">
               <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
-              Synced
+              <Trans i18nKey="desktopUi.synced" />
             </h4>
             <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
               {[
-                'Appearance & language',
-                'Copy, search & OCR preferences',
-                'Renderers & app shortcuts',
-                'Portable extension settings',
+                i18n.t('desktopUi.appearanceLanguage'),
+                i18n.t('desktopUi.copySearchOcrPreferences'),
+                i18n.t('desktopUi.renderersAppShortcuts'),
+                i18n.t('desktopUi.portableExtensionSettings'),
               ].map(label => (
                 <li key={label} className="flex items-center gap-2">
                   <Check className="h-3 w-3 shrink-0 text-violet-500" aria-hidden="true" />
@@ -240,14 +254,14 @@ export function ConfigurationSync({
           <div className="rounded-lg bg-slate-500/5 p-3.5">
             <h4 className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
               <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
-              Stays on this device
+              <Trans i18nKey="desktopUi.staysOnThisDevice" />
             </h4>
             <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
               {[
-                'Clips, notes, tags & files',
-                'Credentials & permissions',
-                'Capture & window settings',
-                'AI providers & device shortcuts',
+                i18n.t('desktopUi.clipsNotesTagsFiles'),
+                i18n.t('desktopUi.credentialsPermissions'),
+                i18n.t('desktopUi.captureWindowSettings'),
+                i18n.t('desktopUi.aiProvidersDeviceShortcuts'),
               ].map(label => (
                 <li key={label} className="flex items-center gap-2">
                   <span
@@ -263,7 +277,7 @@ export function ConfigurationSync({
         <details className="group text-xs text-slate-500 dark:text-slate-400">
           <summary className="flex cursor-pointer list-none items-center gap-2 rounded focus-visible:outline-2 focus-visible:outline-violet-500 [&::-webkit-details-marker]:hidden">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-            Privacy & sync details
+            <Trans i18nKey="desktopUi.privacySyncDetails" />
             <ChevronDown
               className="ml-auto h-3.5 w-3.5 transition-transform group-open:rotate-180 motion-reduce:transition-none"
               aria-hidden="true"
@@ -271,18 +285,13 @@ export function ConfigurationSync({
           </summary>
           <div className="mt-3 space-y-2 leading-relaxed">
             <p>
-              Settings are protected by your account, not end-to-end encrypted. Restored extensions
-              require fresh consent for external capabilities.
+              <Trans i18nKey="desktopUi.settingsAreProtectedByYourAccountNotEndTo" />
             </p>
             <p>
-              Sync includes theme, language, output format, copy toast, search and OCR preferences,
-              renderer choices, signed-extension intent, approved portable settings, and app-command
-              shortcuts.
+              <Trans i18nKey="desktopUi.syncIncludesThemeLanguageOutputFormatCopyToastSearch" />
             </p>
             <p>
-              Clips, notes, tags, files, credentials, permission grants, provider endpoints and
-              models, capture settings, window behavior and layout, autostart, the global activation
-              shortcut, update policy, caches, and diagnostics always stay local.
+              <Trans i18nKey="desktopUi.clipsNotesTagsFilesCredentialsPermissionGrantsProviderEndpoints" />
             </p>
           </div>
         </details>
@@ -290,8 +299,8 @@ export function ConfigurationSync({
 
       <SettingsSection
         icon={<Monitor className="h-4 w-4" />}
-        title="Devices"
-        description="Manage access to your synced settings."
+        title={i18n.t('desktopUi.devices')}
+        description={i18n.t('desktopUi.manageAccessToYourSyncedSettings')}
       >
         {devices.length === 0 ? (
           <div className="flex items-center gap-3 py-1 text-slate-400">
@@ -299,15 +308,15 @@ export function ConfigurationSync({
             <div>
               <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
                 {!userId
-                  ? 'Your devices will appear here'
+                  ? i18n.t('desktopUi.yourDevicesWillAppearHere')
                   : enabled
-                    ? 'No devices to display'
-                    : 'Connect to see your devices'}
+                    ? i18n.t('desktopUi.noDevicesToDisplay')
+                    : i18n.t('desktopUi.connectToSeeYourDevices')}
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 {!userId
-                  ? 'Sign in and enable sync to get started.'
-                  : 'Devices appear after connecting to your cloud profile.'}
+                  ? i18n.t('desktopUi.signInAndEnableSyncToGetStarted')
+                  : i18n.t('desktopUi.devicesAppearAfterConnectingToYourCloudProfile')}
               </p>
             </div>
           </div>
@@ -329,14 +338,16 @@ export function ConfigurationSync({
                       </p>
                       {device.current && (
                         <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
-                          This device
+                          <Trans i18nKey="desktopUi.thisDevice" />
                         </span>
                       )}
                     </div>
                     <p className="mt-0.5 text-xs text-slate-500">
                       {device.revokedAt
-                        ? 'Access revoked'
-                        : `Last seen ${new Date(device.lastSeenAt).toLocaleString()}`}
+                        ? i18n.t('desktopUi.accessRevoked')
+                        : i18n.t('desktopUi.lastSeenDate', {
+                            date: new Date(device.lastSeenAt).toLocaleString(i18n.resolvedLanguage),
+                          })}
                     </p>
                   </div>
                 </div>
@@ -352,7 +363,7 @@ export function ConfigurationSync({
                       })
                     }
                   >
-                    Revoke
+                    <Trans i18nKey="desktopUi.revoke" />
                   </Button>
                 )}
               </li>
@@ -365,7 +376,7 @@ export function ConfigurationSync({
         <details className="group rounded-xl border border-slate-200/70 bg-white/35 dark:border-white/10 dark:bg-white/[0.025]">
           <summary className="flex cursor-pointer list-none items-center gap-3 rounded-xl p-4 text-xs font-medium text-slate-600 focus-visible:outline-2 focus-visible:outline-violet-500 dark:text-slate-400 [&::-webkit-details-marker]:hidden">
             <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
-            Advanced sync options
+            <Trans i18nKey="desktopUi.advancedSyncOptions" />
             <ChevronDown
               className="ml-auto h-4 w-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
               aria-hidden="true"
@@ -375,10 +386,10 @@ export function ConfigurationSync({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-slate-800 dark:text-slate-200">
-                  Start from this device
+                  <Trans i18nKey="desktopUi.startFromThisDevice" />
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Replace cloud settings. Other devices will need to reconnect.
+                  <Trans i18nKey="desktopUi.replaceCloudSettingsOtherDevicesWillNeedToReconnect" />
                 </p>
               </div>
               <Button
@@ -387,16 +398,16 @@ export function ConfigurationSync({
                 disabled={busy}
                 onClick={() => setConfirm('replace')}
               >
-                Replace cloud settings
+                <Trans i18nKey="desktopUi.replaceCloudSettings" />
               </Button>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-slate-800 dark:text-slate-200">
-                  Clear cloud settings
+                  <Trans i18nKey="desktopUi.clearCloudSettings" />
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Pause sync and remove the cloud copy. Local settings stay intact.
+                  <Trans i18nKey="desktopUi.pauseSyncAndRemoveTheCloudCopyLocalSettings" />
                 </p>
               </div>
               <Button
@@ -405,7 +416,7 @@ export function ConfigurationSync({
                 disabled={busy || !accountStatus?.generation}
                 onClick={() => setConfirm('reset')}
               >
-                Clear cloud settings
+                <Trans i18nKey="desktopUi.clearCloudSettings" />
               </Button>
             </div>
             {confirm && (
@@ -415,8 +426,10 @@ export function ConfigurationSync({
               >
                 <p>
                   {confirm === 'replace'
-                    ? 'Replace the entire cloud configuration with the supported settings on this device? Other devices will pause and ask how to reconnect.'
-                    : 'Clear cloud configuration and pause synchronization? Local settings and clipboard content remain on every device.'}
+                    ? i18n.t('desktopUi.replaceTheEntireCloudConfigurationWithTheSupportedSettings')
+                    : i18n.t(
+                        'desktopUi.clearCloudConfigurationAndPauseSynchronizationLocalSettingsAnd'
+                      )}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -431,7 +444,11 @@ export function ConfigurationSync({
                       )
                     }
                   >
-                    Confirm {confirm === 'replace' ? 'replacement' : 'clear'}
+                    {i18n.t(
+                      confirm === 'replace'
+                        ? 'desktopUi.confirmReplacement'
+                        : 'desktopUi.confirmClear'
+                    )}
                   </Button>
                   <Button
                     size="sm"
@@ -439,7 +456,7 @@ export function ConfigurationSync({
                     disabled={busy}
                     onClick={() => setConfirm(null)}
                   >
-                    Cancel
+                    <Trans i18nKey="desktopUi.cancel" />
                   </Button>
                 </div>
               </div>
@@ -450,8 +467,8 @@ export function ConfigurationSync({
       {recovery.length > 0 && (
         <SettingsSection
           icon={<TriangleAlert className="h-4 w-4" />}
-          title="Needs attention"
-          description="Review settings that could not be applied."
+          title={i18n.t('desktopUi.needsAttention')}
+          description={i18n.t('desktopUi.reviewSettingsThatCouldNotBeApplied')}
         >
           <Button
             variant="secondary"
@@ -460,7 +477,7 @@ export function ConfigurationSync({
               void run(() => invoke('sync_recovery', { action: 'retry_effects', id: null }))
             }
           >
-            Retry pending packages and commands
+            <Trans i18nKey="desktopUi.retryPendingPackagesAndCommands" />
           </Button>
           <ul className="space-y-2">
             {recovery.map(item => (
@@ -476,7 +493,7 @@ export function ConfigurationSync({
                         void run(() => invoke('sync_recovery', { action: 'retry', id: item.id }))
                       }
                     >
-                      Retry
+                      <Trans i18nKey="desktopUi.retry" />
                     </Button>
                     <Button
                       variant="secondary"
@@ -485,7 +502,7 @@ export function ConfigurationSync({
                         void run(() => invoke('sync_recovery', { action: 'discard', id: item.id }))
                       }
                     >
-                      Discard record
+                      <Trans i18nKey="desktopUi.discardRecord" />
                     </Button>
                   </div>
                 )}

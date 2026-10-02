@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
 import { describeFailure, failureMessage } from '../extensions/failures'
 import { FailureNotice } from '../extensions/FailureNotice'
@@ -37,6 +39,8 @@ function ResultSplitDivider({
   onChange: (ratio: number) => void
   containerRef: React.RefObject<HTMLDivElement | null>
 }) {
+  useTranslation()
+
   const pointer = useRef<number | null>(null)
   const move = (clientX: number) => {
     const bounds = containerRef.current?.getBoundingClientRect()
@@ -47,7 +51,7 @@ function ResultSplitDivider({
   return (
     <div
       role="separator"
-      aria-label="Resize original and result"
+      aria-label={i18n.t('desktopUi.resizeOriginalAndResult')}
       aria-orientation="vertical"
       aria-valuemin={25}
       aria-valuemax={75}
@@ -98,9 +102,12 @@ export function ExtensionResultTab({
   onChanged: () => void
   onQueued: (jobId: string) => void
 }) {
+  useTranslation()
+
   const { appliedTheme } = useTheme()
   const [ordinal, setOrdinal] = useState(0)
   const [raw, setRaw] = useState(false)
+  const { t } = useTranslation()
   const presentations = useMemo(() => {
     const views = job.view?.tabs.length
       ? job.view.tabs.map(tab => ({
@@ -120,13 +127,13 @@ export function ExtensionResultTab({
       : [
           {
             id: 'result',
-            displayName: 'Result',
+            displayName: t('desktopUi.result'),
             layout: 'single' as const,
             panels: [{ source: 'output' as const, ordinal }],
           },
           {
             id: 'compare',
-            displayName: 'Compare',
+            displayName: t('desktopUi.compare'),
             layout: 'split' as const,
             panels: [{ source: 'input' as const }, { source: 'output' as const, ordinal }],
           },
@@ -134,12 +141,12 @@ export function ExtensionResultTab({
     if (job.view?.tabs.length)
       views.push({
         id: 'host-result',
-        displayName: 'Output preview',
+        displayName: t('desktopUi.outputPreview'),
         layout: 'single',
         panels: [{ source: 'output', ordinal }],
       })
     return views
-  }, [job.view, job.outputs, ordinal])
+  }, [job.view, job.outputs, ordinal, t])
   const initialView = () =>
     presentations.find(
       view =>
@@ -290,7 +297,7 @@ export function ExtensionResultTab({
   return (
     <section
       className="flex h-full min-h-0 flex-col bg-white/35 dark:bg-transparent"
-      aria-label={`${job.displayLabel} result`}
+      aria-label={i18n.t('desktopUi.resultLabel', { label: job.displayLabel })}
     >
       <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-200/70 bg-white/55 px-2 py-1 text-xs dark:border-white/10 dark:bg-white/[.025]">
         {job.status !== 'completed' && (
@@ -308,7 +315,7 @@ export function ExtensionResultTab({
             {job.outputs.length > 0 && (
               <div
                 role="tablist"
-                aria-label="Result outputs"
+                aria-label={i18n.t('desktopUi.resultOutputs')}
                 className="flex shrink-0 items-center gap-0.5"
               >
                 {job.outputs.map(item => (
@@ -335,7 +342,7 @@ export function ExtensionResultTab({
                     onClick={() => setRaw(true)}
                     className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-medium ${raw ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'text-slate-500 hover:bg-slate-500/10'}`}
                   >
-                    Raw
+                    <Trans i18nKey="desktopUi.raw" />
                   </button>
                 )}
               </div>
@@ -359,8 +366,8 @@ export function ExtensionResultTab({
             {job.resultControls.includes('copy') && (
               <button
                 type="button"
-                title="Copy result"
-                aria-label="Copy result"
+                title={i18n.t('desktopUi.copyResult')}
+                aria-label={i18n.t('desktopUi.copyResult')}
                 disabled={busy}
                 onClick={() =>
                   void operation(() => copyClipboardOutput({ kind: 'derived', jobId: job.jobId }))
@@ -373,8 +380,8 @@ export function ExtensionResultTab({
             {job.resultControls.includes('paste') && (
               <button
                 type="button"
-                title="Paste result"
-                aria-label="Paste result"
+                title={i18n.t('desktopUi.pasteResult')}
+                aria-label={i18n.t('desktopUi.pasteResult')}
                 disabled={busy}
                 onClick={() =>
                   void operation(() => pasteClipboardOutput({ kind: 'derived', jobId: job.jobId }))
@@ -387,8 +394,8 @@ export function ExtensionResultTab({
             {job.resultControls.includes('save_as_clip') && (
               <button
                 type="button"
-                title="Save as new clip"
-                aria-label="Save as new clip"
+                title={i18n.t('desktopUi.saveAsNewClip')}
+                aria-label={i18n.t('desktopUi.saveAsNewClip')}
                 disabled={busy}
                 onClick={() =>
                   void operation(() =>
@@ -407,9 +414,11 @@ export function ExtensionResultTab({
               <button
                 type="button"
                 title={
-                  canRegenerate ? 'Regenerate result' : 'Install this transformer to regenerate'
+                  canRegenerate
+                    ? i18n.t('desktopUi.regenerateResult')
+                    : i18n.t('desktopUi.installThisTransformerToRegenerate')
                 }
-                aria-label="Regenerate result"
+                aria-label={i18n.t('desktopUi.regenerateResult')}
                 disabled={busy || !canRegenerate}
                 onClick={() => void operation(regenerate)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"
@@ -425,7 +434,7 @@ export function ExtensionResultTab({
             disabled={busy || !canRegenerate}
             onClick={() => void operation(regenerate)}
           >
-            Retry
+            <Trans i18nKey="desktopUi.retry" />
           </button>
         )}
         {['pending', 'running', 'waiting_provider'].includes(job.status) && (
@@ -436,7 +445,7 @@ export function ExtensionResultTab({
               void operation(() => invoke('cancel_extension_job', { jobId: job.jobId }))
             }
           >
-            Cancel
+            <Trans i18nKey="desktopUi.cancel" />
           </button>
         )}
       </div>
@@ -444,10 +453,10 @@ export function ExtensionResultTab({
         <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
           <Check className="mb-3 h-7 w-7 text-emerald-500" />
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            External change completed
+            <Trans i18nKey="desktopUi.externalChangeCompleted" />
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            {job.completedWrites} confirmed step{job.completedWrites === 1 ? '' : 's'}
+            {i18n.t('desktopUi.confirmedSteps', { count: job.completedWrites })}
           </p>
         </div>
       ) : job.status === 'completed' ? (
@@ -471,11 +480,11 @@ export function ExtensionResultTab({
                   {view.panels.length > 1 && (
                     <span className="pointer-events-none absolute right-2 top-2 z-10 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
                       {panel.source === 'input'
-                        ? 'Original'
+                        ? i18n.t('desktopUi.original')
                         : job.outputs.length > 1
                           ? (job.outputs.find(item => item.ordinal === panel.ordinal)?.outputId ??
-                            'Result')
-                          : 'Result'}
+                            i18n.t('desktopUi.result'))
+                          : i18n.t('desktopUi.result')}
                     </span>
                   )}
                   {presentationFor(panel) && (
@@ -499,8 +508,7 @@ export function ExtensionResultTab({
           </p>
           {job.status === 'waiting_write_review' ? (
             <p className="mt-1 max-w-sm text-xs text-slate-500">
-              The remote change may have succeeded before ClipsX could record the response. Check
-              the destination before starting a new run.
+              <Trans i18nKey="desktopUi.theRemoteChangeMayHaveSucceededBeforeClipsxCould" />
             </p>
           ) : (
             (job.reasonCode || job.status === 'failed' || job.status === 'waiting_provider') && (
@@ -509,8 +517,7 @@ export function ExtensionResultTab({
           )}
           {job.completedWrites > 0 && (
             <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-              {job.completedWrites} external change{job.completedWrites === 1 ? '' : 's'} recorded
-              before this stopped.
+              {i18n.t('desktopUi.recordedChanges', { count: job.completedWrites })}
             </p>
           )}
         </div>

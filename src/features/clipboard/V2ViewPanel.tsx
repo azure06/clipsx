@@ -1,8 +1,9 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Database, RotateCw, ScanText, X } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import type {
   ClipDetail,
   ClipPresentation,
@@ -163,7 +164,10 @@ export const ExtensionCustomView = ({
                   label: expired.label,
                   token: expired.token,
                 })
-                setFailure({ scope, message: 'The extension view did not finish loading.' })
+                setFailure({
+                  scope,
+                  message: i18n.t('desktopUi.theExtensionViewDidNotFinishLoading'),
+                })
               }, 10_000)
             }
           })
@@ -195,6 +199,7 @@ export const ExtensionCustomView = ({
     }
   }, [
     appliedTheme,
+    i18n,
     clipId,
     locale,
     revision,
@@ -210,11 +215,13 @@ export const ExtensionCustomView = ({
       ref={container}
       className="relative flex h-full w-full items-center justify-center bg-transparent"
     >
-      <span className="sr-only">Custom extension view: {view.label}</span>
+      <span className="sr-only">
+        <Trans i18nKey="desktopUi.customExtensionView" /> {view.label}
+      </span>
       {error ? (
         <div className="mx-auto max-w-sm px-6 text-center">
           <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-            This extension view could not be displayed.
+            <Trans i18nKey="desktopUi.thisExtensionViewCouldNotBeDisplayed" />
           </p>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{error}</p>
           <button
@@ -223,13 +230,13 @@ export const ExtensionCustomView = ({
             type="button"
           >
             <RotateCw className="h-3.5 w-3.5" />
-            Retry
+            <Trans i18nKey="desktopUi.retry" />
           </button>
         </div>
       ) : !isReady ? (
         <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
           <span className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-violet-500 dark:border-slate-700 dark:border-t-violet-400" />
-          Loading {view.label}…
+          <Trans i18nKey="desktopUi.loading" /> {view.label}…
         </div>
       ) : null}
     </div>
@@ -244,37 +251,42 @@ const OcrPanel = ({
   ocr: OcrPresentation
   retrying: boolean
   onRetry: () => void
-}) => (
-  <div className="custom-scrollbar h-full min-h-0 overflow-auto overscroll-contain p-4 text-sm">
-    {(ocr.state === 'pending' || ocr.state === 'running') && (
-      <div className="flex items-center gap-2 text-gray-500">
-        <ScanText className="h-4 w-4 animate-pulse text-sky-400" />
-        {ocr.state === 'pending' ? 'Text recognition is queued…' : 'Text recognition is running…'}
-      </div>
-    )}
-    {ocr.state === 'failed' && (
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-xs text-red-500">{ocr.message}</span>
-        <button
-          className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
-          disabled={retrying}
-          onClick={onRetry}
-        >
-          <RotateCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
-          Retry
-        </button>
-      </div>
-    )}
-    {ocr.state === 'ready' &&
-      (ocr.text.trim() ? (
-        <pre className="whitespace-pre-wrap leading-relaxed text-gray-800 dark:text-gray-200">
-          {ocr.text}
-        </pre>
-      ) : (
-        <span className="text-gray-500">No text found in image.</span>
-      ))}
-  </div>
-)
+}) => {
+  useTranslation()
+  return (
+    <div className="custom-scrollbar h-full min-h-0 overflow-auto overscroll-contain p-4 text-sm">
+      {(ocr.state === 'pending' || ocr.state === 'running') && (
+        <div className="flex items-center gap-2 text-gray-500">
+          <ScanText className="h-4 w-4 animate-pulse text-sky-400" />
+          {ocr.state === 'pending' ? i18n.t('desktopUi.ocrQueued') : i18n.t('desktopUi.ocrRunning')}
+        </div>
+      )}
+      {ocr.state === 'failed' && (
+        <div className="flex items-start justify-between gap-3">
+          <span className="text-xs text-red-500">{ocr.message}</span>
+          <button
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-slate-50 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5"
+            disabled={retrying}
+            onClick={onRetry}
+          >
+            <RotateCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
+            <Trans i18nKey="desktopUi.retry" />
+          </button>
+        </div>
+      )}
+      {ocr.state === 'ready' &&
+        (ocr.text.trim() ? (
+          <pre className="whitespace-pre-wrap leading-relaxed text-gray-800 dark:text-gray-200">
+            {ocr.text}
+          </pre>
+        ) : (
+          <span className="text-gray-500">
+            <Trans i18nKey="desktopUi.noTextFoundInImage" />
+          </span>
+        ))}
+    </div>
+  )
+}
 
 type ArtifactUpdate = { clipId: string; sourceId: string }
 
@@ -305,129 +317,137 @@ const formatBytes = (n: number) => {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`
 }
 
-const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => void }) => (
-  <div className="absolute inset-0 z-20 flex flex-col bg-white/95 backdrop-blur-xl dark:bg-slate-950/95">
-    <div className="flex items-center justify-between border-b border-slate-200/60 px-4 py-2.5 dark:border-white/10">
-      <div className="flex items-center gap-2">
-        <Database className="h-4 w-4 text-gray-500" />
-        <span className="text-xs font-semibold">Representations</span>
-        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums dark:bg-white/10">
-          {detail.representations.length}
-        </span>
+const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => void }) => {
+  useTranslation()
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col bg-white/95 backdrop-blur-xl dark:bg-slate-950/95">
+      <div className="flex items-center justify-between border-b border-slate-200/60 px-4 py-2.5 dark:border-white/10">
+        <div className="flex items-center gap-2">
+          <Database className="h-4 w-4 text-gray-500" />
+          <span className="text-xs font-semibold">
+            <Trans i18nKey="desktopUi.representations" />
+          </span>
+          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums dark:bg-white/10">
+            {detail.representations.length}
+          </span>
+        </div>
+        <button
+          aria-label={i18n.t('desktopUi.closeInspector')}
+          className="rounded-md p-1.5 text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-      <button
-        aria-label="Close inspector"
-        className="rounded-md p-1.5 text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10"
-        onClick={onClose}
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </div>
-    <div className="custom-scrollbar flex-1 overflow-auto p-3 space-y-2">
-      {detail.representations.map((rep, index) => {
-        const title = rep.canonicalMimeType ?? rep.nativeType ?? rep.formatKey
-        const kindStyle =
-          STORAGE_KIND_STYLE[rep.storageKind] ?? 'bg-slate-100 text-gray-500 dark:bg-white/10'
-        return (
-          <article
-            className="rounded-xl border border-slate-200/70 bg-white/60 dark:border-white/8 dark:bg-white/4"
-            key={rep.id}
-          >
-            {/* Card header */}
-            <div className="flex items-start gap-3 px-3 pt-3 pb-2">
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 break-all">
-                    {title}
-                  </span>
-                  {rep.nativeType && rep.nativeType !== title && (
-                    <span className="rounded border border-slate-200/80 bg-slate-100/80 px-1.5 py-0.5 text-[10px] text-gray-500 dark:border-white/10 dark:bg-white/5">
-                      {rep.nativeType}
-                    </span>
-                  )}
-                </div>
-                <code className="text-[10px] text-gray-400">{rep.formatKey}</code>
-              </div>
-              <span className="shrink-0 mt-0.5 text-[10px] font-medium tabular-nums text-gray-500">
-                #{index + 1}
-              </span>
-            </div>
-
-            {/* Meta chips */}
-            <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5">
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${kindStyle}`}>
-                {rep.storageKind.replace('_', ' ')}
-              </span>
-              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-white/8 dark:text-gray-400">
-                {formatBytes(rep.byteLength)}
-              </span>
-              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
-                priority {rep.capturePriority}
-              </span>
-              <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
-                {rep.formatFamily}
-              </span>
-              {rep.sha256 && (
-                <code className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] text-gray-400 dark:bg-white/8">
-                  {rep.sha256.slice(0, 8)}…
-                </code>
-              )}
-            </div>
-
-            {/* Text preview */}
-            {rep.textValue !== null && rep.textValue.trim() && (
-              <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2">
-                <pre className="custom-scrollbar max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed text-gray-600 dark:text-gray-400">
-                  {rep.textValue}
-                </pre>
-              </div>
-            )}
-
-            {/* File references */}
-            {rep.fileReferences.length > 0 && (
-              <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2 space-y-1">
-                {rep.fileReferences.map(file => (
-                  <div className="break-all text-[10px] font-mono text-gray-500" key={file}>
-                    {file}
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
-        )
-      })}
-      {detail.formatObservations.length > 0 && (
-        <section className="space-y-2 pt-2" aria-label="Clipboard format observations">
-          <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-            Advertised native formats
-          </div>
-          {detail.formatObservations.map(observation => (
+      <div className="custom-scrollbar flex-1 overflow-auto p-3 space-y-2">
+        {detail.representations.map((rep, index) => {
+          const title = rep.canonicalMimeType ?? rep.nativeType ?? rep.formatKey
+          const kindStyle =
+            STORAGE_KIND_STYLE[rep.storageKind] ?? 'bg-slate-100 text-gray-500 dark:bg-white/10'
+          return (
             <article
-              className="rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2.5 dark:border-white/8 dark:bg-white/4"
-              key={`${observation.ordinal}:${observation.nativeIdentifier}`}
+              className="rounded-xl border border-slate-200/70 bg-white/60 dark:border-white/8 dark:bg-white/4"
+              key={rep.id}
             >
-              <div className="flex items-start justify-between gap-2">
-                <code className="break-all text-[10px] text-gray-700 dark:text-gray-300">
-                  {observation.nativeIdentifier}
-                </code>
-                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 dark:bg-white/8 dark:text-gray-300">
-                  {observation.decision.replace('_', ' ')}
+              {/* Card header */}
+              <div className="flex items-start gap-3 px-3 pt-3 pb-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 break-all">
+                      {title}
+                    </span>
+                    {rep.nativeType && rep.nativeType !== title && (
+                      <span className="rounded border border-slate-200/80 bg-slate-100/80 px-1.5 py-0.5 text-[10px] text-gray-500 dark:border-white/10 dark:bg-white/5">
+                        {rep.nativeType}
+                      </span>
+                    )}
+                  </div>
+                  <code className="text-[10px] text-gray-400">{rep.formatKey}</code>
+                </div>
+                <span className="shrink-0 mt-0.5 text-[10px] font-medium tabular-nums text-gray-500">
+                  #{index + 1}
                 </span>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-gray-400">
-                {observation.capabilityId && <span>{observation.capabilityId}</span>}
-                {observation.byteLength !== null && (
-                  <span>{formatBytes(observation.byteLength)}</span>
+
+              {/* Meta chips */}
+              <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2.5">
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${kindStyle}`}>
+                  {rep.storageKind.replace('_', ' ')}
+                </span>
+                <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-white/8 dark:text-gray-400">
+                  {formatBytes(rep.byteLength)}
+                </span>
+                <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
+                  <Trans i18nKey="desktopUi.priority" /> {rep.capturePriority}
+                </span>
+                <span className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/8 dark:text-gray-500">
+                  {rep.formatFamily}
+                </span>
+                {rep.sha256 && (
+                  <code className="rounded-full bg-slate-100/80 px-2 py-0.5 text-[10px] text-gray-400 dark:bg-white/8">
+                    {rep.sha256.slice(0, 8)}…
+                  </code>
                 )}
-                <span>{observation.reason.replaceAll('_', ' ')}</span>
               </div>
+
+              {/* Text preview */}
+              {rep.textValue !== null && rep.textValue.trim() && (
+                <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2">
+                  <pre className="custom-scrollbar max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed text-gray-600 dark:text-gray-400">
+                    {rep.textValue}
+                  </pre>
+                </div>
+              )}
+
+              {/* File references */}
+              {rep.fileReferences.length > 0 && (
+                <div className="border-t border-slate-100 dark:border-white/6 px-3 py-2 space-y-1">
+                  {rep.fileReferences.map(file => (
+                    <div className="break-all text-[10px] font-mono text-gray-500" key={file}>
+                      {file}
+                    </div>
+                  ))}
+                </div>
+              )}
             </article>
-          ))}
-        </section>
-      )}
+          )
+        })}
+        {detail.formatObservations.length > 0 && (
+          <section
+            className="space-y-2 pt-2"
+            aria-label={i18n.t('desktopUi.clipboardFormatObservations')}
+          >
+            <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              <Trans i18nKey="desktopUi.advertisedNativeFormats" />
+            </div>
+            {detail.formatObservations.map(observation => (
+              <article
+                className="rounded-xl border border-slate-200/70 bg-white/60 px-3 py-2.5 dark:border-white/8 dark:bg-white/4"
+                key={`${observation.ordinal}:${observation.nativeIdentifier}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <code className="break-all text-[10px] text-gray-700 dark:text-gray-300">
+                    {observation.nativeIdentifier}
+                  </code>
+                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 dark:bg-white/8 dark:text-gray-300">
+                    {observation.decision.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-gray-400">
+                  {observation.capabilityId && <span>{observation.capabilityId}</span>}
+                  {observation.byteLength !== null && (
+                    <span>{formatBytes(observation.byteLength)}</span>
+                  )}
+                  <span>{observation.reason.replaceAll('_', ' ')}</span>
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 export const V2ViewPanel = ({
   clipId,
@@ -442,6 +462,8 @@ export const V2ViewPanel = ({
   onTabControls?: (info: ViewTabControls | null) => void
   onTransformControls?: (controls: TransformControls | null) => void
 }) => {
+  useTranslation()
+
   const { appliedTheme } = useTheme()
   const [detail, setDetail] = useState<ClipDetail | null>(null)
   const [viewSet, setViewSet] = useState<ClipViewSet | null>(null)
@@ -625,7 +647,7 @@ export const V2ViewPanel = ({
         ? {
             id: OCR_TAB_ID,
             rendererId: '',
-            label: 'Text',
+            label: i18n.t('desktopUi.text'),
             sourceId: '',
             mimeType: null,
             capabilityId: 'builtin.ocr',
@@ -684,7 +706,7 @@ export const V2ViewPanel = ({
           }}
         >
           <RotateCw className="h-3 w-3" />
-          Retry
+          <Trans i18nKey="desktopUi.retry" />
         </button>
       </div>
     )
@@ -692,7 +714,7 @@ export const V2ViewPanel = ({
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-gray-500">
         <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
-        Loading preview...
+        <Trans i18nKey="desktopUi.loadingPreview" />
       </div>
     )
 

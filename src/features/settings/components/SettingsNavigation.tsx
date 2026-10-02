@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../../i18n/index'
 import type { ReactNode } from 'react'
 
 export type SettingsNavigationItem<T extends string> = {
@@ -20,9 +22,17 @@ export const SettingsNavigation = <T extends string>({
   onSelect,
   title,
 }: SettingsNavigationProps<T>) => {
+  useTranslation()
+
   const groups: Array<{ id: SettingsNavigationItem<T>['group']; label: string }> = [
-    { id: 'preferences', label: 'Preferences' },
-    { id: 'system', label: 'System' },
+    {
+      id: 'preferences',
+      label: i18n.t('desktopUi.preferences'),
+    },
+    {
+      id: 'system',
+      label: i18n.t('desktopUi.system'),
+    },
   ]
 
   return (

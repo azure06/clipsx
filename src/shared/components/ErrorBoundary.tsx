@@ -1,6 +1,6 @@
+import { Trans, Translation } from 'react-i18next'
 import { diagnostic } from '../diagnostics'
 import { Component, type ReactNode } from 'react'
-import { Translation } from 'react-i18next'
 import { captureBoundaryError } from '../telemetry'
 
 interface Props {
@@ -38,7 +38,11 @@ export class ErrorBoundary extends Component<Props, State> {
               <div style={{ padding: '20px', textAlign: 'center' }}>
                 <h1>{t('errors.genericTitle')}</h1>
                 <p>{t('errors.genericDescription')}</p>
-                {this.state.eventId && <p className="text-xs">Reference: {this.state.eventId}</p>}
+                {this.state.eventId && (
+                  <p className="text-xs">
+                    <Trans i18nKey="desktopUi.reference" /> {this.state.eventId}
+                  </p>
+                )}
                 <button
                   onClick={() => this.setState({ hasError: false, error: null, eventId: null })}
                 >
