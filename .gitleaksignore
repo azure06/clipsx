@@ -1,0 +1,11 @@
+# Reviewed synthetic secret-detector and reveal-UI fixtures in historical commits.
+# Exact finding fingerprints only; real credentials and new findings remain scanned.
+20cef2a6f8fc7a4bd44abdd2a913fecf4ad1bc7b:src-tauri/src/contributions/host.rs:generic-api-key:1517
+20cef2a6f8fc7a4bd44abdd2a913fecf4ad1bc7b:src-tauri/src/contributions/host.rs:stripe-access-token:1502
+20cef2a6f8fc7a4bd44abdd2a913fecf4ad1bc7b:src/features/clipboard/RenderModelView.test.tsx:stripe-access-token:145
+65bc19e38427561a4a3e85129c9314de57e02e1a:src-tauri/src/contributions/host.rs:gcp-api-key:1988
+65bc19e38427561a4a3e85129c9314de57e02e1a:src-tauri/src/contributions/host.rs:generic-api-key:1970
+65bc19e38427561a4a3e85129c9314de57e02e1a:src-tauri/src/contributions/host.rs:generic-api-key:2131
+65bc19e38427561a4a3e85129c9314de57e02e1a:src-tauri/src/contributions/host.rs:jwt:1974
+feace6a64ff129dde77cb62106c0aa029a57b081:src-tauri/src/services/intelligence.rs:generic-api-key:898
+feace6a64ff129dde77cb62106c0aa029a57b081:src-tauri/src/services/intelligence.rs:jwt:780

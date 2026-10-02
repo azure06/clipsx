@@ -12,8 +12,12 @@ installed certification.
 
 ## Select the operation
 
-- **Prepare:** align npm/Cargo/Tauri versions, write versioned release notes, then
-  push `release/<version>`. Preparation creates an unpublished candidate identified
+- **Prepare:** align npm/Cargo/Tauri versions and write versioned release notes.
+  Before committing and pushing release changes, run `npm run release:preflight`
+  locally with the CI Rust toolchain. All checks must pass on the final source and
+  lockfiles; rerun affected checks after edits. Missing audit/license/SBOM tools or
+  a failed check are blockers, not reasons to push and let CI discover failures.
+  Then push `release/<version>`. Preparation creates an unpublished candidate identified
   by source revision/tree, workflow run and attempt.
 - **Windows signing:** use the documented `scripts/release/sign-windows.ps1` command
   after the maintainer authenticates SimplySign. It signs and packages CI inputs,

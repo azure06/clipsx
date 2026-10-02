@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
       - name: Install system and audit dependencies
         run: |
           sudo apt-get update
@@ -55,21 +55,7 @@ jobs:
           cargo install cargo-cyclonedx --locked
           cargo install cargo-deny --locked
       - name: Verify application
-        run: |
-          npm ci
-          npm run type-check
-          npm run lint
-          npm test -- --run
-          npm run test:release
-          npm run build
-          npm audit --omit=dev
-          node scripts/check-js-licenses.mjs
-          cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-          cargo clippy --all-features --manifest-path src-tauri/Cargo.toml -- -D warnings
-          cargo test --locked --all-features --manifest-path src-tauri/Cargo.toml --bin clipsx
-          cargo audit --file src-tauri/Cargo.lock
-          cargo deny check licenses bans sources --manifest-path src-tauri/Cargo.toml
-          cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
+        run: npm run release:preflight
       - name: Require a live signed v3 extension catalog
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -146,7 +132,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: ${{ matrix.target }}
       - uses: swatinem/rust-cache@v2

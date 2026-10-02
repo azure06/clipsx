@@ -26,7 +26,7 @@ concurrency:
 
 env:
   NODE_VERSION: "20.19.0"
-  RUST_TOOLCHAIN: "stable"
+  RUST_TOOLCHAIN: "1.99.0"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ jobs:
             tesseract-ocr-jpn
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
 
@@ -184,7 +184,7 @@ jobs:
             tesseract-ocr-jpn
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -240,7 +240,7 @@ jobs:
           cache: "npm"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2

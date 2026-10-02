@@ -297,20 +297,31 @@ installed certification.
 
 ## Automated preflight
 
-Run against a clean checkout of the candidate revision:
+Before committing and pushing release changes, run the same application preflight
+used by candidate CI on the final source and lockfiles. Use Node 24 or newer.
+`rust-toolchain.toml` and CI pin Rust 1.99.0, including Clippy and rustfmt; update
+them together when upgrading the compiler. Install the
+audit, license and SBOM tools once:
 
 ```sh
-npm ci
-npm run type-check
-npm run lint
-npm run format:check
-npm test -- --run
-npm run build
-cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx
-cargo test --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool
+cargo install cargo-audit --locked
+cargo install cargo-deny --locked
+cargo install cargo-cyclonedx --locked
+npm run release:preflight
 ```
+
+The command checks production npm dependencies, current Rust security advisories
+and licenses before frontend checks and native compilation. It then runs frontend
+quality/tests/build, release invariants, strict all-target Rust lint, application,
+extension-tool and updater-verifier tests, and generates the dependency SBOM.
+It stops at the first failure. A missing tool or failed gate blocks the release
+push; resolve it locally and rerun affected checks after edits. Do not ignore
+security advisories to get a candidate build through.
+
+CI repeats this command on the committed revision and separately verifies the
+published signed extension catalog and scans Git history for secrets. Local
+application preflight does not establish platform packaging, notarization or
+installed certification. Preserve CI and installed-platform gates.
 
 | Gate                  | Required checks                                                                                                                                                                           |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
