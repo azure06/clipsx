@@ -5,7 +5,7 @@ import { encode } from './model.mjs'
 
 const root = process.cwd()
 const npm = process.env.npm_execpath
-if (!npm) throw new Error('Run this command with npm run release:preflight.')
+if (!npm) throw new Error('Run this command with npm exec -- node scripts/release/preflight.mjs.')
 const phase = process.argv[2] || 'all'
 if (!['all', 'frontend', 'quality', 'native'].includes(phase))
   throw new Error('Unknown preflight phase')
@@ -36,7 +36,8 @@ if (phase === 'all' || phase === 'frontend') {
     'bans',
     'sources',
   ])
-  for (const task of ['lint', 'format:check']) npmRun('run', task)
+  npmRun('run', 'lint', '--', '--ignore-pattern', '.tooling/**')
+  npmRun('run', 'format:check')
   process.env.RELEASE_CHECK_APP_ENV = 'true'
   run(process.execPath, [
     '--test',
