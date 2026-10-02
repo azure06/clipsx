@@ -17,6 +17,10 @@ installed certification.
   locally with the CI Rust toolchain. All checks must pass on the final source and
   lockfiles; rerun affected checks after edits. Missing audit/license/SBOM tools or
   a failed check are blockers, not reasons to push and let CI discover failures.
+  Local preflight and CI share frontend, Rust quality and native phases. Require
+  the verified frontend before any native compilation; never insert stub assets
+  or rerun frontend builds in packaging jobs. Release PRs use branch preparation
+  checks instead of starting another application CI run.
   Then push `release/<version>`. Preparation creates an unpublished candidate identified
   by source revision/tree, workflow run and attempt.
 - **Windows signing:** use the documented `scripts/release/sign-windows.ps1` command

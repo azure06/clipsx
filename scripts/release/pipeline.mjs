@@ -11,6 +11,7 @@ import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { validateProductionEnvironment } from '../production-env.mjs'
+import { checkFrontend } from './frontend.mjs'
 import {
   assert,
   assertCertified,
@@ -134,6 +135,7 @@ function initialize() {
 }
 
 function collect(platform, bundleDir) {
+  checkFrontend(process.cwd(), true)
   const candidate = readJson(join(directory, 'candidate.json'))
   const destination = join(directory, platform)
   mkdirSync(destination, { recursive: true })
@@ -175,7 +177,9 @@ function collect(platform, bundleDir) {
 }
 
 function windowsKit() {
+  const frontend = checkFrontend(process.cwd(), true)
   const candidate = readJson(join(directory, 'candidate.json'))
+  candidate.build.frontend = frontend
   const kit = join(directory, 'windows-kit')
   mkdirSync(kit, { recursive: true })
   command('git', [

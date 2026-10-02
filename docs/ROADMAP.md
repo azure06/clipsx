@@ -69,7 +69,8 @@ an Apple Developer account, Developer ID credentials, and notarization access.
 ### 3. Certify the release candidate
 
 - [ ] Run `npm run release:preflight` locally before committing and pushing
-      release changes, then require CI preflight to pass on that exact revision.
+      release changes, then require the shared frontend/native `CI` gate to pass
+      on that exact revision.
 - [ ] Test the installed artifacts on Windows, macOS, and Linux/X11 using the
       applicable checklist in [RELEASE.md](RELEASE.md). Record failures and fix
       release blockers; rerun only the affected checks after a change.

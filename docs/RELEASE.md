@@ -58,7 +58,8 @@ readiness orchestration against PR source code.
 
 Before pushing a release branch, align the npm, Cargo and Tauri stable versions
 and add `docs/releases/<version>.md`. Open a draft PR from that branch to main
-so the existing PR CI checks run while preparation and certification proceed.
+to track certification. Release branch preparation supplies its `CI` check; the
+release PR does not launch a duplicate application build.
 Each preparation attempt creates a separate
 `candidate-<version>-<run-id>-<run-attempt>` staging draft. Candidate identity,
 production build settings, retained updater public key, native evidence, package
@@ -77,7 +78,8 @@ digests include manifests, signatures, evidence and ancillary files.
 
 The required `Release readiness` commit status passes ordinary PRs without
 release certification. Release PRs remain pending until their exact candidate is
-certified. Main's existing CI requirements remain in force. The merged tree must
+certified. The aggregate `CI` check requires every applicable validation job to
+succeed, including staging for release candidates. The merged tree must
 equal the certified source tree regardless of merge method.
 
 ### Production configuration
@@ -90,8 +92,9 @@ Release runners use repository variables for:
 - `SENTRY_DESKTOP_DSN`: public desktop ingestion DSN.
 - `WINDOWS_SIGNING_CERT_THUMBPRINT`: expected Authenticode certificate fingerprint.
 
-The production environment validator and generated authentication CSP run before
-every native build. Environment variables can be supplied directly in CI or
+The production environment validator and authentication CSP generator run once
+before the shared production frontend build. Native jobs verify those exact
+assets and CSP before compilation. Environment variables can be supplied directly in CI or
 loaded from the ignored local `.env`. macOS production builds require hardened
 runtime and real Developer ID credentials; development's ad-hoc defaults remain
 separate. Windows publishes NSIS only. Native tests explicitly select the
@@ -318,8 +321,36 @@ It stops at the first failure. A missing tool or failed gate blocks the release
 push; resolve it locally and rerun affected checks after edits. Do not ignore
 security advisories to get a candidate build through.
 
-CI repeats this command on the committed revision and separately verifies the
-published signed extension catalog and scans Git history for secrets. Local
+CI uses the same preflight phases on the committed revision: `frontend` runs
+policy, frontend checks and one build; `quality` runs Rust formatting, strict
+Clippy and auxiliary tests once on Linux; `native` runs application tests once
+on Windows, Linux, Apple Silicon and Intel Mac runners. Ordinary PRs reuse the
+same workflow without release credentials or packaging. Linux also compiles the
+default-feature binary on ordinary PRs. Production packaging remains an optimized
+build after native tests; debug tests cannot substitute for that compilation.
+
+The frontend artifact binds the source commit/tree, run/attempt, production mode,
+configuration, generated CSP and every frontend file hash. Native jobs download
+and verify it before Cargo runs. Missing, extra or changed files and stub HTML
+fail immediately. A generated CI-only overlay disables Tauri's frontend hook;
+local Tauri build commands keep their normal hooks. Sentry source maps upload
+once from the release frontend job. Native signing and updater keys remain in
+the release-only steps.
+
+Release preparation separately verifies the published signed extension catalog
+and scans Git history for secrets. Audit tools use pinned prebuilt distributions
+in CI rather than compiling themselves on each run. Rust caches distinguish
+PR/release trust scopes and native architectures, and retain dependency caches
+on failure. Advisory checks still fetch current security data. Superseded
+preparation runs and sibling jobs of a failed native matrix are cancelled.
+Develop/main pushes do not duplicate PR validation; release pushes prepare one
+candidate. Full-run retries retain the existing run/attempt binding.
+
+When rolling out these checks, first install and verify the aggregate `CI` gate
+on main, then replace the nine obsolete job-name requirements with `CI` while
+retaining `Release readiness` and all other rules. Do not leave obsolete contexts
+required after migrating, and do not remove them before the replacement gate is
+available. Infrastructure rollout is separate from release certification. Local
 application preflight does not establish platform packaging, notarization or
 installed certification. Preserve CI and installed-platform gates.
 
