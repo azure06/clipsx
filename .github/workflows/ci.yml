@@ -144,7 +144,7 @@ jobs:
 
       - name: Clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   # ---------------------------------------------------------------------------
   # 4. Rust tests

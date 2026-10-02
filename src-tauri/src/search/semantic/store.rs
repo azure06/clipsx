@@ -1008,13 +1008,8 @@ fn dot_f32_blob(query: &[f32], bytes: &[u8]) -> Result<f64> {
     }
     Ok(query
         .iter()
-        .zip(bytes.chunks_exact(4))
-        .map(|(left, right)| {
-            f64::from(*left)
-                * f64::from(f32::from_le_bytes(
-                    right.try_into().expect("four-byte chunk"),
-                ))
-        })
+        .zip(bytes.as_chunks::<4>().0.iter())
+        .map(|(left, right)| f64::from(*left) * f64::from(f32::from_le_bytes(*right)))
         .sum())
 }
 

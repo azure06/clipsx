@@ -16,7 +16,9 @@ const STALE_SHARE_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreparedShare {
+    #[cfg(not(target_os = "linux"))]
     Url(String),
+    #[cfg(not(target_os = "linux"))]
     Text(String),
     Files(Vec<PathBuf>),
 }

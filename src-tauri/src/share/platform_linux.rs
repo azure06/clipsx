@@ -1,16 +1,11 @@
 use super::PreparedShare;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use ashpd::{desktop::open_uri::OpenFileRequest, Error};
 use std::{fs::File, path::PathBuf};
 use tauri::WebviewWindow;
 
 pub async fn show(_window: &WebviewWindow, payload: PreparedShare) -> Result<()> {
-    let paths = match payload {
-        PreparedShare::Files(paths) => paths,
-        PreparedShare::Text(_) | PreparedShare::Url(_) => {
-            bail!("Linux sharing requires a prepared file")
-        }
-    };
+    let PreparedShare::Files(paths) = payload;
     for path in paths {
         open_with_chooser(path).await?;
     }
