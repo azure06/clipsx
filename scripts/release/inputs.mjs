@@ -29,6 +29,7 @@ const recipes = new Set([
   '.github/workflows/checks.yml',
   '.github/workflows/ci.yml',
   'scripts/release/preflight.mjs',
+  'scripts/release/registry-check.mjs',
   'scripts/release/frontend.mjs',
   'scripts/release/inputs.mjs',
   'scripts/release/builds.mjs',
