@@ -98,7 +98,9 @@ assets and CSP before compilation. Environment variables can be supplied directl
 loaded from the ignored local `.env`. macOS production builds require hardened
 runtime and real Developer ID credentials; development's ad-hoc defaults remain
 separate. Windows publishes NSIS only. Native tests explicitly select the
-application binary to avoid Windows library-test GUI linking.
+application binary to avoid Windows library-test GUI linking. macOS OCR explicitly
+links Vision and CoreImage so runtime class discovery also works in headless test
+processes. Both Mac architectures must pass language discovery and bitmap OCR.
 
 Keep these existing repository secrets:
 
