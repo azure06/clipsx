@@ -29,7 +29,7 @@ export function frontendIdentity(root, production, env = process.env) {
   const git = ref => execFileSync('git', ['rev-parse', ref], { cwd: root, encoding: 'utf8' }).trim()
   return {
     schemaVersion: 1, sourceRevision: git('HEAD'), sourceTree: git('HEAD^{tree}'),
-    runId: env.GITHUB_RUN_ID || 'local', runAttempt: env.GITHUB_RUN_ATTEMPT || 'local',
+    runId: env.GITHUB_RUN_ID || 'local', runAttempt: env.BUILD_RUN_ATTEMPT || env.GITHUB_RUN_ATTEMPT || 'local',
     production, configuration: hashes(root, configuration),
   }
 }

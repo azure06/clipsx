@@ -23,6 +23,12 @@ installed certification.
   checks instead of starting another application CI run.
   Then push `release/<version>`. Preparation creates an unpublished candidate identified
   by source revision/tree, workflow run and attempt.
+- **Preparation retry:** on unchanged source, use `gh run rerun <run-id> --failed`.
+  Verify the retained frontend generation and executable checkpoint; successful
+  platforms remain unchanged. A source push or full rerun creates a new build
+  generation. Never import checkpoints or installers from another workflow run.
+  Deploy the matching trusted orchestration on main before certifying a resumed
+  candidate; execution attempts and candidate build generations are distinct.
 - **Windows signing:** use the documented `scripts/release/sign-windows.ps1` command
   after the maintainer authenticates SimplySign. It signs and packages CI inputs,
   uploads and requests finalization. Never sign only the outer installer or rebuild

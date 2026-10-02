@@ -32,6 +32,7 @@ path = "src/main.rs"
 [[bin]]
 name = "clipsx-extension-tool"
 path = "src/bin/clipsx-extension-tool.rs"
+required-features = ["extension-tools"]
 
 [[bin]]
 name = "clipsx-release-verify"
@@ -121,3 +122,4 @@ wit-parser = "0.247.0"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 release-tools = []
+extension-tools = []

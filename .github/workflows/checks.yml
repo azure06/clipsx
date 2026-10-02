@@ -5,6 +5,9 @@ on:
       release:
         type: boolean
         default: false
+    outputs:
+      build-attempt:
+        value: ${{ jobs.frontend.outputs.build-attempt }}
     secrets:
       APPLE_CERTIFICATE:
         required: false
@@ -26,6 +29,7 @@ on:
         required: false
 permissions:
   contents: read
+  actions: read
 env:
   NODE_VERSION: '24'
 jobs:
@@ -33,6 +37,7 @@ jobs:
     name: Frontend and dependency checks
     runs-on: ubuntu-24.04
     outputs:
+      build-attempt: ${{ steps.epoch.outputs.attempt }}
       version: ${{ steps.identity.outputs.version }}
     env:
       RELEASE_MODE: ${{ inputs.release }}
@@ -61,6 +66,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-cyclonedx@0.5.9
+      - name: Record build generation
+        id: epoch
+        run: echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - name: Validate candidate identity
         if: inputs.release
         id: identity
@@ -140,6 +148,9 @@ jobs:
             bundles: nsis
     runs-on: ${{ matrix.os }}
     env:
+      BUILD_RUN_ATTEMPT: ${{ needs.frontend.outputs.build-attempt }}
+      PLATFORM: ${{ matrix.platform }}
+      TARGET: ${{ matrix.target }}
       NATIVE_TARGET: ${{ matrix.target }}
       RELEASE_MODE: ${{ inputs.release }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
@@ -171,11 +182,12 @@ jobs:
           prefix-key: ${{ inputs.release && 'release' || 'pr' }}
           shared-key: ${{ matrix.platform }}
           cache-on-failure: true
+          cache-workspace-crates: true
       - run: npm ci
         if: inputs.release
       - uses: actions/download-artifact@v4
         with:
-          name: frontend-${{ github.run_attempt }}
+          name: frontend-${{ needs.frontend.outputs.build-attempt }}
           path: .release
       - name: Restore and verify frontend before Cargo
         shell: bash
@@ -184,14 +196,53 @@ jobs:
         run: |
           tar -xzf .release/frontend.tar.gz
           node scripts/release/frontend.mjs verify
+      - name: Look up compiled checkpoint
+        if: inputs.release
+        id: checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/checkpoint.mjs lookup
+      - name: Restore existing compiled checkpoint
+        if: inputs.release && steps.checkpoint.outputs.exists == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: compiled-${{ matrix.platform }}-${{ needs.frontend.outputs.build-attempt }}
+          path: .release
+      - name: Verify compiled checkpoint
+        if: inputs.release && steps.checkpoint.outputs.exists == 'true'
+        shell: bash
+        run: |
+          tar -xzf .release/compiled.tar.gz
+          node scripts/release/checkpoint.mjs verify
       - name: Rust quality and auxiliary tests
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.checkpoint.outputs.exists != 'true'
         run: npm run release:preflight -- quality
       - name: Native application tests
+        if: steps.checkpoint.outputs.exists != 'true'
         run: npm run release:preflight -- native
       - name: Default-feature compile coverage
         if: runner.os == 'Linux' && !inputs.release
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin clipsx
+      - name: Compile production executable without bundling
+        if: inputs.release && steps.checkpoint.outputs.exists != 'true'
+        shell: bash
+        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --target "$TARGET" --no-bundle --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config src-tauri/tauri.ci-build.conf.json
+      - name: Save verified compiled checkpoint
+        if: inputs.release && steps.checkpoint.outputs.exists != 'true'
+        shell: bash
+        run: |
+          node scripts/release/checkpoint.mjs record
+          binary="src-tauri/target/$TARGET/release/clipsx"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          tar -czf .release/compiled.tar.gz "$binary" .release/compiled.json
+      - uses: actions/upload-artifact@v4
+        if: inputs.release && steps.checkpoint.outputs.exists != 'true'
+        with:
+          name: compiled-${{ matrix.platform }}-${{ needs.frontend.outputs.build-attempt }}
+          path: .release/compiled.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
       - name: Configure Developer ID and notarization
         if: inputs.release && runner.os == 'macOS'
         env:
@@ -218,7 +269,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
           security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
           echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notarization.p8" >> "$GITHUB_ENV"
-      - name: Build signed macOS or Linux packages
+      - name: Bundle and sign macOS or Linux without compilation
         if: inputs.release && runner.os != 'Windows'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -229,7 +280,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           BUNDLES: ${{ matrix.bundles }}
         shell: bash
-        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config src-tauri/tauri.ci-build.conf.json
+        run: node node_modules/@tauri-apps/cli/tauri.js bundle --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config src-tauri/tauri.ci-build.conf.json
       - name: Verify Apple signatures and notarize distributed DMG
         if: inputs.release && runner.os == 'macOS'
         env:
@@ -276,19 +327,15 @@ jobs:
         run: |
           node scripts/release/native-evidence.mjs "$PLATFORM"
           node scripts/release/pipeline.mjs collect "$PLATFORM" "src-tauri/target/$TARGET/release/bundle"
-      - name: Compile Windows signing inputs without bundling
+      - name: Export Windows signing inputs
         if: inputs.release && runner.os == 'Windows'
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          node node_modules/@tauri-apps/cli/tauri.js build --ci --target "$env:TARGET" --no-bundle --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config src-tauri/tauri.ci-build.conf.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/release/pipeline.mjs windows-kit
+        run: node scripts/release/pipeline.mjs windows-kit
       - uses: actions/upload-artifact@v4
         if: inputs.release && runner.os == 'Windows'
         with:
           include-hidden-files: true
-          name: windows-signing-inputs-${{ github.run_attempt }}
+          overwrite: true
+          name: windows-signing-inputs-${{ needs.frontend.outputs.build-attempt }}
           path: .release/windows-kit/*
           if-no-files-found: error
           retention-days: 30
@@ -296,7 +343,8 @@ jobs:
         if: inputs.release && runner.os != 'Windows'
         with:
           include-hidden-files: true
-          name: packages-${{ matrix.platform }}-${{ github.run_attempt }}
+          overwrite: true
+          name: packages-${{ matrix.platform }}-${{ needs.frontend.outputs.build-attempt }}
           path: .release/${{ matrix.platform }}/*
           if-no-files-found: error
           retention-days: 30

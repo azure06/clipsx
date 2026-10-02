@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: prepare-${{ github.ref }}
   cancel-in-progress: true
@@ -28,11 +29,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: packages-*-${{ github.run_attempt }}
+          pattern: packages-*-${{ needs.checks.outputs.build-attempt }}
           path: .release/packages
       - uses: actions/download-artifact@v4
         with:
-          name: windows-signing-inputs-${{ github.run_attempt }}
+          name: windows-signing-inputs-${{ needs.checks.outputs.build-attempt }}
           path: .release/windows-kit
       - name: Stage candidate and print Windows signing instructions
         env:

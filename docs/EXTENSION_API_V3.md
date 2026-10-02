@@ -280,6 +280,12 @@ rules remain device-local; only reviewed primitive settings are portable.
 
 ## Build and publication
 
+Build the development-only tool with
+`cargo build --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool --features extension-tools`;
+`npm run extension:pack` and `npm run extension:validate` enable that feature.
+It is excluded from desktop installers. CI consumers must enable the feature
+when updating their pinned host revision to this tool contract.
+
 Keep the package's WIT copy equal to the host WIT. Use
 `clipsx-extension-tool pack`, `validate`, `inspect`, and `test` on the exact
 archive. `registry-entry <archive> <release-url>` exports technical catalog

@@ -14,6 +14,7 @@ writeFileSync(
     sourceRevision: candidate.sourceRevision,
     runId: candidate.runId,
     runAttempt: candidate.runAttempt,
+    executionAttempt: process.env.GITHUB_RUN_ATTEMPT,
     verificationLog: readFileSync('.release/native-verification.log', 'utf8'),
     nodeVersion: process.version,
     tauriCliVersion: readJson('node_modules/@tauri-apps/cli/package.json').version,

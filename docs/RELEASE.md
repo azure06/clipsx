@@ -65,8 +65,33 @@ Each preparation attempt creates a separate
 production build settings, retained updater public key, native evidence, package
 hashes and Windows input hashes are recorded in `candidate.json`.
 
-For preparation retries, dispatch a new full run or select **Re-run all jobs**.
-Selective job retries cannot combine artifacts from different attempts. For a
+For a failure on the same source commit, select **Re-run failed jobs**, or run:
+
+```sh
+gh run rerun <run-id> --failed --repo azure06/clipsx
+```
+
+Successful frontend/platform jobs retain their artifacts. Each native job saves
+an immutable, hashed executable checkpoint after its tests and production
+compilation, before packaging or signing. Retried native jobs verify that
+checkpoint against the same candidate, source tree, target and frontend; they
+then resume bundling/signing without repeating compilation or tests. Missing
+checkpoints require tests and compilation; corrupt checkpoints fail instead of
+being silently reused. Checkpoints expire after 30 days.
+
+Candidate `runAttempt` denotes the frontend build generation, while native
+verification also records the actual execution attempt. Only artifacts from that
+same run and build generation can stage together. A full rerun creates a new
+frontend generation and supersedes the old candidate. A new push or dispatch
+creates a new run and cannot import an old run's installers or checkpoints.
+Compiler caches are reused across pushes; Cargo still validates changed inputs.
+Deploy matching trusted release orchestration on main before certifying a resumed
+candidate. Readiness, finalization and publication must understand the distinction
+between execution attempts and frontend build generations.
+
+The extension packaging tool and updater verifier are opt-in Cargo binaries and
+never ship in the desktop bundle. Local extension commands enable
+`extension-tools`; the Windows kit contains only the production app executable. For a
 finalization retry, dispatch a fresh run for the same current candidate so its
 Windows inspection and final assembly both run again.
 
@@ -346,7 +371,8 @@ PR/release trust scopes and native architectures, and retain dependency caches
 on failure. Advisory checks still fetch current security data. Superseded
 preparation runs and sibling jobs of a failed native matrix are cancelled.
 Develop/main pushes do not duplicate PR validation; release pushes prepare one
-candidate. Full-run retries retain the existing run/attempt binding.
+candidate. Failed-job retries retain the original build generation and verified checkpoints;
+full-run retries create a new generation.
 
 When rolling out these checks, first install and verify the aggregate `CI` gate
 on main, then replace the nine obsolete job-name requirements with `CI` while

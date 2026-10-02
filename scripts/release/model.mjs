@@ -53,13 +53,28 @@ export function assertCurrent(candidate, branchSha, run) {
   assert(branchSha === candidate.sourceRevision, 'Candidate has been superseded by a source push')
   assert(
     String(run.id) === String(candidate.runId) &&
-      String(run.run_attempt) === String(candidate.runAttempt),
+      Number(run.run_attempt) >= Number(candidate.runAttempt) &&
+      String(run.preparation_attempt ?? run.run_attempt) === String(candidate.runAttempt),
     'Candidate has been superseded by another build'
   )
   assert(
     run.head_sha === candidate.sourceRevision && run.conclusion === 'success',
     'Candidate preparation must finish successfully'
   )
+}
+
+// Successful frontend artifacts identify the immutable build generation. A
+// failed-job retry increments execution attempt without creating another build.
+export function preparationAttempt(run, artifacts, jobs) {
+  const builds = artifacts.filter(item => /^frontend-\d+$/.test(item.name))
+  assert(builds.length, 'Preparation frontend evidence is missing')
+  const latest = builds.sort((a, b) => Number(b.name.slice(9)) - Number(a.name.slice(9)))[0]
+  const attempt = Number(latest.name.slice(9))
+  assert(!latest.expired && attempt > 0 && attempt <= Number(run.run_attempt), 'Preparation frontend evidence expired or invalid')
+  const frontendJobs = jobs.filter(job => job.name.endsWith('Frontend and dependency checks'))
+  const latestJob = frontendJobs.sort((a, b) => b.run_attempt - a.run_attempt)[0]
+  assert(latestJob?.conclusion === 'success' && Number(latestJob.run_attempt) === attempt, 'Latest frontend generation evidence is missing or mismatched')
+  return String(attempt)
 }
 
 export const targets = [

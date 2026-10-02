@@ -40,7 +40,6 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $source 'dist') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $kit 'clipsx.exe') -Destination (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx.exe')
-    Copy-Item -LiteralPath (Join-Path $kit 'clipsx-extension-tool.exe') -Destination (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx-extension-tool.exe')
     Copy-Item -LiteralPath (Join-Path $kit 'tauri.auth.csp.conf.json') -Destination (Join-Path $source 'src-tauri/tauri.auth.csp.conf.json')
     & tar -xzf (Join-Path $kit 'frontend.tar.gz') -C (Join-Path $source 'dist')
     if ($LASTEXITCODE -ne 0) { throw 'Frontend extraction failed.' }

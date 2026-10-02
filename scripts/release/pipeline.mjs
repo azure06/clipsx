@@ -40,6 +40,7 @@ import {
   loadCandidate,
   releaseById,
   repoApi,
+  runWithPreparation,
   status,
   upload,
   writeAsset,
@@ -193,17 +194,13 @@ function windowsKit() {
     'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx.exe',
     join(kit, 'clipsx.exe')
   )
-  copyFileSync(
-    'src-tauri/target/x86_64-pc-windows-msvc/release/clipsx-extension-tool.exe',
-    join(kit, 'clipsx-extension-tool.exe')
-  )
   copyFileSync('src-tauri/tauri.auth.csp.conf.json', join(kit, 'tauri.auth.csp.conf.json'))
   // Bundling resolves frontendDist even though the frontend is embedded in the executable.
   command('tar', ['-czf', resolve(kit, 'frontend.tar.gz'), '-C', 'dist', '.'])
   const exe = readFileSync(join(kit, 'clipsx.exe'))
   candidate.windowsImage = { size: exe.length, sha256: imageDigest(exe) }
   candidate.windowsImages = Object.fromEntries(
-    ['clipsx.exe', 'clipsx-extension-tool.exe'].map(file => {
+    ['clipsx.exe'].map(file => {
       const bytes = readFileSync(join(kit, file))
       return [file, { size: bytes.length, sha256: imageDigest(bytes) }]
     })
@@ -220,7 +217,6 @@ function windowsKit() {
   candidate.windowsKit = [
     'source.zip',
     'clipsx.exe',
-    'clipsx-extension-tool.exe',
     'tauri.auth.csp.conf.json',
     'frontend.tar.gz',
   ].map(file => record(join(kit, file)))
@@ -255,7 +251,16 @@ function stage() {
     candidate.artifacts.push(...platform.artifacts)
     candidate.evidence.push(platform.evidence)
   }
-  const release = repoApi('releases', 'POST', {
+  const existing = JSON.parse(command('gh', ['api', `repos/${repository}/releases?per_page=100`, '--paginate', '--slurp'])).flat().find(item => item.tag_name === candidate.stagingTag)
+  if (existing) {
+    assert(existing.draft && existing.target_commitish === candidate.sourceRevision, 'Conflicting candidate staging release')
+    assert(!existing.assets.some(item => item.name === 'certification.json'), 'Cannot restage a certified candidate')
+    if (existing.assets.some(item => item.name === 'candidate.json')) {
+      const previous = JSON.parse(downloadAsset(existing, 'candidate.json', directory))
+      assert(previous.id === candidate.id && previous.sourceTree === candidate.sourceTree && !previous.finalizedAt, 'Cannot replace a finalized or conflicting candidate')
+    }
+  }
+  const release = existing || repoApi('releases', 'POST', {
     tag_name: candidate.stagingTag,
     target_commitish: candidate.sourceRevision,
     name: `Candidate ${candidate.id}`,
@@ -297,7 +302,7 @@ function fresh(id) {
 
 function prepareWindows(runId) {
   assert(/^\d+$/.test(runId), 'Invalid run ID')
-  const run = repoApi(`actions/runs/${runId}`)
+  const run = runWithPreparation(repoApi(`actions/runs/${runId}`))
   const artifactPath = join(directory, 'windows-kit')
   command('gh', [
     'run',
@@ -306,7 +311,7 @@ function prepareWindows(runId) {
     '--repo',
     repository,
     '--name',
-    `windows-signing-inputs-${run.run_attempt}`,
+    `windows-signing-inputs-${run.preparation_attempt}`,
     '--dir',
     artifactPath,
   ])
@@ -639,7 +644,7 @@ function publish() {
   const latestRuns = repoApi(
     `actions/workflows/release.yml/runs?branch=${encodeURIComponent(candidate.branch)}&per_page=1`
   )
-  assertLatestRun(candidate, latestRuns.workflow_runs[0] || {})
+  assertLatestRun(candidate, runWithPreparation(latestRuns.workflow_runs[0]))
   assertMerged(candidate, git(['rev-parse', `${pr.merge_commit_sha}^{tree}`]))
   assert(
     candidate.build.updaterPublicKey ===
@@ -670,7 +675,7 @@ function publish() {
   const latestBeforePublish = repoApi(
     `actions/workflows/release.yml/runs?branch=${encodeURIComponent(candidate.branch)}&per_page=1`
   )
-  assertLatestRun(candidate, latestBeforePublish.workflow_runs[0] || {})
+  assertLatestRun(candidate, runWithPreparation(latestBeforePublish.workflow_runs[0]))
   // Updating the draft is retryable. Do not create a tag separately from publication.
   repoApi(`releases/${release.id}`, 'PATCH', {
     tag_name: tag,

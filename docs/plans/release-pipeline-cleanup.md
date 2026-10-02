@@ -74,8 +74,10 @@ not to pretend the two compiler profiles are interchangeable.
   separate. Retain valid dependency caches after failed builds.
 - Cancel superseded preparation runs. Stop sibling native jobs after a platform
   fails, since an incomplete inventory cannot stage. Keep publication serialized.
-- Retry preparation as a complete new attempt. Do not combine packages from
-  different attempts to make a candidate appear complete.
+- Retry failed jobs on the same source using immutable compiled checkpoints.
+  Retain the frontend build generation while recording execution attempts. A
+  new source push or complete rerun creates a new candidate/build generation;
+  do not import packages from another run or generation.
 
 ## Implementation order
 
