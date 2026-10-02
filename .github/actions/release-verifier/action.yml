@@ -1,0 +1,15 @@
+name: Install updater signature verifier
+description: Build the small pinned CLI without Tauri or desktop system dependencies
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@1.99.0
+    - uses: swatinem/rust-cache@v2
+      with:
+        workspaces: tools/release-verify -> target
+        shared-key: release-verifier
+        cache-workspace-crates: true
+    - shell: bash
+      run: |
+        cargo build --locked --release --manifest-path tools/release-verify/Cargo.toml
+        echo "RELEASE_VERIFIER=$GITHUB_WORKSPACE/tools/release-verify/target/release/clipsx-release-verify" >> "$GITHUB_ENV"

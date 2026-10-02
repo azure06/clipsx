@@ -26,7 +26,7 @@ export function validateVersion(branch, npmVersion, cargoVersion, tauriVersion) 
 }
 
 export function assertIdentity(candidate) {
-  assert(candidate.schemaVersion === 1, 'Unsupported candidate schema')
+  assert(candidate.schemaVersion === 2, 'Unsupported candidate schema')
   assert(versionPattern.test(candidate.version), 'Invalid candidate version')
   assert(
     /^[a-f0-9]{40}$/.test(candidate.sourceRevision) && /^[a-f0-9]{40}$/.test(candidate.sourceTree),
@@ -46,20 +46,49 @@ export function assertIdentity(candidate) {
     candidate.build?.updaterPublicKey && candidate.build?.production === true,
     'Missing production build identity'
   )
+  assert(
+    candidate.build.origin?.sourceRevision === candidate.sourceRevision &&
+      /^\d+$/.test(String(candidate.build.origin.runId)),
+    'Missing explicit build origin'
+  )
+  assert(
+    /^[a-f0-9]{64}$/.test(candidate.build.appInputsSha256),
+    'Missing app input inventory identity'
+  )
 }
 
-export function assertCurrent(candidate, branchSha, run) {
-  assertIdentity(candidate)
-  assert(branchSha === candidate.sourceRevision, 'Candidate has been superseded by a source push')
+export function assertBuildRun(run, origin) {
   assert(
-    String(run.id) === String(candidate.runId) &&
-      String(run.run_attempt) === String(candidate.runAttempt),
-    'Candidate has been superseded by another build'
+    String(run.id) === String(origin.runId) && run.head_sha === origin.sourceRevision,
+    'Wrong build run/source'
   )
   assert(
-    run.head_sha === candidate.sourceRevision && run.conclusion === 'success',
-    'Candidate preparation must finish successfully'
+    run.head_repository?.full_name === repository && run.head_branch === origin.branch,
+    'Build must originate from this repository release branch'
   )
+  assert(
+    run.status === 'completed' && run.conclusion === 'success',
+    'Selected build must finish successfully'
+  )
+  assert(
+    ['push', 'workflow_dispatch'].includes(run.event),
+    'PR builds cannot become release builds'
+  )
+  assert(run.path?.split('@')[0] === '.github/workflows/release.yml', 'Wrong build workflow')
+  assert(Number(run.run_attempt) === Number(origin.attempt), 'Invalid build attempt')
+}
+export function assertMutable(candidate, release) {
+  assert(
+    !candidate.finalizedAt && !release.assets.some(item => item.name === 'certification.json'),
+    'Finalized/certified candidates are immutable; prepare another candidate'
+  )
+}
+export function selectedCandidate(body = '') {
+  const selections = [
+    ...body.matchAll(/<!-- clipsx-release-candidate: (\d+\.\d+\.\d+-\d+-\d+) -->/g),
+  ]
+  assert(selections.length <= 1, 'Release PR has conflicting candidate selections')
+  return selections[0]?.[1]
 }
 
 export const targets = [
@@ -193,7 +222,7 @@ export function createManifests(candidate, signatures, notes, date) {
 
 export function assertCertified(candidate, certification, candidateBytes, inventory) {
   assert(
-    certification.schemaVersion === 1 && certification.candidateId === candidate.id,
+    certification.schemaVersion === 2 && certification.candidateId === candidate.id,
     'Certification belongs to another candidate'
   )
   assert(
@@ -233,19 +262,11 @@ export function assertManifests(candidate, signatures, notes, updater, downloads
   assert(checksums === expectedChecksums, 'Checksums differ from finalized inventory')
 }
 
-export function assertLatestRun(candidate, run) {
-  assertCurrent(candidate, candidate.sourceRevision, run)
-}
-
 export function publicationMode(releases, version) {
   const existing = releases.find(item => item.tag_name === `v${version}`)
   if (!existing) return { operation: 'publish' }
   assert(!existing.draft && !existing.prerelease, 'Conflicting production release')
   return { operation: 'verify', release: existing }
-}
-
-export function assertMerged(candidate, tree) {
-  assert(tree === candidate.sourceTree, 'Merged source tree differs from certified candidate')
 }
 
 // Authenticode may change only the checksum, certificate-directory entry and

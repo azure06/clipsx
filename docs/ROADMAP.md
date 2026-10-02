@@ -67,8 +67,8 @@ an Apple Developer account, Developer ID credentials, and notarization access.
 
 ### 3. Certify the release candidate
 
-- [ ] Choose one candidate revision and let its automated CI and release
-      preflight pass.
+- [ ] Choose one successful saved build and prepare an explicit candidate using
+      trusted main tooling; preserve completed platforms on retries.
 - [ ] Test the installed artifacts on Windows, macOS, and Linux/X11 using the
       applicable checklist in [RELEASE.md](RELEASE.md). Record failures and fix
       release blockers; rerun only the affected checks after a change.
@@ -86,7 +86,7 @@ draft and repeat the affected certification checks.
 
 - [ ] Record installed and private-fixture upgrade evidence for Windows, both Mac
       architectures, Linux AppImage and deb using Certify candidate.
-- [ ] Merge the certified release PR. Publication verifies the merged tree and
+- [ ] Merge the certified release PR. Publication verifies merged app inputs and
       draft hashes, tags the merged commit, and publishes the existing files.
 - [ ] Verify public manifests and downloads. The website reads downloads.json
       automatically; later desktop releases require no website deployment.

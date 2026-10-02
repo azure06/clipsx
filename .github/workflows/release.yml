@@ -1,302 +1,79 @@
-name: Prepare release candidate
+name: Build release app
 on:
   push:
     branches: ['release/*']
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
-  group: prepare-${{ github.ref }}
-  cancel-in-progress: false
-env:
-  NODE_VERSION: '24'
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  identity:
+  route:
     runs-on: ubuntu-latest
     outputs:
-      candidate-id: ${{ steps.identity.outputs.candidate-id }}
-      version: ${{ steps.identity.outputs.version }}
+      build: ${{ steps.route.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Validate candidate identity
-        id: identity
-        run: node scripts/release/pipeline.mjs initialize
-      - uses: actions/upload-artifact@v4
-        with:
-          include-hidden-files: true
-          name: candidate-identity-${{ github.run_attempt }}
-          path: .release/candidate.json
-          if-no-files-found: error
-          retention-days: 30
-  preflight:
-    name: Exact-revision preflight
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: main
+          path: .tooling
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install system and audit dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn
-          cargo install cargo-audit --locked
-          cargo install cargo-cyclonedx --locked
-          cargo install cargo-deny --locked
-      - name: Verify application
-        run: |
-          npm ci
-          npm run type-check
-          npm run lint
-          npm test -- --run
-          npm run test:release
-          npm run build
-          npm audit --omit=dev
-          node scripts/check-js-licenses.mjs
-          cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
-          cargo clippy --all-features --manifest-path src-tauri/Cargo.toml -- -D warnings
-          cargo test --locked --all-features --manifest-path src-tauri/Cargo.toml --bin clipsx
-          cargo audit --file src-tauri/Cargo.lock
-          cargo deny check licenses bans sources --manifest-path src-tauri/Cargo.toml
-          cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
-      - name: Require a live signed v3 extension catalog
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          git clone --depth 1 https://github.com/azure06/clipsx-registry.git /tmp/clipsx-registry
-          cd /tmp/clipsx-registry
-          npm ci
-          npm run validate -- --require-current --download-dir .downloads --verify-releases
-          node --input-type=module -e '
-            import { readFileSync } from "node:fs"
-            for (const name of ["index.json", "index.signatures.json"]) {
-              const response = await fetch(`https://raw.githubusercontent.com/azure06/clipsx-registry/main/${name}`, { cache: "no-store" })
-              if (!response.ok || !Buffer.from(await response.arrayBuffer()).equals(readFileSync(name))) process.exit(1)
-            }
-            const index = JSON.parse(readFileSync("index.json", "utf8"))
-            if (index.schemaVersion !== 4 || !index.packages?.length || index.packages.some(item => item.apiVersion !== "^3.2")) process.exit(1)
-          '
-      - name: Scan repository for secrets
-        uses: gitleaks/gitleaks-action@v2
-      - name: Upload dependency evidence
-        uses: actions/upload-artifact@v4
-        with:
-          include-hidden-files: true
-          name: release-sbom-${{ github.run_attempt }}
-          path: src-tauri/clipsx.cdx.json
-          if-no-files-found: error
-
-  build:
-    needs: [identity, preflight]
-    name: Build ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-arm64
-            os: macos-latest
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-          - platform: macos-x64
-            os: macos-latest
-            target: x86_64-apple-darwin
-            bundles: app,dmg
-          - platform: linux-x64
-            os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            bundles: appimage,deb
-          - platform: windows-x64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundles: nsis
-    runs-on: ${{ matrix.os }}
-    env:
-      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
-      VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-      SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
-      VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
-      SENTRY_RELEASE: clipsx-desktop@${{ needs.identity.outputs.version }}+${{ github.sha }}
-      VITE_SENTRY_RELEASE: clipsx-desktop@${{ needs.identity.outputs.version }}+${{ github.sha }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: candidate-identity-${{ github.run_attempt }}
-          path: .release
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-      - run: npm ci
-      - run: npm run prepare:tauri-auth-csp:production
-      - name: Native application and verifier tests
-        run: |
-          cargo test --locked --all-features --manifest-path src-tauri/Cargo.toml --bin clipsx
-          cargo test --locked --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
-      - name: Configure Developer ID and notarization
-        if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for value in "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_API_PRIVATE_KEY" "$APPLE_API_KEY" "$APPLE_API_ISSUER"; do test -n "$value"; done
-          keychain_password="$(openssl rand -hex 32)"
-          echo "::add-mask::$keychain_password"
-          keychain="$RUNNER_TEMP/clipsx-signing.keychain-db"
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/notarization.p8"
-          chmod 600 "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notarization.p8"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
-          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notarization.p8" >> "$GITHUB_ENV"
-      - name: Build signed macOS or Linux packages
-        if: runner.os != 'Windows'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: infiniti-next
-          SENTRY_PROJECT: clipsx-desktop
-          TARGET: ${{ matrix.target }}
-          BUNDLES: ${{ matrix.bundles }}
-        shell: bash
-        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json
-      - name: Verify Apple signatures and notarize distributed DMG
-        if: runner.os == 'macOS'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle="src-tauri/target/$TARGET/release/bundle"
-          exec > >(tee .release/native-verification.log) 2>&1
-          codesign --verify --deep --strict "$bundle/macos/ClipsX.app"
-          details="$(codesign --display --verbose=2 "$bundle/macos/ClipsX.app" 2>&1)"
-          printf '%s\n' "$details"
-          [[ "$details" == *runtime* ]]
-          spctl --assess --verbose=4 --type execute "$bundle/macos/ClipsX.app"
-          xcrun stapler validate "$bundle/macos/ClipsX.app"
-          for dmg in "$bundle"/dmg/*.dmg; do
-            codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
-            xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
-            xcrun stapler staple "$dmg"
-            xcrun stapler validate "$dmg"
-            codesign --verify --strict "$dmg"
-            spctl --assess --verbose=4 --type open --context context:primary-signature "$dmg"
-          done
-      - name: Inspect Linux packages
-        if: runner.os == 'Linux'
-        env:
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle="src-tauri/target/$TARGET/release/bundle"
-          exec > >(tee .release/native-verification.log) 2>&1
-          for deb in "$bundle"/deb/*.deb; do dpkg-deb --info "$deb"; dpkg-deb --contents "$deb"; done
-          for image in "$bundle"/appimage/*.AppImage; do test -x "$image"; done
-      - name: Collect verified packages
-        if: runner.os != 'Windows'
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          node scripts/release/native-evidence.mjs "$PLATFORM"
-          node scripts/release/pipeline.mjs collect "$PLATFORM" "src-tauri/target/$TARGET/release/bundle"
-      - name: Compile Windows signing inputs without bundling
-        if: runner.os == 'Windows'
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: infiniti-next
-          SENTRY_PROJECT: clipsx-desktop
-          TARGET: ${{ matrix.target }}
-        run: |
-          node node_modules/@tauri-apps/cli/tauri.js build --ci --target "$env:TARGET" --no-bundle --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/release/pipeline.mjs windows-kit
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
-        with:
-          include-hidden-files: true
-          name: windows-signing-inputs-${{ github.run_attempt }}
-          path: .release/windows-kit/*
-          if-no-files-found: error
-          retention-days: 30
-      - uses: actions/upload-artifact@v4
-        if: runner.os != 'Windows'
-        with:
-          include-hidden-files: true
-          name: packages-${{ matrix.platform }}-${{ github.run_attempt }}
-          path: .release/${{ matrix.platform }}/*
-          if-no-files-found: error
-          retention-days: 30
-      - name: Remove Apple credentials
-        if: always() && runner.os == 'macOS'
-        shell: bash
-        run: |
-          security delete-keychain "$RUNNER_TEMP/clipsx-signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notarization.p8"
-  stage:
-    needs: [identity, build]
+          node-version: 24
+      - id: route
+        run: node .tooling/scripts/release/inputs.mjs
+  checks:
+    needs: route
+    if: needs.route.outputs.build == 'true'
+    uses: ./.github/workflows/checks.yml
+    with:
+      release: true
+    secrets: inherit
+  save-build:
+    needs: checks
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .tooling
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 24
       - uses: actions/download-artifact@v4
         with:
-          pattern: packages-*-${{ github.run_attempt }}
-          path: .release/packages
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-signing-inputs-${{ github.run_attempt }}
-          path: .release/windows-kit
-      - name: Stage candidate and print Windows signing instructions
+          name: frontend-${{ needs.checks.outputs.build-attempt }}
+          path: .release
+      - name: Save complete build identity
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/pipeline.mjs stage
+        run: node .tooling/scripts/release/builds.mjs ready
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-ready-${{ needs.checks.outputs.build-attempt }}
+          path: .release/candidate.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+  gate:
+    name: CI
+    if: always()
+    needs: [route, checks, save-build]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          ROUTE: ${{ needs.route.result }}
+          BUILD: ${{ needs.route.outputs.build }}
+          CHECKS: ${{ needs.checks.result }}
+          SAVED: ${{ needs.save-build.result }}
+        run: test "$ROUTE" = success && { test "$BUILD" != true || { test "$CHECKS" = success && test "$SAVED" = success; }; }

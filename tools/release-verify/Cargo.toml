@@ -1,0 +1,17 @@
+[package]
+name = "clipsx-release-verify"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[[bin]]
+name = "clipsx-release-verify"
+path = "../../src-tauri/src/bin/clipsx-release-verify.rs"
+
+[dependencies]
+anyhow = "=1.0.102"
+base64 = "=0.22.1"
+minisign-verify = "=0.2.5"
+
+[dev-dependencies]
+serde_json = "=1.0.150"
