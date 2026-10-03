@@ -1,0 +1,99 @@
+name: Recover original 0.1.1 Mac symbols
+# Temporary, read-only recovery. Delete this file after retaining the artifacts.
+on:
+  push:
+    branches: [release/0.1.1]
+    paths: [.github/workflows/recover-0.1.1-symbols.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            target: aarch64-apple-darwin
+            os: macos-15
+            cache: release-macos-arm64-Darwin-arm64-ff44c5d7-be351c3c
+          - platform: macos-x64
+            target: x86_64-apple-darwin
+            os: macos-15-intel
+            cache: release-macos-x64-Darwin-x64-b02e1cc6-be351c3c
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLATFORM: ${{ matrix.platform }}
+      TARGET: ${{ matrix.target }}
+      CACHE_KEY: ${{ matrix.cache }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8d962ec598aee6dd4b7eb87ecf606136cb2c10be
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          key: ${{ matrix.cache }}
+          fail-on-cache-miss: true
+          path: |
+            /Users/runner/.cargo/bin
+            /Users/runner/.cargo/.crates.toml
+            /Users/runner/.cargo/.crates2.json
+            /Users/runner/.cargo/registry
+            /Users/runner/.cargo/git
+            /Users/runner/work/clipsx/clipsx/src-tauri/target
+      - name: Load original immutable build without compilation
+        run: |
+          test '${{ steps.cache.outputs.cache-hit }}' = true
+          node --input-type=module <<'NODE'
+          import { loadBuild, restorePlatform, assertArtifact } from './.tooling/scripts/release/builds.mjs'
+          import { workflowArtifacts, downloadArtifact } from './.tooling/scripts/release/github.mjs'
+          const build = loadBuild('37122124538', '.release')
+          const frontend = workflowArtifacts('37122124538').find(a => a.id === build.build.frontendArtifact.id)
+          assertArtifact(frontend, build.build.frontendArtifact)
+          downloadArtifact(frontend, '.release')
+          restorePlatform(build, process.env.PLATFORM, '.release/original')
+          NODE
+      - name: Recover matching cache symbols and record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p .release/link .release/recovered
+          tar -xzf .release/debug-symbols.tar.gz -C .release/link
+          relative="$(readlink .release/link/clipsx.dSYM)"
+          [[ "$relative" =~ ^deps/clipsx-[a-f0-9]+\.dSYM$ ]]
+          symbols="src-tauri/target/$TARGET/release/$relative"
+          test -d "$symbols"
+          binary_uuid="$(dwarfdump --uuid "src-tauri/target/$TARGET/release/clipsx" | awk '{print $2}')"
+          symbol_uuid="$(dwarfdump --uuid "$symbols" | awk '{print $2}')"
+          test -n "$binary_uuid" && test "$binary_uuid" = "$symbol_uuid"
+          cp -RL "$symbols" .release/recovered/clipsx.dSYM
+          tar -h -czf .release/recovered/debug-symbols.tar.gz -C .release/recovered clipsx.dSYM
+          export SYMBOL_UUID="$symbol_uuid"
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          import { digest, encode } from './.tooling/scripts/release/model.mjs'
+          const checkpoint = JSON.parse(readFileSync('.release/compiled.json', 'utf8'))
+          writeFileSync('.release/recovered/recovery.json', encode({
+            buildRunId: '37122124538', platform: process.env.PLATFORM,
+            cacheKey: process.env.CACHE_KEY, uuid: process.env.SYMBOL_UUID,
+            executableSha256: checkpoint.sha256,
+            archiveSha256: digest(readFileSync('.release/recovered/debug-symbols.tar.gz')),
+            recoveryRevision: process.env.GITHUB_SHA,
+          }))
+          NODE
+          echo "Recovered $PLATFORM symbols from original build 37122124538; UUID $symbol_uuid; zero compilation." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovered-symbols-${{ matrix.platform }}
+          path: |
+            .release/recovered/debug-symbols.tar.gz
+            .release/recovered/recovery.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
