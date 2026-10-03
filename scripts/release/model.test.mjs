@@ -275,3 +275,27 @@ test('updater deferral is restricted to the explicitly approved 0.1.0 candidate 
   nodeAssert.throws(() => certificationChecks('0.1.0-36969301315-1', '27', 'true', 'true'))
   nodeAssert.throws(() => certificationChecks('0.2.0-123-1', '28', 'false', 'false'))
 })
+
+test('future releases cannot reuse certification without installed Mac extension evidence', () => {
+  const { candidate } = fixture()
+  candidate.version = '0.1.1'
+  const bytes = encode(candidate),
+    inventory = []
+  const certificate = {
+    schemaVersion: 2,
+    candidateId: candidate.id,
+    sourceRevision: candidate.sourceRevision,
+    sourceTree: candidate.sourceTree,
+    candidateSha256: digest(bytes),
+    inventorySha256: digest(encode(inventory)),
+    evidence: 'https://example.com/results',
+    platforms: targets.map(item => item.id),
+  }
+  nodeAssert.throws(() => assertCertified(candidate, certificate, bytes, inventory))
+  assertCertified(
+    candidate,
+    { ...certificate, checks: { macExtensions: 'passed' } },
+    bytes,
+    inventory
+  )
+})

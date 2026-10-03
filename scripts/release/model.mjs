@@ -238,6 +238,11 @@ export function certificationChecks(id, prNumber, allPassed, exception) {
 }
 
 export function assertCertified(candidate, certification, candidateBytes, inventory) {
+  if (candidate.version !== '0.1.0')
+    assert(
+      certification.checks?.macExtensions === 'passed',
+      'Installed Mac extension certification is missing'
+    )
   assert(
     certification.schemaVersion === 2 && certification.candidateId === candidate.id,
     'Certification belongs to another candidate'

@@ -1,4 +1,5 @@
 //! Storage roots, database preparation, managed files, and reset behavior.
+mod migrations;
 use crate::contracts::{FactoryResetResult, StartupStatus};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -22,6 +23,11 @@ pub enum SchemaState {
     Ready,
     LegacyResetRequired,
     UnsupportedSchema,
+    NewerSchema(i64),
+    MigrationChanged(i64),
+    MissingMigration(i64),
+    IncompleteMigration(i64),
+    StartupFailed,
 }
 
 #[derive(Debug, Clone)]
@@ -166,13 +172,19 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
         .create_if_missing(true)
         .foreign_keys(true);
     let mut connection = SqliteConnection::connect_with(&options).await?;
-    match sqlx::migrate!("./migrations").run(&mut connection).await {
+    let migrator = migrations::canonical();
+    migrations::repair_line_endings(&mut connection, &database, &migrator).await?;
+    match migrator.run(&mut connection).await {
         Ok(()) => Ok(SchemaState::Ready),
-        Err(
-            sqlx::migrate::MigrateError::Dirty(_)
-            | sqlx::migrate::MigrateError::VersionMissing(_)
-            | sqlx::migrate::MigrateError::VersionMismatch(_),
-        ) => Ok(SchemaState::UnsupportedSchema),
+        Err(sqlx::migrate::MigrateError::Dirty(version)) => {
+            Ok(SchemaState::IncompleteMigration(version))
+        }
+        Err(sqlx::migrate::MigrateError::VersionMissing(version)) => {
+            Ok(SchemaState::MissingMigration(version))
+        }
+        Err(sqlx::migrate::MigrateError::VersionMismatch(version)) => {
+            Ok(SchemaState::MigrationChanged(version))
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -190,13 +202,17 @@ async fn inspect_database(path: &Path) -> Result<SchemaState> {
                 .fetch_optional(&mut connection)
                 .await?;
         return Ok(
-            if row
-                .as_ref()
-                .is_some_and(|(id, version)| id == SCHEMA_ID && *version == SCHEMA_VERSION)
-            {
+            if row.as_ref().is_some_and(|(id, version)| {
+                id == SCHEMA_ID && (15..=SCHEMA_VERSION).contains(version)
+            }) {
                 SchemaState::Ready
             } else {
-                SchemaState::UnsupportedSchema
+                match row {
+                    Some((id, version)) if id == SCHEMA_ID && version > SCHEMA_VERSION => {
+                        SchemaState::NewerSchema(version)
+                    }
+                    _ => SchemaState::UnsupportedSchema,
+                }
             },
         );
     }
@@ -209,10 +225,27 @@ async fn inspect_database(path: &Path) -> Result<SchemaState> {
 }
 
 pub fn startup_status(state: SchemaState) -> StartupStatus {
-    match state {
-        SchemaState::Ready => StartupStatus { state: "ready".into(), message: "ClipsX storage is ready.".into(), reset_available: false },
-        SchemaState::LegacyResetRequired => StartupStatus { state: "legacy_reset_required".into(), message: "This ClipsX database uses the retired schema. Factory reset is required; data is not migrated.".into(), reset_available: true },
-        SchemaState::UnsupportedSchema => StartupStatus { state: "unsupported_schema".into(), message: "The local database schema is unsupported. Factory reset is required.".into(), reset_available: true },
+    let (code, message, version) = match state {
+        SchemaState::Ready => ("ready", "ClipsX storage is ready.", None),
+        SchemaState::LegacyResetRequired => ("legacy_reset_required", "This database uses a retired schema. Your data has been preserved. Export diagnostics before deciding whether to reset.", None),
+        SchemaState::UnsupportedSchema => ("unsupported_schema", "This database schema is not supported. Your data has been preserved. Use a compatible build or export diagnostics.", None),
+        SchemaState::NewerSchema(version) => ("newer_schema", "This database requires a newer ClipsX build. Open it with that build; do not reset your data.", Some(version)),
+        SchemaState::MigrationChanged(version) => ("migration_changed", "An applied migration differs from this build. Your data has been preserved. Rebuild from the matching migration source or export diagnostics.", Some(version)),
+        SchemaState::MissingMigration(version) => ("missing_migration", "This database contains a migration unavailable in this build. Use a newer compatible build; your data has been preserved.", Some(version)),
+        SchemaState::IncompleteMigration(version) => ("incomplete_migration", "A database migration did not finish. Your data has been preserved. Export diagnostics before attempting recovery.", Some(version)),
+        SchemaState::StartupFailed => ("startup_failed", "ClipsX could not finish starting. Your data has been preserved. Open logs or export diagnostics for the technical details.", None),
+    };
+    StartupStatus {
+        state: code.into(),
+        message: message.into(),
+        reset_available: matches!(
+            state,
+            SchemaState::LegacyResetRequired
+                | SchemaState::UnsupportedSchema
+                | SchemaState::MigrationChanged(_)
+                | SchemaState::IncompleteMigration(_)
+        ),
+        migration_version: version,
     }
 }
 
@@ -343,7 +376,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn requires_reset_for_an_older_v2_schema_version() {
+    async fn blocks_unknown_older_baseline_without_deleting_data() {
         let root = TempDir::new().unwrap();
         let path = root.path().join("old-v2.db");
         let options = SqliteConnectOptions::new()
@@ -363,7 +396,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn requires_reset_when_an_applied_migration_checksum_changes() {
+    async fn reports_changed_migration_without_deleting_data() {
         let root = TempDir::new().unwrap();
         let roots = AppRoots {
             data: root.path().join("data"),
@@ -383,9 +416,154 @@ mod tests {
 
         assert_eq!(
             prepare(&roots).await.unwrap(),
-            SchemaState::UnsupportedSchema
+            SchemaState::MigrationChanged(2)
         );
     }
+
+    #[tokio::test]
+    async fn repairs_only_published_crlf_checksums_and_keeps_wal_data() {
+        let temp = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(roots.database())
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO config_device_values VALUES('test-preserved','true',0,0)")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        let migrator = migrations::canonical();
+        for migration in migrator.iter() {
+            let crlf = migration.sql.as_str().replace("\n", "\r\n");
+            let hash = sha2::Sha384::digest(crlf.as_bytes()).to_vec();
+            sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=?")
+                .bind(hash)
+                .bind(migration.version)
+                .execute(&mut connection)
+                .await
+                .unwrap();
+        }
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT value_json FROM config_device_values WHERE key='test-preserved'"
+            )
+            .fetch_one(&mut connection)
+            .await
+            .unwrap(),
+            "true"
+        );
+        let backups = fs::read_dir(&roots.data)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("clips-before-checksum-repair-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        let mut backup = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(backups[0].path())
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT value_json FROM config_device_values WHERE key='test-preserved'"
+            )
+            .fetch_one(&mut backup)
+            .await
+            .unwrap(),
+            "true"
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupted_checksum_repair_rolls_back_all_updates() {
+        let temp = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        prepare(&roots).await.unwrap();
+        let mut connection =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(roots.database()))
+                .await
+                .unwrap();
+        for migration in migrations::canonical().iter().take(2) {
+            let hash = sha2::Sha384::digest(migration.sql.as_str().replace("\n", "\r\n")).to_vec();
+            sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=?")
+                .bind(hash)
+                .bind(migration.version)
+                .execute(&mut connection)
+                .await
+                .unwrap();
+        }
+        let before: Vec<(i64, Vec<u8>)> =
+            sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&mut connection)
+                .await
+                .unwrap();
+        sqlx::query("CREATE TRIGGER fail_repair BEFORE UPDATE ON _sqlx_migrations WHEN NEW.version=2 BEGIN SELECT RAISE(ABORT,'test interruption'); END").execute(&mut connection).await.unwrap();
+        assert!(prepare(&roots).await.is_err());
+        let after: Vec<(i64, Vec<u8>)> =
+            sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&mut connection)
+                .await
+                .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[tokio::test]
+    async fn completes_pending_known_migrations_and_rejects_newer_ledgers() {
+        let temp = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        fs::create_dir_all(&roots.data).unwrap();
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(roots.database())
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        let mut partial = migrations::canonical();
+        partial.migrations = std::borrow::Cow::Owned(partial.iter().take(1).cloned().collect());
+        partial.run(&mut connection).await.unwrap();
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        sqlx::query("UPDATE _sqlx_migrations SET success=0 WHERE version=2")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(
+            prepare(&roots).await.unwrap(),
+            SchemaState::IncompleteMigration(2)
+        );
+        sqlx::query("UPDATE _sqlx_migrations SET success=1 WHERE version=2")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time) VALUES(999,'future',1,X'',0)").execute(&mut connection).await.unwrap();
+        assert_eq!(
+            prepare(&roots).await.unwrap(),
+            SchemaState::MissingMigration(999)
+        );
+        assert!(!startup_status(SchemaState::NewerSchema(16)).reset_available);
+    }
+
     #[test]
     fn reset_requires_exact_confirmation() {
         let root = TempDir::new().unwrap();

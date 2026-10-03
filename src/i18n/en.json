@@ -1117,5 +1117,32 @@
     "deleteNamedResultConfirm": "Delete {{label}} result?",
     "lastSyncedDate": "Last synced {{date}}",
     "lastSeenDate": "Last seen {{date}}"
+  },
+  "recovery": {
+    "title": "ClipsX could not finish starting",
+    "resetOption": "Show factory reset option",
+    "selectCrashReport": "Select crash report",
+    "reviewReport": "Review report",
+    "crashReportFound": "A local crash report is available",
+    "reportContents": "Only the device/release diagnostics summary, the selected crash report (if any), and logs you explicitly select will be sent. Crash reports can include file paths and technical process details. Local files remain on this device.",
+    "sentryConfigured": "Sentry is configured",
+    "sentryUnavailable": "Sentry is unavailable in this build",
+    "automaticReportingOn": "Automatic sanitized error reporting is on",
+    "automaticReportingOff": "Automatic sanitized error reporting is off",
+    "crashReportPreview": "Crash report preview",
+    "includeLocalLogs": "Include local operational logs",
+    "reportConsent": "I consent to sending these files to ClipsX support through Sentry for this report only.",
+    "sendReport": "Send report",
+    "reportAccepted": "Sentry accepted report {{eventId}}. Processing has not yet been confirmed.",
+    "reasons": {
+      "legacy_reset_required": "This database uses a retired schema. Your data has been preserved. Export diagnostics before deciding whether to reset.",
+      "unsupported_schema": "This schema is not supported by this build. Use a compatible build or export diagnostics. Your data has been preserved.",
+      "newer_schema": "This database uses schema {{version}} and requires a newer ClipsX build. Do not reset your data.",
+      "migration_changed": "Applied migration {{version}} differs from this build. Use matching migration sources or export diagnostics. Your data has been preserved.",
+      "missing_migration": "Migration {{version}} is not available in this build. Use a newer compatible build. Your data has been preserved.",
+      "incomplete_migration": "Migration {{version}} did not finish. Export diagnostics before attempting recovery. Your data has been preserved.",
+      "startup_failed": "ClipsX could not finish starting. Open logs or export diagnostics for the technical details. Your data has been preserved."
+    },
+    "exportCrashReport": "Export crash report"
   }
 }

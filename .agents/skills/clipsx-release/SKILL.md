@@ -35,6 +35,7 @@ draft inventories; build success is not installed-platform certification.
   Require every advertised platform and native evidence. Verify final signatures
   against the retained public key. Completed retries verify existing finalized
   files; never regenerate certified bytes.
+- **Mac runtime:** require entitlement evidence and the signed cold-cache probe. For 0.1.1 onward, installed extension installation/action/restart evidence on both Macs and `mac_extensions_passed=true` are required. Retained debug symbols must match the selected executable.
 - **Certify:** collect real Windows, both Mac, AppImage/deb installed and private
   upgrade-fixture evidence. Dispatch **Certify candidate** with exact ID, release
   PR, evidence URL and explicit confirmation only after all checks pass.

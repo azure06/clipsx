@@ -16,9 +16,13 @@ use std::{
 use tauri::{Manager, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-const DIAGNOSTICS_SCHEMA_VERSION: u32 = 1;
+const DIAGNOSTICS_SCHEMA_VERSION: u32 = 2;
 const MAX_LOG_FILE_BYTES: u128 = 2_000_000;
 const RETAINED_LOG_FILES: usize = 5;
+
+static SENTRY_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static STARTUP_FAILURE: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
+static LAST_SUBMISSION: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
 
 static VERBOSE_ENABLED: AtomicBool = AtomicBool::new(false);
 // Fail closed until the persisted device policy has been loaded.
@@ -158,6 +162,7 @@ pub fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
             .then_some(breadcrumb)
     }));
     let guard = sentry::init(options);
+    SENTRY_INITIALIZED.store(true, Ordering::SeqCst);
     sentry::configure_scope(|scope| {
         scope.set_tag("layer", "native");
     });
@@ -305,29 +310,49 @@ pub struct DiagnosticsSummary {
     error_reporting_enabled: bool,
     pending_index_jobs: i64,
     failed_index_jobs: i64,
+    sentry_configured: bool,
+    sentry_initialized: bool,
+    startup_failure: Option<String>,
+    last_submission_event_id: Option<String>,
     pending_cleanup_items: i64,
 }
 
 pub async fn summary(
-    repo: &crate::history::HistoryRepository,
+    repo: Option<&crate::history::HistoryRepository>,
 ) -> anyhow::Result<DiagnosticsSummary> {
-    let pending_index_jobs = sqlx::query_scalar(
-        "SELECT count(*) FROM search_index_jobs WHERE status IN ('pending','running')",
-    )
-    .fetch_one(&repo.pool)
-    .await
-    .unwrap_or(0);
-    let failed_index_jobs =
-        sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE status='failed'")
-            .fetch_one(&repo.pool)
-            .await
-            .unwrap_or(0);
-    let pending_cleanup_items = sqlx::query_scalar("SELECT count(*) FROM search_semantic_cleanup")
+    let (pending_index_jobs, failed_index_jobs, pending_cleanup_items) = if let Some(repo) = repo {
+        let pending_index_jobs = sqlx::query_scalar(
+            "SELECT count(*) FROM search_index_jobs WHERE status IN ('pending','running')",
+        )
         .fetch_one(&repo.pool)
         .await
         .unwrap_or(0);
+        let failed_index_jobs =
+            sqlx::query_scalar("SELECT count(*) FROM search_index_jobs WHERE status='failed'")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap_or(0);
+        let pending_cleanup_items =
+            sqlx::query_scalar("SELECT count(*) FROM search_semantic_cleanup")
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap_or(0);
+        (pending_index_jobs, failed_index_jobs, pending_cleanup_items)
+    } else {
+        (0, 0, 0)
+    };
     Ok(DiagnosticsSummary {
         schema_version: DIAGNOSTICS_SCHEMA_VERSION,
+        sentry_configured: configured_dsn().is_some(),
+        sentry_initialized: SENTRY_INITIALIZED.load(Ordering::SeqCst),
+        startup_failure: STARTUP_FAILURE
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+        last_submission_event_id: LAST_SUBMISSION
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
         support_code: support_code(),
         release: release_name(),
         os: std::env::consts::OS,
@@ -346,7 +371,7 @@ pub fn log_directory<R: Runtime>(app: &tauri::AppHandle<R>) -> anyhow::Result<Pa
 
 pub async fn export_bundle<R: Runtime>(
     app: &tauri::AppHandle<R>,
-    repo: &crate::history::HistoryRepository,
+    repo: Option<&crate::history::HistoryRepository>,
     destination: &Path,
 ) -> anyhow::Result<()> {
     let summary = summary(repo).await?;
@@ -491,5 +516,201 @@ mod tests {
         set_error_reporting_enabled(true);
         assert!(initialize(&database).await.is_err());
         assert!(!error_reporting_enabled());
+    }
+}
+
+fn configured_dsn() -> Option<sentry::types::Dsn> {
+    option_env!("SENTRY_DSN")
+        .map(str::to_owned)
+        .or_else(|| std::env::var("SENTRY_DSN").ok())?
+        .parse()
+        .ok()
+}
+
+pub fn startup_failure(code: &str) {
+    *STARTUP_FAILURE.write().unwrap_or_else(|e| e.into_inner()) = Some(code.to_owned());
+    log::error!(target: "clipsx::startup", "startup.failed code={code}");
+}
+
+// Only operational errors belong here, never guest output or authentication payloads.
+pub fn operational_error(code: &str, error: &anyhow::Error) {
+    let mut details = format!("{error:#}");
+    for (name, value) in std::env::vars() {
+        if value.len() >= 8
+            && (name.contains("TOKEN")
+                || name.contains("PASSWORD")
+                || name.contains("PRIVATE_KEY")
+                || name.contains("DSN"))
+        {
+            details = details.replace(&value, "[redacted]");
+        }
+    }
+    log::error!(target: "clipsx::diagnostics", "{code} details={}", details.chars().take(4096).collect::<String>());
+}
+
+pub fn install_panic_logging() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Payloads may contain user content; retain the location and full technical stack.
+        log::error!(target: "clipsx::diagnostics", "native.panic location={:?} backtrace={}", info.location(), std::backtrace::Backtrace::force_capture());
+        previous(info);
+    }));
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSelection {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportSubmission {
+    pub event_id: String,
+    pub status: &'static str,
+}
+
+pub async fn submit_report<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    consent: bool,
+    selected: Option<ReportSelection>,
+    include_logs: bool,
+) -> anyhow::Result<ReportSubmission> {
+    if !consent {
+        anyhow::bail!("Explicit report-upload consent is required");
+    }
+    let dsn = configured_dsn()
+        .ok_or_else(|| anyhow::anyhow!("Sentry is not configured in this build"))?;
+    let report = if let Some(selection) = selected {
+        let report = super::crash_reports::selected(Path::new(&selection.path), &selection.sha256)?;
+        Some(report)
+    } else {
+        None
+    };
+    let event = sanitize_native_event(sentry::protocol::Event {
+        message: Some("User submitted a diagnostic report".into()),
+        level: sentry::Level::Error,
+        release: Some(Cow::Owned(release_name())),
+        environment: Some(Cow::Borrowed(if cfg!(debug_assertions) {
+            "development"
+        } else {
+            "production"
+        })),
+        ..Default::default()
+    });
+    let event_id = event.event_id.simple().to_string();
+    let mut envelope = sentry::Envelope::new();
+    envelope.add_item(event);
+    envelope.add_item(sentry::protocol::Attachment {
+        buffer: serde_json::to_vec_pretty(&summary(None).await?)?,
+        filename: "diagnostics.json".into(),
+        content_type: Some("application/json".into()),
+        ..Default::default()
+    });
+    if let Some(report) = report {
+        envelope.add_item(sentry::protocol::Attachment {
+            buffer: report.text.into_bytes(),
+            filename: "ClipsX.ips".into(),
+            content_type: Some("application/json".into()),
+            ty: Some(sentry::protocol::AttachmentType::AppleCrashReport),
+        });
+    }
+    if include_logs {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("diagnostics.zip");
+        export_bundle(app, None, &path).await?;
+        envelope.add_item(sentry::protocol::Attachment {
+            buffer: fs::read(path)?,
+            filename: "diagnostics.zip".into(),
+            content_type: Some("application/zip".into()),
+            ..Default::default()
+        });
+    }
+    let mut body = Vec::new();
+    envelope.to_writer(&mut body)?;
+    // One consented request, independent of automatic reporting policy. No persistent upload queue.
+    send_report_bytes(&dsn, &body, std::time::Duration::from_secs(15)).await?;
+    *LAST_SUBMISSION.write().unwrap_or_else(|e| e.into_inner()) = Some(event_id.clone());
+    // HTTP acceptance does not prove downstream ingestion or symbolication.
+    Ok(ReportSubmission {
+        event_id,
+        status: "accepted",
+    })
+}
+
+async fn send_report_bytes(
+    dsn: &sentry::types::Dsn,
+    body: &[u8],
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    let response = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(dsn.envelope_api_url())
+        .header(
+            "X-Sentry-Auth",
+            dsn.to_auth(Some("clipsx/manual-report")).to_string(),
+        )
+        .header("Content-Type", "application/x-sentry-envelope")
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("Report upload failed; local files have been retained"))?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Report upload rejected (HTTP {}); local files have been retained",
+            response.status().as_u16()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod submission_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    #[tokio::test]
+    async fn manual_transport_reports_rejection_and_acceptance_without_claiming_ingestion() {
+        for status in [200, 503] {
+            let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = server.local_addr().unwrap();
+            let worker = std::thread::spawn(move || {
+                let (mut stream, _) = server.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = [0; 4096];
+                let _ = stream.read(&mut bytes).unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} response\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            });
+            let dsn = format!("http://test@{address}/1").parse().unwrap();
+            assert_eq!(
+                send_report_bytes(&dsn, b"{}\n", std::time::Duration::from_secs(2))
+                    .await
+                    .is_ok(),
+                status == 200
+            );
+            worker.join().unwrap();
+        }
+        let dsn = "http://test@127.0.0.1:1/1".parse().unwrap();
+        assert!(
+            send_report_bytes(&dsn, b"{}\n", std::time::Duration::from_millis(100))
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn recovery_summary_needs_no_database() {
+        let value = serde_json::to_value(summary(None).await.unwrap()).unwrap();
+        assert_eq!(value["schemaVersion"], 2);
+        assert!(value.get("startupFailure").is_some());
+        assert!(value.get("sentryInitialized").is_some());
+        assert_eq!(value["pendingIndexJobs"], 0);
     }
 }

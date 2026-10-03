@@ -157,6 +157,9 @@ jobs:
             details="$(codesign --display --verbose=2 "$bundle/macos/ClipsX.app" 2>&1)"
             printf '%s\n' "$details"
             [[ "$details" == *runtime* ]]
+            codesign --display --entitlements - --xml "$bundle/macos/ClipsX.app/Contents/MacOS/clipsx" > .release/mac-entitlements.plist
+            plutil -convert json -o .release/mac-entitlements.json .release/mac-entitlements.plist
+            /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-unsigned-executable-memory' .release/mac-entitlements.plist | grep -qx true
             spctl --assess --verbose=4 --type execute "$bundle/macos/ClipsX.app"
             xcrun stapler validate "$bundle/macos/ClipsX.app"
             for dmg in "$bundle"/dmg/*.dmg; do
@@ -172,20 +175,25 @@ jobs:
             for deb in "$bundle"/deb/*.deb; do dpkg-deb --info "$deb"; dpkg-deb --contents "$deb"; done
             for image in "$bundle"/appimage/*.AppImage; do test -x "$image"; done
           fi
-          node .tooling/scripts/release/native-evidence.mjs "$PLATFORM"
-          node .tooling/scripts/release/pipeline.mjs collect "$PLATFORM" "$bundle"
+      - name: Upload retained Mac debug symbols
+        if: runner.os == 'macOS'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: infiniti-next
+          SENTRY_PROJECT: clipsx-desktop
+        shell: bash
+        run: |
+          mkdir -p .release/symbols
+          tar -xzf .release/debug-symbols.tar.gz -C .release/symbols
+          binary_uuid="$(dwarfdump --uuid "src-tauri/target/$TARGET/release/bundle/macos/ClipsX.app/Contents/MacOS/clipsx" | awk '{print $2}')"
+          symbol_uuid="$(dwarfdump --uuid .release/symbols/clipsx.dSYM | awk '{print $2}')"
+          test -n "$binary_uuid" && test "$binary_uuid" = "$symbol_uuid"
+          printf 'debug-symbols verified uuid=%s\n' "$binary_uuid" | tee -a .release/native-verification.log
+          node node_modules/@sentry/cli/bin/sentry-cli debug-files upload .release/symbols
       - name: Export Windows local signing kit
         if: runner.os == 'Windows'
         shell: bash
         run: node .tooling/scripts/release/pipeline.mjs windows-kit
-      - uses: actions/upload-artifact@v4
-        if: runner.os != 'Windows'
-        with:
-          name: prepared-${{ needs.select.outputs.candidate-id }}-${{ matrix.platform }}-${{ github.run_attempt }}
-          path: .release/${{ matrix.platform }}/*
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
         with:
@@ -200,6 +208,26 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/clipsx-signing.keychain-db" || true
           rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notarization.p8"
+      - name: Verify signed runtime and retain native evidence
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/$TARGET/release/bundle"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" "$bundle/macos/ClipsX.app/Contents/MacOS/clipsx" --verify-extension-runtime .release/runtime-fixture.wasm | tee -a .release/native-verification.log
+          fi
+          node .tooling/scripts/release/native-evidence.mjs "$PLATFORM"
+          node .tooling/scripts/release/pipeline.mjs collect "$PLATFORM" "$bundle"
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'Windows'
+        with:
+          name: prepared-${{ needs.select.outputs.candidate-id }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: .release/${{ matrix.platform }}/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
   stage:
     needs: [select, package]
     if: always() && needs.select.result == 'success' && needs.select.outputs.work == 'true'

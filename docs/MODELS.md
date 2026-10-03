@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations). Runtime boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. Schema version 14 is a fresh baseline: pre-release databases use factory reset, with no compatibility reads or dual writes.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The published baseline is `clipsx-local-v3`, schema version 15. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -42,7 +42,7 @@ flowchart TB
 | Table | Class | Purpose | Write authority | Lifecycle / ownership |
 | --- | --- | --- | --- | --- |
 | `system_schema_meta` | Infrastructure | Identifies the fresh schema baseline expected by this application build. | ClipsX foundation startup (`foundation`) | Database-scoped infrastructure retained for the lifetime of the database. |
-| `_sqlx_migrations` | Infrastructure | Records which migration files have been applied. | SQLx migration runner | Framework-owned bookkeeping. Application features must not write it directly. |
+| `_sqlx_migrations` | Infrastructure | Records which migration files have been applied. | SQLx migration runner | Framework-owned bookkeeping. Application features must not write it directly. Foundation alone may transactionally canonicalize the exact published LF/CRLF checksum pairs, after a consistent SQLite backup including WAL contents. |
 | `config_profile_values` | Configuration | Stores profile-wide settings as namespaced JSON values, including UI behavior, enabled search sources, contribution preferences, and FTS mode. | Seeded by the ClipsX config migration; subsequently written by the settings IPC/history repository and the subsystem that owns each key | Profile-scoped. Values persist until changed or reset; each owning subsystem defines the key's type, validation, and default. |
 | `config_device_values` | Configuration | Stores machine-local settings such as capture limits, the shared Ollama connection, and independent model-capability assignments. | Seeded by the ClipsX config migration; subsequently written by the settings IPC/history repository and the owning device-specific services | Device-scoped. Kept separate because endpoints, installed models, and hardware capabilities may differ between machines. |
 | `provider_runtime_diagnostics` | Operational | Records the latest model-provider connection and capability health observations. | Provider catalog, embedding, and generation services | Replaceable operational state. Safe to overwrite or clear; not user configuration. |
@@ -58,7 +58,7 @@ Model configuration uses three device-local keys with distinct ownership:
 
 Installed-model inventory, model digests, capability inspection results, and connection health are derived observations rather than settings. The application refreshes them from Ollama and may discard them at any time. Changing the endpoint retains capability assignments so a missing model is visible and recoverable instead of being silently replaced.
 
-This remains a pre-release fresh schema. The keys above are defined directly in `002_config.sql`; there is no compatibility migration from the former duplicated endpoint values. A database created from an older migration checksum must use the documented reset flow.
+Published migrations are append-only. Startup validates migration history and preserves all data on errors. Only known line-ending checksum equivalents from `published-v0.1.0.json` are repaired after backup; arbitrary checksum changes are blocked with the affected migration version. A factory reset is an explicit last-resort action, never an automatic compatibility mechanism.
 
 Diagnostic logging uses the device-local boolean `diagnostics.logging_enabled`
 (default true). Settings reset restores its default; exports and sync never carry
@@ -262,4 +262,4 @@ Extension tables store package/runtime infrastructure, not arbitrary extension-o
 
 The architecture is appropriate for a local-first pre-1.0 clipboard: canonical truth is normalized, configuration has explicit scope, derived data is rebuildable, operational state is recoverable, ownership is enforceable, and files are deleted durably after database commits. The main cost is more lifecycle tables and joins, accepted in exchange for recovery and provenance.
 
-The deliberate limits are measurable: binary clip-routing recall requires labelled certification, JSON preferences depend on typed application validation, and factory reset remains acceptable only before the first stable release. These are explicit boundaries, not hidden data-model debt.
+The deliberate limits are measurable: binary clip-routing recall requires labelled certification, JSON preferences depend on typed application validation, and schema incompatibility preserves user data and factory reset remains an explicitly confirmed last resort. These are explicit boundaries, not hidden data-model debt.

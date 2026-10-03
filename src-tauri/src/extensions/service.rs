@@ -600,6 +600,7 @@ impl ExtensionService {
         version: &str,
         epoch: Option<i64>,
     ) -> Result<ExtensionSummary> {
+        crate::diagnostic!("extension.install.registry.begin");
         let index = self.registry().await?;
         let entry = index
             .find(package_id, version)
@@ -680,6 +681,7 @@ impl ExtensionService {
         if path.extension().and_then(|value| value.to_str()) != Some("clipsx") {
             bail!("local extension package must use the .clipsx extension");
         }
+        crate::diagnostic!("extension.install.local.begin");
         let archive = fs::read(path).context("unable to read local extension package")?;
         let package = self
             .store
@@ -704,6 +706,7 @@ impl ExtensionService {
         if path.extension().and_then(|value| value.to_str()) != Some("clipsx") {
             bail!("local extension package must use the .clipsx extension");
         }
+        crate::diagnostic!("extension.install.local.begin");
         let archive = fs::read(path).context("unable to read local extension package")?;
         let manifest = self.store.inspect(&archive)?;
         Ok(summary_from_manifest(

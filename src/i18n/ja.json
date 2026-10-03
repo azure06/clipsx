@@ -1117,5 +1117,32 @@
     "deleteNamedResultConfirm": "{{label}}の結果を削除しますか？",
     "lastSyncedDate": "最終同期：{{date}}",
     "lastSeenDate": "最終接続：{{date}}"
+  },
+  "recovery": {
+    "title": "ClipsXを起動できませんでした",
+    "resetOption": "初期化の選択肢を表示",
+    "selectCrashReport": "クラッシュレポートを選択",
+    "reviewReport": "送信内容を確認",
+    "crashReportFound": "ローカルのクラッシュレポートがあります",
+    "reportContents": "端末・リリースの診断概要、選択したクラッシュレポート（ある場合）、明示的に選択したログのみを送信します。クラッシュレポートにはファイルパスやプロセスの技術情報が含まれる場合があります。ローカルファイルはこの端末に残ります。",
+    "sentryConfigured": "Sentryは設定済みです",
+    "sentryUnavailable": "このビルドではSentryを利用できません",
+    "automaticReportingOn": "匿名化されたエラーの自動送信は有効です",
+    "automaticReportingOff": "匿名化されたエラーの自動送信は無効です",
+    "crashReportPreview": "クラッシュレポートのプレビュー",
+    "includeLocalLogs": "ローカルの動作ログを含める",
+    "reportConsent": "今回のレポートに限り、これらのファイルをSentry経由でClipsXサポートに送信することに同意します。",
+    "sendReport": "レポートを送信",
+    "reportAccepted": "Sentryがレポート {{eventId}} を受け付けました。処理の完了はまだ確認されていません。",
+    "reasons": {
+      "legacy_reset_required": "このデータベースは旧スキーマを使用しています。データは保持されています。初期化を検討する前に診断情報をエクスポートしてください。",
+      "unsupported_schema": "このビルドはこのスキーマに対応していません。互換性のあるビルドを使用するか、診断情報をエクスポートしてください。データは保持されています。",
+      "newer_schema": "スキーマ {{version}} を使用するデータベースには新しいClipsXが必要です。データを初期化しないでください。",
+      "migration_changed": "適用済みマイグレーション {{version}} がこのビルドと異なります。一致するソースを使用するか、診断情報をエクスポートしてください。データは保持されています。",
+      "missing_migration": "このビルドにはマイグレーション {{version}} がありません。対応する新しいビルドを使用してください。データは保持されています。",
+      "incomplete_migration": "マイグレーション {{version}} が完了していません。復旧の前に診断情報をエクスポートしてください。データは保持されています。",
+      "startup_failed": "ClipsXを起動できませんでした。詳細はログを開くか診断情報をエクスポートして確認してください。データは保持されています。"
+    },
+    "exportCrashReport": "クラッシュレポートをエクスポート"
   }
 }

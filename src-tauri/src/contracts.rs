@@ -193,6 +193,7 @@ pub struct EmbeddingSpaceDescriptor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartupStatus {
+    pub migration_version: Option<i64>,
     pub state: String,
     pub message: String,
     pub reset_available: bool,

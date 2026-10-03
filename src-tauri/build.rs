@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=migrations");
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "show_main_window_command",
@@ -93,6 +94,9 @@ fn main() {
             "retry_settings_effects",
             "write_diagnostic",
             "get_diagnostics_summary",
+            "get_crash_report",
+            "export_crash_report",
+            "send_diagnostic_report",
             "export_diagnostic_bundle",
             "open_diagnostics_log_folder",
             "set_telemetry_identity",

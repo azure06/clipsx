@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use tauri::menu::MenuItem;
 
 pub struct StartupState {
-    pub roots: AppRoots,
-    pub schema_state: SchemaState,
+    pub roots: Option<AppRoots>,
+    pub schema_state: Mutex<SchemaState>,
 }
 
 pub struct HostState {
