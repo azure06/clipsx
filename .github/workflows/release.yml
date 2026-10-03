@@ -1,4 +1,4 @@
-name: Prepare release candidate
+name: Build release app
 on:
   push:
     branches: ['release/*']
@@ -7,45 +7,73 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: prepare-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
-env:
-  NODE_VERSION: '24'
 jobs:
+  route:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.route.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .tooling
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: route
+        run: node .tooling/scripts/release/inputs.mjs
   checks:
+    needs: route
+    if: needs.route.outputs.build == 'true'
     uses: ./.github/workflows/checks.yml
     with:
       release: true
     secrets: inherit
-  stage:
+  save-build:
     needs: checks
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .tooling
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 24
       - uses: actions/download-artifact@v4
         with:
-          pattern: packages-*-${{ needs.checks.outputs.build-attempt }}
-          path: .release/packages
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-signing-inputs-${{ needs.checks.outputs.build-attempt }}
-          path: .release/windows-kit
-      - name: Stage candidate and print Windows signing instructions
+          name: frontend-${{ needs.checks.outputs.build-attempt }}
+          path: .release
+      - name: Save complete build identity
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/pipeline.mjs stage
+        run: node .tooling/scripts/release/builds.mjs ready
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-ready-${{ needs.checks.outputs.build-attempt }}
+          path: .release/candidate.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
   gate:
     name: CI
     if: always()
-    needs: [checks, stage]
+    needs: [route, checks, save-build]
     runs-on: ubuntu-latest
     steps:
-      - name: Require complete candidate preparation
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: node -e 'if (Object.values(JSON.parse(process.env.RESULTS)).some(job => job.result !== "success")) process.exit(1)'
+      - env:
+          ROUTE: ${{ needs.route.result }}
+          BUILD: ${{ needs.route.outputs.build }}
+          CHECKS: ${{ needs.checks.result }}
+          SAVED: ${{ needs.save-build.result }}
+        run: test "$ROUTE" = success && { test "$BUILD" != true || { test "$CHECKS" = success && test "$SAVED" = success; }; }

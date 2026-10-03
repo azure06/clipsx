@@ -9,17 +9,49 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  checks:
-    if: ${{ !(startsWith(github.head_ref, 'release/') && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) }}
-    uses: ./.github/workflows/checks.yml
-  gate:
-    # Release PRs use the CI gate from their exact release-branch preparation.
-    name: ${{ (startsWith(github.head_ref, 'release/') && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) && 'Release PR routing' || 'CI' }}
-    if: always() && !(startsWith(github.head_ref, 'release/') && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)
-    needs: checks
+  route:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.route.outputs.app }}
+      release-pr: ${{ steps.route.outputs.release-pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: route
+        run: node scripts/release/inputs.mjs
+  tooling:
+    needs: route
+    if: needs.route.outputs.release-pr != 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Require all application checks
-        env:
-          RESULT: ${{ needs.checks.result }}
-        run: test "$RESULT" = success
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test scripts/release/*.test.mjs
+      - uses: ./.github/actions/release-verifier
+      - run: cargo test --locked --manifest-path tools/release-verify/Cargo.toml
+      - uses: raven-actions/actionlint@v2
+  checks:
+    needs: route
+    if: needs.route.outputs.app == 'true' && needs.route.outputs.release-pr != 'true'
+    uses: ./.github/workflows/checks.yml
+  gate:
+    name: CI
+    if: always() && needs.route.outputs.release-pr != 'true'
+    needs: [route, tooling, checks]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          ROUTE: ${{ needs.route.result }}
+          BUILD: ${{ needs.route.outputs.app }}
+          TOOLING: ${{ needs.tooling.result }}
+          CHECKS: ${{ needs.checks.result }}
+        run: test "$ROUTE" = success && test "$TOOLING" = success && { test "$BUILD" != true || test "$CHECKS" = success; }

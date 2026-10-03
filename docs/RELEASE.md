@@ -6,14 +6,15 @@ release. Open shipping work belongs in [ROADMAP.md](ROADMAP.md).
 
 ```mermaid
 flowchart LR
-    Revision[Push release branch] --> CI[Automated checks and builds]
-    CI --> Windows[Local SimplySign packaging]
-    Windows --> Draft[CI finalizes complete draft]
-    Draft --> Test[Install and certify every platform]
+    App[App or build recipe change] --> Build[Build and automated tests]
+    Build --> Save[Immutable saved build]
+    Save --> Prepare[Package and sign from trusted main]
+    Prepare --> Win[Local Windows SimplySign]
+    Win --> Final[Finalize exact inventory]
+    Final --> Test[Installed tests and certification]
     Test --> Merge[Merge release PR]
-    Merge --> Publish[Publish existing certified draft]
-    Publish --> Website[Website discovers downloads.json]
-    Publish --> Update[Verify installed-client update]
+    Merge --> Publish[Publish certified files]
+    Publish --> Web[Website and updater discover release]
 ```
 
 ## Scope
@@ -37,75 +38,82 @@ Extension API v3.2 releases must certify durable Rewrite and local transformer j
 
 ## Build and publication
 
-The release lifecycle is **release branch -> CI packages -> local Windows signing
--> finalized draft -> installed certification -> merge -> publication**.
-Preparation and certification do not publish a production release.
+Compilation and release preparation are separate. Keep app source and release
+tooling in this repository. Release packaging, readiness, certification and
+publication execute trusted default-branch scripts. Packaging takes an explicit
+successful build ID; it never compiles the app/frontend or runs application tests.
 
-| Trigger | Result |
-| --- | --- |
-| Push `release/<version>` or manually run Prepare release candidate on that branch | Validate identity and preflight; build four targets; stage an unpublished candidate |
-| Run the local Windows helper | Sign the CI executable and NSIS installer/uninstaller, upload and automatically request finalization |
-| Finalize release candidate on main | Install/verify Windows on a disposable runner, verify complete inventory, sign final updater files, assemble draft |
-| Certify candidate on main | Record installed-test evidence and set `Release readiness` success |
-| Merge certified release PR into main | Verify merged tree and hashes, publish existing assets under `v<version>` |
-| Manually run Publish certified release with merged PR number | Retry publication/public verification without rebuilding |
+| Workflow / trigger                                                                                         | Result                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Build release app**: `release/<version>` push affecting app/build inputs; manual dispatch on that branch | Frontend checks and production frontend once; native tests and optimized compilation once per target; immutable saved build |
+| **Prepare release candidate**: successful build completion; manual dispatch on `main`                      | Download selected build; package/sign/notarize missing platforms; preserve successful outputs                               |
+| Local Windows helper                                                                                       | Package CI executable without recompilation; sign app, NSIS installer and uninstaller; upload and dispatch finalization     |
+| **Finalize release candidate**: dispatch on `main`                                                         | Verify Windows installation and original executable; finalize complete inventory and updater signatures                     |
+| **Certify candidate**: dispatch on `main`                                                                  | Bind exact candidate, release PR, notes, inventory and real installed/upgrade evidence                                      |
+| Release PR merge into `main`                                                                               | Publish the certified existing draft and tag the merged commit; no rebuild/re-sign                                          |
+| Ordinary merges or tag pushes                                                                              | No desktop release build/publication                                                                                        |
 
-Ordinary merges and tag pushes do not build or publish desktop releases. All
-dispatch workflows must first exist on the default branch. Never run privileged
-readiness orchestration against PR source code.
+### Routing and identity
 
-### Candidate identity and evidence
+`scripts/release/inputs.mjs` is the single file classification. App inputs include
+source, public assets, Rust migrations/permissions/configuration, dependencies and
+lockfiles, compiler/frontend settings and production environment/CSP generators.
+Unknown files are conservatively app inputs. Compilation workflows and build
+helpers are recipes: release-branch changes trigger a new build. Docs and
+packaging/signing/upload helpers skip expensive app checks. Ordinary PRs run
+application checks for app changes and focused tooling checks for infrastructure
+changes. Both routes report the aggregate required `CI` gate.
 
-Before pushing a release branch, align the npm, Cargo and Tauri stable versions
-and add `docs/releases/<version>.md`. Open a draft PR from that branch to main
-to track certification. Release branch preparation supplies its `CI` check; the
-release PR does not launch a duplicate application build.
-Each preparation attempt creates a separate
-`candidate-<version>-<run-id>-<run-attempt>` staging draft. Candidate identity,
-production build settings, retained updater public key, native evidence, package
-hashes and Windows input hashes are recorded in `candidate.json`.
+The app-input inventory contains tracked paths, modes and Git blobs, including
+new/deleted files. Its digest compares a saved build with release source; it is
+not a cross-commit build cache. Reuse always selects a build explicitly. Changes
+to public production variables require an explicit new build and fail reuse.
 
-For a failure on the same source commit, select **Re-run failed jobs**, or run:
+Internal `candidate.json` schema **2** records build source revision/tree,
+successful build run/attempt, immutable artifact IDs/digests, frontend/generated
+configuration, compiler and public environment provenance, and per-platform
+binary hashes. Preparation records its separate trusted tooling revision and run.
+It never attributes old binaries to a newer commit. Notes are captured and hashed
+at preparation. Public `downloads.json` remains schema **1**.
+
+Successful native builds save executables after tests and optimized compilation.
+Debug tests and production builds have separate profiles. Native matrix
+`fail-fast` is disabled. Artifacts expire after 30 days; expired/incomplete builds
+must be rebuilt rather than guessed or combined with another run.
+
+### Select and retry preparation
+
+On GitHub Actions, choose **Prepare release candidate → Run workflow → main**.
+Enter the successful `build_run_id`. Leave `candidate_id` empty for a new candidate;
+enter the exact existing ID to resume it. `target=missing` preserves completed
+platforms. Explicitly select a platform (or `all`) to replace its bytes before
+finalization. Workflow summaries print the build, candidate and next action.
 
 ```sh
-gh run rerun <run-id> --failed --repo azure06/clipsx
+gh workflow run release-prepare.yml --repo azure06/clipsx --ref main -f build_run_id=<build-id> -f candidate_id=<existing-candidate-id> -f target=missing -f pr_number=<release-pr>
 ```
 
-Successful frontend/platform jobs retain their artifacts. Each native job saves
-an immutable, hashed executable checkpoint after its tests and production
-compilation, before packaging or signing. Retried native jobs verify that
-checkpoint against the same candidate, source tree, target and frontend; they
-then resume bundling/signing without repeating compilation or tests. Missing
-checkpoints require tests and compilation; corrupt checkpoints fail instead of
-being silently reused. Checkpoints expire after 30 days.
+After correcting release scripts, deploy them to `main`, then dispatch preparation
+against the same build/candidate. Successful Mac/Linux packages remain untouched
+when retrying Windows. Another build running or finishing does not supersede the
+selection. Failed compilation can use **Re-run failed jobs**; packaging retries
+use the preparation dispatch rather than restarting compilation.
 
-Candidate `runAttempt` denotes the frontend build generation, while native
-verification also records the actual execution attempt. Only artifacts from that
-same run and build generation can stage together. A full rerun creates a new
-frontend generation and supersedes the old candidate. A new push or dispatch
-creates a new run and cannot import an old run's installers or checkpoints.
-Compiler caches are reused across pushes; Cargo still validates changed inputs.
-Deploy matching trusted release orchestration on main before certifying a resumed
-candidate. Readiness, finalization and publication must understand the distinction
-between execution attempts and frontend build generations.
+`pr_number` explicitly selects the candidate by writing the PR body's
+`clipsx-release-candidate` marker. Automatic preparation only fills an absent
+selection. Readiness/signing/certification/publication never discover the latest
+candidate or guess an ID. Release source must match the selected app inventory;
+docs and release tooling can differ. Certification includes the exact release PR.
 
-The extension packaging tool and updater verifier are opt-in Cargo binaries and
-never ship in the desktop bundle. Local extension commands enable
-`extension-tools`; the Windows kit contains only the production app executable. For a
-finalization retry, dispatch a fresh run for the same current candidate so its
-Windows inspection and final assembly both run again.
+Finalized/certified candidates are immutable. A finalized retry verifies existing
+signatures/manifests instead of generating new ones or repeating Windows installed
+verification. Interrupted finalization reuses already verified signatures. Changed
+assets, notes or evidence invalidate certification and block publication.
 
-A changed source revision or newer preparation attempt supersedes the old
-candidate. Signing, finalization and certification reject superseded candidates.
-Certified candidates cannot be re-finalized or receive another Windows upload.
-Changing bytes requires new finalization and certification. Draft inventory
-digests include manifests, signatures, evidence and ancillary files.
-
-The required `Release readiness` commit status passes ordinary PRs without
-release certification. Release PRs remain pending until their exact candidate is
-certified. The aggregate `CI` check requires every applicable validation job to
-succeed, including staging for release candidates. The merged tree must
-equal the certified source tree regardless of merge method.
+`Release readiness` passes ordinary PRs automatically. Release PRs report clear
+states for missing selection, packaging, Windows signing/finalization, installed
+certification, source/config mismatch or an orchestration error. Successful selected
+build coverage supplies their `CI` status without duplicate app testing on the PR.
 
 ### Production configuration
 
@@ -156,14 +164,14 @@ Connect API. Under Team Keys, generate a named key with Developer access, record
 its key ID and the issuer ID, and download the `.p8` once. Retain that download
 securely. The account holder may need to request API access first.
 
-| GitHub secret | Value |
-| --- | --- |
-| `APPLE_CERTIFICATE` | Base64-encoded Developer ID Application `.p12` |
-| `APPLE_CERTIFICATE_PASSWORD` | Export password |
-| `APPLE_SIGNING_IDENTITY` | Full Developer ID Application identity |
-| `APPLE_API_ISSUER` | Team API issuer ID |
-| `APPLE_API_KEY` | API key ID |
-| `APPLE_API_PRIVATE_KEY` | Downloaded `.p8` contents |
+| GitHub secret                | Value                                          |
+| ---------------------------- | ---------------------------------------------- |
+| `APPLE_CERTIFICATE`          | Base64-encoded Developer ID Application `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | Export password                                |
+| `APPLE_SIGNING_IDENTITY`     | Full Developer ID Application identity         |
+| `APPLE_API_ISSUER`           | Team API issuer ID                             |
+| `APPLE_API_KEY`              | API key ID                                     |
+| `APPLE_API_PRIVATE_KEY`      | Downloaded `.p8` contents                      |
 
 Add private values directly to GitHub Secrets, never source files or chat.
 Runners create a temporary keychain and API-key file, then remove both even after
@@ -173,7 +181,7 @@ stapled. See [Tauri's Apple signing guide](https://v2.tauri.app/distribute/sign/
 
 ### Windows signing
 
-Use PowerShell on your own Windows desktop with Node 24, npm, Rust/Cargo metadata
+Use PowerShell 7 on your own Windows desktop with Node 24, npm, Rust/Cargo metadata
 tools, GitHub CLI, tar, Windows SDK SignTool and SimplySign Desktop installed.
 Log into GitHub CLI and connect SimplySign in the same Windows user session.
 The certificate must be valid and available in the current-user certificate store.
@@ -181,7 +189,7 @@ The certificate must be valid and available in the current-user certificate stor
 From the repository root:
 
 ```powershell
-./scripts/release/sign-windows.ps1 -RunId <preparation-run-id> -CertificateThumbprint <40-character-thumbprint>
+./scripts/release/sign-windows.ps1 -CandidateId <candidate-id> -CertificateThumbprint 6AF31929B107C7E9C725DE4BFAC7CEC5471E71D1
 ```
 
 Optional `-SignToolPath` selects an SDK executable. `-WorkingDirectory` must name
@@ -191,14 +199,21 @@ The helper downloads and verifies the exact packaging kit, restores its CI-built
 executable and frontend resources, installs locked packaging dependencies without
 lifecycle scripts, and runs `tauri bundle` rather than `tauri build`. A trusted
 SignTool wrapper timestamps and verifies each Authenticode operation. The
-installer, uninstaller and application must all be signed. The helper uploads
+installer, uninstaller and application must all be signed. NSIS signs its
+generated uninstaller under a temporary filename; the wrapper verifies each
+operation with Windows Authenticode, and hosted CI inspects the actual installed
+uninstaller. Do not infer its role from a temporary basename. The helper uploads
 the installer and dispatches Finalize release candidate on main. It does not
 need the Tauri updater private key.
 
 Finalization independently installs the package on a disposable hosted Windows
 runner, verifies certificate fingerprints and timestamps, and confirms that the
 installed executable matches the original CI image except for Authenticode's
-checksum/certificate fields. This automated inspection does not replace manual
+checksum/certificate fields and Tauri's fixed-width NSIS format marker. The
+installed marker must be NSIS; arbitrary code/data changes remain rejected. See
+[Tauri's pinned bundler implementation](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs#L32). The helper
+uses its current PowerShell host so signing does not load incompatible modules
+from another PowerShell edition. This automated inspection does not replace manual
 native behavior and upgrade certification.
 
 If upload/dispatch fails, retain the helper workspace. Retry submission with:
@@ -207,7 +222,7 @@ If upload/dispatch fails, retain the helper workspace. Retry submission with:
 node scripts/release/pipeline.mjs submit-windows <candidate-id> <installer-path> <windows-evidence-json-path>
 ```
 
-Only an un-certified current candidate accepts replacement submission.
+Only an unfinalized, uncertified candidate accepts replacement submission.
 
 ### Finalization and updater manifests
 
@@ -235,13 +250,13 @@ Download the final draft packages and perform the full applicable checklist
 below on Windows, both Mac architectures and Linux/X11 for AppImage and Debian.
 Record exact artifact hashes, environments, results and an HTTPS evidence link.
 
-Run **Certify candidate** on main with the candidate ID, evidence reference and
+Run **Certify candidate** on main with the candidate ID, release PR number, evidence reference and
 the explicit all-platforms confirmation. Certification binds the candidate
 descriptor and complete draft inventory hashes. Merge the release PR only when
 `Release readiness` and all normal CI checks pass.
 Certification also marks an existing matching draft release PR ready for review.
 
-Publication verifies the merged tree, certification, current build attempt and
+Publication verifies the merged app-input inventory, certified selection and
 final signatures. It assigns the production tag to the merged commit and
 publishes the existing complete draft. No release artifact is rebuilt or
 re-signed after merge. Public manifests, file hashes and signatures are then
@@ -284,29 +299,54 @@ insecure HTTP option exists only in this private loopback fixture. Test interrup
 updates and recovery as well as the successful path. Stop the feed after testing.
 Use separate test user profiles/VMs to preserve real clipboard data.
 
-### Infrastructure rollout
+### Infrastructure rollout and saved 0.1.0 build
 
-1. Merge pipeline, helper, verifier and skill changes through a normal PR.
-2. Deploy the website metadata reader once and verify its unavailable-first-release
-   state while no production manifest exists.
-3. Configure signing secrets and public build variables.
-4. After the readiness workflow is active on main, run
-   `node scripts/release/pipeline.mjs configure-readiness` using an administrator's
-   GitHub CLI session. It adds the status requirement while preserving the existing
-   ruleset. Do not enable the requirement before the workflow is deployed.
-5. Prepare a release candidate. Building and inspecting drafts does not publish
-   a production release. Complete Windows signing and real installed certification
-   before the release PR is merged.
+1. Open an infrastructure-only PR to `main`; preserve app inputs and unrelated
+   working-tree edits. Validate release tests, workflows, PowerShell and verifier.
+2. Prove the replacement `CI` check on that PR. With administrator GitHub CLI
+   authentication, set `RELEASE_GATE_PROOF_SHA` to its exact successful head and
+   run `node scripts/release/pipeline.mjs configure-readiness`. It replaces only
+   the nine obsolete check names, preserving `Release readiness` and all other
+   rules/protections. The existing readiness workflow must already be deployed.
+3. Merge infrastructure before dispatching the new main-only workflows. Deploy
+   website metadata capability once before first publication; later releases need
+   no web deployment/webhook. Configure credentials and public build variables.
+4. Import **build 36969301315 / candidate 0.1.0-36969301315-1**:
 
-### Validation commands
+   ```sh
+   gh workflow run release-prepare.yml --repo azure06/clipsx --ref main -f build_run_id=36969301315 -f candidate_id=0.1.0-36969301315-1 -f target=missing -f pr_number=27
+   ```
+
+   The narrowly scoped adapter accepts only successful original run/source
+   `6103a807996c56cb8e45bbeb466afab6d5ee784f`. It verifies retained frontend,
+   executables, kit, package hashes and original signing evidence, then records
+   migration to schema 2. Mac/Linux bytes are preserved, without rebuilding or
+   re-signing. `node scripts/release/pipeline.mjs check-legacy` performs a read-only
+   migration rehearsal. Logs must show zero app/frontend compilation.
+
+5. Sign Windows with the documented certificate; finalize, then perform the
+   installed-platform and private upgrade-fixture checks. Certification for PR
+   **27** remains mandatory. Infrastructure validation creates no production tag
+   or published release.
+
+### Focused infrastructure validation
 
 ```sh
-npm run test:release
-cargo test --locked --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+node --test scripts/release/*.test.mjs
+cargo test --locked --manifest-path tools/release-verify/Cargo.toml
+cargo clippy --locked --manifest-path tools/release-verify/Cargo.toml --all-targets -- -D warnings
 ```
 
-These checks validate release invariants and signature decoding; they do not
-establish native installed-platform certification.
+Run workflow lint, PowerShell syntax checks and the skill-creator validator too.
+Frontend environment validation runs in app preflight against that app's actual
+Vite configuration; infrastructure-only validation does not compile an older
+default-branch app. The minimal verifier uses the same Rust source and pinned
+Minisign implementation as the installed updater. Later release jobs compile its
+14-crate graph, without GUI dependencies. The original application Cargo verifier
+target remains for existing `release-tools` callers during the saved-build rollout;
+the standalone tests exercise this shared implementation.
+
+These checks validate orchestration and signatures, not installed certification.
 
 ### Production smoke build
 
@@ -337,13 +377,13 @@ audit, license and SBOM tools once:
 cargo install cargo-audit --locked
 cargo install cargo-deny --locked
 cargo install cargo-cyclonedx --locked
-npm run release:preflight
+npm exec -- node scripts/release/preflight.mjs
 ```
 
 The command checks production npm dependencies, current Rust security advisories
 and licenses before frontend checks and native compilation. It then runs frontend
 quality/tests/build, release invariants, strict all-target Rust lint, application,
-extension-tool and updater-verifier tests, and generates the dependency SBOM.
+extension-tool tests, and generates the dependency SBOM.
 It stops at the first failure. A missing tool or failed gate blocks the release
 push; resolve it locally and rerun affected checks after edits. Do not ignore
 security advisories to get a candidate build through.
@@ -364,23 +404,12 @@ local Tauri build commands keep their normal hooks. Sentry source maps upload
 once from the release frontend job. Native signing and updater keys remain in
 the release-only steps.
 
-Release preparation separately verifies the published signed extension catalog
-and scans Git history for secrets. Audit tools use pinned prebuilt distributions
-in CI rather than compiling themselves on each run. Rust caches distinguish
-PR/release trust scopes and native architectures, and retain dependency caches
-on failure. Advisory checks still fetch current security data. Superseded
-preparation runs and sibling jobs of a failed native matrix are cancelled.
-Develop/main pushes do not duplicate PR validation; release pushes prepare one
-candidate. Failed-job retries retain the original build generation and verified checkpoints;
-full-run retries create a new generation.
-
-When rolling out these checks, first install and verify the aggregate `CI` gate
-on main, then replace the nine obsolete job-name requirements with `CI` while
-retaining `Release readiness` and all other rules. Do not leave obsolete contexts
-required after migrating, and do not remove them before the replacement gate is
-available. Infrastructure rollout is separate from release certification. Local
-application preflight does not establish platform packaging, notarization or
-installed certification. Preserve CI and installed-platform gates.
+The release build verifies the signed extension catalog and scans Git history.
+Audit tools use pinned prebuilt distributions; Rust caches distinguish PR/release
+trust and architectures. Updated advisory data is still fetched. Main/develop
+pushes do not duplicate PR checks. Packaging and later release operations reuse
+the saved build and never repeat the app preflight. Run app-wide checks when app
+or compilation inputs change, and focused release checks for orchestration fixes.
 
 | Gate                  | Required checks                                                                                                                                                                           |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

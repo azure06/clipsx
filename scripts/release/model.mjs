@@ -26,7 +26,7 @@ export function validateVersion(branch, npmVersion, cargoVersion, tauriVersion) 
 }
 
 export function assertIdentity(candidate) {
-  assert(candidate.schemaVersion === 1, 'Unsupported candidate schema')
+  assert(candidate.schemaVersion === 2, 'Unsupported candidate schema')
   assert(versionPattern.test(candidate.version), 'Invalid candidate version')
   assert(
     /^[a-f0-9]{40}$/.test(candidate.sourceRevision) && /^[a-f0-9]{40}$/.test(candidate.sourceTree),
@@ -46,35 +46,49 @@ export function assertIdentity(candidate) {
     candidate.build?.updaterPublicKey && candidate.build?.production === true,
     'Missing production build identity'
   )
-}
-
-export function assertCurrent(candidate, branchSha, run) {
-  assertIdentity(candidate)
-  assert(branchSha === candidate.sourceRevision, 'Candidate has been superseded by a source push')
   assert(
-    String(run.id) === String(candidate.runId) &&
-      Number(run.run_attempt) >= Number(candidate.runAttempt) &&
-      String(run.preparation_attempt ?? run.run_attempt) === String(candidate.runAttempt),
-    'Candidate has been superseded by another build'
+    candidate.build.origin?.sourceRevision === candidate.sourceRevision &&
+      /^\d+$/.test(String(candidate.build.origin.runId)),
+    'Missing explicit build origin'
   )
   assert(
-    run.head_sha === candidate.sourceRevision && run.conclusion === 'success',
-    'Candidate preparation must finish successfully'
+    /^[a-f0-9]{64}$/.test(candidate.build.appInputsSha256),
+    'Missing app input inventory identity'
   )
 }
 
-// Successful frontend artifacts identify the immutable build generation. A
-// failed-job retry increments execution attempt without creating another build.
-export function preparationAttempt(run, artifacts, jobs) {
-  const builds = artifacts.filter(item => /^frontend-\d+$/.test(item.name))
-  assert(builds.length, 'Preparation frontend evidence is missing')
-  const latest = builds.sort((a, b) => Number(b.name.slice(9)) - Number(a.name.slice(9)))[0]
-  const attempt = Number(latest.name.slice(9))
-  assert(!latest.expired && attempt > 0 && attempt <= Number(run.run_attempt), 'Preparation frontend evidence expired or invalid')
-  const frontendJobs = jobs.filter(job => job.name.endsWith('Frontend and dependency checks'))
-  const latestJob = frontendJobs.sort((a, b) => b.run_attempt - a.run_attempt)[0]
-  assert(latestJob?.conclusion === 'success' && Number(latestJob.run_attempt) === attempt, 'Latest frontend generation evidence is missing or mismatched')
-  return String(attempt)
+export function assertBuildRun(run, origin) {
+  assert(
+    String(run.id) === String(origin.runId) && run.head_sha === origin.sourceRevision,
+    'Wrong build run/source'
+  )
+  assert(
+    run.head_repository?.full_name === repository && run.head_branch === origin.branch,
+    'Build must originate from this repository release branch'
+  )
+  assert(
+    run.status === 'completed' && run.conclusion === 'success',
+    'Selected build must finish successfully'
+  )
+  assert(
+    ['push', 'workflow_dispatch'].includes(run.event),
+    'PR builds cannot become release builds'
+  )
+  assert(run.path?.split('@')[0] === '.github/workflows/release.yml', 'Wrong build workflow')
+  assert(Number(run.run_attempt) === Number(origin.attempt), 'Invalid build attempt')
+}
+export function assertMutable(candidate, release) {
+  assert(
+    !candidate.finalizedAt && !release.assets.some(item => item.name === 'certification.json'),
+    'Finalized/certified candidates are immutable; prepare another candidate'
+  )
+}
+export function selectedCandidate(body = '') {
+  const selections = [
+    ...body.matchAll(/<!-- clipsx-release-candidate: (\d+\.\d+\.\d+-\d+-\d+) -->/g),
+  ]
+  assert(selections.length <= 1, 'Release PR has conflicting candidate selections')
+  return selections[0]?.[1]
 }
 
 export const targets = [
@@ -208,7 +222,7 @@ export function createManifests(candidate, signatures, notes, date) {
 
 export function assertCertified(candidate, certification, candidateBytes, inventory) {
   assert(
-    certification.schemaVersion === 1 && certification.candidateId === candidate.id,
+    certification.schemaVersion === 2 && certification.candidateId === candidate.id,
     'Certification belongs to another candidate'
   )
   assert(
@@ -248,19 +262,11 @@ export function assertManifests(candidate, signatures, notes, updater, downloads
   assert(checksums === expectedChecksums, 'Checksums differ from finalized inventory')
 }
 
-export function assertLatestRun(candidate, run) {
-  assertCurrent(candidate, candidate.sourceRevision, run)
-}
-
 export function publicationMode(releases, version) {
   const existing = releases.find(item => item.tag_name === `v${version}`)
   if (!existing) return { operation: 'publish' }
   assert(!existing.draft && !existing.prerelease, 'Conflicting production release')
   return { operation: 'verify', release: existing }
-}
-
-export function assertMerged(candidate, tree) {
-  assert(tree === candidate.sourceTree, 'Merged source tree differs from certified candidate')
 }
 
 // Authenticode may change only the checksum, certificate-directory entry and
@@ -293,4 +299,28 @@ export function imageDigest(bytes, originalSize = bytes.length) {
   image.fill(0, optional + 64, optional + 68)
   image.fill(0, security, security + 8)
   return digest(image)
+}
+
+// Tauri patches exactly this fixed-width installer marker before Authenticode signing.
+// Everything else remains covered by the original PE image hash.
+export function nsisImageDigest(bytes, originalSize = bytes.length, packaged = false) {
+  const unknown = Buffer.from('__TAURI_BUNDLE_TYPE_VAR_UNK')
+  const nsis = Buffer.from('__TAURI_BUNDLE_TYPE_VAR_NSS')
+  const image = Buffer.from(bytes)
+  const source = image.subarray(0, originalSize)
+  const unknownOffset = source.indexOf(unknown)
+  const nsisOffset = source.indexOf(nsis)
+  const offset = unknownOffset >= 0 ? unknownOffset : nsisOffset
+  assert(
+    offset >= 0 && !(unknownOffset >= 0 && nsisOffset >= 0),
+    'Expected one Tauri bundle type marker'
+  )
+  const marker = unknownOffset >= 0 ? unknown : nsis
+  assert(source.indexOf(marker, offset + 1) === -1, 'Ambiguous Tauri bundle type marker')
+  assert(
+    !packaged || nsisOffset >= 0,
+    'Installed application must identify its NSIS updater format'
+  )
+  nsis.copy(image, offset)
+  return imageDigest(image, originalSize)
 }

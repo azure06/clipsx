@@ -9,6 +9,11 @@ on:
         description: Merged release PR number for a publication or verification retry
         required: true
         type: string
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
+  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: read
 concurrency:
@@ -29,21 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-      - name: Install release verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
-          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - uses: ./.github/actions/release-verifier
+
       - name: Publish or verify existing production release
         id: publish
         env:

@@ -7,22 +7,46 @@ on:
         description: Exact candidate ID printed by preparation
         required: true
         type: string
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
+  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: candidate-${{ inputs.candidate_id }}
   cancel-in-progress: false
 jobs:
-  windows-verification:
+  state:
     if: github.ref == 'refs/heads/main'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     outputs:
-      installer: ${{ steps.download.outputs.installer }}
+      finalized: ${{ steps.state.outputs.finalized }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: node scripts/release/pipeline.mjs finalization-state "$CANDIDATE_ID"
+  windows-verification:
+    needs: state
+    if: needs.state.outputs.finalized != 'true'
+    runs-on: windows-latest
+    outputs:
+      installer: ${{ steps.download.outputs.installer }}
+      attempt: ${{ steps.download.outputs.attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -31,7 +55,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
-        run: node scripts/release/pipeline.mjs download-windows "$env:CANDIDATE_ID"
+        run: |
+          node scripts/release/pipeline.mjs download-windows "$env:CANDIDATE_ID"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "attempt=$env:GITHUB_RUN_ATTEMPT" >> $env:GITHUB_OUTPUT
       - name: Verify installed signed executable and uninstaller
         env:
           WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERT_THUMBPRINT }}
@@ -46,7 +73,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   finalize:
-    needs: windows-verification
+    needs: [state, windows-verification]
+    if: always() && needs.state.result == 'success' && (needs.state.outputs.finalized == 'true' || needs.windows-verification.result == 'success')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -54,24 +82,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-      - name: Install verifier dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev
-          npm ci --ignore-scripts
-          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin clipsx-release-verify --features release-tools
+      - uses: ./.github/actions/release-verifier
+
+      - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@v4
+        if: needs.state.outputs.finalized != 'true'
         with:
-          name: windows-verification-${{ github.run_attempt }}
+          name: windows-verification-${{ needs.windows-verification.outputs.attempt }}
           path: .release
       - name: Finalize exact candidate
         env:

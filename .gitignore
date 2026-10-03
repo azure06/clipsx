@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 /target
 
@@ -57,3 +57,5 @@ Thumbs.db
 
 docs/deploy.txt
 .release/
+
+/tools/release-verify/target/
