@@ -1,0 +1,74 @@
+name: Upload Mac debug symbols
+run-name: Symbols for build ${{ inputs.build_run_id || github.event.workflow_run.id }}
+on:
+  workflow_run:
+    workflows: [Build release app]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful release build ID
+        required: true
+        type: string
+      recovery_run_id:
+        description: One-time recovered-symbol run for build 37122124538 only
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  select:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.ready.outputs.ready }}
+    steps:
+      - id: ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          ready="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_ID/artifacts" --jq '.artifacts | any(.name | startswith("build-ready-"))')"
+          if [[ "$MANUAL" == true && "$ready" != true ]]; then echo 'Selected build is not ready' >&2; exit 1; fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+  upload:
+    needs: select
+    if: needs.select.outputs.ready == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-15
+          - platform: macos-x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Restore verified symbols without compilation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
+          RECOVERY_ID: ${{ inputs.recovery_run_id }}
+          PLATFORM: ${{ matrix.platform }}
+        run: node scripts/release/mac-symbols.mjs "$BUILD_ID" "$PLATFORM" "$RECOVERY_ID"
+      - name: Upload matching symbols
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: infiniti-next
+          SENTRY_PROJECT: clipsx-desktop
+        run: node node_modules/@sentry/cli/bin/sentry-cli debug-files upload .release/symbols
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbol-upload-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: .release/symbol-evidence.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

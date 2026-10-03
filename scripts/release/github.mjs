@@ -4,12 +4,19 @@ import { join } from 'node:path'
 import { assert, repository, encode, readinessContext, digest } from './model.mjs'
 
 export const command = (program, args, options = {}) =>
-  execFileSync(program, args, {
-    maxBuffer: 32 * 1024 * 1024,
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    ...options,
-  })
+  execFileSync(
+    // Git Bash's GNU tar interprets Windows drive letters as remote hosts.
+    program === 'tar' && process.platform === 'win32'
+      ? join(process.env.SystemRoot, 'System32', 'tar.exe')
+      : program,
+    args,
+    {
+      maxBuffer: 32 * 1024 * 1024,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...options,
+    }
+  )
 export function api(path, method = 'GET', body) {
   const args = ['api', path, '--method', method]
   if (body !== undefined) args.push('--input', '-')
