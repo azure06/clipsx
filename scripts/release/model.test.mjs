@@ -7,6 +7,7 @@ import {
   assetName,
   createManifests,
   candidateDraftMetadata,
+  certificationChecks,
   digest,
   encode,
   imageDigest,
@@ -258,4 +259,19 @@ test('draft metadata updates preserve candidate tag and never publish', () => {
   nodeAssert.throws(() =>
     candidateDraftMetadata(candidate, { ...release, tag_name: 'untagged' }, 'notes')
   )
+})
+
+test('updater deferral is restricted to the explicitly approved 0.1.0 candidate and PR', () => {
+  nodeAssert.equal(
+    certificationChecks('0.1.0-36969301315-1', '27', 'false', 'true').updaterUpgrades,
+    'deferred'
+  )
+  nodeAssert.equal(
+    certificationChecks('0.2.0-123-1', '28', 'true', 'false').updaterUpgrades,
+    'confirmed'
+  )
+  nodeAssert.throws(() => certificationChecks('0.2.0-123-1', '27', 'false', 'true'))
+  nodeAssert.throws(() => certificationChecks('0.1.0-36969301315-1', '28', 'false', 'true'))
+  nodeAssert.throws(() => certificationChecks('0.1.0-36969301315-1', '27', 'true', 'true'))
+  nodeAssert.throws(() => certificationChecks('0.2.0-123-1', '28', 'false', 'false'))
 })

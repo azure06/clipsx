@@ -38,6 +38,7 @@ draft inventories; build success is not installed-platform certification.
 - **Certify:** collect real Windows, both Mac, AppImage/deb installed and private
   upgrade-fixture evidence. Dispatch **Certify candidate** with exact ID, release
   PR, evidence URL and explicit confirmation only after all checks pass.
+- **Approved 0.1.0 exception:** only candidate `0.1.0-36969301315-1` / PR `27` may record the owner-approved updater deferral. Follow the exact inputs in RELEASE.md; future releases retain full testing requirements.
 - **Publish/retry:** merge the certified release PR. Publication verifies merged
   app inputs and publishes existing certified files. Retry **Publish certified
   release** with merged PR number; reuse files and reject conflicting tags.
