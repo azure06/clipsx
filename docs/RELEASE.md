@@ -199,7 +199,10 @@ The helper downloads and verifies the exact packaging kit, restores its CI-built
 executable and frontend resources, installs locked packaging dependencies without
 lifecycle scripts, and runs `tauri bundle` rather than `tauri build`. A trusted
 SignTool wrapper timestamps and verifies each Authenticode operation. The
-installer, uninstaller and application must all be signed. The helper uploads
+installer, uninstaller and application must all be signed. NSIS signs its
+generated uninstaller under a temporary filename; the wrapper verifies each
+operation with Windows Authenticode, and hosted CI inspects the actual installed
+uninstaller. Do not infer its role from a temporary basename. The helper uploads
 the installer and dispatches Finalize release candidate on main. It does not
 need the Tauri updater private key.
 

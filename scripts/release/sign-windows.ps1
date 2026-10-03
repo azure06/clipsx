@@ -63,7 +63,9 @@ try {
     $installers = @(Get-ChildItem -LiteralPath (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis') -Filter '*.exe')
     if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer.' }
     $signatures = @(Get-Content -LiteralPath $env:CLIPSX_SIGNING_LOG | ForEach-Object { $_ | ConvertFrom-Json })
-    if (-not ($signatures | Where-Object { $_.File -eq 'clipsx.exe' }) -or -not ($signatures | Where-Object { $_.File -match 'uninstall' })) { throw 'Application or uninstaller signing evidence is missing.' }
+    # NSIS signs its generated uninstaller under a temporary filename. The wrapper
+    # verifies every signing operation; CI inspects the actual installed uninstaller.
+    if (-not ($signatures | Where-Object { $_.File -eq 'clipsx.exe' })) { throw 'Application signing evidence is missing.' }
     if (-not ($signatures | Where-Object { $_.File -eq $installers[0].Name })) { throw 'Installer signing evidence is missing.' }
     Push-Location $root
     try {

@@ -588,6 +588,10 @@ function prepareWindows(id) {
     }
     writeAsset(release, 'candidate.json', candidate, directory)
   }
+  assert(
+    nsisImageDigest(executable) === candidate.windowsImages['clipsx.exe'].sha256,
+    'NSIS executable identity changed'
+  )
   writeFileSync(join(directory, 'signing-candidate.json'), encode(candidate))
   console.log(candidate.id)
 }
