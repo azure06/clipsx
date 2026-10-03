@@ -539,6 +539,7 @@ impl ExtensionRuntime {
         if self.component(sha256).is_some() {
             return Ok(());
         }
+        crate::diagnostic!("extension.component.compile.begin");
         let started = Instant::now();
         let cache_hits = self.cache.as_ref().map_or(0, Cache::cache_hits);
         let bytes = tokio::fs::read(path)
@@ -555,13 +556,26 @@ impl ExtensionRuntime {
                 .context("extension compilation task failed")?;
         let component = component
             .map_err(wasmtime_error)
-            .context("extension component is invalid")?;
+            .context("extension component is invalid")
+            .inspect_err(|error| {
+                crate::app::diagnostics::operational_error(
+                    "extension.component.compile.failed",
+                    error,
+                )
+            })?;
+        crate::diagnostic!("extension.component.instantiate.begin");
         self.instantiate(
             component.clone(),
             DETECT_RENDER_FUEL,
             Duration::from_millis(250),
         )
-        .await?;
+        .await
+        .inspect_err(|error| {
+            crate::app::diagnostics::operational_error(
+                "extension.component.instantiate.failed",
+                error,
+            )
+        })?;
         self.components
             .lock()
             .expect("extension component cache poisoned")

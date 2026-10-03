@@ -6,6 +6,9 @@ import { StartupRecovery } from './StartupRecovery'
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('../settings/DiagnosticsActions', () => ({
+  DiagnosticsActions: () => <div>Diagnostics available</div>,
+}))
 
 const status = {
   state: 'legacy_reset_required' as const,
@@ -14,6 +17,18 @@ const status = {
 }
 
 describe('StartupRecovery', () => {
+  it('preserves newer databases without offering a reset', () => {
+    render(
+      <StartupRecovery
+        status={{ state: 'newer_schema', message: '', migrationVersion: 16, resetAvailable: false }}
+      />
+    )
+    expect(screen.getByText(/requires a newer ClipsX/)).toBeInTheDocument()
+    expect(screen.getByText('Diagnostics available')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Show factory reset option' })
+    ).not.toBeInTheDocument()
+  })
   beforeEach(() => invokeMock.mockReset())
   afterEach(async () => {
     await i18n.changeLanguage('en')
@@ -21,11 +36,17 @@ describe('StartupRecovery', () => {
 
   it('updates Japanese labels live while keeping the reset confirmation exact', async () => {
     render(<StartupRecovery status={status} />)
+    expect(
+      screen.queryByRole('button', { name: 'Reset local ClipsX data' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Show factory reset option' }))
     expect(screen.getByRole('button', { name: 'Reset local ClipsX data' })).toBeDisabled()
     await act(async () => {
       await i18n.changeLanguage('ja')
     })
-    expect(screen.getByRole('heading', { name: '初期化が必要です' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'ClipsXを起動できませんでした' })
+    ).toBeInTheDocument()
     const button = screen.getByRole('button', { name: i18n.t('desktopUi.resetLocalClipsxData') })
     expect(button).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/RESET CLIPSX/), { target: { value: 'RESET CLIPSX' } })
@@ -34,6 +55,7 @@ describe('StartupRecovery', () => {
 
   it('requires the exact reset confirmation', () => {
     render(<StartupRecovery status={status} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show factory reset option' }))
     const button = screen.getByRole('button', { name: 'Reset local ClipsX data' })
     expect(button).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/Type RESET CLIPSX/), {
@@ -54,6 +76,7 @@ describe('StartupRecovery', () => {
       return Promise.resolve(null)
     })
     render(<StartupRecovery status={status} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show factory reset option' }))
     fireEvent.change(screen.getByLabelText(/Type RESET CLIPSX/), {
       target: { value: 'RESET CLIPSX' },
     })
@@ -72,6 +95,7 @@ describe('StartupRecovery', () => {
       restartRequired: true,
     })
     render(<StartupRecovery status={status} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show factory reset option' }))
     fireEvent.change(screen.getByLabelText(/Type RESET CLIPSX/), {
       target: { value: 'RESET CLIPSX' },
     })

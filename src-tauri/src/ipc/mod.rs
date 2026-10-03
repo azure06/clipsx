@@ -322,7 +322,7 @@ fn apply_representation_size_limit(snapshot: &mut history::CapturedSnapshot, lim
 
 #[tauri::command]
 fn get_startup_status(state: State<'_, StartupState>) -> StartupStatus {
-    foundation::startup_status(state.schema_state)
+    foundation::startup_status(*state.schema_state.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 #[tauri::command]
@@ -330,7 +330,14 @@ fn factory_reset(
     confirmation: String,
     state: State<'_, StartupState>,
 ) -> Result<FactoryResetResult, String> {
-    foundation::factory_reset(&state.roots, &confirmation).map_err(|error| error.to_string())
+    foundation::factory_reset(
+        state
+            .roots
+            .as_ref()
+            .ok_or("Storage location is unavailable")?,
+        &confirmation,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2140,22 +2147,61 @@ fn write_diagnostic(event: String) {
 
 #[tauri::command]
 async fn get_diagnostics_summary(
-    state: State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<crate::app::diagnostics::DiagnosticsSummary, String> {
-    crate::app::diagnostics::summary(&state.history)
+    let state = app.try_state::<AppState>();
+    crate::app::diagnostics::summary(state.as_ref().map(|state| &state.history))
         .await
         .map_err(|_| "Unable to read diagnostics summary".into())
 }
 
 #[tauri::command]
-async fn export_diagnostic_bundle(
-    path: String,
-    state: State<'_, AppState>,
-    app: tauri::AppHandle,
+async fn export_diagnostic_bundle(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.try_state::<AppState>();
+    crate::app::diagnostics::export_bundle(
+        &app,
+        state.as_ref().map(|state| &state.history),
+        std::path::Path::new(&path),
+    )
+    .await
+    .map_err(|_| "Unable to export diagnostic bundle".into())
+}
+
+#[tauri::command]
+fn get_crash_report(
+    path: Option<String>,
+) -> Result<Option<crate::app::crash_reports::CrashReport>, String> {
+    match path {
+        Some(path) => crate::app::crash_reports::read(std::path::Path::new(&path))
+            .map(Some)
+            .map_err(|e| e.to_string()),
+        None => Ok(crate::app::crash_reports::discover()),
+    }
+}
+
+#[tauri::command]
+fn export_crash_report(
+    selected: crate::app::diagnostics::ReportSelection,
+    destination: String,
 ) -> Result<(), String> {
-    crate::app::diagnostics::export_bundle(&app, &state.history, std::path::Path::new(&path))
+    crate::app::crash_reports::export(
+        std::path::Path::new(&selected.path),
+        &selected.sha256,
+        std::path::Path::new(&destination),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn send_diagnostic_report(
+    app: tauri::AppHandle,
+    consent: bool,
+    selected: Option<crate::app::diagnostics::ReportSelection>,
+    include_logs: bool,
+) -> Result<crate::app::diagnostics::ReportSubmission, String> {
+    crate::app::diagnostics::submit_report(&app, consent, selected, include_logs)
         .await
-        .map_err(|_| "Unable to export diagnostic bundle".into())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2864,6 +2910,25 @@ fn quit_app(app: &tauri::AppHandle) {
     app.exit(0);
 }
 
+fn recover_startup(
+    app: &tauri::AppHandle,
+    roots: Option<AppRoots>,
+    code: &str,
+    error: &anyhow::Error,
+) {
+    crate::app::diagnostics::operational_error("startup.operation.failed", error);
+    crate::app::diagnostics::startup_failure(code);
+    if let Some(state) = app.try_state::<StartupState>() {
+        *state.schema_state.lock().unwrap_or_else(|e| e.into_inner()) =
+            foundation::SchemaState::StartupFailed;
+    } else {
+        app.manage(StartupState {
+            roots,
+            schema_state: std::sync::Mutex::new(foundation::SchemaState::StartupFailed),
+        });
+    }
+}
+
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         .plugin(crate::app::diagnostics::log_plugin())
@@ -2882,6 +2947,7 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
 
 pub(crate) fn run() {
     let _sentry_guard = crate::app::diagnostics::initialize_sentry();
+    crate::app::diagnostics::install_panic_logging();
     app_builder()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -3045,12 +3111,15 @@ pub(crate) fn run() {
                 let _ = host::show_main_window(&deep_link_app);
             });
 
-            let roots =
-                AppRoots::from_app(app.handle()).expect("Failed to resolve ClipsX storage roots");
-            let auth_data = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve local authentication storage");
+            crate::diagnostic!("startup.storage.begin");
+            let roots = match AppRoots::from_app(app.handle()) {
+                Ok(roots) => roots,
+                Err(error) => { recover_startup(app.handle(), None, "storage_roots", &error); return Ok(()); }
+            };
+            let auth_data = match app.path().app_local_data_dir() {
+                Ok(path) => path,
+                Err(error) => { recover_startup(app.handle(), Some(roots), "auth_storage_root", &error.into()); return Ok(()); }
+            };
             app.manage(AuthStorage::new(auth_data));
             if crate::share::cleanup_stale(&roots).is_err() {
                 crate::diagnostic!("[SHARE] Failed to clean stale share exports");
@@ -3058,11 +3127,16 @@ pub(crate) fn run() {
             crate::clipboard::capabilities::validate_embedded()
                 .context("embedded clipboard capability policy is invalid")?;
             let foundation_started = Instant::now();
-            let schema_state = tauri::async_runtime::block_on(foundation::prepare(&roots))
-                .expect("Failed to prepare the ClipsX database");
+            let schema_state = match tauri::async_runtime::block_on(foundation::prepare(&roots)) {
+                Ok(state) => state,
+                Err(error) => { recover_startup(app.handle(), Some(roots), "database_prepare", &error); return Ok(()); }
+            };
             let foundation_elapsed = foundation_started.elapsed();
             if schema_state == foundation::SchemaState::Ready {
-                let _ = tauri::async_runtime::block_on(crate::app::diagnostics::initialize(&roots.database()));
+                if let Err(error) = tauri::async_runtime::block_on(crate::app::diagnostics::initialize(&roots.database())) {
+                    crate::app::diagnostics::operational_error("startup.diagnostics_policy.failed", &error);
+                    crate::app::diagnostics::startup_failure("diagnostics_policy");
+                }
             }
             crate::diagnostic!("app.started");
             if cfg!(debug_assertions) || foundation_elapsed.as_millis() >= 250 {
@@ -3072,23 +3146,35 @@ pub(crate) fn run() {
                 );
             }
             app.manage(StartupState {
-                roots: roots.clone(),
-                schema_state,
+                roots: Some(roots.clone()),
+                schema_state: std::sync::Mutex::new(schema_state),
             });
+            if schema_state != foundation::SchemaState::Ready {
+                crate::app::diagnostics::startup_failure(&foundation::startup_status(schema_state).state);
+            }
             if schema_state == foundation::SchemaState::Ready {
+                crate::diagnostic!("startup.services.begin");
+                let initialized = (|| -> anyhow::Result<_> {
                 let history = tauri::async_runtime::block_on(HistoryRepository::connect(
                     &roots.database(),
                     roots.clipboard_data(),
                 ))
-                .expect("Failed to open ClipsX history");
+                .context("Failed to open ClipsX history")?;
                 if let Ok(settings) = tauri::async_runtime::block_on(history.app_settings()) {
                     let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
                     tauri::async_runtime::block_on(lifecycle.reconcile(app.handle(), &history, settings));
                 }
                 let extensions = ExtensionService::new(&roots, &app.path().app_cache_dir()?.join("extensions"))
-                    .expect("Failed to initialize ClipsX extension storage");
+                    .context("Failed to initialize ClipsX extension storage")?;
                 tauri::async_runtime::block_on(contributions::initialize(&history))
-                    .expect("Failed to initialize ClipsX facet registry");
+                    .context("Failed to initialize ClipsX facet registry")?;
+                Ok((history, extensions))
+                })();
+                let (history, extensions) = match initialized {
+                    Ok(services) => services,
+                    Err(error) => { recover_startup(app.handle(), Some(roots), "services_initialize", &error); return Ok(()); }
+                };
+                crate::diagnostic!("startup.services.ready");
                 app.manage(AppState {
                     roots: roots.clone(),
                     history: history.clone(),
@@ -3379,6 +3465,9 @@ pub(crate) fn run() {
             retry_settings_effects,
             write_diagnostic,
             get_diagnostics_summary,
+            get_crash_report,
+            export_crash_report,
+            send_diagnostic_report,
             export_diagnostic_bundle,
             open_diagnostics_log_folder,
             set_telemetry_identity,

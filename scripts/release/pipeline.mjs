@@ -194,6 +194,16 @@ function collect(platform, bundleDir) {
   const evidence = readJson(
     process.env.NATIVE_EVIDENCE_PATH || join(directory, `native-evidence-${platform}.json`)
   )
+  if (platform.startsWith('macos-') && candidate.version !== '0.1.0')
+    assert(
+      evidence.runtimeProbe?.verified === true &&
+        evidence.runtimeProbe.fixtureSha256 ===
+          candidate.build.platforms[platform].runtimeFixtureSha256 &&
+        evidence.entitlementsPlist?.includes(
+          'com.apple.security.cs.allow-unsigned-executable-memory'
+        ),
+      'Signed Mac runtime evidence is missing'
+    )
   assert(
     evidence.candidateId === candidate.id && evidence.verified === true,
     'Native verification evidence does not match candidate'
@@ -821,6 +831,13 @@ function certify(id, prNumber) {
     process.env.CERTIFY_ALL_PLATFORMS,
     process.env.CERTIFY_0_1_0_EXCEPTION
   )
+  if (candidate.version !== '0.1.0') {
+    assert(
+      process.env.CERTIFY_MAC_EXTENSIONS === 'true',
+      'Confirm installed extension installation, execution and restart on both Mac architectures'
+    )
+    checks.macExtensions = 'passed'
+  }
   const evidence = process.env.CERTIFICATION_EVIDENCE?.trim()
   assert(
     evidence && /^https:\/\//.test(evidence),

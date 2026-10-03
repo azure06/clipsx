@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assert, assertBuildRun, digest, encode, readJson } from './model.mjs'
@@ -57,6 +57,21 @@ export function verifyExecutable(bytes, checkpoint, candidate, platform, fronten
     'Mixed build executable/frontend'
   )
   assert(checkpoint.sha256 === digest(bytes), 'Compiled executable changed')
+}
+export function verifyAuxiliary(checkpoint, candidate) {
+  if (!checkpoint.runtimeFixtureSha256) {
+    assert(candidate.version === '0.1.0', 'Build runtime fixture is missing')
+    return
+  }
+  assert(
+    checkpoint.runtimeFixtureSha256 === digest(readFileSync('.release/runtime-fixture.wasm')),
+    'Runtime fixture changed'
+  )
+  if (checkpoint.platform.startsWith('macos-'))
+    assert(
+      checkpoint.debugSymbolsSha256 === digest(readFileSync('.release/debug-symbols.tar.gz')),
+      'Mac debug symbols changed'
+    )
 }
 export function validateBuildDescriptor(candidate, run, artifacts) {
   assertBuildRun(run, candidate.build.origin)
@@ -133,6 +148,14 @@ export function restorePlatform(candidate, platform, directory) {
     platform,
     readFileSync('.release/frontend.json')
   )
+  const checkpoint = readJson('.release/compiled.json')
+  const saved = candidate.build.platforms[platform]
+  assert(
+    checkpoint.runtimeFixtureSha256 === saved.runtimeFixtureSha256 &&
+      checkpoint.debugSymbolsSha256 === saved.debugSymbolsSha256,
+    'Mixed build auxiliary inventory'
+  )
+  verifyAuxiliary(checkpoint, candidate)
   assert(
     digest(readFileSync(binary)) === candidate.build.platforms[platform].sha256,
     'Build executable hash mismatch'
@@ -161,6 +184,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         sha256: digest(readFileSync(binary)),
         checksExecutionAttempt: process.env.GITHUB_RUN_ATTEMPT,
         compiler: command('rustc', ['-vV']).trim(),
+        runtimeFixtureSha256: digest(readFileSync('.release/runtime-fixture.wasm')),
+        debugSymbolsSha256: existsSync('.release/debug-symbols.tar.gz')
+          ? digest(readFileSync('.release/debug-symbols.tar.gz'))
+          : null,
+        debugProfile: process.env.PLATFORM.startsWith('macos-')
+          ? { debug: 'line-tables-only', splitDebuginfo: 'packed' }
+          : null,
       })
     )
   } else if (operation === 'ready') {
@@ -186,6 +216,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         platform,
         readFileSync('.release/frontend.json')
       )
+      verifyAuxiliary(checkpoint, candidate)
       candidate.build.platforms[platform] = { ...checkpoint, artifact: artifactRecord(artifact) }
     }
     candidate.build.appInputs = appInputs(candidate.sourceRevision)

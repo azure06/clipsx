@@ -1,3 +1,4 @@
+import { DiagnosticsActions } from './DiagnosticsActions'
 import { diagnostic } from '../../shared/diagnostics'
 import { invoke } from '@tauri-apps/api/core'
 import { PortableRecovery } from './components/PortableRecovery'
@@ -39,8 +40,6 @@ import {
   UserRound,
   LogOut,
   Cloud,
-  FolderOpen,
-  FileArchive,
   Copy as CopyIcon,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
@@ -278,17 +277,6 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       await resetSettings()
       setFeedback(t('settings.resetSuccess'))
     }, t('errors.settingsReset'))
-
-  const handleDiagnosticsExport = () =>
-    manage(async () => {
-      const path = await save({
-        defaultPath: `clipsx-diagnostics-${new Date().toISOString().split('T')[0]}.zip`,
-        filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
-      })
-      if (!path) return
-      await invoke('export_diagnostic_bundle', { path })
-      setFeedback(t('settings.diagnosticsExportSuccess'))
-    }, t('settings.diagnosticsExportFailed'))
 
   // --- Loading / Error states ---
 
@@ -1155,6 +1143,9 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                         {diagnosticsSummary?.supportCode ?? '...'}
                       </p>
                     </div>
+                    <div className="mt-3">
+                      <DiagnosticsActions />
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
@@ -1169,23 +1160,6 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                         }
                       >
                         {t('common.copy')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        leftIcon={<FolderOpen className="h-3.5 w-3.5" />}
-                        onClick={() => void invoke('open_diagnostics_log_folder')}
-                      >
-                        {t('settings.openLogFolder')}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={isManaging}
-                        leftIcon={<FileArchive className="h-3.5 w-3.5" />}
-                        onClick={() => void handleDiagnosticsExport()}
-                      >
-                        {t('settings.exportDiagnostics')}
                       </Button>
                     </div>
                   </div>

@@ -201,7 +201,7 @@ describe('App', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('A factory reset is required')).toBeInTheDocument()
+    expect(await screen.findByText('ClipsX could not finish starting')).toBeInTheDocument()
     expect(screen.queryByText('Mock App Layout')).not.toBeInTheDocument()
     expect(invokeMock).not.toHaveBeenCalledWith('get_app_settings')
   })

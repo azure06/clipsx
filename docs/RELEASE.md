@@ -592,3 +592,16 @@ Publish only when the applicable checks pass, required
 [roadmap work](ROADMAP.md) is complete, and no high-severity finding remains.
 Release notes state verified platforms/features, limitations, reset implications,
 and updater compatibility. Verify website download metadata after assets are public.
+
+
+## Mac runtime and diagnostics acceptance (0.1.1 onward)
+
+Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and uploaded to Sentry from trusted preparation jobs; symbol uploads do not finalize deployment records.
+
+Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. The existing 0.1.0 exception does not waive these checks for 0.1.1.
+
+For the reported Silicon/macOS 26 crash, obtain the original OS report before claiming the root cause is confirmed. In Console, open Crash Reports and locate ClipsX, or use Finder → Go → Go to Folder → `~/Library/Logs/DiagnosticReports`. Preserve the Exception Type, Termination Reason and matching executable UUID. A private copy of the existing app can validate the entitlement fix without recompiling; never replace published 0.1.0 assets. Compare Dock/Finder icons under the same macOS appearance setting: the published ICNS matches the source, while macOS 26 can apply its own icon background. The logo remains unchanged.
+
+Recovery and Settings provide local diagnostic export, report preview and optional submission. An upload requires per-report consent; local operational logs are included only when checked. Reports can contain local file paths. For a startup failure before the UI appears, obtain logs/crash reports through Finder or Console; install a corrected build without resetting the database. Verify one frontend error, one native error and one consented `.ips` submission in Sentry, checking the event ID and matching debug symbols rather than assuming an upload proves ingestion.
+
+Dev/production switching against identical published migrations must retain the same database. Check LF/CRLF compatibility, rejected arbitrary checksum changes, newer-schema blocking and interrupted repairs. Foundation makes a consistent `clips-before-checksum-repair-*.db` backup before known checksum repair; do not delete the active database as a workaround.

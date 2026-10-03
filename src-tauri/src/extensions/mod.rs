@@ -9,7 +9,7 @@ mod manifest;
 mod packages;
 mod parameters;
 pub use parameters::ParameterField;
-mod runtime;
+pub(crate) mod runtime;
 mod service;
 #[cfg(test)]
 mod test_component;

@@ -81,3 +81,10 @@ fn types(module: &mut String, kind: &str, values: &[WasmType]) {
     }
     module.push(')');
 }
+
+#[test]
+fn export_runtime_probe_fixture() {
+    if let Some(path) = std::env::var_os("CLIPSX_RUNTIME_FIXTURE_PATH") {
+        std::fs::write(path, bytes()).unwrap();
+    }
+}

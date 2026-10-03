@@ -1,6 +1,6 @@
 {
   "productName": "ClipsX",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.infiniti.clipsx",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,25 +25,39 @@
     },
     "linux": {
       "deb": {
-        "recommends": ["tesseract-ocr", "tesseract-ocr-eng", "tesseract-ocr-jpn"]
+        "recommends": [
+          "tesseract-ocr",
+          "tesseract-ocr-eng",
+          "tesseract-ocr-jpn"
+        ]
       }
     },
     "windows": {
       "nsis": {
         "displayLanguageSelector": true,
         "installerIcon": "icons/icon.ico",
-        "languages": ["English", "Japanese", "Italian", "Spanish", "SimpChinese"]
+        "languages": [
+          "English",
+          "Japanese",
+          "Italian",
+          "Spanish",
+          "SimpChinese"
+        ]
       }
     }
   },
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["clipsx"]
+        "schemes": [
+          "clipsx"
+        ]
       }
     },
     "updater": {
-      "endpoints": ["https://github.com/azure06/clipsx/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/azure06/clipsx/releases/latest/download/latest.json"
+      ],
       "pubkey": "dW50cnRzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGMTJGQThGREQ4N0Q5OTAKUldTUTJZZmRqL29TWDRsQVV6eFptdk5oL1I1MmNTcS8zUi9tcWx2QWVjYXhqRTg4UnpXK2RJSXEK"
     }
   },
@@ -69,7 +83,10 @@
         "visible": false,
         "focus": true,
         "windowEffects": {
-          "effects": ["acrylic", "underWindowBackground"]
+          "effects": [
+            "acrylic",
+            "underWindowBackground"
+          ]
         }
       }
     ],

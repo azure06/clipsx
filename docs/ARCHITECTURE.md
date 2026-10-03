@@ -594,3 +594,14 @@ still intersect with user rules. Unknown sources match only all-clips rules.
 Automation affects future external captures, never startup history or promotion.
 Future rule conditions can extend host eligibility without changing guest inputs,
 saved setups or durable execution.
+
+
+### Startup recovery and Mac native failures
+
+Operational logging starts before storage preparation. Foundation and service initialization failures become a recovery state rather than a panic. Diagnostics summary/export and log-folder access do not require the history repository. Migration versions and precise compatibility reasons are shown without deleting data; retired schema and factory reset remain separate explicit actions.
+
+Local logs retain bounded operational error chains, stages and panic backtraces, never clipboard content or credentials. They are not automatically uploaded. The automatic Sentry policy remains independent of manual submission. Diagnostics schema 2 exposes SDK configuration/initialization, reporting policy, startup failure and the last manual submission ID. An accepted HTTP submission does not prove processing in Sentry.
+
+On macOS, the OS captures `.ips` reports. ClipsX discovers its own reports and permits manual selection, preview and explicit per-report consent, with logs excluded unless selected. Wrong-app, malformed, oversized or changed reports are rejected; network failures retain local files. No native crash-handler process is bundled. Fatal termination before the recovery UI starts requires Console/Finder or a subsequent working build.
+
+Mac production signatures retain hardened runtime and the minimum Wasmtime executable-memory entitlement. Packaging verifies the actual signature and runs the existing executable with `--verify-extension-runtime <component.wasm>`. This isolated cold-cache probe neither opens application storage nor initializes telemetry. The fixture is exported during native tests and its hash is retained with the compiled build, alongside Mac debug-symbol hashes. Compilation remains confined to the build workflow.

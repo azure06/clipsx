@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { FactoryResetResult, StartupStatus } from '../../shared/types'
+import { DiagnosticsActions } from '../settings/DiagnosticsActions'
 import { Button } from '../../shared/components/ui'
 
 const CONFIRMATION = 'RESET CLIPSX'
@@ -11,6 +12,7 @@ const CONFIRMATION = 'RESET CLIPSX'
 export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
   useTranslation()
 
+  const [showReset, setShowReset] = useState(false)
   const [confirmation, setConfirmation] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,54 +47,73 @@ export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
         </div>
 
         <h1 className="mt-4 text-2xl font-semibold text-gray-900 dark:text-gray-100">
-          <Trans i18nKey="desktopUi.aFactoryResetIsRequired" />
+          <Trans i18nKey="recovery.title" />
         </h1>
-        <p className="mt-3 text-sm leading-6 text-gray-600 dark:text-slate-300">{status.message}</p>
-        <p className="mt-4 rounded-xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
-          <Trans i18nKey="desktopUi.clipsxWillDeleteItsLocalDatabaseManagedClipboardFiles" />
+        <p className="mt-3 text-sm leading-6 text-gray-600 dark:text-slate-300">
+          {i18n.t(`recovery.reasons.${status.state}`, {
+            defaultValue: status.message,
+            version: status.migrationVersion ?? '?',
+          })}
         </p>
-
-        <label
-          className="mt-6 block text-sm font-medium text-gray-700 dark:text-gray-300"
-          htmlFor="reset-confirmation"
-        >
-          <Trans
-            i18nKey="desktopUi.resetConfirmation"
-            values={{ confirmation: CONFIRMATION }}
-            components={{
-              confirmation: (
-                <span className="font-mono font-semibold text-amber-600 dark:text-amber-400" />
-              ),
-            }}
-          />
-        </label>
-        <input
-          id="reset-confirmation"
-          value={confirmation}
-          onChange={event => setConfirmation(event.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-          className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-50/60 px-3 py-2 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 dark:border-white/10 dark:bg-slate-100/5 dark:text-gray-100"
-        />
-
-        {error && (
-          <p
-            role="alert"
-            className="mt-4 whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
-          >
-            {error}
-          </p>
+        <div className="mt-5">
+          <DiagnosticsActions />
+        </div>
+        {status.resetAvailable && (
+          <Button variant="outline" className="mt-5" onClick={() => setShowReset(value => !value)}>
+            {i18n.t('recovery.resetOption')}
+          </Button>
         )}
+        {showReset && status.resetAvailable && (
+          <>
+            <p className="mt-4 rounded-xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+              <Trans i18nKey="desktopUi.clipsxWillDeleteItsLocalDatabaseManagedClipboardFiles" />
+            </p>
 
-        <Button
-          variant="destructive"
-          className="mt-6 w-full"
-          isLoading={busy}
-          disabled={busy || confirmation !== CONFIRMATION || !status.resetAvailable}
-          onClick={() => void reset()}
-        >
-          {busy ? i18n.t('desktopUi.resettingClipsx') : i18n.t('desktopUi.resetLocalClipsxData')}
-        </Button>
+            <label
+              className="mt-6 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              htmlFor="reset-confirmation"
+            >
+              <Trans
+                i18nKey="desktopUi.resetConfirmation"
+                values={{ confirmation: CONFIRMATION }}
+                components={{
+                  confirmation: (
+                    <span className="font-mono font-semibold text-amber-600 dark:text-amber-400" />
+                  ),
+                }}
+              />
+            </label>
+            <input
+              id="reset-confirmation"
+              value={confirmation}
+              onChange={event => setConfirmation(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-50/60 px-3 py-2 font-mono text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 dark:border-white/10 dark:bg-slate-100/5 dark:text-gray-100"
+            />
+
+            {error && (
+              <p
+                role="alert"
+                className="mt-4 whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
+              >
+                {error}
+              </p>
+            )}
+
+            <Button
+              variant="destructive"
+              className="mt-6 w-full"
+              isLoading={busy}
+              disabled={busy || confirmation !== CONFIRMATION || !status.resetAvailable}
+              onClick={() => void reset()}
+            >
+              {busy
+                ? i18n.t('desktopUi.resettingClipsx')
+                : i18n.t('desktopUi.resetLocalClipsxData')}
+            </Button>
+          </>
+        )}
       </section>
     </main>
   )
