@@ -201,7 +201,7 @@ jobs:
           if [[ "$RUNNER_OS" == macOS ]]; then
             symbols="src-tauri/target/$TARGET/release/clipsx.dSYM"
             test -d "$symbols"
-            tar -czf .release/debug-symbols.tar.gz -C "$(dirname "$symbols")" clipsx.dSYM
+            tar -h -czf .release/debug-symbols.tar.gz -C "$(dirname "$symbols")" clipsx.dSYM
           fi
           node .tooling/scripts/release/builds.mjs record
           binary="src-tauri/target/$TARGET/release/clipsx"

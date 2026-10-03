@@ -555,6 +555,8 @@ complete only when linked evidence identifies the artifact and result.
 
 ## Packaging and updates
 
+Windows release helpers use the system `tar.exe` so Git Bash cannot interpret drive letters as remote archive hosts. Linux packaging requires AppIndicator development metadata for bundler discovery, alongside the runtime libraries; installing that metadata does not compile the application.
+
 | Platform | Required result                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------- |
 | Windows  | Valid executable/installer signatures; clean install, upgrade, downgrade rejection, uninstall, metadata |
@@ -593,10 +595,11 @@ Publish only when the applicable checks pass, required
 Release notes state verified platforms/features, limitations, reset implications,
 and updater compatibility. Verify website download metadata after assets are public.
 
-
 ## Mac runtime and diagnostics acceptance (0.1.1 onward)
 
-Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and uploaded to Sentry from trusted preparation jobs; symbol uploads do not finalize deployment records.
+Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and archived with symlinks dereferenced and uploaded by **Upload Mac debug symbols** from trusted `main`. That workflow starts after a successful release build and accepts an explicit `build_run_id` for retries. It verifies the saved executable hash and matching dSYM UUID, without compiling or packaging. Symbol-service failures do not discard signed packages or finalize deployment records.
+
+Build `37122124538` needs a one-time recovery because its symbol archive retained Cargo’s link instead of the target directory. Recover only its exact release-branch caches, compare dSYM UUIDs with the immutable build executables, and retain recovery evidence. Supply that successful recovery run as `recovery_run_id` to the symbol workflow. This exception never replaces the saved build archive or executable and is rejected for other builds. Delete the temporary recovery workflow after recovery; do not rebuild 0.1.1 for a symbol archive correction.
 
 Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. The existing 0.1.0 exception does not waive these checks for 0.1.1.
 
