@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { ArrowLeft, Play } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Button } from '../../shared/components/ui/Button'
@@ -33,6 +35,8 @@ export const ContributionParametersPanel = ({
   onCancel: () => void
   onSubmit: (values: Record<string, unknown>) => void
 }) => {
+  useTranslation()
+
   const properties = useMemo(() => parameterProperties(request.schema), [request.schema])
   const required = useMemo(
     () => new Set(Array.isArray(request.schema['required']) ? request.schema['required'] : []),
@@ -55,7 +59,7 @@ export const ContributionParametersPanel = ({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-200/60 px-2 dark:border-white/7">
         <button
           type="button"
-          aria-label="Back to actions"
+          aria-label={i18n.t('desktopUi.backToActions')}
           className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-500/10 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 dark:hover:text-slate-200"
           onClick={onCancel}
         >
@@ -65,7 +69,9 @@ export const ContributionParametersPanel = ({
           <h2 className="truncate text-xs font-semibold text-gray-900 dark:text-gray-100">
             {request.label}
           </h2>
-          <p className="truncate text-[9px] text-gray-500">Configure and run</p>
+          <p className="truncate text-[9px] text-gray-500">
+            <Trans i18nKey="desktopUi.configureAndRun" />
+          </p>
         </div>
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-auto px-3 py-3">
@@ -96,7 +102,11 @@ export const ContributionParametersPanel = ({
                   value={scalarString(values[id])}
                   onChange={event => setValue(id, event.target.value)}
                 >
-                  {!required.has(id) && <option value="">Default</option>}
+                  {!required.has(id) && (
+                    <option value="">
+                      <Trans i18nKey="desktopUi.default" />
+                    </option>
+                  )}
                   {enumValues.map(value => (
                     <option key={String(value)} value={String(value)}>
                       {String(value)}
@@ -148,7 +158,7 @@ export const ContributionParametersPanel = ({
       <div className="flex shrink-0 justify-end border-t border-slate-200/60 p-2 dark:border-white/7">
         <Button type="submit" size="sm" className="gap-1.5">
           <Play className="h-3 w-3 fill-current" />
-          Run
+          <Trans i18nKey="desktopUi.run" />
         </Button>
       </div>
     </form>

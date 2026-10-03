@@ -6,7 +6,7 @@ import { parseSearch } from './searchQuery'
 
 type Props = Omit<
   ComponentPropsWithoutRef<typeof SearchBar>,
-  'value' | 'onChange' | 'onClear' | 'canRecall'
+  'value' | 'onChange' | 'onClear' | 'canRecall' | 'isUpdatingResults'
 >
 
 // Only this small subtree subscribes to the raw input. The history renders
@@ -15,6 +15,7 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
   function SearchController(props, ref) {
     const query = useUIStore(state => state.searchQuery)
     const setQuery = useUIStore(state => state.setSearchQuery)
+    const isUpdatingResults = useClipboardStore(state => state.resultsStale && !state.error)
     const composing = useRef(false)
     const scheduleRef = useRef<(() => void) | null>(null)
 
@@ -68,6 +69,7 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
           onChange={setQuery}
           onClear={() => setQuery('')}
           canRecall={parseSearch(query).query.length > 0}
+          isUpdatingResults={isUpdatingResults}
         />
       </div>
     )

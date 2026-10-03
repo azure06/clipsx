@@ -1,8 +1,9 @@
 # ClipsX roadmap
 
 The Extension API v3.2 transformation-tab implementation requires installed-host
-certification and coordinated package publication before release. Work that can
-wait belongs under **After the first release**.
+certification before the desktop release. The six first-party 2.0.0 archives and
+their signed registry catalog are already published. Work that can wait belongs
+under **After the first release**.
 
 The detailed cross-platform test matrix remains in [RELEASE.md](RELEASE.md).
 This roadmap answers only three questions: what blocks the release, how the
@@ -23,36 +24,37 @@ macOS, and Linux/X11 builds. Exercise automatic capture, duplicate-copy
 deduplication, restart recovery, source deletion, and retained results after
 disablement and uninstall. Verify saved setups, built-in presets, multiple typed
 outputs, Compare resizing, result controls, and the single Tools entry point.
-Publish reviewed immutable v3.2 package archives and signed registry metadata
-only after these tests pass. The host requires an explicit reset to database
-version 15 and shows only current-contract releases in Discover.
+The host requires an explicit reset to database version 15 and shows only
+current-contract releases in Discover.
 
-### Local review before publication
+### Local behavior review for future package releases
 
 Local package behavior must be reviewed before consolidated release validation.
 The [extension development workflow](../.agents/skills/clipsx-extension-development/SKILL.md)
 describes the focused build and checkpoint procedure. Installed-platform
 certification requirements remain in [RELEASE.md](RELEASE.md).
 
-### 1. Complete extension catalog sync and smoke test
+### 1. Verify extension publication and installed behavior
 
-Merge the reviewed host v3.2 contract and package tool before publishing new
-packages. Rebuild and publish six immutable 2.0.0 extension archives, replace
-the reviewed registry metadata with their exact generated records, and publish
-the signed index and signature pair. Verify the public catalog, registry-to-web
-portable-setting reconciliation and readback, then test Discover and each
-package on installed desktop builds. Release the desktop app last. A source
-merge alone does not make an archive visible in Discover.
+The six immutable 2.0.0 extension archives and signed catalog are published.
+The public catalog and registry-to-web portable-setting reconciliation and
+readback have been checked. Test Discover and each package on installed desktop
+builds before releasing the desktop app. A package source merge publishes its
+checked archive; the separate signed registry merge makes it visible in Discover.
+Configure the publication GitHub App described in the extension and registry
+release guides, then verify the complete automated handoff with the next real
+versioned package release. Do not bump package versions solely to test it.
 
 ### 2. Configure production desktop signing
 
-Release branch pushes prepare immutable candidates for Windows x64, Linux x64,
-macOS arm64 and macOS x64. A local SimplySign helper packages the CI-built
-Windows executable; CI verifies the installer, application and uninstaller,
-then signs updater bytes and assembles a complete staging draft.
+App/build-input pushes on release branches save tested binaries for Windows x64,
+Linux x64 and both Mac architectures. Trusted main tooling prepares an explicit
+saved build and preserves completed platforms on retries. SimplySign packages
+and signs Windows locally; hosted verification and finalization assemble the
+complete draft without recompiling the app or frontend.
 
-- [ ] Roll the infrastructure workflows onto main and add Release readiness to
-      the existing main ruleset using the documented additive setup command.
+- [x] Deploy trusted release orchestration and require the proven aggregate CI
+      gate plus Release readiness, preserving other main protections.
 - [ ] Configure public production build variables, the pinned Windows signing
       thumbprint, Developer ID certificate and App Store Connect team API key.
 - [ ] Back up the existing updater private key and retain the embedded public key.
@@ -67,8 +69,9 @@ an Apple Developer account, Developer ID credentials, and notarization access.
 
 ### 3. Certify the release candidate
 
-- [ ] Choose one successful saved build and prepare an explicit candidate using
-      trusted main tooling; preserve completed platforms on retries.
+- [ ] Run shared app preflight before app/build-input release changes. Choose
+      an explicit successful saved build; its app-input inventory and public
+      production variables must match the selected release source.
 - [ ] Test the installed artifacts on Windows, macOS, and Linux/X11 using the
       applicable checklist in [RELEASE.md](RELEASE.md). Record failures and fix
       release blockers; rerun only the affected checks after a change.
@@ -78,9 +81,10 @@ an Apple Developer account, Developer ID credentials, and notarization access.
 - [ ] Confirm there are no unresolved high-severity security findings or secrets
       in the repository, logs, or distributable artifacts.
 
-There is no separate "pre-certification product freeze." The candidate revision
-and its draft artifacts are the boundary. If that revision changes, rebuild the
-draft and repeat the affected certification checks.
+The selected app-input inventory and finalized bytes form the release boundary.
+Docs/release-tooling revisions can differ; actual app/configuration changes need
+a new build. Newer builds do not automatically supersede a selected candidate.
+Changed finalized/certified assets require another candidate and certification.
 
 ### 4. Publish
 

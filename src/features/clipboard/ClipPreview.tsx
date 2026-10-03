@@ -1,6 +1,6 @@
+import { Trans, useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ChevronLeft, ChevronRight, ScanText, Sparkles, X } from 'lucide-react'
@@ -56,6 +56,8 @@ export const ViewTabIcon = ({
   dark: string | null
   scale: number
 }) => {
+  useTranslation()
+
   if (!light) return null
   const style = scale === 1 ? undefined : { transform: `scale(${scale})` }
   if (!dark) return <img alt="" className="h-3 w-3 shrink-0" src={light} style={style} />
@@ -261,7 +263,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
             {toolbarScroll.canScrollLeft && (
               <button
                 type="button"
-                aria-label="Scroll actions left"
+                aria-label={i18n.t('desktopUi.scrollActionsLeft')}
                 onClick={() => scrollToolbarBy(-1)}
                 className="absolute left-0 z-10 flex h-5 w-4 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-slate-200/60 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-slate-300"
               >
@@ -315,8 +317,8 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                       action?.unavailableReason ??
                       decision?.reason ??
                       (transformer?.providerAvailable === false
-                        ? 'Configure Local Text Generation'
-                        : 'Unavailable for this clip')
+                        ? i18n.t('desktopUi.configureLocalTextGeneration')
+                        : i18n.t('desktopUi.unavailableForThisClip'))
                     return (
                       <button
                         type="button"
@@ -352,8 +354,8 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 <button
                   ref={toolsTriggerRef}
                   type="button"
-                  aria-label="Open clip tools"
-                  title="Tools"
+                  aria-label={i18n.t('desktopUi.openClipTools')}
+                  title={i18n.t('desktopUi.tools')}
                   aria-haspopup="dialog"
                   aria-expanded={toolsOpen}
                   onClick={() => {
@@ -378,7 +380,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
             {toolbarScroll.canScrollRight && (
               <button
                 type="button"
-                aria-label="Scroll actions right"
+                aria-label={i18n.t('desktopUi.scrollActionsRight')}
                 onClick={() => scrollToolbarBy(1)}
                 className="absolute right-0 z-10 flex h-5 w-4 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-slate-200/60 hover:text-gray-600 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-slate-300"
               >
@@ -451,16 +453,27 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 </button>
                 <button
                   type="button"
-                  aria-label={`${['completed', 'failed', 'cancelled'].includes(job.status) ? 'Delete' : 'Cancel'} ${job.displayLabel} result`}
+                  aria-label={i18n.t(
+                    ['completed', 'failed', 'cancelled'].includes(job.status)
+                      ? 'desktopUi.deleteNamedResult'
+                      : 'desktopUi.cancelNamedResult',
+                    { label: job.displayLabel }
+                  )}
                   title={
                     ['completed', 'failed', 'cancelled'].includes(job.status)
-                      ? 'Delete result'
-                      : 'Cancel job'
+                      ? i18n.t('desktopUi.deleteResult')
+                      : i18n.t('desktopUi.cancelJob')
                   }
                   className="rounded-r-md p-1 hover:bg-red-500/10 hover:text-red-600"
                   onClick={() => {
                     const terminal = ['completed', 'failed', 'cancelled'].includes(job.status)
-                    if (terminal && !window.confirm(`Delete ${job.displayLabel} result?`)) return
+                    if (
+                      terminal &&
+                      !window.confirm(
+                        i18n.t('desktopUi.deleteNamedResultConfirm', { label: job.displayLabel })
+                      )
+                    )
+                      return
                     void invoke(terminal ? 'delete_extension_result' : 'cancel_extension_job', {
                       jobId: job.jobId,
                     })
@@ -493,7 +506,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                 >
                   <DropdownMenuTrigger asChild>
                     <button className="ml-auto shrink-0 rounded-md px-2 py-1 text-[10px] text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10">
-                      Use by default…
+                      <Trans i18nKey="desktopUi.useByDefault" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" sideOffset={4} className="min-w-44 text-xs">
@@ -503,7 +516,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
                         className="px-2 py-1.5 text-xs"
                         onSelect={() => void visibleTabs.onPreferActive(scope)}
                       >
-                        Always for this {scope}
+                        <Trans i18nKey="desktopUi.alwaysForThis" /> {scope}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
@@ -541,7 +554,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
         )}
         {selectedResultId && !selectedResult && (
           <div className="flex h-full items-center justify-center text-xs text-slate-500">
-            Loading result…
+            <Trans i18nKey="desktopUi.loadingResult" />
           </div>
         )}
       </div>
@@ -603,7 +616,11 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
               OCR {ocr.state}…
             </span>
           )}
-          {ocr?.state === 'failed' && <span className="text-red-500">OCR failed</span>}
+          {ocr?.state === 'failed' && (
+            <span className="text-red-500">
+              <Trans i18nKey="desktopUi.ocrFailed" />
+            </span>
+          )}
           {ocr?.state === 'ready' && ocr.text.trim() && (
             <span className="text-emerald-600 dark:text-emerald-400">OCR</span>
           )}

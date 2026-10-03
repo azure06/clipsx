@@ -70,7 +70,7 @@ export const BottomBar = () => {
 
       {/* Right: Icon and Active View Indicator */}
       <div className="hidden sm:flex items-center gap-1 opacity-60 dark:opacity-40 uppercase shrink-0 pl-4">
-        {activeView === 'clips' && (
+        {activeView === 'clipsx' && (
           <img
             src="/monochromatic.svg"
             alt={t('bottomBar.iconAlt')}

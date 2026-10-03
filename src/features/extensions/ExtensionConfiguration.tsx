@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
@@ -40,6 +42,8 @@ export function SavedSetupsEditor({
   detail: PackageDetail
   onChanged: () => Promise<void>
 }) {
+  useTranslation()
+
   const first = detail.transformers[0]
   const [setups, setSetups] = useState<SavedSetup[]>([])
   const [transformerId, setTransformerId] = useState(first?.id ?? '')
@@ -116,7 +120,7 @@ export function SavedSetupsEditor({
     setErrors(next)
     const label = selected && !copyMode ? selected.label : name.trim()
     if (Object.keys(next).length || !label) {
-      if (!label) setError('Enter a setup name.')
+      if (!label) setError(i18n.t('desktopUi.enterASetupName'))
       return
     }
     setBusy(true)
@@ -149,12 +153,7 @@ export function SavedSetupsEditor({
     }
   }
   const remove = async (setup: SavedSetup) => {
-    if (
-      !window.confirm(
-        'Delete this setup? Its automation rules will be disabled. Existing results stay available.'
-      )
-    )
-      return
+    if (!window.confirm(i18n.t('desktopUi.deleteThisSetupItsAutomationRulesWillBeDisabled'))) return
     setBusy(true)
     setError(null)
     try {
@@ -172,12 +171,11 @@ export function SavedSetupsEditor({
   return (
     <div className="grid gap-4">
       <p className="text-xs leading-5 text-slate-500">
-        Saved setups are reusable choices. Changes apply to future automatic runs; existing results
-        stay unchanged.
+        <Trans i18nKey="desktopUi.savedSetupsAreReusableChoicesChangesApplyToFuture" />
       </p>
       {detail.transformers.length > 1 && (
         <Select
-          label="Operation"
+          label={i18n.t('desktopUi.operation')}
           value={transformerId}
           disabled={busy}
           className={controlClass}
@@ -211,7 +209,7 @@ export function SavedSetupsEditor({
           />
           {(!selected || copyMode) && (
             <label className="grid gap-1.5 text-xs font-semibold">
-              Setup name
+              <Trans i18nKey="desktopUi.setupName" />
               <input
                 className={controlClass}
                 value={name}
@@ -226,7 +224,9 @@ export function SavedSetupsEditor({
               disabled={busy || (selected && !selected.available)}
               onClick={() => void save()}
             >
-              {selected && !copyMode ? 'Save changes' : 'Save setup'}
+              {selected && !copyMode
+                ? i18n.t('desktopUi.saveChanges')
+                : i18n.t('desktopUi.saveSetup')}
             </Button>
             {selected && !copyMode && (
               <>
@@ -239,7 +239,7 @@ export function SavedSetupsEditor({
                     setName('')
                   }}
                 >
-                  Save as another setup
+                  <Trans i18nKey="desktopUi.saveAsAnotherSetup" />
                 </Button>
                 <Button
                   variant="ghost"
@@ -247,7 +247,7 @@ export function SavedSetupsEditor({
                   disabled={busy}
                   onClick={() => void remove(selected)}
                 >
-                  Delete setup
+                  <Trans i18nKey="desktopUi.deleteSetup" />
                 </Button>
               </>
             )}
@@ -260,28 +260,30 @@ export function SavedSetupsEditor({
                   setName('')
                 }}
               >
-                Cancel
+                <Trans i18nKey="desktopUi.cancel" />
               </Button>
             )}
           </div>
         </>
       ) : (
         <p className="text-xs text-slate-500">
-          This extension has no configurable transformations.
+          <Trans i18nKey="desktopUi.thisExtensionHasNoConfigurableTransformations" />
         </p>
       )}
       {setups.some(item => !item.available) && (
         <div className="grid gap-2">
-          <p className="text-xs font-semibold text-slate-500">Unavailable setups</p>
+          <p className="text-xs font-semibold text-slate-500">
+            <Trans i18nKey="desktopUi.unavailableSetups" />
+          </p>
           {setups
             .filter(item => !item.available)
             .map(item => (
               <div key={item.id} className="flex items-center gap-2 text-xs">
                 <span className="min-w-0 flex-1">
-                  {item.label} — incompatible with the installed operation
+                  {item.label} <Trans i18nKey="desktopUi.incompatibleWithTheInstalledOperation" />
                 </span>
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => void remove(item)}>
-                  Delete {item.label}
+                  <Trans i18nKey="desktopUi.delete" /> {item.label}
                 </Button>
               </div>
             ))}
@@ -307,6 +309,8 @@ export function AutomationEditor({
   request?: ExtensionSettingsRequest | null
   onChanged: () => Promise<void>
 }) {
+  useTranslation()
+
   const [automation, setAutomation] = useState<{ revision: number; rules: AutomationRule[] }>({
     revision: 0,
     rules: [],
@@ -422,7 +426,9 @@ export function AutomationEditor({
   }
   if (!detail.activations.length)
     return (
-      <p className="text-xs text-slate-500">This extension does not declare capture automation.</p>
+      <p className="text-xs text-slate-500">
+        <Trans i18nKey="desktopUi.thisExtensionDoesNotDeclareCaptureAutomation" />
+      </p>
     )
   return (
     <div className="grid gap-4">
@@ -432,7 +438,7 @@ export function AutomationEditor({
           className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs"
         >
           <p>
-            Permission is required for this package release. Rules stay inactive until approved.
+            <Trans i18nKey="desktopUi.permissionIsRequiredForThisPackageReleaseRulesStay" />
           </p>
           {automation.rules.some(rule => rule.enabled) && (
             <Button
@@ -442,17 +448,16 @@ export function AutomationEditor({
               disabled={busy}
               onClick={() => void save(automation.rules)}
             >
-              Review permissions
+              <Trans i18nKey="desktopUi.reviewPermissions" />
             </Button>
           )}
         </div>
       )}
       <p className="text-xs leading-5 text-slate-500">
-        Choose which copied content starts an operation. Rules reuse a setup; they do not maintain
-        separate parameter fields. Results stay attached to the source clip.
+        <Trans i18nKey="desktopUi.chooseWhichCopiedContentStartsAnOperationRulesReuse" />
       </p>
       <Select
-        label="Operation"
+        label={i18n.t('desktopUi.operation')}
         ariaLabel="Automation operation"
         className={controlClass}
         value={activationId}
@@ -468,13 +473,16 @@ export function AutomationEditor({
         }))}
       />
       <Select
-        label="Copied content"
+        label={i18n.t('desktopUi.copiedContent')}
         className={controlClass}
         value={applicationId}
         onChange={setApplicationId}
-        placeholder="Choose an observed application"
+        placeholder={i18n.t('desktopUi.chooseAnObservedApplication')}
         options={[
-          { value: 'all', label: 'All copied clips' },
+          {
+            value: 'all',
+            label: i18n.t('desktopUi.allCopiedClips'),
+          },
           ...applications.map(item => ({
             value: `${item.platform}\u0000${item.id}`,
             label: `From ${item.displayName}`,
@@ -483,20 +491,19 @@ export function AutomationEditor({
       />
       {!applications.length && (
         <p className="text-[11px] text-slate-500">
-          All copied clips works without application identity. Copy from an application to add a
-          specific source rule.
+          <Trans i18nKey="desktopUi.allCopiedClipsWorksWithoutApplicationIdentityCopyFrom" />
         </p>
       )}
       <Select
-        label="Setup"
+        label={i18n.t('desktopUi.setup')}
         ariaLabel="Automation setup"
         className={controlClass}
         value={setupRef}
         onChange={setSetupRef}
-        placeholder="Choose a setup"
+        placeholder={i18n.t('desktopUi.chooseASetup')}
         groups={[
           {
-            label: 'Built-in setups',
+            label: i18n.t('desktopUi.builtInSetups'),
             options: builtin.map(item => ({
               value: item.value,
               label: item.label + (!item.available ? ' — configure and save first' : ''),
@@ -504,7 +511,7 @@ export function AutomationEditor({
             })),
           },
           {
-            label: 'Saved setups',
+            label: i18n.t('desktopUi.savedSetups'),
             options: saved.map(item => ({
               value: item.value,
               label: item.label + (!item.available ? ' — unavailable' : ''),
@@ -518,15 +525,15 @@ export function AutomationEditor({
           role="alert"
           className="rounded-lg bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
         >
-          A generation model is not configured.{' '}
+          <Trans i18nKey="desktopUi.aGenerationModelIsNotConfigured" />{' '}
           <button
             type="button"
             className="underline"
             onClick={() => useUIStore.getState().setActiveView('intelligence')}
           >
-            Configure Local Text Generation
+            <Trans i18nKey="desktopUi.configureLocalTextGeneration" />
           </button>{' '}
-          before testing this rule.
+          <Trans i18nKey="desktopUi.beforeTestingThisRule" />
         </p>
       )}
       <div>
@@ -561,7 +568,7 @@ export function AutomationEditor({
             void save([...automation.rules.filter(item => item.id !== rule.id), rule])
           }}
         >
-          Add rule
+          <Trans i18nKey="desktopUi.addRule" />
         </Button>
       </div>
       <div className="space-y-2">
@@ -583,7 +590,7 @@ export function AutomationEditor({
             />
             <span className="min-w-0 flex-1">
               <span className="block font-semibold">
-                {rule.application?.displayName ?? 'All copied clips'}
+                {rule.application?.displayName ?? i18n.t('desktopUi.allCopiedClips')}
               </span>
               <span className="mt-1 block text-[11px] text-slate-500">
                 {rule.setupLabel}
@@ -592,7 +599,7 @@ export function AutomationEditor({
             </span>
             <button
               type="button"
-              aria-label="Delete automation rule"
+              aria-label={i18n.t('desktopUi.deleteAutomationRule')}
               disabled={busy}
               onClick={() => void save(automation.rules.filter(item => item.id !== rule.id))}
               className="rounded p-2 text-slate-400 hover:bg-red-500/10 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"

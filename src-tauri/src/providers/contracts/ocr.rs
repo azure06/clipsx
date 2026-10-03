@@ -21,6 +21,8 @@ pub struct OcrProviderDiagnostics {
     pub recovery_message: Option<String>,
 }
 
+// async_trait adds must_use to an already must-use boxed Future.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait OcrProvider: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;

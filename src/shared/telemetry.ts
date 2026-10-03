@@ -8,7 +8,36 @@ export type TelemetryIdentity = {
   authProvider: 'google' | 'github' | 'email' | 'unknown'
 }
 
-let reportingEnabled = true
+let reportingEnabled = false
+let settingsReportingEnabled: boolean | null = null
+
+type RuntimeSnapshot = {
+  appVersion: string
+  release: string
+  environment: string
+  os: string
+  osVersion?: string
+  arch: string
+  webviewEngine: string
+  webviewVersion?: string
+  userAgent: string
+  errorReportingEnabled: boolean
+}
+
+let runtime: RuntimeSnapshot | null = null
+
+export async function bootstrapTelemetry(): Promise<void> {
+  try {
+    runtime = await invoke<RuntimeSnapshot>('bootstrap_telemetry', {
+      userAgent: navigator.userAgent,
+    })
+    reportingEnabled = settingsReportingEnabled ?? runtime.errorReportingEnabled
+  } catch {
+    // A missing bridge or unreadable policy must never prevent the app rendering.
+    reportingEnabled = false
+    runtime = null
+  }
+}
 
 const sentryEnabled =
   Boolean(import.meta.env['VITE_SENTRY_DSN']) &&
@@ -21,13 +50,36 @@ const sanitizeEvent = <
 ): T => {
   delete event.request
   delete event.extra
+  if (runtime) {
+    event.release = runtime.release
+    event.environment = runtime.environment
+    event.tags = {
+      ...event.tags,
+      app_version: runtime.appVersion,
+      os: runtime.os,
+      arch: runtime.arch,
+      webview_engine: runtime.webviewEngine,
+      ...(runtime.webviewVersion ? { webview_version: runtime.webviewVersion } : {}),
+    }
+    event.contexts = {
+      ...event.contexts,
+      os: { name: runtime.os, ...(runtime.osVersion ? { version: runtime.osVersion } : {}) },
+      webview: { user_agent: runtime.userAgent },
+    }
+    if (runtime.userAgent) event.request = { headers: { 'User-Agent': runtime.userAgent } }
+  }
   if (event.message) event.message = 'A desktop webview failure occurred'
   event.exception?.values?.forEach(value => {
     value.value = 'A desktop webview failure occurred'
   })
-  event.breadcrumbs = event.breadcrumbs?.filter(breadcrumb =>
-    breadcrumb.category?.startsWith('clipsx.')
-  )
+  event.breadcrumbs = event.breadcrumbs
+    ?.filter(breadcrumb => breadcrumb.category?.startsWith('clipsx.'))
+    .map(breadcrumb => ({
+      category: breadcrumb.category,
+      message: breadcrumb.category,
+      level: breadcrumb.level,
+      timestamp: breadcrumb.timestamp,
+    }))
   return event
 }
 
@@ -61,7 +113,8 @@ Sentry.init({
 export const reactErrorHandler = Sentry.reactErrorHandler
 
 export function setDesktopErrorReportingEnabled(enabled: boolean): void {
-  reportingEnabled = enabled
+  settingsReportingEnabled = enabled
+  reportingEnabled = Boolean(runtime) && enabled
 }
 
 export function addTelemetryBreadcrumb(event: string): void {

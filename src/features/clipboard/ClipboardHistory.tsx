@@ -130,6 +130,26 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     void loadMoreClips(50)
   }, [loadMoreClips])
 
+  // Local User Timing only: measure once the first nonempty page has painted.
+  useEffect(() => {
+    if (clips.length === 0 || performance.getEntriesByName('clipsx.first-history-paint').length > 0)
+      return
+    let paintedFrame = 0
+    const frame = requestAnimationFrame(() => {
+      paintedFrame = requestAnimationFrame(() => {
+        performance.mark('clipsx.first-history-paint')
+        performance.measure('clipsx.startup-to-history', {
+          start: 0,
+          end: 'clipsx.first-history-paint',
+        })
+      })
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+      cancelAnimationFrame(paintedFrame)
+    }
+  }, [clips.length])
+
   // Infinite scroll observer
   useEffect(() => {
     const trigger = loadMoreTriggerRef.current
@@ -619,7 +639,6 @@ export const ClipboardHistory = memo(function ClipboardHistory({
         aria-busy={loading || (resultsStale && !error)}
         className="relative flex min-h-0 flex-1 flex-col"
       >
-        {resultsStale && !error && <div aria-hidden="true" className="loading-ring" />}
         {renderContent()}
       </div>
     </div>

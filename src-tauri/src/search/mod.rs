@@ -327,6 +327,8 @@ struct SourceContext<'a> {
     semantic_eligible: Option<&'a HashMap<String, i64>>,
 }
 
+// async_trait adds must_use to an already must-use boxed Future.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 trait SearchSource: Send + Sync {
     fn descriptor(&self) -> StaticSearchSourceDescriptor;

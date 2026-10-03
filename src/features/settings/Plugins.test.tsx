@@ -1,6 +1,7 @@
 import userEvent from '@testing-library/user-event'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '../../i18n'
 import { Plugins } from './Plugins'
 import { PackageDetailView } from './extensions/PackageDetail'
 import type { ExtensionCatalog, PackageDetail } from './extensions/types'
@@ -316,8 +317,15 @@ describe('extension installation feedback', () => {
 
 describe('extension catalog availability', () => {
   beforeEach(() => mockInvoke.mockReset())
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
 
   it('explains a failed first registry check and offers retry', async () => {
+    let rejectCheck!: (reason: Error) => void
+    const pendingCheck = new Promise<never>((_, reject) => {
+      rejectCheck = reject
+    })
     mockInvoke.mockImplementation((command: string) => {
       if (command === 'get_extension_catalog') {
         return Promise.resolve({
@@ -330,7 +338,7 @@ describe('extension catalog availability', () => {
           },
         })
       }
-      if (command === 'check_extension_updates') return Promise.reject(new Error('HTTP 404'))
+      if (command === 'check_extension_updates') return pendingCheck
       if (command === 'list_core_utilities') return Promise.resolve([])
       if (
         command === 'get_extension_developer_mode' ||
@@ -344,7 +352,23 @@ describe('extension catalog availability', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Discover' }))
 
     expect(await screen.findByText('Extension catalog unavailable')).toBeInTheDocument()
-    expect(screen.getByText(/Could not load the signed registry/)).toBeInTheDocument()
+    expect(screen.getByText('The signed registry has not been loaded yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/Could not load the signed registry/)).not.toBeInTheDocument()
+    await act(async () => {
+      rejectCheck(new Error('HTTP 404'))
+      await pendingCheck.catch(() => undefined)
+    })
+    expect(await screen.findByText(/Could not load the signed registry/)).toBeInTheDocument()
+    await act(async () => {
+      await i18n.changeLanguage('ja')
+    })
+    expect(
+      screen.getByText(i18n.t('desktopUi.couldNotLoadTheSignedRegistryCheckYourConnection'))
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Could not load the signed registry/)).not.toBeInTheDocument()
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
     expect(screen.queryByText('Nothing matches this search')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Retry catalog' }))
     await waitFor(() =>

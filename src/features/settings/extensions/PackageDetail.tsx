@@ -1,3 +1,5 @@
+import { Trans, useTranslation } from 'react-i18next'
+import i18n from '../../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ExternalLink, KeyRound, RotateCcw, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
@@ -12,23 +14,58 @@ import type { ExtensionSettingsRequest } from '../../../stores/uiStore'
 type DetailTab =
   'overview' | 'settings' | 'setups' | 'automation' | 'permissions' | 'actions' | 'diagnostics'
 const tabs: Array<{ id: DetailTab; label: string }> = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'settings', label: 'General' },
-  { id: 'setups', label: 'Saved setups' },
-  { id: 'automation', label: 'Automation' },
-  { id: 'permissions', label: 'Permissions' },
-  { id: 'actions', label: 'Actions' },
-  { id: 'diagnostics', label: 'Diagnostics' },
+  {
+    id: 'overview',
+    get label() {
+      return i18n.t('desktopUi.overview')
+    },
+  },
+  {
+    id: 'settings',
+    get label() {
+      return i18n.t('desktopUi.general')
+    },
+  },
+  {
+    id: 'setups',
+    get label() {
+      return i18n.t('desktopUi.savedSetups')
+    },
+  },
+  {
+    id: 'automation',
+    get label() {
+      return i18n.t('desktopUi.automation')
+    },
+  },
+  {
+    id: 'permissions',
+    get label() {
+      return i18n.t('desktopUi.permissions')
+    },
+  },
+  {
+    id: 'actions',
+    get label() {
+      return i18n.t('desktopUi.actions')
+    },
+  },
+  {
+    id: 'diagnostics',
+    get label() {
+      return i18n.t('desktopUi.diagnostics')
+    },
+  },
 ]
 
 const formatBytes = (value?: number | null) =>
   value == null
-    ? 'Not recorded'
+    ? i18n.t('desktopUi.notRecorded')
     : value < 1024 * 1024
       ? `${Math.ceil(value / 1024)} KB`
       : `${(value / 1024 / 1024).toFixed(2)} MB`
 const formatDate = (value?: string | null) =>
-  value ? new Date(value).toLocaleDateString() : 'Not recorded'
+  value ? new Date(value).toLocaleDateString() : i18n.t('desktopUi.notRecorded')
 
 export const PackageDetailView = ({
   packageId,
@@ -45,6 +82,8 @@ export const PackageDetailView = ({
   request?: ExtensionSettingsRequest | null
   onChanged: () => Promise<void>
 }) => {
+  useTranslation()
+
   const [tab, setTab] = useState<DetailTab>(request?.section ?? 'overview')
   const [values, setValues] = useState(detail.settings)
   const [mode, setMode] = useState<UpdateMode>(detail.autoUpdateMode)
@@ -112,13 +151,16 @@ export const PackageDetailView = ({
     await runOperation(() => invoke('install_registry_extension', { packageId, version }))
   }
   const metadata = [
-    ['Identifier', registryPackage.packageId],
-    ['Installed', installed ? `v${installed.version}` : 'Not installed'],
-    ['Release', `v${registryPackage.version}`],
-    ['Updated', formatDate(registryPackage.updatedAt)],
-    ['Published', formatDate(registryPackage.publishedAt)],
-    ['Size', formatBytes(registryPackage.archiveSizeBytes)],
-    ['License', registryPackage.license ?? 'Not recorded'],
+    [i18n.t('desktopUi.identifier'), registryPackage.packageId],
+    [
+      i18n.t('desktopUi.installedf8b3'),
+      installed ? `v${installed.version}` : i18n.t('desktopUi.notInstalled'),
+    ],
+    [i18n.t('desktopUi.release'), `v${registryPackage.version}`],
+    [i18n.t('desktopUi.updated'), formatDate(registryPackage.updatedAt)],
+    [i18n.t('desktopUi.published'), formatDate(registryPackage.publishedAt)],
+    [i18n.t('desktopUi.size'), formatBytes(registryPackage.archiveSizeBytes)],
+    [i18n.t('desktopUi.license'), registryPackage.license ?? i18n.t('desktopUi.notRecorded')],
   ]
 
   return (
@@ -157,28 +199,30 @@ export const PackageDetailView = ({
               <span
                 className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${installed.enabled ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-500/10 text-slate-500'}`}
               >
-                {installed.enabled ? 'Enabled' : 'Disabled'}
+                {installed.enabled ? i18n.t('desktopUi.enabled') : i18n.t('desktopUi.disabled')}
               </span>
             )}
             {detail.update && (
               <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
-                Update available
+                <Trans i18nKey="desktopUi.updateAvailable" />
               </span>
             )}
             {detail.revoked && (
               <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:text-red-300">
-                Revoked
+                <Trans i18nKey="desktopUi.revoked" />
               </span>
             )}
           </div>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
             {registryPackage.publisher?.displayName ??
-              (installed?.source === 'developer' ? 'Local package' : 'Registry publisher')}{' '}
+              (installed?.source === 'developer'
+                ? i18n.t('desktopUi.localPackage')
+                : i18n.t('desktopUi.registryPublisher'))}{' '}
             · {registryPackage.packageId}
           </p>
         </div>
         <Button variant="ghost" size="sm" onClick={onClose}>
-          Back
+          <Trans i18nKey="desktopUi.back" />
         </Button>
       </div>
 
@@ -193,11 +237,13 @@ export const PackageDetailView = ({
         ) : null}
         {installed ? (
           <span className="mr-auto text-xs text-slate-600 dark:text-slate-300">
-            {installed.enabled ? 'Participating in ClipsX' : 'Installed but inactive'}
+            {installed.enabled
+              ? i18n.t('desktopUi.participatingInClipsx')
+              : i18n.t('desktopUi.installedButInactive')}
           </span>
         ) : (
           <span className="mr-auto text-xs text-slate-600 dark:text-slate-300">
-            Ready to install from the reviewed registry
+            <Trans i18nKey="desktopUi.readyToInstallFromTheReviewedRegistry" />
           </span>
         )}
         {detail.update ? (
@@ -207,7 +253,7 @@ export const PackageDetailView = ({
             leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
             onClick={() => void install(detail.update!.version)}
           >
-            Review update
+            <Trans i18nKey="desktopUi.reviewUpdate" />
           </Button>
         ) : !installed ? (
           <Button
@@ -216,7 +262,7 @@ export const PackageDetailView = ({
             disabled={detail.revoked}
             onClick={() => void install(registryPackage.version)}
           >
-            Install
+            <Trans i18nKey="desktopUi.install" />
           </Button>
         ) : null}
       </div>
@@ -250,7 +296,7 @@ export const PackageDetailView = ({
       {tab === 'overview' && (
         <div className="space-y-5">
           <p className="max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-            {registryPackage.description || 'No package description was provided.'}
+            {registryPackage.description || i18n.t('desktopUi.noPackageDescriptionWasProvided')}
           </p>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
             {metadata.map(([label, value]) => (
@@ -279,9 +325,9 @@ export const PackageDetailView = ({
           </div>
           <div className="flex flex-wrap gap-3 text-xs">
             {[
-              ['Homepage', registryPackage.homepageUrl],
-              ['Repository', registryPackage.repositoryUrl],
-              ['Documentation', registryPackage.documentationUrl],
+              [i18n.t('desktopUi.homepage'), registryPackage.homepageUrl],
+              [i18n.t('desktopUi.repository'), registryPackage.repositoryUrl],
+              [i18n.t('desktopUi.documentation'), registryPackage.documentationUrl],
             ].flatMap(([label, value]) =>
               value
                 ? [
@@ -305,9 +351,9 @@ export const PackageDetailView = ({
       {tab === 'settings' && (
         <div className="space-y-3">
           {!installed ? (
-            <Empty text="Install this package to change its settings." />
+            <Empty text={i18n.t('desktopUi.installToConfigure')} />
           ) : installed.settings.length === 0 ? (
-            <Empty text="This package has no user settings." />
+            <Empty text={i18n.t('desktopUi.noUserSettings')} />
           ) : (
             installed.settings.map(setting => (
               <label
@@ -362,27 +408,26 @@ export const PackageDetailView = ({
       {tab === 'permissions' && (
         <div className="space-y-4">
           <p className="text-xs leading-5 text-slate-500">
-            External data only leaves ClipsX after a package-release-specific consent. Credentials
-            stay in the operating system credential store and are never shown to the package.
+            <Trans i18nKey="desktopUi.externalDataOnlyLeavesClipsxAfterAPackageRelease" />
           </p>
           <PermissionGroup
-            title="HTTPS endpoints"
+            title={i18n.t('desktopUi.httpsEndpoints')}
             values={installed?.httpOrigins ?? registryPackage.httpOrigins}
           />
           <PermissionGroup
-            title="External navigation"
+            title={i18n.t('desktopUi.externalNavigation')}
             values={
               installed?.externalNavigationOrigins ?? registryPackage.externalNavigationOrigins
             }
           />
           <PermissionGroup
-            title="Credential slots"
+            title={i18n.t('desktopUi.credentialSlots')}
             values={installed?.credentialLabels ?? registryPackage.credentialLabels}
             icon={<KeyRound className="h-3.5 w-3.5" />}
           />
           {detail.grantsRevokedOnUpdate && (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/[.06] px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-              Updating revokes remembered consent. The next external request asks again.
+              <Trans i18nKey="desktopUi.updatingRevokesRememberedConsentTheNextExternalRequestAsks" />
             </div>
           )}
         </div>
@@ -394,8 +439,8 @@ export const PackageDetailView = ({
             <Empty
               text={
                 installed?.enabled
-                  ? 'This package has no currently available actions.'
-                  : 'Enable this package to manage its actions.'
+                  ? i18n.t('desktopUi.thisPackageHasNoCurrentlyAvailableActions')
+                  : i18n.t('desktopUi.enableThisPackageToManageItsActions')
               }
             />
           ) : (
@@ -431,7 +476,7 @@ export const PackageDetailView = ({
                         <Tooltip.Trigger asChild>
                           <button
                             type="button"
-                            aria-label="Remove shortcut"
+                            aria-label={i18n.t('desktopUi.removeShortcut')}
                             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-500/10 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-slate-200"
                             disabled={operationBusy}
                             onClick={() =>
@@ -451,7 +496,7 @@ export const PackageDetailView = ({
                             className="z-100 rounded bg-white/95 px-2 py-1 text-[10px] text-gray-900 shadow dark:bg-slate-900/95 dark:text-white"
                             sideOffset={5}
                           >
-                            Remove shortcut
+                            <Trans i18nKey="desktopUi.removeShortcut" />
                             <Tooltip.Arrow className="fill-white dark:fill-slate-900" />
                           </Tooltip.Content>
                         </Tooltip.Portal>
@@ -470,7 +515,7 @@ export const PackageDetailView = ({
           <div className="rounded-xl border border-slate-200/65 bg-white/30 p-3 text-xs dark:border-white/[.08] dark:bg-white/[.025]">
             <div className="mb-2 flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
               <ShieldCheck className="h-4 w-4 text-emerald-500" />
-              Package health
+              <Trans i18nKey="desktopUi.packageHealth" />
             </div>
             {detail.diagnostics.length ? (
               detail.diagnostics.map(item => (
@@ -479,7 +524,9 @@ export const PackageDetailView = ({
                 </p>
               ))
             ) : (
-              <p className="text-slate-500">No runtime problems have been reported.</p>
+              <p className="text-slate-500">
+                <Trans i18nKey="desktopUi.noRuntimeProblemsHaveBeenReported" />
+              </p>
             )}
           </div>
           {installed?.status === 'quarantined' && (
@@ -489,7 +536,7 @@ export const PackageDetailView = ({
               leftIcon={<RotateCcw className="h-3.5 w-3.5" />}
               onClick={() => void runOperation(() => invoke('recover_extension', { packageId }))}
             >
-              Recover package
+              <Trans i18nKey="desktopUi.recoverPackage" />
             </Button>
           )}
           {installed && (
@@ -499,7 +546,11 @@ export const PackageDetailView = ({
               isLoading={operationBusy}
               leftIcon={<Trash2 className="h-3.5 w-3.5 text-red-500" />}
               onClick={() => {
-                if (window.confirm(`Remove ${registryPackage.displayName}?`))
+                if (
+                  window.confirm(
+                    i18n.t('desktopUi.removePackage', { name: registryPackage.displayName })
+                  )
+                )
                   void runOperation(() => invoke('uninstall_extension', { packageId })).then(
                     removed => {
                       if (removed) onClose()
@@ -507,13 +558,13 @@ export const PackageDetailView = ({
                   )
               }}
             >
-              Remove package
+              <Trans i18nKey="desktopUi.removePackage" />
             </Button>
           )}
           <div className="border-t border-slate-200/65 pt-4 dark:border-white/[.08]">
             <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
               <Zap className="h-3.5 w-3.5 text-violet-500" />
-              Automatic updates
+              <Trans i18nKey="desktopUi.automaticUpdates" />
               <Select
                 ariaLabel="Automatic updates"
                 value={mode}
@@ -521,16 +572,25 @@ export const PackageDetailView = ({
                 disabled={installed?.source === 'developer' || operationBusy}
                 onChange={next => void setUpdateMode(next)}
                 options={[
-                  { value: 'inherit', label: 'Use global preference' },
-                  { value: 'enabled', label: 'Always install safe updates' },
-                  { value: 'disabled', label: 'Never auto-update' },
+                  {
+                    value: 'inherit',
+                    label: i18n.t('desktopUi.useGlobalPreference'),
+                  },
+                  {
+                    value: 'enabled',
+                    label: i18n.t('desktopUi.alwaysInstallSafeUpdates'),
+                  },
+                  {
+                    value: 'disabled',
+                    label: i18n.t('desktopUi.neverAutoUpdate'),
+                  },
                 ]}
               />
             </label>
             <p className="mt-2 text-[10px] leading-4 text-slate-500">
               {detail.autoUpdateEligible
-                ? 'This release is eligible when automatic updates are enabled.'
-                : 'Only enabled, ready registry packages with unchanged permissions can update automatically.'}
+                ? i18n.t('desktopUi.thisReleaseIsEligibleWhenAutomaticUpdatesAreEnabled')
+                : i18n.t('desktopUi.onlyEnabledReadyRegistryPackagesWithUnchangedPermissionsCan')}
             </p>
           </div>
         </div>
@@ -547,30 +607,38 @@ const PermissionGroup = ({
   title: string
   values: string[]
   icon?: ReactNode
-}) => (
-  <div>
-    <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
-      {icon}
-      {title}
-    </div>
-    {values.length ? (
-      <div className="flex flex-wrap gap-1.5">
-        {values.map(value => (
-          <code
-            key={value}
-            className="rounded-md bg-slate-900/[.045] px-2 py-1 text-[10px] text-slate-600 dark:bg-white/[.06] dark:text-slate-300"
-          >
-            {value}
-          </code>
-        ))}
+}) => {
+  useTranslation()
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+        {icon}
+        {title}
       </div>
-    ) : (
-      <p className="text-xs text-slate-500">None declared.</p>
-    )}
-  </div>
-)
-const Empty = ({ text }: { text: string }) => (
-  <div className="rounded-xl border border-dashed border-slate-200/80 px-4 py-8 text-center text-xs text-slate-500 dark:border-white/15">
-    {text}
-  </div>
-)
+      {values.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {values.map(value => (
+            <code
+              key={value}
+              className="rounded-md bg-slate-900/[.045] px-2 py-1 text-[10px] text-slate-600 dark:bg-white/[.06] dark:text-slate-300"
+            >
+              {value}
+            </code>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">
+          <Trans i18nKey="desktopUi.noneDeclared" />
+        </p>
+      )}
+    </div>
+  )
+}
+const Empty = ({ text }: { text: string }) => {
+  useTranslation()
+  return (
+    <div className="rounded-xl border border-dashed border-slate-200/80 px-4 py-8 text-center text-xs text-slate-500 dark:border-white/15">
+      {text}
+    </div>
+  )
+}

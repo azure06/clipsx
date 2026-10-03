@@ -1,3 +1,4 @@
+import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
 import {
   getDeleteShortcut,
@@ -9,15 +10,69 @@ import {
 } from './shortcuts'
 
 export const APP_COMMANDS = [
-  { id: 'core.focus_search', label: 'Focus search', shortcut: 'Primary+K' },
-  { id: 'core.recall', label: 'Ask Recall', shortcut: 'Primary+Enter' },
-  { id: 'core.copy', label: 'Copy selected clip', shortcut: 'Primary+C' },
-  { id: 'core.copy_plain_text', label: 'Copy plain text', shortcut: 'Primary+Shift+C' },
-  { id: 'core.share', label: 'Share', shortcut: 'Primary+Shift+S' },
-  { id: 'core.favorite', label: 'Toggle favorite', shortcut: 'Primary+F' },
-  { id: 'core.pin', label: 'Toggle pin', shortcut: 'Primary+P' },
-  { id: 'core.open', label: 'Open in editor', shortcut: 'Primary+Shift+O' },
-  { id: 'core.delete', label: 'Delete selected clip', shortcut: '' },
+  {
+    id: 'core.focus_search',
+    get label() {
+      return i18n.t('desktopUi.focusSearch')
+    },
+    shortcut: 'Primary+K',
+  },
+  {
+    id: 'core.recall',
+    get label() {
+      return i18n.t('desktopUi.askRecall')
+    },
+    shortcut: 'Primary+Enter',
+  },
+  {
+    id: 'core.copy',
+    get label() {
+      return i18n.t('desktopUi.copySelectedClip')
+    },
+    shortcut: 'Primary+C',
+  },
+  {
+    id: 'core.copy_plain_text',
+    get label() {
+      return i18n.t('desktopUi.copyPlainText')
+    },
+    shortcut: 'Primary+Shift+C',
+  },
+  {
+    id: 'core.share',
+    get label() {
+      return i18n.t('desktopUi.share')
+    },
+    shortcut: 'Primary+Shift+S',
+  },
+  {
+    id: 'core.favorite',
+    get label() {
+      return i18n.t('desktopUi.toggleFavorite')
+    },
+    shortcut: 'Primary+F',
+  },
+  {
+    id: 'core.pin',
+    get label() {
+      return i18n.t('desktopUi.togglePin')
+    },
+    shortcut: 'Primary+P',
+  },
+  {
+    id: 'core.open',
+    get label() {
+      return i18n.t('desktopUi.openInEditorea1d')
+    },
+    shortcut: 'Primary+Shift+O',
+  },
+  {
+    id: 'core.delete',
+    get label() {
+      return i18n.t('desktopUi.deleteSelectedClip')
+    },
+    shortcut: '',
+  },
   ...Array.from({ length: 9 }, (_, index) => ({
     id: `core.quick_slot_${index + 1}`,
     label: `Quick slot ${index + 1}`,

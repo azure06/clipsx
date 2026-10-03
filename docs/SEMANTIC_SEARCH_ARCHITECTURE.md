@@ -15,6 +15,11 @@ Original clips remain usable if models or indexes fail. Capture never waits for
 embeddings. The 60,000-clip capacity target still requires installed-platform
 qualification; it is not a certified product claim.
 
+While search results refresh, the search bar shows a fading blue-to-violet beam
+following its rounded border. The previous results remain visible and temporarily
+inert until replacement succeeds. The beam stops on completion or failure;
+reduced-motion preferences replace its movement with a static border.
+
 ## Data flow
 
 ```mermaid
@@ -187,6 +192,8 @@ actual active bytes and estimates replacement space from the existing index.
 
 Recall starts only when the user submits a question. It searches eligible
 history independently of visible rows or pagination.
+While a Recall request runs, the search bar shows elapsed seconds from that
+request's start; the timer stops on its terminal event and resets for a new turn.
 
 ```text
 Question + fixed search scope

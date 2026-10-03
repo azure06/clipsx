@@ -7,6 +7,25 @@ sandboxed detail/dialog UI assets. The current contract is
 local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
+## Error reporting
+
+When the user enables desktop error reports, the host attributes unexpected
+extension failures to the validated package and contribution that executed.
+Reports distinguish installed package version from contribution version and
+include the failure stage, safe reason code, and extension/provider/host origin.
+Registry and developer-installed packages are covered; developer installs use
+the telemetry source label `local`. Metadata is snapshotted before execution or
+custom-view creation, so package changes cannot relabel an in-flight failure.
+
+Durable job reports are emitted only on an authoritative terminal failure,
+not on retries, waiting states, or cancellation. Custom-view error notifications
+must pass the existing token, webview-label, and expiry checks; their arbitrary
+message text is never sent to Sentry. Host-generated reports contain no clip
+IDs, settings, operation inputs/outputs, or bridge tokens. Extensions do not
+initialize Sentry, control reporting policy, or attach application metadata.
+Repeated identical reports are rate limited without changing failure counters,
+quarantine thresholds, job recovery, permissions, or the extension contract.
+
 ## One transformer path
 
 On clip selection, ClipsX matches operations against the whole clip, preferring
@@ -195,6 +214,20 @@ Workers do not prompt for consent.
 
 ## Execution, storage, and recovery
 
+Discovery reads package metadata without compiling components. Guest execution
+prepares only an eligible package; installation validation and guest availability
+checks remain required. Preparation uses the host's shared engine, in-memory cache,
+and Wasmtime's persistent cache, with a successful fallback when disk caching is
+unavailable.
+
+Detection recovery tracks detector/representation pairs and detector versions.
+Completed results, including empty facet lists, and unsupported outcomes are
+terminal. Selector mismatches, oversized inputs, and guest-reported unsupported
+inputs clear old facets in the same transaction. Startup batches only unfinished
+pairs; explicit redetection can force all pairs. Operational failures retain their
+existing retry and quarantine behavior. No package contract or execution limits
+change with this recovery policy.
+
 SQLite owns job state and deduplication. The coordinator executes one extension
 transformation at a time, favors manual jobs, and periodically admits background
 jobs. It revalidates source fingerprints, package checksum, live grants, enabled app rules,
@@ -246,6 +279,12 @@ quota bound, and committed with successful jobs. Rich settings and automation
 rules remain device-local; only reviewed primitive settings are portable.
 
 ## Build and publication
+
+Build the development-only tool with
+`cargo build --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool --features extension-tools`;
+`npm run extension:pack` and `npm run extension:validate` enable that feature.
+It is excluded from desktop installers. CI consumers must enable the feature
+when updating their pinned host revision to this tool contract.
 
 Keep the package's WIT copy equal to the host WIT. Use
 `clipsx-extension-tool pack`, `validate`, `inspect`, and `test` on the exact

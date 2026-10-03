@@ -98,6 +98,32 @@ pub fn log_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
+fn sanitize_native_event(
+    mut event: sentry::protocol::Event<'static>,
+) -> sentry::protocol::Event<'static> {
+    event.request = None;
+    event.server_name = None;
+    event.extra.clear();
+    event.breadcrumbs.values.retain(|breadcrumb| {
+        breadcrumb
+            .category
+            .as_deref()
+            .is_some_and(|category| category.starts_with("clipsx."))
+    });
+    for breadcrumb in &mut event.breadcrumbs.values {
+        breadcrumb.message = breadcrumb.category.clone();
+        breadcrumb.data.clear();
+    }
+    super::telemetry::enrich_runtime(&mut event);
+    if let Some(message) = event.message.as_mut() {
+        *message = "A native application failure occurred".into();
+    }
+    for value in event.exception.values.iter_mut() {
+        value.value = Some("A native application failure occurred".into());
+    }
+    event
+}
+
 pub fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     let explicitly_enabled = std::env::var("CLIPSX_SENTRY_ENABLED").as_deref() == Ok("true");
     if cfg!(debug_assertions) && !explicitly_enabled {
@@ -118,20 +144,11 @@ pub fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     }));
     options.send_default_pii = false;
     options.attach_stacktrace = true;
-    options.before_send = Some(std::sync::Arc::new(|mut event| {
+    options.before_send = Some(std::sync::Arc::new(|event| {
         if !error_reporting_enabled() {
             return None;
         }
-        event.request = None;
-        event.server_name = None;
-        event.extra.clear();
-        if let Some(message) = event.message.as_mut() {
-            *message = "A native application failure occurred".into();
-        }
-        for value in event.exception.values.iter_mut() {
-            value.value = Some("A native application failure occurred".into());
-        }
-        Some(event)
+        Some(sanitize_native_event(event))
     }));
     options.before_breadcrumb = Some(std::sync::Arc::new(|breadcrumb| {
         breadcrumb
@@ -143,14 +160,12 @@ pub fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
     let guard = sentry::init(options);
     sentry::configure_scope(|scope| {
         scope.set_tag("layer", "native");
-        scope.set_tag("app_version", env!("CARGO_PKG_VERSION"));
-        scope.set_tag("os", std::env::consts::OS);
-        scope.set_tag("arch", std::env::consts::ARCH);
     });
     Some(guard)
 }
 
 pub async fn initialize(database: &Path) -> anyhow::Result<()> {
+    set_error_reporting_enabled(false);
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(database)
         .create_if_missing(false);
@@ -429,6 +444,28 @@ pub fn frontend_message(event: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_events_remove_content_and_retain_only_reviewed_breadcrumbs() {
+        let event: sentry::protocol::Event<'static> = serde_json::from_value(serde_json::json!({
+            "message": "private-content-sentinel",
+            "server_name": "private-content-sentinel",
+            "request": { "url": "https://private-content-sentinel/", "headers": {"Cookie": "private-content-sentinel"}, "data": "private-content-sentinel" },
+            "extra": { "content": "private-content-sentinel" },
+            "exception": { "values": [{ "type": "Error", "value": "private-content-sentinel" }] },
+            "breadcrumbs": { "values": [{"category":"http", "message":"private-content-sentinel"}, {"category":"clipsx.error", "message":"private-content-sentinel", "data":{"content":"private-content-sentinel"}}] }
+        })).unwrap();
+        let sanitized = sanitize_native_event(event);
+        assert_eq!(sanitized.breadcrumbs.values.len(), 1);
+        if let Some(request) = &sanitized.request {
+            assert!(request.url.is_none());
+            assert_eq!(request.headers.len(), 1);
+            assert!(request.headers.contains_key("User-Agent"));
+        }
+        assert!(!serde_json::to_string(&sanitized)
+            .unwrap()
+            .contains("private-content-sentinel"));
+    }
+
     #[tokio::test]
     async fn policies_are_loaded_and_frontend_messages_are_allowlisted() {
         let (temp, repo) = crate::sync::tests::repo().await;
@@ -450,5 +487,9 @@ mod tests {
             frontend_message("auth_deep_link_callback_received"),
             Some("auth.deep_link.received")
         );
+        sqlx::query("UPDATE config_device_values SET value_json='invalid-json' WHERE key='diagnostics.error_reporting_enabled'").execute(&repo.pool).await.unwrap();
+        set_error_reporting_enabled(true);
+        assert!(initialize(&database).await.is_err());
+        assert!(!error_reporting_enabled());
     }
 }

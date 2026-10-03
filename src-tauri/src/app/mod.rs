@@ -5,6 +5,7 @@ pub(crate) mod global_shortcut;
 pub(crate) mod host;
 pub(crate) mod settings;
 pub(crate) mod state;
+pub(crate) mod telemetry;
 pub(crate) mod window_behavior;
 pub(crate) mod window_chrome;
 pub(crate) mod workers;

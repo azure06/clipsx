@@ -1,89 +1,193 @@
+import i18n from '../../i18n/index'
 type FailureDescription = {
   message: string
   action?: 'generation' | 'permissions'
 }
 
 const unknownFailure: FailureDescription = {
-  message: 'The operation failed for an unknown reason.',
+  get message() {
+    return i18n.t('desktopUi.theOperationFailedForAnUnknownReason')
+  },
 }
 
 const reasons: Record<string, FailureDescription> = {
   input_limit: {
-    message: 'The input exceeds the supported request size. Shorten it and try again.',
+    get message() {
+      return i18n.t('desktopUi.theInputExceedsTheSupportedRequestSizeShortenIt')
+    },
   },
   context_overflow: {
-    message:
-      'The model reported insufficient context. Shorten the input or choose a model with a larger context.',
+    get message() {
+      return i18n.t('desktopUi.theModelReportedInsufficientContextShortenTheInputOr')
+    },
     action: 'generation',
   },
   provider_not_configured: {
-    message: 'Local Text Generation is not configured.',
+    get message() {
+      return i18n.t('desktopUi.localTextGenerationIsNotConfigured')
+    },
     action: 'generation',
   },
-  provider_disabled: { message: 'Local Text Generation is disabled.', action: 'generation' },
+  provider_disabled: {
+    get message() {
+      return i18n.t('desktopUi.localTextGenerationIsDisabled')
+    },
+    action: 'generation',
+  },
   provider_configuration: {
-    message: 'The text generation configuration is invalid.',
+    get message() {
+      return i18n.t('desktopUi.theTextGenerationConfigurationIsInvalid')
+    },
     action: 'generation',
   },
   model_unavailable: {
-    message: 'The selected model is unavailable. Check or install it.',
+    get message() {
+      return i18n.t('desktopUi.theSelectedModelIsUnavailableCheckOrInstallIt')
+    },
     action: 'generation',
   },
   connection_unavailable: {
-    message: 'ClipsX cannot reach the model provider. Check that Ollama is running.',
+    get message() {
+      return i18n.t('desktopUi.clipsxCannotReachTheModelProviderCheckThatOllama')
+    },
     action: 'generation',
   },
   provider_timeout: {
-    message: 'The model provider did not finish within the allowed time. Try shorter input.',
+    get message() {
+      return i18n.t('desktopUi.theModelProviderDidNotFinishWithinTheAllowed')
+    },
   },
-  provider_rate_limited: { message: 'The model provider is temporarily limiting requests.' },
-  provider_server_error: { message: 'The model provider reported a temporary server error.' },
+  provider_rate_limited: {
+    get message() {
+      return i18n.t('desktopUi.theModelProviderIsTemporarilyLimitingRequests')
+    },
+  },
+  provider_server_error: {
+    get message() {
+      return i18n.t('desktopUi.theModelProviderReportedATemporaryServerError')
+    },
+  },
   provider_rejected: {
-    message: 'The model provider rejected the request. Its reason was not recognized.',
+    get message() {
+      return i18n.t('desktopUi.theModelProviderRejectedTheRequestItsReasonWas')
+    },
   },
-  invalid_response: { message: 'The model provider returned an invalid or incomplete response.' },
-  invalid_output: { message: 'The extension returned output that ClipsX cannot use.' },
+  invalid_response: {
+    get message() {
+      return i18n.t('desktopUi.theModelProviderReturnedAnInvalidOrIncompleteResponse')
+    },
+  },
+  invalid_output: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionReturnedOutputThatClipsxCannotUse')
+    },
+  },
   permission_required: {
-    message: 'A required extension permission is missing or was revoked.',
+    get message() {
+      return i18n.t('desktopUi.aRequiredExtensionPermissionIsMissingOrWasRevoked')
+    },
     action: 'permissions',
   },
-  unsupported_input: { message: 'This operation does not support the selected input.' },
-  invalid_input: { message: 'The selected input is not valid for this operation.' },
+  unsupported_input: {
+    get message() {
+      return i18n.t('desktopUi.thisOperationDoesNotSupportTheSelectedInput')
+    },
+  },
+  invalid_input: {
+    get message() {
+      return i18n.t('desktopUi.theSelectedInputIsNotValidForThisOperation')
+    },
+  },
   invalid_parameters: {
-    message: 'The operation parameters are invalid. Review its configuration.',
+    get message() {
+      return i18n.t('desktopUi.theOperationParametersAreInvalidReviewItsConfiguration')
+    },
   },
-  extension_failed: { message: 'The extension could not complete this operation.' },
-  extension_timeout: { message: 'The extension exceeded its execution deadline.' },
-  resource_limit: { message: 'The extension exceeded a host resource limit.' },
-  extension_trap: { message: 'The extension stopped unexpectedly during execution.' },
+  extension_failed: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionCouldNotCompleteThisOperation')
+    },
+  },
+  extension_timeout: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionExceededItsExecutionDeadline')
+    },
+  },
+  resource_limit: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionExceededAHostResourceLimit')
+    },
+  },
+  extension_trap: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionStoppedUnexpectedlyDuringExecution')
+    },
+  },
   extension_failed_after_output_limit: {
-    message:
-      'The extension could not complete after the model reached its output limit. Try shorter input.',
+    get message() {
+      return i18n.t('desktopUi.theExtensionCouldNotCompleteAfterTheModelReached')
+    },
   },
-  provider_cancelled: { message: 'Generation was cancelled.' },
-  user_cancelled: { message: 'You cancelled this operation.' },
+  provider_cancelled: {
+    get message() {
+      return i18n.t('desktopUi.generationWasCancelled')
+    },
+  },
+  user_cancelled: {
+    get message() {
+      return i18n.t('desktopUi.youCancelledThisOperation')
+    },
+  },
   stale_context: {
-    message: 'The source or authorization changed, so this operation was cancelled.',
+    get message() {
+      return i18n.t('desktopUi.theSourceOrAuthorizationChangedSoThisOperationWas')
+    },
   },
   extension_updated: {
-    message: 'The extension was updated. Start a new run with the current version.',
+    get message() {
+      return i18n.t('desktopUi.theExtensionWasUpdatedStartANewRunWith')
+    },
   },
-  extension_disabled: { message: 'The extension was disabled.' },
-  extension_uninstalled: { message: 'The extension was removed.' },
-  interrupted_too_often: { message: 'This operation was interrupted by repeated app restarts.' },
-  restart_recovery: { message: 'ClipsX is recovering this operation after a restart.' },
+  extension_disabled: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionWasDisabled')
+    },
+  },
+  extension_uninstalled: {
+    get message() {
+      return i18n.t('desktopUi.theExtensionWasRemoved')
+    },
+  },
+  interrupted_too_often: {
+    get message() {
+      return i18n.t('desktopUi.thisOperationWasInterruptedByRepeatedAppRestarts')
+    },
+  },
+  restart_recovery: {
+    get message() {
+      return i18n.t('desktopUi.clipsxIsRecoveringThisOperationAfterARestart')
+    },
+  },
   provider_unavailable: {
-    message: 'The generation provider is unavailable. Review Local Text Generation.',
+    get message() {
+      return i18n.t('desktopUi.theGenerationProviderIsUnavailableReviewLocalTextGeneration')
+    },
     action: 'generation',
   },
   provider_retry: {
-    message: 'The generation provider encountered a temporary problem. A retry is scheduled.',
+    get message() {
+      return i18n.t('desktopUi.theGenerationProviderEncounteredATemporaryProblemARetry')
+    },
   },
   provider_retries_exhausted: {
-    message: 'Generation failed after automatic retries. The original reason was not recorded.',
+    get message() {
+      return i18n.t('desktopUi.generationFailedAfterAutomaticRetriesTheOriginalReasonWas')
+    },
   },
   execution_failed: {
-    message: 'The operation failed. This older result did not record a specific reason.',
+    get message() {
+      return i18n.t('desktopUi.theOperationFailedThisOlderResultDidNotRecord')
+    },
   },
   unknown_failure: unknownFailure,
 }

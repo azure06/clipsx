@@ -16,7 +16,9 @@ const STALE_SHARE_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreparedShare {
+    #[cfg(not(target_os = "linux"))]
     Url(String),
+    #[cfg(not(target_os = "linux"))]
     Text(String),
     Files(Vec<PathBuf>),
 }
@@ -297,11 +299,10 @@ mod tests {
             },
         )
         .await;
-        let PreparedShare::Files(paths) = prepare(&repository, &roots, &clip_id).await.unwrap()
-        else {
-            panic!("image should be exported as a file")
+        let paths = match prepare(&repository, &roots, &clip_id).await.unwrap() {
+            PreparedShare::Files(paths) if paths.len() == 1 => paths,
+            _ => panic!("image should be exported as one file"),
         };
-        assert_eq!(paths.len(), 1);
         assert_eq!(paths[0].parent(), Some(roots.share_staging().as_path()));
         assert_eq!(
             paths[0].extension().and_then(|value| value.to_str()),

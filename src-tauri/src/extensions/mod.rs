@@ -11,6 +11,8 @@ mod parameters;
 pub use parameters::ParameterField;
 mod runtime;
 mod service;
+#[cfg(test)]
+mod test_component;
 
 pub use broker::{BrokerHttpRequest, BrokerHttpResponse};
 

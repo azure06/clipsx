@@ -27,6 +27,14 @@ flowchart LR
 
 ## Ownership
 
+Host interface text belongs in the English and Japanese catalogs in `src/i18n/`.
+This includes accessible labels, validation messages, status labels, and recovery
+screens. Components subscribe to language changes with `useTranslation`; dynamic
+sentences use interpolation so Japanese can change word order. Keep command IDs,
+confirmation tokens, code examples, product names, and user content unchanged.
+Extension publishers own the language of package metadata and custom views.
+Catalog parity and live language switching are covered by frontend tests.
+
 | Owner                | Responsibility                                                | Code                         |
 | -------------------- | ------------------------------------------------------------- | ---------------------------- |
 | React                | Interaction and typed presentation                            | `src/`                       |
@@ -41,6 +49,46 @@ flowchart LR
 
 Rust owns every clipboard write; the webview never uses the browser clipboard.
 Extensions receive only approved input and broker capabilities. Extension API v3.2 routes every transformation through a host-owned durable queue. Result tabs and their typed artifact outputs belong to the source clip; automatic runs never write the clipboard. Only explicit promotion creates a canonical clip.
+
+## Desktop startup
+
+React mounts immediately. Telemetry bootstrap runs independently; reporting stays
+closed until authoritative policy and runtime metadata arrive. A newer settings
+choice takes precedence over a delayed bootstrap response.
+
+Storage recovery remains a gate. Once storage is ready, the webview loads saved
+settings, applies the initial language and document direction, then mounts history.
+Tray translation and initial language normalization persistence run without
+blocking that mount. Subsequent saved language changes use the same synchronization
+path. Incompatible storage shows the recovery screen before loading normal app state.
+
+History, pagination, and ordinary clipboard previews are available immediately.
+Settings, Extensions, Intelligence, and Recall load on navigation with local
+loading fallbacks. Existing detection, indexing, artifact, and transformation
+workers continue in the background.
+
+Extension discovery reads manifests and metadata only: listing packages, setups,
+icons, and view descriptors does not compile WebAssembly. After input, permission,
+and availability eligibility checks, guest calls prepare only their package.
+Installation still validates components. One shared Wasmtime engine retains the
+in-memory component cache. A single preparation mutex serializes compilation on
+blocking workers and is released before normal guest execution. Wasmtime's built-in
+persistent cache uses the app-local cache directory and owns invalidation and
+cleanup; unavailable caching emits a bounded diagnostic and runs without disk
+caching. The epoch timer continues to enforce execution deadlines.
+
+## Desktop appearance
+
+The main webview's theme provider applies the saved Light/Dark choice to the
+document; Auto follows system theme changes. The native window follows the OS.
+On macOS, the main window's OS theme-change handler forwards the new theme to
+Tauri so the webview's system color-scheme preference remains current.
+CSS compares the document's theme class with the system color-scheme preference
+and strengthens only the outer frame's background opacity when they differ:
+Light over a dark system uses 85%; Dark over a light system uses 75%.
+Matching combinations retain the original 30% Light / 60% Dark opacity.
+All combinations use the original slate colors, internal surfaces and blur;
+there are no alternative palettes or additional theme state/listeners.
 
 ## Diagnostics and error reporting
 
@@ -72,6 +120,32 @@ use `layer=native|webview`. Signed-in events identify the Supabase account by
 UUID, verified email, bounded display name, and controlled auth-provider tag.
 Signed-out desktop events use a random installation ID and short support code.
 Disabling reporting takes effect in both layers without disabling local logs.
+
+The main webview bootstraps reporting through a restricted host command independently
+of rendering. Reports use the host's app version, release, environment, OS/version,
+architecture, and webview engine/version; unavailable versions are omitted.
+Webview reporting remains disabled until the saved policy and runtime metadata
+are available. The host retains a control-character-free user-agent, bounded to
+1,024 characters. Both SDKs include it in runtime context and a reconstructed
+User-Agent-only request header for Sentry's browser enrichment; no other request
+information survives sanitization.
+
+Extension reports carry host-snapshotted package ID/name/version/checksum,
+registry/local source, contribution ID/version/kind, execution stage, classified
+reason, and extension/provider/host origin. Package and contribution versions
+are independent. Immediate operations report at the service boundary; durable
+jobs report only after an authoritative terminal failure transition. Custom-view
+failures report through validated host sessions. Extension metadata is local to
+each event and never attached to unrelated app crashes. Expected cancellations,
+input/permission/configuration failures, and transient provider retries do not
+create error reports. Identical events are suppressed for 60 seconds in a
+256-entry in-memory cache; changed packages and quarantine transitions can
+report separately. Issue fingerprints omit versions so regressions can be
+compared across releases. Neither reporting nor suppression changes execution,
+retry, or quarantine policy.
+
+Component validation failures are attributed once to the package; contribution
+fields are omitted because no contribution has executed yet.
 
 Neither path admits clipboard or OCR content, search queries, notes, tags,
 Vault data, arbitrary URLs, query strings, file paths, window titles, secrets,
@@ -125,6 +199,20 @@ Stable native snapshot (bounded retries)
 | Delete, clear history, retention | One transactional cascade                                                  |
 | Final file reference removed     | Managed file becomes eligible for deletion                                 |
 | Derived job fails                | Preserve the captured clip; expose retry/rebuild                           |
+
+Extension detection records each detector/representation outcome in
+`content_detection_jobs`. Both `completed` (including empty results) and
+`unsupported` are terminal for the current detector version. Selector mismatches,
+oversized inputs, and guest-reported unsupported inputs atomically clear obsolete
+facets and record `unsupported`. Operational failures retain retry and quarantine
+handling.
+
+Startup recovery uses cursor batches of 100 and only the selected detector's
+unfinished representations. Completed and unsupported pairs do not call guests
+again until the detector version changes or explicit redetection forces the shared
+path. Existing installations converge when missing unsupported outcomes are first
+recorded. Compact presentations refresh only after detection state or facets change;
+the existing facet event refreshes visible history.
 
 Artifacts belong to a clip; their input references stay within that clip.
 A saved transform survives deletion of its source through nullable live links

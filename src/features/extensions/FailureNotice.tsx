@@ -1,8 +1,12 @@
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n/index'
 import { useUIStore } from '../../stores/uiStore'
 import { Button } from '../../shared/components/ui'
 import { describeFailure } from './failures'
 
 export function FailureNotice({ reason, packageId }: { reason: string | null; packageId: string }) {
+  useTranslation()
+
   const failure = describeFailure(reason)
   const setActiveView = useUIStore(state => state.setActiveView)
   const openExtensionSettings = useUIStore(state => state.openExtensionSettings)
@@ -20,7 +24,9 @@ export function FailureNotice({ reason, packageId }: { reason: string | null; pa
               : openExtensionSettings({ packageId, section: 'permissions' })
           }
         >
-          {failure.action === 'generation' ? 'Local Text Generation' : 'Review permissions'}
+          {failure.action === 'generation'
+            ? i18n.t('desktopUi.localTextGeneration')
+            : i18n.t('desktopUi.reviewPermissions')}
         </Button>
       )}
     </div>

@@ -747,7 +747,9 @@ mod tests {
             .component_path
             .as_ref()
             .is_some_and(|path| path.exists()));
-        let runtime = crate::extensions::runtime::ExtensionRuntime::new().unwrap();
+        let runtime =
+            crate::extensions::runtime::ExtensionRuntime::new(&root.path().join("compiled-cache"))
+                .unwrap();
         runtime
             .validate_component(
                 &loaded.sha256,

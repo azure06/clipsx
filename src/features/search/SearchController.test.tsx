@@ -28,6 +28,8 @@ describe('search input scheduling', () => {
     fireEvent.change(input, { target: { value: 'd' } })
     expect(input).toHaveValue('d')
     expect(useClipboardStore.getState().resultsStale).toBe(true)
+    expect(input.parentElement).toHaveAttribute('aria-busy', 'true')
+    expect(input.parentElement?.querySelector('.search-loading-beam')).toBeInTheDocument()
     await act(() => vi.advanceTimersByTimeAsync(250))
     fireEvent.change(input, { target: { value: 'doc' } })
     expect(input).toHaveValue('doc')

@@ -18,6 +18,24 @@ describe('localization', () => {
     expect(flattenKeys(ja).sort()).toEqual(flattenKeys(en).sort())
   })
 
+  it('keeps translations nonempty with matching interpolation parameters', () => {
+    const check = (english: Record<string, unknown>, japanese: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(english)) {
+        if (typeof value === 'object' && value !== null) {
+          check(value as Record<string, unknown>, japanese[key] as Record<string, unknown>)
+        } else {
+          expect(String(japanese[key]).trim(), key).not.toBe('')
+          const parameters = (text: string) =>
+            [...text.matchAll(/\{\{\s*([^},]+)(?:,[^}]+)?\s*\}\}/g)]
+              .map(match => match[1]!.trim())
+              .sort()
+          expect(parameters(String(japanese[key])), key).toEqual(parameters(String(value)))
+        }
+      }
+    }
+    check(en, ja)
+  })
+
   it('normalizes supported regional codes and falls back to English', () => {
     expect(normalizeLanguage('ja-JP')).toBe('ja')
     expect(normalizeLanguage('en-US')).toBe('en')

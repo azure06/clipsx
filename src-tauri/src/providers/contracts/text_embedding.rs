@@ -12,6 +12,8 @@ pub struct TextEmbeddingSpace {
     pub distance_metric: String,
 }
 
+// async_trait adds must_use to an already must-use boxed Future.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TextEmbeddingProvider: Send + Sync {
     async fn describe(&self) -> ProviderResult<TextEmbeddingSpace>;

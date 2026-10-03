@@ -187,9 +187,14 @@ async fn detect_with_extensions(
     history: &HistoryRepository,
     extensions: &ExtensionService,
     clip_id: &str,
+    force: bool,
 ) -> anyhow::Result<()> {
     contributions::detect_clip(history, clip_id).await?;
-    extensions.detect_clip(history, clip_id).await?;
+    if force {
+        extensions.redetect_clip(history, clip_id).await?;
+    } else {
+        extensions.detect_clip(history, clip_id).await?;
+    }
     extensions
         .refresh_compact_presentations(history, clip_id)
         .await?;
@@ -975,7 +980,7 @@ async fn capture_clipboard(
             let event_app = app.clone();
             let detect_id = id.clone();
             tauri::async_runtime::spawn(async move {
-                match detect_with_extensions(&history, &extensions, &detect_id).await {
+                match detect_with_extensions(&history, &extensions, &detect_id, false).await {
                     Ok(_) => {
                         emit_clip_facets_updated(&event_app, Some(&detect_id));
                     }
@@ -1501,54 +1506,67 @@ async fn open_extension_custom_view(
         )
         .await
         .map_err(|error| error.to_string())?;
-    let url = url::Url::parse(&session.entry_url).map_err(|error| error.to_string())?;
-    let allowed_token = session.token.clone();
-    let bridge_token = session.token.clone();
-    let bridge_label = session.label.clone();
-    let bridge_app = app.clone();
-    let initialization_script = state
-        .extensions
-        .custom_view_initialization_script(&session.token)
-        .map_err(|error| error.to_string())?;
-    let builder = tauri::webview::WebviewBuilder::new(
-        session.label.clone(),
-        tauri::WebviewUrl::External(url),
-    )
-    // Wry focuses child WebViews by default on Windows. A preview detail view
-    // must not take history focus merely by loading; dialogs focus after ready.
-    .focused(false)
-    .initialization_script(initialization_script)
-    .incognito(true)
-    .background_color(tauri::webview::Color(0, 0, 0, 0))
-    .devtools(cfg!(debug_assertions))
-    .on_navigation(move |url| {
-        if is_extension_bridge_close_navigation(url, &bridge_token) {
-            if let Some(webview) = bridge_app.get_webview(&bridge_label) {
-                let _ = webview.close();
-            }
-            if let Some(state) = bridge_app.try_state::<AppState>() {
-                state.extensions.end_custom_view(&bridge_token);
-            }
-            if let Some(main) = bridge_app.get_webview("main") {
-                let _ = main.set_focus();
-            }
-            return false;
-        }
-        is_extension_asset_navigation(url, &allowed_token)
-    })
-    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .on_download(|_, _| false);
-    let parent = app
-        .get_window("main")
-        .ok_or_else(|| "main window is unavailable".to_string())?;
-    let child = parent
-        .add_child(
-            builder,
-            tauri::LogicalPosition::new(x, y),
-            tauri::LogicalSize::new(width, height),
+    let creation = (|| -> Result<(), String> {
+        let url = url::Url::parse(&session.entry_url).map_err(|error| error.to_string())?;
+        let allowed_token = session.token.clone();
+        let bridge_token = session.token.clone();
+        let bridge_label = session.label.clone();
+        let bridge_app = app.clone();
+        let initialization_script = state
+            .extensions
+            .custom_view_initialization_script(&session.token)
+            .map_err(|error| error.to_string())?;
+        let builder = tauri::webview::WebviewBuilder::new(
+            session.label.clone(),
+            tauri::WebviewUrl::External(url),
         )
-        .map_err(|error| error.to_string())?;
-    child.hide().map_err(|error| error.to_string())?;
+        // Wry focuses child WebViews by default on Windows. A preview detail view
+        // must not take history focus merely by loading; dialogs focus after ready.
+        .focused(false)
+        .initialization_script(initialization_script)
+        .incognito(true)
+        .background_color(tauri::webview::Color(0, 0, 0, 0))
+        .devtools(cfg!(debug_assertions))
+        .on_navigation(move |url| {
+            if is_extension_bridge_close_navigation(url, &bridge_token) {
+                if let Some(webview) = bridge_app.get_webview(&bridge_label) {
+                    let _ = webview.close();
+                }
+                if let Some(state) = bridge_app.try_state::<AppState>() {
+                    state.extensions.end_custom_view(&bridge_token);
+                }
+                if let Some(main) = bridge_app.get_webview("main") {
+                    let _ = main.set_focus();
+                }
+                return false;
+            }
+            is_extension_asset_navigation(url, &allowed_token)
+        })
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .on_download(|_, _| false);
+        let parent = app
+            .get_window("main")
+            .ok_or_else(|| "main window is unavailable".to_string())?;
+        let child = parent
+            .add_child(
+                builder,
+                tauri::LogicalPosition::new(x, y),
+                tauri::LogicalSize::new(width, height),
+            )
+            .map_err(|error| error.to_string())?;
+        child.hide().map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if let Err(error) = creation {
+        state
+            .extensions
+            .report_custom_view_creation_failure(&session.token);
+        if let Some(webview) = app.get_webview(&session.label) {
+            let _ = webview.close();
+        }
+        state.extensions.end_custom_view(&session.token);
+        return Err(error);
+    }
     Ok(session)
 }
 
@@ -2157,6 +2175,17 @@ fn set_error_reporting_enabled(enabled: bool) {
 }
 
 #[tauri::command]
+fn bootstrap_telemetry(
+    webview: tauri::Webview,
+    user_agent: String,
+) -> Result<crate::app::telemetry::RuntimeSnapshot, String> {
+    if webview.label() != "main" {
+        return Err("Telemetry bootstrap is restricted to the main webview".into());
+    }
+    Ok(crate::app::telemetry::bootstrap(&user_agent))
+}
+
+#[tauri::command]
 fn set_verbose_logging_enabled(enabled: bool) {
     crate::app::diagnostics::set_verbose_enabled(enabled);
 }
@@ -2504,7 +2533,7 @@ async fn redetect_clip(
     clip_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    detect_with_extensions(&state.history, &state.extensions, &clip_id)
+    detect_with_extensions(&state.history, &state.extensions, &clip_id, true)
         .await
         .map_err(|e| e.to_string())?;
     refresh_search_for_clip(&app, &state.history, &clip_id)
@@ -2532,7 +2561,7 @@ async fn redetect_history(
             .await
             .map_err(|e| e.to_string())?;
         for clip in page.items {
-            detect_with_extensions(&state.history, &state.extensions, &clip.id)
+            detect_with_extensions(&state.history, &state.extensions, &clip.id, true)
                 .await
                 .map_err(|e| e.to_string())?;
             refresh_search_for_clip(&app, &state.history, &clip.id)
@@ -3056,7 +3085,7 @@ pub(crate) fn run() {
                     let lifecycle = app.state::<crate::app::settings::SettingsLifecycle>();
                     tauri::async_runtime::block_on(lifecycle.reconcile(app.handle(), &history, settings));
                 }
-                let extensions = ExtensionService::new(&roots)
+                let extensions = ExtensionService::new(&roots, &app.path().app_cache_dir()?.join("extensions"))
                     .expect("Failed to initialize ClipsX extension storage");
                 tauri::async_runtime::block_on(contributions::initialize(&history))
                     .expect("Failed to initialize ClipsX facet registry");
@@ -3105,9 +3134,11 @@ pub(crate) fn run() {
                     let _guard = lifecycle.gate.lock().await;
                     let _ = redetect_extensions.reconcile_configuration_sync(&extension_history).await;
                     drop(_guard);
-                    let _ = redetect_extensions
-                        .redetect_outdated(&extension_history)
-                        .await;
+                    match redetect_extensions.redetect_outdated(&extension_history).await {
+                        Ok(count) if count > 0 => emit_clip_facets_updated(&extension_app, None),
+                        Err(_) => crate::diagnostic!("extension.detection.recovery.failed"),
+                        _ => {}
+                    }
                 });
                 let auto_clear_history = history.clone();
                 let auto_clear_app = app.handle().clone();
@@ -3208,6 +3239,7 @@ pub(crate) fn run() {
                                         &detection_history,
                                         &detection_extensions,
                                         &id,
+                                        false,
                                     )
                                     .await
                                     {
@@ -3350,6 +3382,7 @@ pub(crate) fn run() {
             export_diagnostic_bundle,
             open_diagnostics_log_folder,
             set_telemetry_identity,
+            bootstrap_telemetry,
             set_error_reporting_enabled,
             set_verbose_logging_enabled,
             export_portable_settings,
@@ -3402,6 +3435,13 @@ pub(crate) fn run() {
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
+            }
+            // Tauri only re-syncs the webview's prefers-color-scheme on OS theme
+            // changes on Windows; macOS needs the same push or the glass tint's
+            // theme-mismatch CSS in styles.css never sees a live system value.
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                let _ = window.set_theme(Some(*theme));
             }
             if let Some(host_state) = window.app_handle().try_state::<HostState>() {
                 match event {

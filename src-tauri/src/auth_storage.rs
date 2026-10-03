@@ -1,15 +1,19 @@
 //! Device-local persistence for Supabase session and PKCE values.
 
+#[cfg(target_os = "windows")]
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::collections::BTreeMap;
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
 pub const AUTH_STORAGE_KEY: &str = "sb-clipsx-auth-token";
+#[cfg(target_os = "windows")]
 const MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
+#[cfg(target_os = "windows")]
 const MAX_ENCRYPTED_BYTES: u64 = 2 * 1024 * 1024;
 
 pub fn is_supported_key(key: &str) -> bool {
@@ -88,6 +92,7 @@ fn validate_key(key: &str) -> Result<(), String> {
         .ok_or_else(|| "Unsupported authentication storage key".to_string())
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct Envelope {
     version: u8,

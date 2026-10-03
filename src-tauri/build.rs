@@ -4,6 +4,7 @@ fn main() {
             "show_main_window_command",
             "set_tray_labels",
             "get_release_info",
+            "bootstrap_telemetry",
             "start_local_auth_callback_listener",
             "get_startup_status",
             "auth_storage_get",

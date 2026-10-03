@@ -54,16 +54,16 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
       {/* Top Icons */}
       <div className="flex flex-col items-center gap-1">
         <button
-          onClick={() => setActiveView('clips')}
+          onClick={() => setActiveView('clipsx')}
           className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent ${
-            activeView === 'clips'
+            activeView === 'clipsx'
               ? 'text-gray-900 dark:text-gray-100'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'
           }`}
           title={t('sidebar.clipboard')}
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
-          {activeView === 'clips' && (
+          {activeView === 'clipsx' && (
             <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
           )}
         </button>

@@ -67,6 +67,8 @@ impl VisualEmbeddingSpace {
 
 /// Compatible image and text-query vectors in one immutable space.
 /// TODO(M4b): connect an explicitly installed, checksum-verified local package.
+// async_trait adds must_use to an already must-use boxed Future.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait VisualEmbeddingProvider: Send + Sync {
     async fn describe(&self) -> ProviderResult<VisualEmbeddingSpace>;

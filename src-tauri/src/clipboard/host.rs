@@ -509,8 +509,7 @@ fn active_application() -> Option<(String, String)> {
     let class = value
         .split(|byte| *byte == 0)
         .filter_map(|part| std::str::from_utf8(part).ok())
-        .filter(|part| !part.is_empty())
-        .next_back()?
+        .rfind(|part| !part.is_empty())?
         .to_owned();
     safe_application(
         class.clone(),
@@ -889,7 +888,7 @@ fn x11_selection_loop(
 
         let mut values: std::collections::BTreeMap<u32, Vec<u8>> = Default::default();
         let mut offered = vec![targets, timestamp];
-        for representation in &representations {
+        for representation in ordered_write_representations(&representations, "linux_x11") {
             let target_name = representation
                 .native_type
                 .as_deref()
@@ -915,7 +914,7 @@ fn x11_selection_loop(
             if values.insert(target, value).is_none() {
                 offered.push(target);
             }
-            if target_name == "text/plain" && values.get(&utf8).is_none() {
+            if target_name == "text/plain" && !values.contains_key(&utf8) {
                 values.insert(utf8, values[&target].clone());
                 offered.push(utf8);
             }
@@ -1056,8 +1055,10 @@ fn capture_x11_formats(
     .check()?;
     let (_, target_bytes) = x11_read_target(&conn, window, selection, targets, property)?;
     for atom in target_bytes
-        .chunks_exact(4)
-        .map(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_ne_bytes(*bytes))
     {
         let name = String::from_utf8_lossy(&conn.get_atom_name(atom)?.reply()?.name).into_owned();
         if matches!(
@@ -1649,7 +1650,10 @@ fn windows_png_to_dib_v5(png: &[u8]) -> Option<Vec<u8>> {
     dib[48..52].copy_from_slice(&0x0000_00ffu32.to_le_bytes());
     dib[52..56].copy_from_slice(&0xff00_0000u32.to_le_bytes());
     dib[56..60].copy_from_slice(&0x7352_4742u32.to_le_bytes());
-    for (source, target) in image.pixels().zip(dib[124..].chunks_exact_mut(4)) {
+    for (source, target) in image
+        .pixels()
+        .zip(dib[124..].as_chunks_mut::<4>().0.iter_mut())
+    {
         target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
     }
     Some(dib)
@@ -1838,6 +1842,35 @@ mod tests {
         }
     }
     #[test]
+    fn x11_writeback_uses_format_policy_instead_of_capture_order() {
+        let representations = vec![
+            CapturedRepresentation {
+                format_key: "linux_x11:UTF8_STRING".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("UTF8_STRING".into()),
+                platform: "linux_x11".into(),
+                capture_priority: 1,
+                payload: CapturedPayload::Text("plain".into()),
+            },
+            CapturedRepresentation {
+                format_key: "linux_x11:text/html".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: Some("text/html".into()),
+                platform: "linux_x11".into(),
+                capture_priority: 1000,
+                payload: CapturedPayload::Text("<b>plain</b>".into()),
+            },
+        ];
+        let ordered = ordered_write_representations(&representations, "linux_x11");
+        assert_eq!(ordered[0].native_type.as_deref(), Some("text/html"));
+        assert_eq!(ordered[1].native_type.as_deref(), Some("UTF8_STRING"));
+        assert_eq!(
+            representations[0].native_type.as_deref(),
+            Some("UTF8_STRING")
+        );
+    }
+
+    #[test]
     fn duplicate_native_formats_keep_the_highest_capture_priority() {
         let mut representations = vec![
             CapturedRepresentation {
@@ -1896,8 +1929,10 @@ mod tests {
     fn windows_text_and_file_list_codecs_preserve_unicode_and_order() {
         let text = windows_unicode_text_bytes("hello 雪");
         let units: Vec<u16> = text
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         assert_eq!(
             String::from_utf16(&units[..units.len() - 1]).unwrap(),
@@ -1913,8 +1948,10 @@ mod tests {
         assert_eq!(u32::from_le_bytes(encoded[0..4].try_into().unwrap()), 20);
         assert_eq!(u32::from_le_bytes(encoded[16..20].try_into().unwrap()), 1);
         let units: Vec<u16> = encoded[20..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         let decoded: Vec<String> = units
             .split(|unit| *unit == 0)

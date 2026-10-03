@@ -10,7 +10,7 @@ describe('Sidebar account indicator', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useAuthStore.setState({ status: 'signed_out', email: null, error: null })
-    useUIStore.setState({ activeView: 'clips' })
+    useUIStore.setState({ activeView: 'clipsx' })
   })
 
   it('shows the signed-in email and opens account settings', () => {

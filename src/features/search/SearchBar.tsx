@@ -33,6 +33,7 @@ import {
   suggestionItemClass,
 } from '../../shared/components/ui'
 import { cn } from '../../shared/utils/cn'
+import { SearchLoadingBeam } from './SearchLoadingBeam'
 
 const FILTER_OPTIONS = [
   {
@@ -107,6 +108,7 @@ interface SearchBarProps {
   activeScope?: ScopeCommand
   placeholder?: string
   autoFocus?: boolean
+  isUpdatingResults?: boolean
   semanticStatus?: TextEmbeddingStatus | null
   isSemanticActive?: boolean
   onToggleSemantic?: () => void
@@ -134,6 +136,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     activeScope,
     placeholder,
     autoFocus = true,
+    isUpdatingResults = false,
     semanticStatus = null,
     isSemanticActive = false,
     onToggleSemantic,
@@ -291,7 +294,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
 
   return (
     <div className="relative w-full group">
-      <div className="relative flex items-center backdrop-blur-2xl border-none bg-slate-100/10 dark:bg-transparent rounded-xl shadow-sm shadow-black/4 dark:shadow-2xl">
+      <div
+        aria-busy={isUpdatingResults}
+        className="relative flex items-center backdrop-blur-2xl border-none bg-slate-100/10 dark:bg-transparent rounded-xl shadow-sm shadow-black/4 dark:shadow-2xl"
+      >
+        {isUpdatingResults && <SearchLoadingBeam />}
+
         {/* Search Icon */}
         <div className="pl-4 text-gray-500 dark:text-gray-400">
           <Search className="w-5 h-5" />
@@ -363,10 +371,16 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               onClick={onRecall}
               disabled={isRecalling}
               className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 disabled:opacity-50 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
-              title={recallAvailable ? `Ask Recall (${recallShortcut})` : 'Set up Recall'}
+              title={
+                recallAvailable
+                  ? t('desktopUi.askRecallShortcut', { shortcut: recallShortcut })
+                  : t('desktopUi.setUpRecall')
+              }
             >
               <Sparkles className={`h-3.5 w-3.5 ${isRecalling ? 'animate-pulse' : ''}`} />
-              {isRecalling ? `Reading… ${recallElapsedSeconds}s` : 'Recall'}
+              {isRecalling
+                ? t('desktopUi.readingSeconds', { count: recallElapsedSeconds })
+                : 'Recall'}
               {!isRecalling && (
                 <span aria-hidden="true" className="hidden lg:inline opacity-60">
                   {recallShortcut}

@@ -32,6 +32,7 @@ path = "src/main.rs"
 [[bin]]
 name = "clipsx-extension-tool"
 path = "src/bin/clipsx-extension-tool.rs"
+required-features = ["extension-tools"]
 
 [[bin]]
 name = "clipsx-release-verify"
@@ -59,15 +60,15 @@ arboard = "3.6.1"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "bmp", "gif", "tiff", "webp"] }
 url = "2.5.7"
 base64 = "0.22.1"
-minisign-verify = "0.2.5"
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+minisign-verify = "0.2.5"
 async-trait = "0.1"
 futures = "0.3"
 fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 semver = "1.0"
 toml = "0.8"
-wasmtime = { version = "47.0.3", default-features = false, features = ["async", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
+wasmtime = { version = "48.0.3", default-features = false, features = ["async", "cache", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
 wit-component = "0.247.0"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 rtf-parser = { version = "0.4.3", default-features = false }
@@ -113,8 +114,12 @@ foreign-types = "0.5"
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", features = ["open_uri"] }
 x11rb = { version = "0.13", features = ["xtest"] }
+[dev-dependencies]
+wat = "=1.247.0"
+wit-parser = "0.247.0"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-
 release-tools = []
+extension-tools = []

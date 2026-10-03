@@ -10,6 +10,8 @@ pub struct VisionDescription {
 
 /// Produces inspectable derived text; it is deliberately not a visual embedding provider.
 /// TODO(M4b): add an optional Ollama implementation and artifact provenance.
+// async_trait adds must_use to an already must-use boxed Future.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait VisionDescriptionProvider: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;

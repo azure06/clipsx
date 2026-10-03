@@ -37,6 +37,20 @@ const ScopeHarness = ({
 }
 
 describe('SearchBar scope slash commands', () => {
+  it('shows the result-refresh beam on the search field only while updating', () => {
+    const { rerender, container } = render(
+      <SearchBar value="water" onChange={vi.fn()} onClear={vi.fn()} isUpdatingResults />
+    )
+
+    expect(screen.getByRole('combobox').parentElement).toHaveAttribute('aria-busy', 'true')
+    expect(container.querySelector('.search-loading-beam')).toBeInTheDocument()
+
+    rerender(<SearchBar value="water" onChange={vi.fn()} onClear={vi.fn()} />)
+
+    expect(screen.getByRole('combobox').parentElement).toHaveAttribute('aria-busy', 'false')
+    expect(container.querySelector('.search-loading-beam')).not.toBeInTheDocument()
+  })
+
   it('offers Recall only for bounded search results and reports its running state', () => {
     const onRecall = vi.fn()
     const { rerender } = render(

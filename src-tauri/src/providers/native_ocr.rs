@@ -397,6 +397,13 @@ async fn platform_recognize(input: &VisualInput, language: &str) -> ProviderResu
     .map_err(|_| unavailable("Tesseract recognition task stopped"))?
 }
 
+// Runtime Objective-C class lookups do not create linker references. Load the
+// OCR frameworks explicitly rather than relying on AppKit to load them.
+#[cfg(target_os = "macos")]
+#[link(name = "Vision", kind = "framework")]
+#[link(name = "CoreImage", kind = "framework")]
+unsafe extern "C" {}
+
 #[cfg(target_os = "macos")]
 async fn platform_diagnostics() -> ProviderResult<OcrProviderDiagnostics> {
     tokio::task::spawn_blocking(macos_diagnostics)

@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -11,7 +11,7 @@ use bindings::Extension;
 use tokio::time::timeout;
 use wasmtime::{
     component::{Component, HasSelf, Linker},
-    Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
+    Cache, CacheConfig, Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -491,15 +491,30 @@ fn contains_protected_secret(body: &[u8], secrets: &[Vec<u8>]) -> bool {
 pub struct ExtensionRuntime {
     engine: Engine,
     components: Arc<Mutex<HashMap<String, Component>>>,
+    preparation: Arc<tokio::sync::Mutex<()>>,
+    cache: Option<Cache>,
+    #[cfg(test)]
+    pub(super) detection_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ExtensionRuntime {
-    pub fn new() -> Result<Self> {
+    pub fn new(cache_directory: &Path) -> Result<Self> {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
         config.epoch_interruption(true);
         config.max_wasm_stack(2 * 1024 * 1024);
+        let cache = (|| -> Result<Cache> {
+            std::fs::create_dir_all(cache_directory)?;
+            let mut cache_config = CacheConfig::new();
+            cache_config.with_directory(cache_directory);
+            Cache::new(cache_config).map_err(wasmtime_error)
+        })()
+        .ok();
+        if cache.is_none() {
+            crate::diagnostic!("extension.compilation.cache.unavailable");
+        }
+        config.cache(cache.clone());
         let engine = Engine::new(&config).map_err(wasmtime_error)?;
         let ticker = engine.clone();
         tauri::async_runtime::spawn(async move {
@@ -512,17 +527,33 @@ impl ExtensionRuntime {
         Ok(Self {
             engine,
             components: Arc::new(Mutex::new(HashMap::new())),
+            preparation: Arc::new(tokio::sync::Mutex::new(())),
+            cache,
+            #[cfg(test)]
+            detection_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
     pub async fn validate_component(&self, sha256: &str, path: &Path) -> Result<()> {
+        let guard = self.preparation.clone().lock_owned().await;
+        if self.component(sha256).is_some() {
+            return Ok(());
+        }
+        let started = Instant::now();
+        let cache_hits = self.cache.as_ref().map_or(0, Cache::cache_hits);
         let bytes = tokio::fs::read(path)
             .await
             .context("unable to read extension component")?;
         if bytes.len() > 8 * 1024 * 1024 {
             bail!("extension component exceeds 8 MiB");
         }
-        let component = Component::new(&self.engine, bytes)
+        let engine = self.engine.clone();
+        // Keep the compilation permit in the blocking task if its caller is cancelled.
+        let (component, _guard) =
+            tokio::task::spawn_blocking(move || (Component::new(&engine, bytes), guard))
+                .await
+                .context("extension compilation task failed")?;
+        let component = component
             .map_err(wasmtime_error)
             .context("extension component is invalid")?;
         self.instantiate(
@@ -535,6 +566,13 @@ impl ExtensionRuntime {
             .lock()
             .expect("extension component cache poisoned")
             .insert(sha256.into(), component);
+        crate::diagnostic!(
+            "[PERF] extension-component-prepare count=1 cache_hit={} duration_ms={}",
+            self.cache
+                .as_ref()
+                .is_some_and(|cache| cache.cache_hits() > cache_hits),
+            started.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -552,6 +590,9 @@ impl ExtensionRuntime {
         contribution_id: &str,
         input: ExtensionRepresentation,
     ) -> Result<Vec<ExtensionFacet>> {
+        #[cfg(test)]
+        self.detection_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let deadline = local_deadline(&input, 100, 750);
         let (mut store, instance) = self
             .binding_instance(sha256, LOCAL_FUEL, deadline, None)
@@ -1036,6 +1077,43 @@ pub(super) fn runtime_error_code(error: &anyhow::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn component_preparation_is_serialized_and_cached_across_engines() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("component.wasm");
+        std::fs::write(&path, super::super::test_component::bytes()).unwrap();
+        let cache_path = temp.path().join("cache");
+        let runtime = ExtensionRuntime::new(&cache_path).unwrap();
+        let (first, second, third) = tokio::join!(
+            runtime.validate_component("fixture", &path),
+            runtime.validate_component("fixture", &path),
+            runtime.validate_component("fixture", &path),
+        );
+        first.unwrap();
+        second.unwrap();
+        third.unwrap();
+        assert_eq!(runtime.cache.as_ref().unwrap().cache_misses(), 1);
+        let reopened = ExtensionRuntime::new(&cache_path).unwrap();
+        reopened.validate_component("fixture", &path).await.unwrap();
+        assert_eq!(reopened.cache.as_ref().unwrap().cache_hits(), 1);
+        assert_eq!(reopened.cache.as_ref().unwrap().cache_misses(), 0);
+    }
+
+    #[tokio::test]
+    async fn unavailable_disk_cache_still_prepares_valid_components() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache_path = temp.path().join("not-a-directory");
+        std::fs::write(&cache_path, b"file").unwrap();
+        let runtime = ExtensionRuntime::new(&cache_path).unwrap();
+        assert!(runtime.cache.is_none());
+        let path = temp.path().join("component.wasm");
+        std::fs::write(&path, super::super::test_component::bytes()).unwrap();
+        runtime.validate_component("fixture", &path).await.unwrap();
+        std::fs::write(&path, b"invalid component").unwrap();
+        assert!(runtime.validate_component("invalid", &path).await.is_err());
+        assert!(runtime.component("invalid").is_none());
+    }
 
     #[test]
     fn credential_reflection_check_is_exact_and_ignores_empty_values() {
