@@ -3137,6 +3137,10 @@ pub(crate) fn run() {
                     crate::app::diagnostics::operational_error("startup.diagnostics_policy.failed", &error);
                     crate::app::diagnostics::startup_failure("diagnostics_policy");
                 }
+            } else {
+                let status = foundation::startup_status(schema_state);
+                crate::app::diagnostics::startup_failure(&status.state);
+                crate::diagnostic!("startup.storage.blocked state={} migration_version={:?}", status.state, status.migration_version);
             }
             crate::diagnostic!("app.started");
             if cfg!(debug_assertions) || foundation_elapsed.as_millis() >= 250 {

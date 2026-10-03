@@ -28,9 +28,9 @@ jobs:
       matrix: ${{ steps.recipe.outputs.matrix }}
     env:
       RELEASE_MODE: ${{ inputs.release }}
-      VITE_SUPABASE_URL: ${{ inputs.release && vars.VITE_SUPABASE_URL || '' }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ inputs.release && vars.VITE_SUPABASE_PUBLISHABLE_KEY || '' }}
-      VITE_NEXT_PUBLIC_SITE_URL: ${{ inputs.release && vars.VITE_NEXT_PUBLIC_SITE_URL || '' }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
       VITE_SENTRY_DSN: ${{ inputs.release && vars.SENTRY_DESKTOP_DSN || '' }}
     steps:
       - uses: actions/checkout@v4
