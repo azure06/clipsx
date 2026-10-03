@@ -41,6 +41,7 @@ import {
   assetName,
   createManifests,
   candidateDraftMetadata,
+  certificationChecks,
   digest,
   encode,
   imageDigest,
@@ -814,9 +815,11 @@ function certify(id, prNumber) {
     selectedCandidate(pr.body) === id,
     'Select this candidate on the release PR before certifying'
   )
-  assert(
-    process.env.CERTIFY_ALL_PLATFORMS === 'true',
-    'Explicit installed-platform confirmation is required'
+  const checks = certificationChecks(
+    id,
+    prNumber,
+    process.env.CERTIFY_ALL_PLATFORMS,
+    process.env.CERTIFY_0_1_0_EXCEPTION
   )
   const evidence = process.env.CERTIFICATION_EVIDENCE?.trim()
   assert(
@@ -852,6 +855,7 @@ function certify(id, prNumber) {
     candidateSha256: digest(bytes),
     inventorySha256: digest(encode(inventory)),
     evidence,
+    checks,
     platforms: targets.map(item => item.id),
     actor: process.env.GITHUB_ACTOR,
     toolingRevision: git(['rev-parse', 'HEAD']),

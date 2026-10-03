@@ -220,6 +220,23 @@ export function createManifests(candidate, signatures, notes, date) {
   }
 }
 
+export function certificationChecks(id, prNumber, allPassed, exception) {
+  if (exception === 'true') {
+    assert(
+      id === '0.1.0-36969301315-1' && Number(prNumber) === 27 && allPassed !== 'true',
+      'The owner-approved updater deferral applies only to candidate 0.1.0-36969301315-1 / PR 27'
+    )
+    return {
+      installedPlatforms: 'owner-confirmed',
+      updaterUpgrades: 'deferred',
+      exception:
+        'Release owner explicitly approved testing updater upgrades after publication for this candidate only',
+    }
+  }
+  assert(allPassed === 'true', 'Explicit installed-platform and updater confirmation is required')
+  return { installedPlatforms: 'confirmed', updaterUpgrades: 'confirmed' }
+}
+
 export function assertCertified(candidate, certification, candidateBytes, inventory) {
   assert(
     certification.schemaVersion === 2 && certification.candidateId === candidate.id,

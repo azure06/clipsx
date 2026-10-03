@@ -269,6 +269,16 @@ verified again rather than recreated. A conflicting tag/release or an older
 version cannot replace the latest release. A previously installed public build
 must also discover and install the published update.
 
+### Approved exception for saved 0.1.0 only
+
+The release owner explicitly approved deferring private updater upgrade tests for
+candidate `0.1.0-36969301315-1` / PR **27**, after confirming installed apps on all
+platforms. Record that approval and the deferred test in the certification evidence.
+For this candidate only, dispatch certification with `all_platforms_passed=false`
+and `owner_approved_0_1_0_exception=true`. Certification records updater upgrades as
+**deferred**, never passed. Other candidates/PRs cannot use this exception and retain
+the full installed-platform and private upgrade requirements.
+
 ### Private pre-publication upgrade test
 
 After finalization, start a loopback-only feed of the exact final updater bytes:

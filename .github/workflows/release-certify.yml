@@ -20,6 +20,11 @@ on:
         required: true
         default: false
         type: boolean
+      owner_approved_0_1_0_exception:
+        description: Only candidate 0.1.0-36969301315-1 / PR 27; installed apps confirmed, updater tests explicitly deferred by owner
+        required: false
+        default: false
+        type: boolean
 env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
@@ -54,4 +59,5 @@ jobs:
           CERTIFICATION_EVIDENCE: ${{ inputs.evidence }}
           RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
           CERTIFY_ALL_PLATFORMS: ${{ inputs.all_platforms_passed }}
+          CERTIFY_0_1_0_EXCEPTION: ${{ inputs.owner_approved_0_1_0_exception }}
         run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"
