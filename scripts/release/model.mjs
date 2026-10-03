@@ -300,3 +300,27 @@ export function imageDigest(bytes, originalSize = bytes.length) {
   image.fill(0, security, security + 8)
   return digest(image)
 }
+
+// Tauri patches exactly this fixed-width installer marker before Authenticode signing.
+// Everything else remains covered by the original PE image hash.
+export function nsisImageDigest(bytes, originalSize = bytes.length, packaged = false) {
+  const unknown = Buffer.from('__TAURI_BUNDLE_TYPE_VAR_UNK')
+  const nsis = Buffer.from('__TAURI_BUNDLE_TYPE_VAR_NSS')
+  const image = Buffer.from(bytes)
+  const source = image.subarray(0, originalSize)
+  const unknownOffset = source.indexOf(unknown)
+  const nsisOffset = source.indexOf(nsis)
+  const offset = unknownOffset >= 0 ? unknownOffset : nsisOffset
+  assert(
+    offset >= 0 && !(unknownOffset >= 0 && nsisOffset >= 0),
+    'Expected one Tauri bundle type marker'
+  )
+  const marker = unknownOffset >= 0 ? unknown : nsis
+  assert(source.indexOf(marker, offset + 1) === -1, 'Ambiguous Tauri bundle type marker')
+  assert(
+    !packaged || nsisOffset >= 0,
+    'Installed application must identify its NSIS updater format'
+  )
+  nsis.copy(image, offset)
+  return imageDigest(image, originalSize)
+}

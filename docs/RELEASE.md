@@ -181,7 +181,7 @@ stapled. See [Tauri's Apple signing guide](https://v2.tauri.app/distribute/sign/
 
 ### Windows signing
 
-Use PowerShell on your own Windows desktop with Node 24, npm, Rust/Cargo metadata
+Use PowerShell 7 on your own Windows desktop with Node 24, npm, Rust/Cargo metadata
 tools, GitHub CLI, tar, Windows SDK SignTool and SimplySign Desktop installed.
 Log into GitHub CLI and connect SimplySign in the same Windows user session.
 The certificate must be valid and available in the current-user certificate store.
@@ -199,14 +199,21 @@ The helper downloads and verifies the exact packaging kit, restores its CI-built
 executable and frontend resources, installs locked packaging dependencies without
 lifecycle scripts, and runs `tauri bundle` rather than `tauri build`. A trusted
 SignTool wrapper timestamps and verifies each Authenticode operation. The
-installer, uninstaller and application must all be signed. The helper uploads
+installer, uninstaller and application must all be signed. NSIS signs its
+generated uninstaller under a temporary filename; the wrapper verifies each
+operation with Windows Authenticode, and hosted CI inspects the actual installed
+uninstaller. Do not infer its role from a temporary basename. The helper uploads
 the installer and dispatches Finalize release candidate on main. It does not
 need the Tauri updater private key.
 
 Finalization independently installs the package on a disposable hosted Windows
 runner, verifies certificate fingerprints and timestamps, and confirms that the
 installed executable matches the original CI image except for Authenticode's
-checksum/certificate fields. This automated inspection does not replace manual
+checksum/certificate fields and Tauri's fixed-width NSIS format marker. The
+installed marker must be NSIS; arbitrary code/data changes remain rejected. See
+[Tauri's pinned bundler implementation](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.11.4/crates/tauri-bundler/src/bundle.rs#L32). The helper
+uses its current PowerShell host so signing does not load incompatible modules
+from another PowerShell edition. This automated inspection does not replace manual
 native behavior and upgrade certification.
 
 If upload/dispatch fails, retain the helper workspace. Retry submission with:
