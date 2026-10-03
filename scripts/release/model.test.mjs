@@ -9,6 +9,7 @@ import {
   digest,
   encode,
   imageDigest,
+  nsisImageDigest,
   publicationMode,
   targets,
   validateInventory,
@@ -214,4 +215,26 @@ test('duplicate publication and verification retries reuse the existing release'
   nodeAssert.deepEqual(publicationMode([published], '0.1.0'), result)
   nodeAssert.throws(() => publicationMode([{ ...published, draft: true }], '0.1.0'))
   nodeAssert.throws(() => publicationMode([{ ...published, prerelease: true }], '0.1.0'))
+})
+
+test('NSIS image identity permits only Tauri installer marker and Authenticode changes', () => {
+  const original = Buffer.alloc(512)
+  original.write('MZ')
+  original.writeUInt32LE(128, 0x3c)
+  original.set([80, 69, 0, 0], 128)
+  original.writeUInt16LE(0x20b, 152)
+  original.write('__TAURI_BUNDLE_TYPE_VAR_UNK', 320)
+  const expected = nsisImageDigest(original)
+  nodeAssert.throws(() => nsisImageDigest(original, original.length, true))
+  const packaged = Buffer.concat([original, Buffer.alloc(32)])
+  packaged.write('__TAURI_BUNDLE_TYPE_VAR_NSS', 320)
+  packaged.writeUInt32LE(512, 296)
+  packaged.writeUInt32LE(32, 300)
+  nodeAssert.equal(nsisImageDigest(packaged, original.length, true), expected)
+  const tampered = Buffer.from(packaged)
+  tampered[400] = 1
+  nodeAssert.notEqual(nsisImageDigest(tampered, original.length, true), expected)
+  const wrongFormat = Buffer.from(packaged)
+  wrongFormat.write('__TAURI_BUNDLE_TYPE_VAR_MSI', 320)
+  nodeAssert.throws(() => nsisImageDigest(wrongFormat, original.length, true))
 })

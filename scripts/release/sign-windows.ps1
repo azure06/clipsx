@@ -48,7 +48,8 @@ try {
     $env:CLIPSX_SIGNING_LOG = Join-Path $work 'signing-log.jsonl'
     # Use the trusted helper's signing wrapper, not a command from the candidate.
     $signScript = Join-Path $PSScriptRoot 'sign-file.ps1'
-    $signCommand = @('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $signScript, '%1')
+    $signHost = Join-Path $PSHOME $(if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' })
+    $signCommand = @($signHost, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $signScript, '%1')
     $overlay = @{ build = @{ beforeBuildCommand = $null; beforeBundleCommand = $null }; bundle = @{ targets = @('nsis'); createUpdaterArtifacts = $false; windows = @{ signCommand = @{ cmd = $signCommand[0]; args = $signCommand[1..($signCommand.Length - 1)] }; nsis = @{ installMode = 'currentUser' } } } }
     $configPath = Join-Path $work 'signing.conf.json'
     [IO.File]::WriteAllText($configPath, ($overlay | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
@@ -56,7 +57,7 @@ try {
     try {
         & npm ci --ignore-scripts
         if ($LASTEXITCODE -ne 0) { throw 'Pinned packaging dependency installation failed.' }
-        & node node_modules/@tauri-apps/cli/tauri.js bundle --ci --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.auth.csp.conf.json --config $configPath
+        & node node_modules/@tauri-apps/cli/tauri.js bundle --ci --verbose --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.auth.csp.conf.json --config $configPath
         if ($LASTEXITCODE -ne 0) { throw 'Signed bundling failed.' }
     } finally { Pop-Location }
     $installers = @(Get-ChildItem -LiteralPath (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis') -Filter '*.exe')
@@ -66,7 +67,7 @@ try {
     if (-not ($signatures | Where-Object { $_.File -eq $installers[0].Name })) { throw 'Installer signing evidence is missing.' }
     Push-Location $root
     try {
-        & node --input-type=module -e "import {readFileSync} from 'node:fs'; import {join} from 'node:path'; import {imageDigest,readJson,assert} from './scripts/release/model.mjs'; const c=readJson(process.argv[1]); for (const [name,image] of Object.entries(c.windowsImages)) assert(imageDigest(readFileSync(join(process.argv[2], name)), image.size)===image.sha256,'Packaging executable differs from CI build: '+name);" (Join-Path $work 'signing-candidate.json') (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release')
+        & node --input-type=module -e "import {readFileSync} from 'node:fs'; import {join} from 'node:path'; import {nsisImageDigest,readJson,assert} from './scripts/release/model.mjs'; const c=readJson(process.argv[1]); for (const [name,image] of Object.entries(c.windowsImages)) assert(nsisImageDigest(readFileSync(join(process.argv[2], name)), image.size)===image.sha256,'Packaging executable differs from CI build: '+name);" (Join-Path $work 'signing-candidate.json') (Join-Path $source 'src-tauri/target/x86_64-pc-windows-msvc/release')
         if ($LASTEXITCODE -ne 0) { throw 'Packaging executable identity verification failed.' }
     } finally { Pop-Location }
     $evidence = @{ candidateId = $candidate.id; verified = $true; thumbprint = $env:CLIPSX_CERT_THUMBPRINT; signatures = $signatures }

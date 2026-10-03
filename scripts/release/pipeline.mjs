@@ -43,6 +43,7 @@ import {
   digest,
   encode,
   imageDigest,
+  nsisImageDigest,
   publicationMode,
   readJson,
   repository,
@@ -225,7 +226,7 @@ function windowsKit() {
   candidate.windowsImages = Object.fromEntries(
     ['clipsx.exe'].map(file => {
       const bytes = readFileSync(join(kit, file))
-      return [file, { size: bytes.length, sha256: imageDigest(bytes) }]
+      return [file, { size: bytes.length, sha256: nsisImageDigest(bytes), bundleType: 'nsis' }]
     })
   )
   candidate.windowsKit = [
@@ -570,6 +571,23 @@ function prepareWindows(id) {
       digest(readFileSync(join(artifactPath, file.file))) === file.sha256,
       `Packaging input changed: ${file.file}`
     )
+  const executable = readFileSync(join(artifactPath, 'clipsx.exe'))
+  assert(
+    digest(executable) === candidate.build.platforms['windows-x64'].sha256,
+    'Windows kit executable differs from saved build'
+  )
+  if (!candidate.windowsImages['clipsx.exe'].bundleType) {
+    assert(
+      imageDigest(executable) === candidate.windowsImages['clipsx.exe'].sha256,
+      'Legacy Windows executable identity changed'
+    )
+    candidate.windowsImages['clipsx.exe'] = {
+      size: executable.length,
+      sha256: nsisImageDigest(executable),
+      bundleType: 'nsis',
+    }
+    writeAsset(release, 'candidate.json', candidate, directory)
+  }
   writeFileSync(join(directory, 'signing-candidate.json'), encode(candidate))
   console.log(candidate.id)
 }
