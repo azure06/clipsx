@@ -106,7 +106,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-0 libappindicator3-1 librsvg2-2 patchelf libxdo3
+          sudo apt-get install -y libwebkit2gtk-4.1-0 libappindicator3-dev librsvg2-2 patchelf libxdo3
       - name: Configure Developer ID and notarization
         if: runner.os == 'macOS'
         env:
@@ -175,21 +175,6 @@ jobs:
             for deb in "$bundle"/deb/*.deb; do dpkg-deb --info "$deb"; dpkg-deb --contents "$deb"; done
             for image in "$bundle"/appimage/*.AppImage; do test -x "$image"; done
           fi
-      - name: Upload retained Mac debug symbols
-        if: runner.os == 'macOS'
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: infiniti-next
-          SENTRY_PROJECT: clipsx-desktop
-        shell: bash
-        run: |
-          mkdir -p .release/symbols
-          tar -xzf .release/debug-symbols.tar.gz -C .release/symbols
-          binary_uuid="$(dwarfdump --uuid "src-tauri/target/$TARGET/release/bundle/macos/ClipsX.app/Contents/MacOS/clipsx" | awk '{print $2}')"
-          symbol_uuid="$(dwarfdump --uuid .release/symbols/clipsx.dSYM | awk '{print $2}')"
-          test -n "$binary_uuid" && test "$binary_uuid" = "$symbol_uuid"
-          printf 'debug-symbols verified uuid=%s\n' "$binary_uuid" | tee -a .release/native-verification.log
-          node node_modules/@sentry/cli/bin/sentry-cli debug-files upload .release/symbols
       - name: Export Windows local signing kit
         if: runner.os == 'Windows'
         shell: bash
