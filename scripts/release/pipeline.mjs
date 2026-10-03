@@ -517,11 +517,10 @@ function stagePlatform(id, platform) {
   writeAsset(release, 'candidate.json', candidate, directory)
 }
 function packageSource(id) {
-  const { candidate } = fresh(id)
-  assertMutable(candidate, findCandidate(id))
   command('git', ['init'])
   command('git', ['remote', 'add', 'origin', `https://github.com/${repository}.git`])
-  source(candidate.sourceRevision)
+  const { candidate } = fresh(id)
+  assertMutable(candidate, findCandidate(id))
   const paths = command('git', ['ls-tree', '-r', '--name-only', candidate.sourceRevision]).split(
     '\n'
   )
