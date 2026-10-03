@@ -40,6 +40,7 @@ import {
   assertManifests,
   assetName,
   createManifests,
+  candidateDraftMetadata,
   digest,
   encode,
   imageDigest,
@@ -762,7 +763,7 @@ function finalize(id, windowsEvidencePath) {
   }
   candidate.finalizedAt = new Date().toISOString()
   writeAsset(release, 'candidate.json', candidate, directory)
-  repoApi(`releases/${release.id}`, 'PATCH', { body: notes })
+  repoApi(`releases/${release.id}`, 'PATCH', candidateDraftMetadata(candidate, release, notes))
   console.log(
     `Candidate ${id} finalized. Download installers, test every platform, then run Certify candidate.`
   )

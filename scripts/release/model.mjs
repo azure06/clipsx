@@ -324,3 +324,20 @@ export function nsisImageDigest(bytes, originalSize = bytes.length, packaged = f
   nsis.copy(image, offset)
   return imageDigest(image, originalSize)
 }
+
+export function candidateDraftMetadata(candidate, release, body) {
+  assertIdentity(candidate)
+  assert(
+    release.draft && release.tag_name === candidate.stagingTag,
+    'Unexpected candidate draft metadata'
+  )
+  // GitHub draft updates require an explicit tag; omission can create an untagged draft.
+  return {
+    tag_name: candidate.stagingTag,
+    target_commitish: release.target_commitish,
+    name: release.name,
+    body,
+    draft: true,
+    prerelease: true,
+  }
+}

@@ -6,6 +6,7 @@ import {
   assertManifests,
   assetName,
   createManifests,
+  candidateDraftMetadata,
   digest,
   encode,
   imageDigest,
@@ -237,4 +238,24 @@ test('NSIS image identity permits only Tauri installer marker and Authenticode c
   const wrongFormat = Buffer.from(packaged)
   wrongFormat.write('__TAURI_BUNDLE_TYPE_VAR_MSI', 320)
   nodeAssert.throws(() => nsisImageDigest(wrongFormat, original.length, true))
+})
+
+test('draft metadata updates preserve candidate tag and never publish', () => {
+  const { candidate } = fixture()
+  const release = {
+    draft: true,
+    tag_name: candidate.stagingTag,
+    target_commitish: 'a'.repeat(40),
+    name: 'Candidate',
+  }
+  const metadata = candidateDraftMetadata(candidate, release, 'Final notes')
+  nodeAssert.equal(metadata.tag_name, candidate.stagingTag)
+  nodeAssert.equal(metadata.target_commitish, release.target_commitish)
+  nodeAssert.equal(metadata.body, 'Final notes')
+  nodeAssert.equal(metadata.draft, true)
+  nodeAssert.equal(metadata.prerelease, true)
+  nodeAssert.throws(() => candidateDraftMetadata(candidate, { ...release, draft: false }, 'notes'))
+  nodeAssert.throws(() =>
+    candidateDraftMetadata(candidate, { ...release, tag_name: 'untagged' }, 'notes')
+  )
 })
