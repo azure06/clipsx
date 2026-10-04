@@ -503,8 +503,9 @@ timings are not certification of the current release.
 
 Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Follow their repository release
-skills and [extension release procedure](https://github.com/azure06/clipsx-extensions/blob/main/.agents/skills/clipsx-extension-release/references/operations.md)
-and [registry operations](https://github.com/azure06/clipsx-registry/blob/main/.agents/skills/clipsx-registry-publication/references/operations.md).
+skills and the operating references linked from the
+[extension repository](https://github.com/azure06/clipsx-extensions) and
+[registry repository](https://github.com/azure06/clipsx-registry).
 Extension PRs prepare affected packages once; their merge publishes those exact
 candidate bytes and opens a registry metadata PR. Trusted registry automation
 validates and signs the catalog in that same PR. Merging it activates the signed
