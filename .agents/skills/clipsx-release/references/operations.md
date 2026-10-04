@@ -269,6 +269,10 @@ tools, GitHub CLI, tar, Windows SDK SignTool and SimplySign Desktop installed.
 Log into GitHub CLI and connect SimplySign in the same Windows user session.
 The certificate must be valid and available in the current-user certificate store.
 
+Wait for the preparation workflow's final staging job to register
+windowsKitArtifact in candidate.json before signing. The Windows platform job
+exports the kit; its success alone does not mean the candidate can download it.
+
 From the repository root:
 
 ```powershell
