@@ -35,8 +35,8 @@ export const StartupRecovery = ({ status }: { status: StartupStatus }) => {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-6 dark:bg-slate-950">
-      <section className="w-full max-w-lg rounded-2xl border border-amber-400/30 bg-white/80 p-7 shadow-2xl backdrop-blur-xl dark:border-amber-400/20 dark:bg-slate-900/80">
+    <main className="flex h-screen overflow-y-auto bg-slate-100 px-6 py-6 dark:bg-slate-950">
+      <section className="m-auto w-full max-w-lg shrink-0 rounded-2xl border border-amber-400/30 bg-white/80 p-7 shadow-2xl backdrop-blur-xl dark:border-amber-400/20 dark:bg-slate-900/80">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/15">
             <AlertTriangle className="h-4.5 w-4.5 text-amber-500" strokeWidth={1.5} />
