@@ -1,6 +1,6 @@
 [package]
 name = "clipsx"
-version = "0.1.1"
+version = "0.1.2"
 description = "Free, programmable desktop clipboard"
 license = "Apache-2.0"
 authors = ["gabriele.sato"]
