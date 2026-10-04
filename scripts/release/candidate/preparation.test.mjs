@@ -46,6 +46,9 @@ test('packaging-tool corrections consume an explicit older build and preserve su
     assert.equal(encode(saved.artifacts), before)
     assert(!f.trace.some(item => item.program === 'node' || item.program === 'cargo'))
     assert.throws(() => prepare('999', f.candidate.id, 'missing'), /another build/)
+    artifacts[0].expired = true
+    assert.throws(() => prepare('100', f.candidate.id, 'missing', '', 'main'), /expired/)
+    assert(!f.trace.some(item => item.program === 'gh' && item.args[1] === 'upload'))
   } finally {
     f.restore()
     if (previousId === undefined) delete process.env.GITHUB_RUN_ID

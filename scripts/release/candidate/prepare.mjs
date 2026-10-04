@@ -136,9 +136,9 @@ export function prepare(runId, id, target = 'missing', prNumber, notesRef) {
     'Candidate belongs to another build'
   )
   assertMutable(candidate, release)
-  if (id && notesRef) updateNotes(release, candidate, notesRef)
   assertPublicEnvironment(candidate)
   if (id) loadBuild(runId, join(directory, 'build'), candidate)
+  if (id && notesRef) updateNotes(release, candidate, notesRef)
   const matrix = preparationTargets(candidate, target)
   writeFileSync(join(directory, 'candidate.json'), encode(candidate))
   output('candidate-id', candidate.id)
