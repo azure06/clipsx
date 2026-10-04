@@ -16,10 +16,17 @@ test('root loader discovers nested tests from a tooling checkout with a differen
         join(tooling, domain, 'fixture.test.mjs'),
         `import test from 'node:test';test('${domain} discovered',()=>{})`
       )
-    const output = execFileSync(process.execPath, ['--test', join(tooling, 'release.test.mjs')], {
-      cwd: work,
-      encoding: 'utf8',
-    })
+    const childEnv = { ...process.env }
+    delete childEnv.NODE_TEST_CONTEXT
+    const output = execFileSync(
+      process.execPath,
+      ['--test', '--test-reporter=spec', join(tooling, 'release.test.mjs')],
+      {
+        cwd: work,
+        encoding: 'utf8',
+        env: childEnv,
+      }
+    )
     assert(output.includes('core discovered'))
     assert(output.includes('platforms/windows discovered'))
   } finally {
