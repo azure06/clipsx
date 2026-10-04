@@ -1,4 +1,3 @@
-import { DiagnosticsActions } from './features/settings/DiagnosticsActions'
 import { useTranslation } from 'react-i18next'
 import { diagnostic } from './shared/diagnostics'
 import { useEffect, useRef, useState } from 'react'
@@ -126,7 +125,6 @@ const App = () => {
       <ErrorBoundary>
         <ToastProvider>
           <AppLayout />
-          <DiagnosticsActions notifyOnly />
         </ToastProvider>
       </ErrorBoundary>
     </ThemeProvider>

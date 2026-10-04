@@ -30,14 +30,14 @@ test('routing classifies app, recipes, docs, packaging and unknown files conserv
     assert(route([path]))
   }
   for (const path of [
-    'docs/RELEASE.md',
+    'docs/MODELS.md',
     'README.md',
     'scripts/release/sign-windows.ps1',
     '.github/workflows/release-prepare.yml',
     'tools/release-verify/Cargo.lock',
   ])
     assert(!route([path]))
-  assert(route(['docs/RELEASE.md', 'src/new.ts']))
+  assert(route(['docs/MODELS.md', 'src/new.ts']))
 })
 test('app inventory tolerates docs/tooling commits and detects additions/deletions/config changes', t => {
   const root = mkdtempSync(join(tmpdir(), 'clipsx-inputs-'))
@@ -50,11 +50,11 @@ test('app inventory tolerates docs/tooling commits and detects additions/deletio
   mkdirSync(join(root, 'docs'))
   mkdirSync(join(root, 'scripts/release'), { recursive: true })
   writeFileSync(join(root, 'src/app.ts'), 'app')
-  writeFileSync(join(root, 'docs/RELEASE.md'), 'docs')
+  writeFileSync(join(root, 'docs/MODELS.md'), 'docs')
   git('add', '.')
   git('commit', '-m', 'fixture')
   const original = inputsDigest(appInputs('HEAD', root))
-  writeFileSync(join(root, 'docs/RELEASE.md'), 'new docs')
+  writeFileSync(join(root, 'docs/MODELS.md'), 'new docs')
   writeFileSync(join(root, 'scripts/release/sign-windows.ps1'), 'new signing')
   git('add', '.')
   git('commit', '-m', 'tooling')

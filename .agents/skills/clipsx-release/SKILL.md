@@ -5,8 +5,11 @@ description: Operate ClipsX desktop releases from saved builds, retry packaging,
 
 # ClipsX release workflow
 
-Read [release requirements](../../../docs/RELEASE.md). Inspect the selected build,
+Read [release requirements](references/operations.md). Inspect the selected build,
 candidate draft and evidence; build success is not installed certification.
+An explicit request to publish authorizes signing, finalization, certification
+and merge/publication within this flow; preparation alone does not. Certification
+still requires evidence for the exact finalized files.
 
 ## Ordered operations
 
@@ -52,14 +55,16 @@ Compilation ends at the saved build. Preparation and later stages cannot build
 the app/frontend or run application tests. Compare the central tracked app-input
 inventory and public environment with release source. Docs/signing tooling may
 differ; changed app inputs or public production variables require a new build.
+For documentation-only corrections, follow the reference procedure for preserving
+an in-progress build and validating the exact PR head. Do not rebuild unchanged
+application inputs or treat tested source/dev builds as tested installers.
 Newer builds do not supersede selected candidates. Record build and release-tooling
 revisions separately and reject mixed, expired or tampered inputs.
 
 Finalized/certified assets and notes are immutable. Recheck descriptor/asset
 metadata before lifecycle writes and verify transfers at external boundaries.
 Never infer installed success from a build, signature or checkbox without evidence.
-Historical release evidence remains readable; completed migration, waiver,
-symbol/cache recovery and ruleset migration commands are retired.
+Existing published descriptors and certifications remain verifiable.
 
 ## Infrastructure changes
 
@@ -71,7 +76,7 @@ Merge infrastructure before using changed main-only dispatch actions; validate
 with fixtures and read-only verification without creating a production tag/release.
 
 Keep exact commands, credential setup and installed checklists in
-[RELEASE.md](../../../docs/RELEASE.md). Public DSN mapping is centralized; secret
+[operations reference](references/operations.md). Public DSN mapping is centralized; secret
 upload/deployment tokens remain separate. Loopback-only updater fixture settings
 must never enter production artifacts. Website and extension publication remain
-separate. This skill does not independently authorize external publication.
+separate. Never certify missing tests or fabricate an evidence reference.

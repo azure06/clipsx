@@ -74,6 +74,8 @@ describe('App', () => {
     render(<App />)
     expect(screen.queryByText('Mock App Layout')).not.toBeInTheDocument()
     expect(await screen.findByText('Mock App Layout')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Prepare report…' })).not.toBeInTheDocument()
+    expect(invokeMock).not.toHaveBeenCalledWith('get_crash_report', { path: null })
   })
 
   it('does not wait for tray labels before rendering history', async () => {

@@ -20,17 +20,16 @@ searches. Skip CodeGraph in repositories without an index.
 
 ## Task routing
 
-Load only the guidance relevant to the task. Skills describe workflows; docs
-remain authoritative for behavior and requirements.
+Load only the guidance relevant to the task. Skills describe workflows and link operating requirements; domain references
+own contracts. Code and tests own implementation details.
 
 | Task                                              | Guidance                                                                                                 |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Desktop UI interactions                           | [UI skill](.agents/skills/clipsx-ui/SKILL.md)                                                            |
 | Extension contracts, integration or compatibility | [Extension skill](.agents/skills/clipsx-extension-development/SKILL.md), [API](docs/EXTENSION_API_V3.md) |
-| Explicit release preparation or publication       | [Release skill](.agents/skills/clipsx-release/SKILL.md), [release requirements](docs/RELEASE.md)         |
-| Architecture or persistence                       | [Architecture](docs/ARCHITECTURE.md), [data model](docs/MODELS.md)                                       |
+| Explicit release preparation or publication       | [Release skill](.agents/skills/clipsx-release/SKILL.md), [release operations](.agents/skills/clipsx-release/references/operations.md)         |
+| Persistence | [Data model](docs/MODELS.md) |
 | Search or Recall                                  | [Search architecture](docs/SEMANTIC_SEARCH_ARCHITECTURE.md)                                              |
-| Product scope and blockers                        | [Roadmap](docs/ROADMAP.md)                                                                               |
 
 ## Validation
 
@@ -44,4 +43,8 @@ content validation rather than app builds.
 - Rust lint: `npm run lint:rust`
 - Focused Rust tests: `npm run test:rust -- <test-filter>`
 
-Release-wide gates remain in the release document.
+Release-wide gates remain in the release skill’s operations reference.
+
+## Documentation maintenance
+
+After completing a task, review affected documentation and skills. Update the authoritative source only. Remove obsolete statements and duplication; simplify existing text before adding sections. Describe current behavior, not implementation history. Code and tests own implementation details; retain contracts and operational requirements that cannot be safely inferred. Do not claim passing checks or production availability without evidence. Avoid maintaining roadmaps or completed investigation reports.

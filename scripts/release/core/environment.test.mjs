@@ -21,7 +21,7 @@ test('public mapping preserves recorded descriptors and excludes secrets', () =>
   assert.equal(consumerEnvironment(env, 'checks').VITE_SENTRY_DSN, '')
 })
 test('relocated, new, deleted and mixed inputs select independent check owners', () => {
-  assert.deepEqual(decisions(['docs/RELEASE.md']), {
+  assert.deepEqual(decisions(['docs/MODELS.md']), {
     app: false,
     build: false,
     tooling: false,
@@ -40,7 +40,7 @@ test('relocated, new, deleted and mixed inputs select independent check owners',
   for (const path of ['src/new.ts', 'src/deleted.ts', 'unknown.config'])
     assert(decisions([path]).app)
   assert.deepEqual(
-    decisions(['src/new.ts', 'docs/RELEASE.md', 'scripts/release/platforms/windows/image.mjs']),
+    decisions(['src/new.ts', 'docs/MODELS.md', 'scripts/release/platforms/windows/image.mjs']),
     { app: true, build: true, tooling: true, docs: true }
   )
 })

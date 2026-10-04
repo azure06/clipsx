@@ -2,7 +2,7 @@
 
 A release is ready when its exact artifacts pass automated checks and installed
 tests on every advertised platform. This checklist is not a record of a passed
-release. Open shipping work belongs in [ROADMAP.md](ROADMAP.md).
+release. Record unresolved candidate blockers in its certification evidence.
 
 ```mermaid
 flowchart LR
@@ -32,11 +32,9 @@ Advertise only demonstrated capabilities. Configuration sync and local Ollama
 generation require installed tests like other features. Windows OCR is
 release-blocking until its real lifecycle passes.
 
-Preserve the current schema/reset contract in [Architecture](ARCHITECTURE.md).
-Release notes must explain incompatible-schema resets; packaging is not a reason
-to add compatibility reads.
+Preserve the [database compatibility contract](../../../../docs/MODELS.md). Build mode and release version do not require reset. Support known forward migrations; block unsupported downgrades and arbitrary checksum differences without deleting user data. Retired schemas require a separate explicit destructive action.
 
-Extension API v3.2 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The fresh database baseline is version 15 and requires an explicit reset. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
+Extension API v3.2 releases must certify durable Rewrite and local transformer jobs across restart, exact source-application attribution, source deletion, package update/uninstall, typed output rendering, and explicit promotion. The database baseline is defined by the published migrations; reset is reserved for incompatible retired schemas. Discover shows only current-contract releases and rejects incompatible archives with an upgrade message.
 
 ## Build and publication
 
@@ -159,6 +157,23 @@ pass the unprivileged CI workflow on the exact PR head before CI passes. CI
 completion refreshes readiness; privileged evaluation reads PR code only as data.
 Docs-only routing installs no application dependencies and compiles no verifier.
 
+### Documentation-only corrections
+
+The release-build workflow cancels an earlier run on the same branch when another
+push starts. If compilation is still running, commit documentation corrections
+locally and wait for that run to finish before pushing. A docs-only push then
+runs lightweight validation; it does not create a new saved application build.
+Keep the explicit successful build ID and select its candidate on the release PR.
+Readiness compares app inputs and requires documentation/tooling CI on the exact
+PR head, so documentation fixes can reuse those existing binaries.
+
+Use repository-local links for files in this repository and GitHub URLs for
+other repositories; CI does not check out sibling repositories. Before pushing:
+
+```sh
+node --input-type=module -e "import {execFileSync} from 'node:child_process'; import {checkDocuments} from './scripts/release/core/docs.mjs'; checkDocuments(execFileSync('git',['diff','--name-only','origin/main'],{encoding:'utf8'}).trim().split('\n'))"
+```
+
 ### Release-note corrections
 
 Preparation accepts optional notes_ref (a commit or branch resolved once to an
@@ -254,6 +269,10 @@ tools, GitHub CLI, tar, Windows SDK SignTool and SimplySign Desktop installed.
 Log into GitHub CLI and connect SimplySign in the same Windows user session.
 The certificate must be valid and available in the current-user certificate store.
 
+Wait for the preparation workflow's final staging job to register
+windowsKitArtifact in candidate.json before signing. The Windows platform job
+exports the kit; its success alone does not mean the candidate can download it.
+
 From the repository root:
 
 ```powershell
@@ -319,7 +338,10 @@ below on Windows, both Mac architectures and Linux/X11 for AppImage and Debian.
 Record exact artifact hashes, environments, results and an HTTPS evidence link.
 
 Run **Certify candidate** on main with the candidate ID, release PR number, evidence reference and
-the explicit all-platforms confirmation. Certification binds the candidate
+both all_platforms_passed and mac_extensions_passed confirmations. Only set
+these after testing the finalized files; a generic approval or source/dev test
+is not installed certification. The HTTPS evidence must identify the candidate,
+package hashes, test environments and outcomes. Certification binds the candidate
 descriptor and complete draft inventory hashes. Merge the release PR only when
 `Release readiness` and all normal CI checks pass.
 Certification also marks an existing matching draft release PR ready for review.
@@ -337,13 +359,7 @@ verified again rather than recreated. A conflicting tag/release or an older
 version cannot replace the latest release. A previously installed public build
 must also discover and install the published update.
 
-### Historical releases
-
-Published 0.1.0 retained the original saved-build migration and the owner's
-explicit updater-test deferral in its immutable evidence. Published 0.1.1 retained
-a one-time symbol archive recovery. These procedures are completed and have no
-executable recovery commands or workflow inputs. Historical descriptors and
-certifications remain readable; new certifications require all current checks.
+Historical descriptors and certifications remain readable. Newly created certifications require all current checks.
 
 ### Private pre-publication upgrade test
 
@@ -484,15 +500,16 @@ or compilation inputs change, and focused release checks for orchestration fixes
 | UI / native effects   | Splitter geometry/persistence, command save/reset/conflicts, all-or-nothing share preparation                                                                                             |
 | Supply chain          | Dependency audit, licenses, SBOM, secret scan, built-artifact and log inspection                                                                                                          |
 | Security              | Review actionable findings against source/tests; resolve high-severity findings                                                                                                           |
-| Search capacity       | Run [qualification tests](SEMANTIC_SEARCH_ARCHITECTURE.md#qualification); retain output                                                                                                   |
+| Search capacity       | Run [qualification tests](../../../../docs/SEMANTIC_SEARCH_ARCHITECTURE.md#qualification); retain output                                                                                                   |
 
 Tests establish only the behaviour they exercise. Old test counts and developer
 timings are not certification of the current release.
 
 Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Follow their repository release
-skills and [extension release procedure](https://github.com/azure06/clipsx-extensions/blob/main/RELEASE.md)
-and [registry operations](https://github.com/azure06/clipsx-registry/blob/main/OPERATIONS.md).
+skills and the operating references linked from the
+[extension repository](https://github.com/azure06/clipsx-extensions) and
+[registry repository](https://github.com/azure06/clipsx-registry).
 Extension PRs prepare affected packages once; their merge publishes those exact
 candidate bytes and opens a registry metadata PR. Trusted registry automation
 validates and signs the catalog in that same PR. Merging it activates the signed
@@ -511,8 +528,8 @@ Discover's catalog parser rather than approximating the desktop contract.
 
 ## Native clipboard sequence
 
-The [platform-format matrix](platform-format-matrix.json), its
-[schema](platform-format-matrix.schema.json), and compiled codecs define support.
+The [platform-format matrix](../../../../docs/platform-format-matrix.json), its
+[schema](../../../../docs/platform-format-matrix.schema.json), and compiled codecs define support.
 Change policy and fixtures together; never infer native identifiers.
 
 ```text
@@ -586,7 +603,7 @@ complete only when linked evidence identifies the artifact and result.
       language changes; exactly-once search refresh with unchanged image bytes.
 - [ ] **Search/Recall:** configuration, provider failure/recovery, exact
       identifiers, filters, citation support, cancellation, self-write checks;
-      [capacity qualification](SEMANTIC_SEARCH_ARCHITECTURE.md#qualification) before
+      [capacity qualification](../../../../docs/SEMANTIC_SEARCH_ARCHITECTURE.md#qualification) before
       capacity claims.
 - [ ] **Sharing:** Unicode, URLs, existing/missing files, images, PDFs, typed
       documents, unsupported native data; duplicate clicks, corrupt assets,
@@ -645,21 +662,18 @@ cross-platform sign-off is recorded by this checklist.
 | Evidence    | CI/test output, signing/notarization results, redacted diagnostics |
 | Decision    | Pass/fail, remaining blocker, evidence URL/path                    |
 
-Publish only when the applicable checks pass, required
-[roadmap work](ROADMAP.md) is complete, and no high-severity finding remains.
+Publish only when applicable checks pass and no unresolved release blocker or high-severity finding remains.
 Release notes state verified platforms/features, limitations, reset implications,
 and updater compatibility. Verify website download metadata after assets are public.
 
-## Mac runtime and diagnostics acceptance (0.1.1 onward)
+## Mac runtime and diagnostics acceptance
 
 Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and archived with symlinks dereferenced and uploaded by **Upload Mac debug symbols** from trusted `main`. That workflow starts after a successful release build and accepts an explicit `build_run_id` for retries. It verifies the saved executable hash and matching dSYM UUID, without compiling or packaging. Symbol-service failures do not discard signed packages or finalize deployment records.
-
-The historical 0.1.1 symbol recovery is complete. Normal builds archive dSYM contents with tar dereferencing and record hashes in the saved checkpoint. Uploads restore those exact symbols and compare UUIDs with the saved executable; there is no cache-recovery input.
 
 Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. Every newly created certification requires these confirmations.
 
 For the reported Silicon/macOS 26 crash, obtain the original OS report before claiming the root cause is confirmed. In Console, open Crash Reports and locate ClipsX, or use Finder → Go → Go to Folder → `~/Library/Logs/DiagnosticReports`. Preserve the Exception Type, Termination Reason and matching executable UUID. A private copy of the existing app can validate the entitlement fix without recompiling; never replace published 0.1.0 assets. Compare Dock/Finder icons under the same macOS appearance setting: the published ICNS matches the source, while macOS 26 can apply its own icon background. The logo remains unchanged.
 
-Recovery and Settings provide local diagnostic export, report preview and optional submission. An upload requires per-report consent; local operational logs are included only when checked. Reports can contain local file paths. For a startup failure before the UI appears, obtain logs/crash reports through Finder or Console; install a corrected build without resetting the database. Verify one frontend error, one native error and one consented `.ips` submission in Sentry, checking the event ID and matching debug symbols rather than assuming an upload proves ingestion.
+Startup recovery and Settings > Advanced > Diagnostics & support provide local diagnostic export, inline report review and optional submission. The main screen shows no crash-report panel or startup notice. Automatic reporting is a separate preference; enabling verbose logging only changes local logging. More tools contains log-folder access and macOS crash-file selection, plus crash-file saving when a report is selected. An upload requires per-report consent; local operational logs are included only when checked. Reports can contain local file paths. For a startup failure before the UI appears, obtain logs/crash reports through Finder or Console; install a corrected build without resetting the database. Verify one frontend error, one native error and one consented `.ips` submission in Sentry, checking the event ID and matching debug symbols rather than assuming an upload proves ingestion.
 
 Dev/production switching against identical published migrations must retain the same database. Check LF/CRLF compatibility, rejected arbitrary checksum changes, newer-schema blocking and interrupted repairs. Foundation makes a consistent `clips-before-checksum-repair-*.db` backup before known checksum repair; do not delete the active database as a workaround.

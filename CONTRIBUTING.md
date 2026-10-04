@@ -5,9 +5,7 @@ clear writing, and well-contained features all make the project better.
 
 ## Before you start
 
-Read the [architecture](docs/ARCHITECTURE.md) and the relevant part of the
-[roadmap](docs/ROADMAP.md). They describe the domain boundaries and release
-work that take precedence over assumptions from unfinished code.
+Read the relevant [data model](docs/MODELS.md), [extension contract](docs/EXTENSION_API_V3.md) or [search reference](docs/SEMANTIC_SEARCH_ARCHITECTURE.md). Inspect current code and tests for implementation details.
 
 For a new capability or a substantial change, start a GitHub issue or
 discussion first. A short shared direction is especially useful for clipboard

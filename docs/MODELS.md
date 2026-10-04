@@ -1,6 +1,6 @@
 # ClipsX data model
 
-ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations). Runtime boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md).
+ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
 Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The published baseline is `clipsx-local-v3`, schema version 15. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
@@ -263,3 +263,193 @@ Extension tables store package/runtime infrastructure, not arbitrary extension-o
 The architecture is appropriate for a local-first pre-1.0 clipboard: canonical truth is normalized, configuration has explicit scope, derived data is rebuildable, operational state is recoverable, ownership is enforceable, and files are deleted durably after database commits. The main cost is more lifecycle tables and joins, accepted in exchange for recovery and provenance.
 
 The deliberate limits are measurable: binary clip-routing recall requires labelled certification, JSON preferences depend on typed application validation, and schema incompatibility preserves user data and factory reset remains an explicitly confirmed last resort. These are explicit boundaries, not hidden data-model debt.
+
+
+## Capture and recovery contract
+
+### Capture, recovery, deletion
+
+```text
+Stable native snapshot (bounded retries)
+  -> deduplicate a ready capture, or create new records
+  -> stage binary files -> hash + fsync -> atomic move -> mark ready
+  -> schedule derived work
+```
+
+| Event                            | Behaviour                                                                  |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| Startup                          | Recover staging and incomplete records; do not rehash all ready files      |
+| Access to ready binary           | Verify SHA-256                                                             |
+| Background maintenance           | Recheck references, remove orphans/empty directories, retry failed cleanup |
+| Delete, clear history, retention | One transactional cascade                                                  |
+| Final file reference removed     | Managed file becomes eligible for deletion                                 |
+| Derived job fails                | Preserve the captured clip; expose retry/rebuild                           |
+
+Extension detection records each detector/representation outcome in
+`content_detection_jobs`. Both `completed` (including empty results) and
+`unsupported` are terminal for the current detector version. Selector mismatches,
+oversized inputs, and guest-reported unsupported inputs atomically clear obsolete
+facets and record `unsupported`. Operational failures retain retry and quarantine
+handling.
+
+Startup recovery uses cursor batches of 100 and only the selected detector's
+unfinished representations. Completed and unsupported pairs do not call guests
+again until the detector version changes or explicit redetection forces the shared
+path. Existing installations converge when missing unsupported outcomes are first
+recorded. Compact presentations refresh only after detection state or facets change;
+the existing facet event refreshes visible history.
+
+Artifacts belong to a clip; their input references stay within that clip.
+A saved transform survives deletion of its source through nullable live links
+and a bounded provenance snapshot.
+
+Clip deletion also writes semantic cleanup intent in the same transaction.
+That intent survives the clip cascade and restart. The single semantic writer
+removes the clip, chunks, routing entries, and unused vectors from retained
+indexes, checkpoints complete indexes, then acknowledges cleanup. This runs
+before provider validation, including when Meaning Search is unavailable.
+
+Notes, tags, and OCR changes refresh search projections. Extension lifecycle
+changes invalidate its derived facets, views, sessions, and grants.
+`clip-facets-updated` refreshes the matching preview; `clipId: null` refreshes
+loaded summaries and the open preview.
+
+## Settings, account, and sync
+
+| Screen       | Owns                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| Clips        | History and preview                                                                         |
+| Intelligence | Models, provider health, indexing, search, OCR                                              |
+| Extensions   | Installed, Discover, Built-ins, Developer; package settings/permissions/actions/diagnostics |
+| Settings     | General, Clipboard, Keyboard, Storage, Privacy, Sync, Account, Advanced                     |
+
+List pages show identity, health, and next action; detail pages hold configuration
+and diagnostics. SQLite is the live settings store; JSON is the validated value
+and export format.
+
+| Data class            | Examples                                                                                                  | Travels through configuration sync?                |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Portable preferences  | Theme, language, output/copy UI, search, OCR, renderer preference                                         | Explicit allowlist only                            |
+| Portable intent       | Signed-registry extensions, approved boolean/number settings, app shortcuts                               | Yes, subject to local validation and fresh consent |
+| Device settings       | Window geometry, autostart, capture limits, provider endpoint/model, similarity floor, local package path | No                                                 |
+| Secrets               | Account sessions, API credentials                                                                         | No; OS-protected storage                           |
+| Consent / operations  | Grants, tokens, quarantine, jobs, health, cursor                                                          | No                                                 |
+| Clip and derived data | Clips, notes, tags, files, OCR, caches, indexes                                                           | No                                                 |
+
+Extension setting portability and approval rules live in the
+[Extension API](EXTENSION_API_V3.md#settings).
+
+### Account storage
+
+The Supabase client owns Google/GitHub sign-in choice, PKCE, session serialization,
+refresh, and local sign-out. Provider choice is per attempt, not a preference.
+Rust exposes an allowlisted opaque key/value adapter.
+
+| Platform      | Session storage                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| Windows       | Versioned map in private app data, encrypted and integrity-protected by current-user DPAPI |
+| macOS / Linux | Native credential store                                                                    |
+
+This protects against other ordinary OS users, not malicious code running as
+the signed-in user or a compromised ClipsX process.
+
+### Configuration sync v1
+
+Sync is opt-in and account-protected, independent of browser vault and billing.
+
+```text
+Local settings transaction + outbox
+  -> event-driven coordinator -> owner-scoped server RPC
+  -> staged cloud records -> validated local application -> pending effects/recovery
+```
+
+SQLite owns the clock, cursor, per-account/generation outbox, exact-revision
+acknowledgements, staged first restore, invalid-record quarantine, and pending
+effects. Triggers commit settings and outbox together.
+
+| Trigger                  | Schedule                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| Startup / manual request | Synchronize                                                                                 |
+| Eligible local mutations | 5-second debounce; 30-second maximum wait                                                   |
+| Active reconnect         | Synchronize                                                                                 |
+| Window activation        | Wait 2 seconds; cancel on blur; pull only if last automatic pull is at least 15 minutes old |
+| Idle/hidden app          | No periodic polling                                                                         |
+
+Conflicts use deterministic `(physical time, logical counter, source device)`
+ordering. Received clocks are observed; excessive future clocks use server-time
+correction. Reset/replacement increments profile generation so offline devices
+cannot resurrect cleared state. Late responses must match account, generation,
+and local session epoch.
+
+First connection defaults to cloud restore. Empty-cloud initialization and
+explicit replacement are atomic snapshots; paged restores stage before replacing
+local portable values. Sign-out disables sync and preserves local data. Sync
+does not upgrade installed extensions or transfer grants. Unavailable packages
+and unknown/conflicting commands remain pending.
+
+The sibling `clipsx-web` repository owns Supabase migrations, tests, deployment,
+and [backend protocol](https://github.com/azure06/clipsx-web/blob/main/docs/backend/configuration-sync.md).
+Desktop owns the client, generated types, secure session storage, and local
+coordinator. Backend RPCs enforce ownership over `sync_profiles`,
+`sync_devices`, and `sync_records`; clients have no raw table access.
+Internal operations use a NOLOGIN/NOBYPASSRLS role. Enrollment requires a live
+Auth session; revoked sessions cannot replace their device identity.
+
+### Settings changes and recovery
+
+| Operation                    | Guarantee                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read                         | Coherent SQLite snapshot                                                                                                                                      |
+| Save                         | Host validates patch against latest values under one lifecycle lock; commits capture/profile/device values and outbox together                                |
+| Frontend edits               | Serialized; display committed values; preserve unedited fields, including exact byte limits                                                                   |
+| Native effects               | Startup reconciles autostart, shortcuts, window behaviour, logging, retention; failures have Retry                                                            |
+| Shortcut edit                | Register replacement before removing old binding; persist after success; restore old registration if save fails and report failed rollback                    |
+| Retention failure after save | Report failed effect, not an unsaved setting                                                                                                                  |
+| Reset settings               | Restore defaults and logging; clear built-in shortcut overrides/pending intent; preserve clips, account, Intelligence, renderer/extension settings and grants |
+| App language change          | Atomically invalidate automatic-language OCR; recover interrupted jobs after restart                                                                          |
+
+The command registry defines stable IDs, contexts, defaults, overrides,
+conflicts, and labels. Rust owns configurable built-in bindings; portable
+`Primary` overrides live in `config_command_shortcuts`. UI records keys and
+requires Save; restoring a default deletes its override. Fixed navigation is
+separate. Extension shortcuts use their contribution-owned table/lifecycle.
+Context-only commands are explicitly configurable, menu-only, or unbound.
+
+Portable import/export works without an account:
+
+| Contract   | Value                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| Envelope   | `format: "clipsx-portable-settings"`, `version: 1`                                                   |
+| Records    | Only `kind`, `key`, `payload`, `tombstone`                                                           |
+| Limits     | 4 MiB, 1,000 records, existing per-record bounds                                                     |
+| Validation | Whole document before commit; reject duplicates/unknown fields; validate signed-package declarations |
+| Merge      | Apply supplied records/tombstones; preserve omitted records and device settings                      |
+
+Import uses the same domain application as sync; local triggers publish eligible
+changes when sync is enabled. OCR invalidation is atomic; workers/UI refresh
+after commit. Pending imports remain recoverable while signed out. Their origin
+survives matching cloud echoes: import and retry never auto-install packages.
+Users install through Extensions and review fresh permissions. No legacy
+settings-file import exists.
+
+### OCR
+
+```text
+Commit image -> persistent single-flight queue -> bounded native OCR
+             -> accept only current job/configuration -> OCR artifact -> search
+```
+
+| Platform | Provider                                                               |
+| -------- | ---------------------------------------------------------------------- |
+| Windows  | Image decoding and Windows.Media.Ocr on a dedicated WinRT MTA executor |
+| macOS    | Vision off the UI thread                                               |
+| Linux    | System Tesseract, invoked without a shell                              |
+
+OCR provenance is version 3. Input limits cover encoded bytes, dimensions,
+decoded allocation, and pixels. Providers report runtime version, installed
+languages, availability, and recovery instructions. Automatic language is the
+default; an installed-language override is optional.
+
+Restart recovers interrupted jobs. Configuration changes cancel stale work;
+enablement/language changes rebuild only OCR and related search data. Image
+bytes remain unchanged on failure, cancellation, or disablement.

@@ -27,5 +27,5 @@ description: Create or change ClipsX desktop screens, forms, menus, dialogs, or 
    local app or preview is available; report explicitly when visual verification
    could not run. Summarize changed behavior and remaining review needs.
 
-Use [architecture](../../../docs/ARCHITECTURE.md) for ownership and boundaries.
+Read [runtime constraints](references/runtime.md) when changing startup, diagnostics, previews, theme or focus behavior.
 Do not move product requirements into this workflow.

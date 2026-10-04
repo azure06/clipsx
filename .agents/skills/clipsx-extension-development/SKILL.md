@@ -8,7 +8,6 @@ description: Develop or diagnose ClipsX extension contracts, host integration, c
 1. Follow [CodeGraph navigation](../../../AGENTS.md) when the repository is indexed.
    Locate the affected host boundaries and packages before editing. Read only the
    relevant sections of the [API](../../../docs/EXTENSION_API_V3.md),
-   [architecture](../../../docs/ARCHITECTURE.md) and
    [data model](../../../docs/MODELS.md).
 2. Take contract versions and limits from the current
    [manifest validation](../../../src-tauri/src/extensions/manifest.rs),

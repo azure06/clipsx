@@ -241,7 +241,7 @@ cargo test --release --manifest-path src-tauri/Cargo.toml --bin clipsx history_s
 | History / FTS        | First/deep 50-item pages, selective/common search, batched hydration; p95 100 ms history / 250 ms keyword |
 
 These are test gates, not current release measurements. Retain actual output with
-the tested revision and machine in [release evidence](RELEASE.md#evidence-and-sign-off).
+the tested revision and machine in [release evidence](../.agents/skills/clipsx-release/references/operations.md#evidence-and-sign-off).
 There is one production retrieval backend; full-scan oracles and fixtures are
 test tools.
 
@@ -249,3 +249,55 @@ Before advertising 60,000 clips, certify labelled recall@10/@50 with filters and
 long documents, query/rebuild latency, peak memory, steady/rebuild disk,
 capture responsiveness during indexing, and interrupted/missing/corrupt-index
 recovery on each advertised platform.
+
+
+## Keyword search and request lifecycle
+
+| Capability                        | Current implementation                                                   |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| Keyword search                    | Always-available FTS5; exact words/prefixes                              |
+| Meaning Search                    | Optional local Ollama embeddings                                         |
+| Recall                            | Explicit question answered by a configured local Ollama generation model |
+| OCR                               | Native platform providers above                                          |
+| Hosted models / visual embeddings | No shipped runtime                                                       |
+| Ollama network                    | Loopback endpoints only                                                  |
+
+One derived FTS document per clip combines notes, tags, ready text, and completed
+OCR. HTML/RTF contribute safe visible text; equivalent normalized inputs
+contribute once. Simple queries use whitespace-separated prefix terms with
+implicit AND; advanced queries use FTS5 syntax with typed errors.
+
+Keyword/filter eligibility runs in SQLite. Optional sources use the same
+eligible clips and may add semantic-only matches. Each source returns at most
+5,000 candidates; FTS snippets are bounded in SQLite. Source failures preserve
+successful results. Ranking, semantic limits, index recovery, and Recall are
+defined in the retrieval, index lifecycle and Recall sections above.
+
+Search participation and embedding/indexing enablement are separate settings:
+excluding Meaning Search from a query does not itself stop indexing.
+
+```text
+Query/filter change -> invalidate old responses immediately
+  -> retain old rows + preview with "updating" state
+  -> pause result actions/pagination; hide native extension detail surface
+  -> current success: atomically replace rows, outcomes, cursor
+     failure: keep stale rows and offer retry
+```
+
+Only pages from the current request may append. Selection survives by ID where
+possible and clears on empty results. Input remains editable; operations already
+started, including note saves, may finish. Status events are coalesced to one
+start per 500 ms, one active refresh, and one trailing refresh; unmounted
+consumers ignore late responses.
+
+The Models screen owns the shared Ollama connection and independent embedding
+and generation assignments. Bounded model inspection derives `embedding` /
+`completion` capabilities. Indexing owns progress, failures, retry, reindex,
+disk use, and reset. Extensions receive provider availability and output, never
+endpoint/model configuration or credentials.
+
+## Startup measurement
+
+Use an isolated profile and a coherent database backup, with reporting and autostart disabled. Record source revision, OS/hardware, fixture size, cache state and warm-up separately. Compare repeated production launches without building during measurement.
+
+`clipsx.first-history-paint` is a Performance API mark after two animation frames with nonempty history mounted; it is a paint proxy, not pixel detection. Distinguish process-launch from webview-navigation latency. Windows native process CPU samples exclude WebView2 child processes. Retain raw results with the measurement; one machine’s timings are not product guarantees.
