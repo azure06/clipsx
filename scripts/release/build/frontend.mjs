@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assert, digest, encode } from './model.mjs'
+import { assert, digest, encode } from '../core/contracts.mjs'
 
 const configuration = [
   'package-lock.json',

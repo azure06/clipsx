@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assert, assertBuildRun, digest, encode, readJson } from './model.mjs'
-import { command, repoApi, workflowArtifacts, downloadArtifact } from './github.mjs'
-import { appInputs, inputsDigest } from './inputs.mjs'
+import { assert, assertBuildRun, digest, encode, readJson } from '../core/contracts.mjs'
+import { command, repoApi, workflowArtifacts, downloadArtifact } from '../core/github.mjs'
+import { appInputs, inputsDigest } from '../core/inputs.mjs'
 
 export const platforms = {
   'macos-arm64': { target: 'aarch64-apple-darwin', os: 'macos-15', bundles: 'app,dmg' },
@@ -31,8 +31,6 @@ export const platformMatrix = () => ({
   include: Object.entries(platforms).map(([platform, settings]) => ({ platform, ...settings })),
 })
 
-export const legacyRun = '36969301315'
-export const legacySource = '6103a807996c56cb8e45bbeb466afab6d5ee784f'
 export const artifactRecord = item => ({ id: item.id, name: item.name, digest: item.digest })
 export function assertArtifact(actual, selected) {
   assert(
@@ -58,11 +56,7 @@ export function verifyExecutable(bytes, checkpoint, candidate, platform, fronten
   )
   assert(checkpoint.sha256 === digest(bytes), 'Compiled executable changed')
 }
-export function verifyAuxiliary(checkpoint, candidate) {
-  if (!checkpoint.runtimeFixtureSha256) {
-    assert(candidate.version === '0.1.0', 'Build runtime fixture is missing')
-    return
-  }
+export function verifyAuxiliary(checkpoint) {
   assert(
     checkpoint.runtimeFixtureSha256 === digest(readFileSync('.release/runtime-fixture.wasm')),
     'Runtime fixture changed'

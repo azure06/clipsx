@@ -8,3 +8,4 @@ if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -n
 if ($env:CLIPSX_SIGNING_LOG) {
     [pscustomobject]@{ File = [IO.Path]::GetFileName($Path); Sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant(); Thumbprint = $signature.SignerCertificate.Thumbprint; Timestamped = $true } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:CLIPSX_SIGNING_LOG
 }
+

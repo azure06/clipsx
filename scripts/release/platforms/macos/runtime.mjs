@@ -1,4 +1,4 @@
-import { assert } from './model.mjs'
+import { assert } from '../../core/contracts.mjs'
 
 export function verifyMacRuntime(entitlements, log, fixtureSha256) {
   assert(

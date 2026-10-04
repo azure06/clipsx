@@ -2,7 +2,13 @@ name: Release eligibility
 on:
   workflow_run:
     workflows:
-      [Build release app, Prepare release candidate, Finalize release candidate, Certify candidate]
+      [
+        CI,
+        Build release app,
+        Prepare release candidate,
+        Finalize release candidate,
+        Certify candidate,
+      ]
     types: [completed]
   workflow_dispatch:
   pull_request_target:
@@ -12,7 +18,7 @@ env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: write
   actions: read
@@ -30,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - name: Set Release readiness commit status
         env:
           GH_TOKEN: ${{ github.token }}

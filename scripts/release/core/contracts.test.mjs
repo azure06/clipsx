@@ -1,3 +1,4 @@
+import { imageDigest, nsisImageDigest } from '../platforms/windows/image.mjs'
 import test from 'node:test'
 import nodeAssert from 'node:assert/strict'
 import {
@@ -10,13 +11,11 @@ import {
   certificationChecks,
   digest,
   encode,
-  imageDigest,
-  nsisImageDigest,
   publicationMode,
   targets,
   validateInventory,
   validateVersion,
-} from './model.mjs'
+} from './contracts.mjs'
 
 const fixture = () => {
   const candidate = {
@@ -62,6 +61,12 @@ test('release identity requires matching stable versions', () => {
   nodeAssert.throws(() =>
     validateVersion('release/0.1.0-rc.1', '0.1.0-rc.1', '0.1.0-rc.1', '0.1.0-rc.1')
   )
+})
+
+test('new certifications cannot recreate historical waivers', () => {
+  nodeAssert.throws(() => certificationChecks('false', 'true'))
+  nodeAssert.throws(() => certificationChecks('true', 'false'))
+  nodeAssert.equal(certificationChecks('true', 'true').macExtensions, 'passed')
 })
 test('selected builds require successful repository-owned release workflow provenance', () => {
   const { candidate } = fixture()
@@ -259,21 +264,6 @@ test('draft metadata updates preserve candidate tag and never publish', () => {
   nodeAssert.throws(() =>
     candidateDraftMetadata(candidate, { ...release, tag_name: 'untagged' }, 'notes')
   )
-})
-
-test('updater deferral is restricted to the explicitly approved 0.1.0 candidate and PR', () => {
-  nodeAssert.equal(
-    certificationChecks('0.1.0-36969301315-1', '27', 'false', 'true').updaterUpgrades,
-    'deferred'
-  )
-  nodeAssert.equal(
-    certificationChecks('0.2.0-123-1', '28', 'true', 'false').updaterUpgrades,
-    'confirmed'
-  )
-  nodeAssert.throws(() => certificationChecks('0.2.0-123-1', '27', 'false', 'true'))
-  nodeAssert.throws(() => certificationChecks('0.1.0-36969301315-1', '28', 'false', 'true'))
-  nodeAssert.throws(() => certificationChecks('0.1.0-36969301315-1', '27', 'true', 'true'))
-  nodeAssert.throws(() => certificationChecks('0.2.0-123-1', '28', 'false', 'false'))
 })
 
 test('future releases cannot reuse certification without installed Mac extension evidence', () => {

@@ -13,7 +13,7 @@ env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: read
 concurrency:
@@ -40,6 +40,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - uses: ./.github/actions/release-verifier
 
       - name: Publish or verify existing production release
@@ -56,10 +58,17 @@ jobs:
         with:
           ref: ${{ needs.publish.outputs.source-revision }}
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .tooling
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - name: Map public release environment
+        run: node .tooling/scripts/release/core/environment.mjs
       - run: npm ci --ignore-scripts
       - name: Record published production deployment
         env:
@@ -70,4 +79,4 @@ jobs:
         run: |
           npx sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
           npx sentry-cli releases finalize "$SENTRY_RELEASE"
-          node scripts/release/sentry-deploy.mjs
+          node .tooling/scripts/release/observability/sentry-deploy.mjs

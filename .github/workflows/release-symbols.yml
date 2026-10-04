@@ -10,9 +10,6 @@ on:
         description: Successful release build ID
         required: true
         type: string
-      recovery_run_id:
-        description: One-time recovered-symbol run for build 37122124538 only
-        type: string
 permissions:
   contents: read
   actions: read
@@ -56,9 +53,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
-          RECOVERY_ID: ${{ inputs.recovery_run_id }}
           PLATFORM: ${{ matrix.platform }}
-        run: node scripts/release/mac-symbols.mjs "$BUILD_ID" "$PLATFORM" "$RECOVERY_ID"
+        run: node scripts/release/observability/symbols.mjs "$BUILD_ID" "$PLATFORM"
       - name: Upload matching symbols
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

@@ -11,7 +11,7 @@ env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: write
   actions: read
@@ -31,6 +31,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - id: state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,6 +52,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - name: Download exact Windows submission
         id: download
         env:
@@ -64,7 +68,7 @@ jobs:
           WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERT_THUMBPRINT }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           INSTALLER: ${{ steps.download.outputs.installer }}
-        run: ./scripts/release/verify-windows.ps1 -Installer $env:INSTALLER -CandidateId $env:CANDIDATE_ID
+        run: ./scripts/release/platforms/windows/verify-windows.ps1 -Installer $env:INSTALLER -CandidateId $env:CANDIDATE_ID
       - uses: actions/upload-artifact@v4
         with:
           include-hidden-files: true
@@ -87,6 +91,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - uses: ./.github/actions/release-verifier
 
       - run: npm ci --ignore-scripts

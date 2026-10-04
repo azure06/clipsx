@@ -18,9 +18,10 @@ $uninstaller = Join-Path $installRoot 'uninstall.exe'
 try {
     Assert-Signature $uninstaller
     foreach ($image in $candidate.windowsImages.PSObject.Properties) { Assert-Signature (Join-Path $installRoot $image.Name) }
-    & node --input-type=module -e "import {readFileSync} from 'node:fs'; import {join} from 'node:path'; import {nsisImageDigest,readJson,assert} from './scripts/release/model.mjs'; const c=readJson(process.argv[1]); for (const [name,image] of Object.entries(c.windowsImages)) assert(nsisImageDigest(readFileSync(join(process.argv[2], name)), image.size, true)===image.sha256,'Installed executable differs from CI build: '+name);" (Join-Path $work 'signing-candidate.json') $installRoot
+    & node (Join-Path $PSScriptRoot 'image.mjs') (Join-Path $work 'signing-candidate.json') $installRoot installed
     if ($LASTEXITCODE -ne 0) { throw 'Installed executable identity verification failed.' }
     @{ candidateId = $CandidateId; verified = $true; installerSha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant(); thumbprint = $env:WINDOWS_SIGNING_CERT_THUMBPRINT; applicationVerified = $true; uninstallerVerified = $true; originalImageVerified = $true } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'native-evidence-windows-x64.json') -Encoding utf8
 } finally {
     if (Test-Path -LiteralPath $uninstaller) { Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -Wait | Out-Null }
 }
+

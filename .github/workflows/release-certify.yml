@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       pr_number:
-        description: Release PR to certify (27 for 0.1.0)
+        description: Release PR to certify
         required: true
         type: string
       evidence:
@@ -22,19 +22,14 @@ on:
         type: boolean
       mac_extensions_passed:
         description: Installed extension installation, execution and restart passed on both Mac architectures
-        required: false
-        default: false
-        type: boolean
-      owner_approved_0_1_0_exception:
-        description: Only candidate 0.1.0-36969301315-1 / PR 27; installed apps confirmed, updater tests explicitly deferred by owner
-        required: false
+        required: true
         default: false
         type: boolean
 env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: write
   actions: read
@@ -54,6 +49,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - uses: ./.github/actions/release-verifier
 
       - name: Record immutable certification and release readiness
@@ -65,5 +62,4 @@ jobs:
           RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
           CERTIFY_MAC_EXTENSIONS: ${{ inputs.mac_extensions_passed }}
           CERTIFY_ALL_PLATFORMS: ${{ inputs.all_platforms_passed }}
-          CERTIFY_0_1_0_EXCEPTION: ${{ inputs.owner_approved_0_1_0_exception }}
         run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { classify, route, appInputs, inputsDigest, assertPublicEnvironment } from './inputs.mjs'
-import { selectedCandidate, assertMutable } from './model.mjs'
+import { selectedCandidate, assertMutable } from './contracts.mjs'
 
 test('routing classifies app, recipes, docs, packaging and unknown files conservatively', () => {
   for (const path of [
@@ -24,7 +24,7 @@ test('routing classifies app, recipes, docs, packaging and unknown files conserv
   for (const path of [
     '.github/workflows/checks.yml',
     'scripts/release/preflight.mjs',
-    'scripts/release/frontend.mjs',
+    'scripts/release/build/frontend.mjs',
   ]) {
     assert.equal(classify(path), 'recipe')
     assert(route([path]))
