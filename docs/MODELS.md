@@ -388,7 +388,7 @@ does not upgrade installed extensions or transfer grants. Unavailable packages
 and unknown/conflicting commands remain pending.
 
 The sibling `clipsx-web` repository owns Supabase migrations, tests, deployment,
-and [backend protocol](../../clipsx-web/docs/backend/configuration-sync.md).
+and [backend protocol](https://github.com/azure06/clipsx-web/blob/main/docs/backend/configuration-sync.md).
 Desktop owns the client, generated types, secure session storage, and local
 coordinator. Backend RPCs enforce ownership over `sync_profiles`,
 `sync_devices`, and `sync_records`; clients have no raw table access.
