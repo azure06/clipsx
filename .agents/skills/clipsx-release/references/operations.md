@@ -157,6 +157,23 @@ pass the unprivileged CI workflow on the exact PR head before CI passes. CI
 completion refreshes readiness; privileged evaluation reads PR code only as data.
 Docs-only routing installs no application dependencies and compiles no verifier.
 
+### Documentation-only corrections
+
+The release-build workflow cancels an earlier run on the same branch when another
+push starts. If compilation is still running, commit documentation corrections
+locally and wait for that run to finish before pushing. A docs-only push then
+runs lightweight validation; it does not create a new saved application build.
+Keep the explicit successful build ID and select its candidate on the release PR.
+Readiness compares app inputs and requires documentation/tooling CI on the exact
+PR head, so documentation fixes can reuse those existing binaries.
+
+Use repository-local links for files in this repository and GitHub URLs for
+other repositories; CI does not check out sibling repositories. Before pushing:
+
+```sh
+node --input-type=module -e "import {execFileSync} from 'node:child_process'; import {checkDocuments} from './scripts/release/core/docs.mjs'; checkDocuments(execFileSync('git',['diff','--name-only','origin/main'],{encoding:'utf8'}).trim().split('\n'))"
+```
+
 ### Release-note corrections
 
 Preparation accepts optional notes_ref (a commit or branch resolved once to an
@@ -317,7 +334,10 @@ below on Windows, both Mac architectures and Linux/X11 for AppImage and Debian.
 Record exact artifact hashes, environments, results and an HTTPS evidence link.
 
 Run **Certify candidate** on main with the candidate ID, release PR number, evidence reference and
-the explicit all-platforms confirmation. Certification binds the candidate
+both all_platforms_passed and mac_extensions_passed confirmations. Only set
+these after testing the finalized files; a generic approval or source/dev test
+is not installed certification. The HTTPS evidence must identify the candidate,
+package hashes, test environments and outcomes. Certification binds the candidate
 descriptor and complete draft inventory hashes. Merge the release PR only when
 `Release readiness` and all normal CI checks pass.
 Certification also marks an existing matching draft release PR ready for review.
@@ -483,8 +503,8 @@ timings are not certification of the current release.
 
 Extension build/publication belongs to `clipsx-extensions`; reviewed signed
 catalog publication belongs to `clipsx-registry`. Follow their repository release
-skills and [extension release procedure](https://github.com/azure06/clipsx-extensions/blob/main/RELEASE.md)
-and [registry operations](https://github.com/azure06/clipsx-registry/blob/main/OPERATIONS.md).
+skills and [extension release procedure](https://github.com/azure06/clipsx-extensions/blob/main/.agents/skills/clipsx-extension-release/references/operations.md)
+and [registry operations](https://github.com/azure06/clipsx-registry/blob/main/.agents/skills/clipsx-registry-publication/references/operations.md).
 Extension PRs prepare affected packages once; their merge publishes those exact
 candidate bytes and opens a registry metadata PR. Trusted registry automation
 validates and signs the catalog in that same PR. Merging it activates the signed
