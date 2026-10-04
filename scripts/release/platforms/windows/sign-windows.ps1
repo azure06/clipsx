@@ -82,4 +82,3 @@ try {
     $env:RELEASE_WORKDIR = $previousWork
     Remove-Item Env:CLIPSX_SIGNTOOL, Env:CLIPSX_CERT_THUMBPRINT, Env:CLIPSX_SIGNING_LOG -ErrorAction SilentlyContinue
 }
-

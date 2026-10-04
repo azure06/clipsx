@@ -24,4 +24,3 @@ try {
 } finally {
     if (Test-Path -LiteralPath $uninstaller) { Start-Process -FilePath $uninstaller -ArgumentList '/S' -WindowStyle Hidden -Wait | Out-Null }
 }
-
