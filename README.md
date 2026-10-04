@@ -22,7 +22,9 @@ Capture -> Understand -> Render / Transform -> Copy or Paste
 
 ## Getting Started
 
-ClipsX is pre-release software and currently runs from source. Install Node.js,
+Download installers from the [latest release](https://github.com/azure06/clipsx/releases/latest).
+
+For development, install Node.js,
 Rust, and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 for your platform, then run:
 
@@ -35,7 +37,7 @@ npm run tauri:dev
 
 `npm run tauri:dev` and `npm run tauri:build` require `VITE_SUPABASE_URL` so
 the generated content-security policy can allow the configured authentication
-origin. The [release guide](docs/RELEASE.md) covers distributable-build
+origin. The [release guide](.agents/skills/clipsx-release/references/operations.md) covers distributable-build
 requirements.
 
 To run a development binary against production services, populate the ignored
@@ -72,17 +74,7 @@ ClipsX includes, but is not limited to:
 
 ### Platforms
 
-ClipsX is intended for the following desktop platforms. Native validation,
-packaging, and signing are still in progress.
-
-| Platform | Status                             |
-| :------- | :--------------------------------- |
-| Windows  | Targeted for the first release     |
-| macOS    | Targeted for the first release     |
-| Linux    | X11 targeted for the first release |
-
-See the [roadmap](docs/ROADMAP.md) for the current certification and packaging
-work.
+Published targets are Windows x64, macOS Apple Silicon and Intel, and Linux/X11 x64 (AppImage and `.deb`). Wayland is outside the advertised targets. Consult the selected release’s notes for verified capabilities and limitations.
 
 ## Contributing
 
@@ -99,11 +91,10 @@ ClipsX has a native host, a React interface, platform-specific clipboard
 adapters, and a persistence model that distinguishes original captures from
 derived data. The maintained documentation describes those boundaries:
 
-- [Architecture](docs/ARCHITECTURE.md)
 - [Data model](docs/MODELS.md)
 - [Semantic search architecture](docs/SEMANTIC_SEARCH_ARCHITECTURE.md)
 - [Extension API v3](docs/EXTENSION_API_V3.md)
-- [Roadmap](docs/ROADMAP.md)
+- [Release operations](.agents/skills/clipsx-release/references/operations.md)
 
 ## Organization
 

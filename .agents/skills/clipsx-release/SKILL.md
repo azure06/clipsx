@@ -5,7 +5,7 @@ description: Operate ClipsX desktop releases from saved builds, retry packaging,
 
 # ClipsX release workflow
 
-Read [release requirements](../../../docs/RELEASE.md). Inspect the selected build,
+Read [release requirements](references/operations.md). Inspect the selected build,
 candidate draft and evidence; build success is not installed certification.
 
 ## Ordered operations
@@ -58,8 +58,7 @@ revisions separately and reject mixed, expired or tampered inputs.
 Finalized/certified assets and notes are immutable. Recheck descriptor/asset
 metadata before lifecycle writes and verify transfers at external boundaries.
 Never infer installed success from a build, signature or checkbox without evidence.
-Historical release evidence remains readable; completed migration, waiver,
-symbol/cache recovery and ruleset migration commands are retired.
+Existing published descriptors and certifications remain verifiable.
 
 ## Infrastructure changes
 
@@ -71,7 +70,7 @@ Merge infrastructure before using changed main-only dispatch actions; validate
 with fixtures and read-only verification without creating a production tag/release.
 
 Keep exact commands, credential setup and installed checklists in
-[RELEASE.md](../../../docs/RELEASE.md). Public DSN mapping is centralized; secret
+[operations reference](references/operations.md). Public DSN mapping is centralized; secret
 upload/deployment tokens remain separate. Loopback-only updater fixture settings
 must never enter production artifacts. Website and extension publication remain
 separate. This skill does not independently authorize external publication.
