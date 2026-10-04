@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { assert } from './model.mjs'
+import { assert } from '../core/contracts.mjs'
 
 // Run in the validated registry checkout. Published bytes must match reviewed metadata.
 for (const name of ['index.json', 'index.signatures.json']) {

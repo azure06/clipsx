@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.route.outputs.app }}
+      tooling: ${{ steps.route.outputs.tooling }}
+      docs: ${{ steps.route.outputs.docs }}
       release-pr: ${{ steps.route.outputs.release-pr }}
     steps:
       - uses: actions/checkout@v4
@@ -23,22 +25,55 @@ jobs:
         with:
           node-version: 24
       - id: route
-        run: node scripts/release/inputs.mjs
+        run: node scripts/release/core/inputs.mjs
   tooling:
+    name: Release tooling (${{ matrix.os }})
     needs: route
-    if: needs.route.outputs.release-pr != 'true'
-    runs-on: ubuntu-latest
+    if: needs.route.outputs.tooling == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: node --test scripts/release/*.test.mjs
+      - run: node --test scripts/release/release.test.mjs
+      - name: Validate PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem scripts/release -Recurse -Filter *.ps1 | ForEach-Object {
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors)
+            if ($parseErrors) { throw ($parseErrors | Out-String) }
+          }
       - uses: ./.github/actions/release-verifier
-      - run: cargo test --locked --manifest-path tools/release-verify/Cargo.toml
+        if: runner.os == 'Linux'
+      - name: Test and lint standalone verifier
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path tools/release-verify/Cargo.toml
+          cargo clippy --locked --all-targets --manifest-path tools/release-verify/Cargo.toml -- -D warnings
       - uses: raven-actions/actionlint@v2
+        if: runner.os == 'Linux'
+  docs:
+    needs: route
+    if: needs.route.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/release/core/docs.mjs
   checks:
     needs: route
     if: needs.route.outputs.app == 'true' && needs.route.outputs.release-pr != 'true'
@@ -46,12 +81,19 @@ jobs:
   gate:
     name: CI
     if: always() && needs.route.outputs.release-pr != 'true'
-    needs: [route, tooling, checks]
+    needs: [route, tooling, docs, checks]
     runs-on: ubuntu-latest
     steps:
       - env:
           ROUTE: ${{ needs.route.result }}
-          BUILD: ${{ needs.route.outputs.app }}
+          APP: ${{ needs.route.outputs.app }}
+          TOOLING_REQUIRED: ${{ needs.route.outputs.tooling }}
+          DOCS_REQUIRED: ${{ needs.route.outputs.docs }}
           TOOLING: ${{ needs.tooling.result }}
+          DOCS: ${{ needs.docs.result }}
           CHECKS: ${{ needs.checks.result }}
-        run: test "$ROUTE" = success && test "$TOOLING" = success && { test "$BUILD" != true || test "$CHECKS" = success; }
+        run: |
+          test "$ROUTE" = success
+          if [[ "$TOOLING_REQUIRED" == true ]]; then test "$TOOLING" = success; fi
+          if [[ "$DOCS_REQUIRED" == true ]]; then test "$DOCS" = success; fi
+          if [[ "$APP" == true ]]; then test "$CHECKS" = success; fi

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assert, digest, encode } from './model.mjs'
+import { assert, digest, encode } from './contracts.mjs'
 
 // One conservative classification for routing and app-source equivalence.
 const appRoots = ['src/', 'src-tauri/', 'public/']
@@ -29,10 +29,6 @@ const recipes = new Set([
   '.github/workflows/checks.yml',
   '.github/workflows/ci.yml',
   'scripts/release/preflight.mjs',
-  'scripts/release/registry-check.mjs',
-  'scripts/release/frontend.mjs',
-  'scripts/release/inputs.mjs',
-  'scripts/release/builds.mjs',
   'eslint.config.js',
   'vitest.config.ts',
   'deny.toml',
@@ -41,7 +37,14 @@ const recipes = new Set([
 ])
 export function classify(path) {
   if (appRoots.some(prefix => path.startsWith(prefix)) || appFiles.has(path)) return 'app'
-  if (recipes.has(path)) return 'recipe'
+  if (path.startsWith('scripts/release/') && path.endsWith('.test.mjs')) return 'release'
+  if (
+    recipes.has(path) ||
+    path.startsWith('scripts/release/build/') ||
+    path === 'scripts/release/core/inputs.mjs' ||
+    path === 'scripts/release/core/environment.mjs'
+  )
+    return 'recipe'
   if (
     path.startsWith('scripts/release/') ||
     path.startsWith('.github/') ||
@@ -82,20 +85,18 @@ export function assertAppInputs(candidate, ref) {
     'App inputs differ from selected build; select/build the intended app revision'
   )
 }
-export const publicEnvironment = (env = process.env) =>
-  Object.fromEntries(
-    [
-      'VITE_SUPABASE_URL',
-      'VITE_SUPABASE_PUBLISHABLE_KEY',
-      'VITE_NEXT_PUBLIC_SITE_URL',
-      'VITE_SENTRY_DSN',
-    ].map(name => [name, env[name] || ''])
-  )
-export function assertPublicEnvironment(candidate, env = process.env) {
-  assert(
-    encode(publicEnvironment(env)) === encode(candidate.build.publicEnvironment),
-    'Production build variables changed; start a new build'
-  )
+export { publicEnvironment, assertPublicEnvironment } from './environment.mjs'
+
+export function decisions(paths) {
+  const kinds = paths.map(classify)
+  return {
+    app: kinds.includes('app'),
+    build: kinds.some(kind => ['app', 'recipe'].includes(kind)),
+    tooling:
+      kinds.some(kind => ['recipe', 'release'].includes(kind)) ||
+      paths.includes('src-tauri/src/bin/clipsx-release-verify.rs'),
+    docs: kinds.includes('docs'),
+  }
 }
 export function route(paths) {
   return paths.some(path => ['app', 'recipe'].includes(classify(path)))
@@ -115,7 +116,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     event.pull_request.head.repo.full_name === event.repository.full_name
   appendFileSync(
     process.env.GITHUB_OUTPUT,
-    `build=${forced || route(paths)}\napp=${paths.some(path => classify(path) === 'app')}\nrelease-pr=${Boolean(releasePr)}\n`
+    `build=${forced || route(paths)}\napp=${decisions(paths).app}\ntooling=${decisions(paths).tooling}\ndocs=${decisions(paths).docs}\nrelease-pr=${Boolean(releasePr)}\n`
   )
   console.log(
     encode({

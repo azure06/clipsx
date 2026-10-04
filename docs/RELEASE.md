@@ -9,6 +9,8 @@ flowchart LR
     App[App or build recipe change] --> Build[Build and automated tests]
     Build --> Save[Immutable saved build]
     Save --> Prepare[Package and sign from trusted main]
+    Retry[Retry explicit build ID] --> Prepare
+    Save -.-> Symbols[Independent symbol upload]
     Prepare --> Win[Local Windows SimplySign]
     Win --> Final[Finalize exact inventory]
     Final --> Test[Installed tests and certification]
@@ -53,9 +55,45 @@ successful build ID; it never compiles the app/frontend or runs application test
 | Release PR merge into `main`                                                                               | Publish the certified existing draft and tag the merged commit; no rebuild/re-sign                                          |
 | Ordinary merges or tag pushes                                                                              | No desktop release build/publication                                                                                        |
 
+### Implementation domains
+
+The workflow YAML files stay directly in .github/workflows because Actions
+discovers them there. Their names and dispatch buttons remain unchanged.
+
+| Directory under scripts/release       | Owns                                                                               | Why separate                               |
+| ------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------ |
+| core                                  | Identity/contracts, app-input classification, public environment, GitHub transfers | Every phase uses the same rules            |
+| build                                 | Preflight, frontend integrity, immutable saved executables                         | Compilation ends here                      |
+| candidate                             | Preparation, notes, finalization, certification, readiness                         | One candidate lifecycle                    |
+| platforms/windows and platforms/macos | OS signing, image identity, runtime checks                                         | OS details stay outside lifecycle logic    |
+| publication                           | Publish and read-only public verification                                          | Public promotion has separate side effects |
+| observability                         | Symbols and successful Sentry deployment                                           | Monitoring can retry independently         |
+| testing                               | Loopback-only updater feed and fake orchestration services                         | Test configuration never enters production |
+| setup                                 | Public repository-variable setup                                                   | Setup is not a recurring release step      |
+
+Root pipeline.mjs dispatches commands; preflight.mjs and sign-windows.ps1
+delegate to their domains. Tests live beside their domain. release.test.mjs
+discovers tests relative to its own file, including in a trusted .tooling checkout.
+No packaging phase invokes app/frontend compilation or application tests.
+
+### Ordered operation
+
+1. Build only when app/build-recipe inputs change; record the successful build ID.
+2. Prepare that explicit build on main; record candidate ID and next action.
+3. Complete missing native packages and local Windows signing. Retry missing
+   steps by default; choose a platform explicitly only to replace its output
+   before finalization.
+4. Finalize the complete inventory. Interrupted retries reuse signatures;
+   completed retries verify final files without rewriting them.
+5. Install and test all five targets, upgrades and both Mac extension runtimes.
+   Certify with an evidence URL and both required confirmations.
+6. Merge the selected release PR; publication promotes those certified files.
+   Retry publication with that merged PR number. Use verify-published for
+   verification without publication or Sentry deployment.
+
 ### Routing and identity
 
-`scripts/release/inputs.mjs` is the single file classification. App inputs include
+`scripts/release/core/inputs.mjs` is the single file classification. App inputs include
 source, public assets, Rust migrations/permissions/configuration, dependencies and
 lockfiles, compiler/frontend settings and production environment/CSP generators.
 Unknown files are conservatively app inputs. Compilation workflows and build
@@ -74,7 +112,9 @@ successful build run/attempt, immutable artifact IDs/digests, frontend/generated
 configuration, compiler and public environment provenance, and per-platform
 binary hashes. Preparation records its separate trusted tooling revision and run.
 It never attributes old binaries to a newer commit. Notes are captured and hashed
-at preparation. Public `downloads.json` remains schema **1**.
+at preparation. Optional releaseNotesRevision records their exact commit; old
+descriptors derive note provenance from build source without rewriting metadata.
+Public `downloads.json` remains schema **1**.
 
 Successful native builds save executables after tests and optimized compilation.
 Debug tests and production builds have separate profiles. Native matrix
@@ -114,6 +154,26 @@ assets, notes or evidence invalidate certification and block publication.
 states for missing selection, packaging, Windows signing/finalization, installed
 certification, source/config mismatch or an orchestration error. Successful selected
 build coverage supplies their `CI` status without duplicate app testing on the PR.
+Trusted readiness classifies PR changes itself. Changed tooling and docs must
+pass the unprivileged CI workflow on the exact PR head before CI passes. CI
+completion refreshes readiness; privileged evaluation reads PR code only as data.
+Docs-only routing installs no application dependencies and compiles no verifier.
+
+### Release-note corrections
+
+Preparation accepts optional notes_ref (a commit or branch resolved once to an
+exact commit). New candidates otherwise use the explicitly selected release PR
+head, or the saved build source if no PR is supplied. Notes come from
+docs/releases/<version>.md and are hashed. An omitted retry reference preserves
+existing notes. An explicit reference can correct notes before finalization while
+leaving all completed packages intact:
+
+```sh
+gh workflow run release-prepare.yml --repo azure06/clipsx --ref main -f build_run_id=<build-id> -f candidate_id=<candidate-id> -f target=missing -f notes_ref=<commit-or-branch>
+```
+
+Finalized or certified candidates reject note changes. Make a new candidate if
+notes need correction after finalization; do not edit certified draft assets.
 
 ### Production configuration
 
@@ -123,6 +183,14 @@ Release runners use repository variables for:
 - `VITE_SUPABASE_PUBLISHABLE_KEY`: public client key, never a service-role key.
 - `VITE_NEXT_PUBLIC_SITE_URL`: production HTTPS site and OAuth callback origin.
 - `SENTRY_DESKTOP_DSN`: public desktop ingestion DSN.
+
+core/environment.mjs maps this single GitHub value to frontend VITE_SENTRY_DSN
+and Rust SENTRY_DSN. Candidate comparisons use the same mapping and preserve
+existing descriptor fields. SENTRY_AUTH_TOKEN is injected only into authorized
+upload/deployment steps. VITE_NEXT_PUBLIC_SITE_URL is the authentication site
+origin; the desktop frontend needs VITE_, while NEXT_PUBLIC_ is historical naming.
+These variable names remain unchanged.
+
 - `WINDOWS_SIGNING_CERT_THUMBPRINT`: expected Authenticode certificate fingerprint.
 
 The production environment validator and authentication CSP generator run once
@@ -269,15 +337,13 @@ verified again rather than recreated. A conflicting tag/release or an older
 version cannot replace the latest release. A previously installed public build
 must also discover and install the published update.
 
-### Approved exception for saved 0.1.0 only
+### Historical releases
 
-The release owner explicitly approved deferring private updater upgrade tests for
-candidate `0.1.0-36969301315-1` / PR **27**, after confirming installed apps on all
-platforms. Record that approval and the deferred test in the certification evidence.
-For this candidate only, dispatch certification with `all_platforms_passed=false`
-and `owner_approved_0_1_0_exception=true`. Certification records updater upgrades as
-**deferred**, never passed. Other candidates/PRs cannot use this exception and retain
-the full installed-platform and private upgrade requirements.
+Published 0.1.0 retained the original saved-build migration and the owner's
+explicit updater-test deferral in its immutable evidence. Published 0.1.1 retained
+a one-time symbol archive recovery. These procedures are completed and have no
+executable recovery commands or workflow inputs. Historical descriptors and
+certifications remain readable; new certifications require all current checks.
 
 ### Private pre-publication upgrade test
 
@@ -309,35 +375,24 @@ insecure HTTP option exists only in this private loopback fixture. Test interrup
 updates and recovery as well as the successful path. Stop the feed after testing.
 Use separate test user profiles/VMs to preserve real clipboard data.
 
-### Infrastructure rollout and saved 0.1.0 build
+### Infrastructure rollout
 
-1. Open an infrastructure-only PR to `main`; preserve app inputs and unrelated
-   working-tree edits. Validate release tests, workflows, PowerShell and verifier.
-2. Prove the replacement `CI` check on that PR. With administrator GitHub CLI
-   authentication, set `RELEASE_GATE_PROOF_SHA` to its exact successful head and
-   run `node scripts/release/pipeline.mjs configure-readiness`. It replaces only
-   the nine obsolete check names, preserving `Release readiness` and all other
-   rules/protections. The existing readiness workflow must already be deployed.
-3. Merge infrastructure before dispatching the new main-only workflows. Deploy
-   website metadata capability once before first publication; later releases need
-   no web deployment/webhook. Configure credentials and public build variables.
-4. Import **build 36969301315 / candidate 0.1.0-36969301315-1**:
+1. Open an infrastructure-only PR to main. Compare tracked app-input inventories
+   with its base; preserve manifests, lockfiles, runtime code and updater settings.
+2. Run focused release tests on Windows and Linux, workflow lint, PowerShell
+   syntax, standalone verifier tests/lint and skill validation. Prove required
+   statuses on the exact PR head. Keep existing CI and Release readiness rules.
+3. Merge infrastructure before dispatching updated trusted workflows.
+4. Verify published files read-only, using the merged release PR number:
 
    ```sh
-   gh workflow run release-prepare.yml --repo azure06/clipsx --ref main -f build_run_id=36969301315 -f candidate_id=0.1.0-36969301315-1 -f target=missing -f pr_number=27
+   node scripts/release/pipeline.mjs verify-published <merged-release-pr>
    ```
 
-   The narrowly scoped adapter accepts only successful original run/source
-   `6103a807996c56cb8e45bbeb466afab6d5ee784f`. It verifies retained frontend,
-   executables, kit, package hashes and original signing evidence, then records
-   migration to schema 2. Mac/Linux bytes are preserved, without rebuilding or
-   re-signing. `node scripts/release/pipeline.mjs check-legacy` performs a read-only
-   migration rehearsal. Logs must show zero app/frontend compilation.
-
-5. Sign Windows with the documented certificate; finalize, then perform the
-   installed-platform and private upgrade-fixture checks. Certification for PR
-   **27** remains mandatory. Infrastructure validation creates no production tag
-   or published release.
+   This verifies certification, merged app inputs, tag, public manifests, hashes
+   and signatures. It cannot publish or record a Sentry deployment. Local verifier
+   prerequisites are the standalone release verifier and authenticated GitHub CLI.
+   Preparation/routing fixtures create no production tag or release.
 
 ### Focused infrastructure validation
 
@@ -352,9 +407,9 @@ Frontend environment validation runs in app preflight against that app's actual
 Vite configuration; infrastructure-only validation does not compile an older
 default-branch app. The minimal verifier uses the same Rust source and pinned
 Minisign implementation as the installed updater. Later release jobs compile its
-14-crate graph, without GUI dependencies. The original application Cargo verifier
-target remains for existing `release-tools` callers during the saved-build rollout;
-the standalone tests exercise this shared implementation.
+14-crate graph, without GUI dependencies. The application Cargo verifier target
+remains covered by `npm run lint:rust` with all targets/features. Both targets share the existing Rust source;
+release automation uses only the standalone manifest.
 
 These checks validate orchestration and signatures, not installed certification.
 
@@ -599,9 +654,9 @@ and updater compatibility. Verify website download metadata after assets are pub
 
 Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and archived with symlinks dereferenced and uploaded by **Upload Mac debug symbols** from trusted `main`. That workflow starts after a successful release build and accepts an explicit `build_run_id` for retries. It verifies the saved executable hash and matching dSYM UUID, without compiling or packaging. Symbol-service failures do not discard signed packages or finalize deployment records.
 
-Build `37122124538` needs a one-time recovery because its symbol archive retained Cargo’s link instead of the target directory. Recover only its exact release-branch caches, compare dSYM UUIDs with the immutable build executables, and retain recovery evidence. Supply that successful recovery run as `recovery_run_id` to the symbol workflow. This exception never replaces the saved build archive or executable and is rejected for other builds. Delete the temporary recovery workflow after recovery; do not rebuild 0.1.1 for a symbol archive correction.
+The historical 0.1.1 symbol recovery is complete. Normal builds archive dSYM contents with tar dereferencing and record hashes in the saved checkpoint. Uploads restore those exact symbols and compare UUIDs with the saved executable; there is no cache-recovery input.
 
-Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. The existing 0.1.0 exception does not waive these checks for 0.1.1.
+Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. Every newly created certification requires these confirmations.
 
 For the reported Silicon/macOS 26 crash, obtain the original OS report before claiming the root cause is confirmed. In Console, open Crash Reports and locate ClipsX, or use Finder → Go → Go to Folder → `~/Library/Logs/DiagnosticReports`. Preserve the Exception Type, Termination Reason and matching executable UUID. A private copy of the existing app can validate the entitlement fix without recompiling; never replace published 0.1.0 assets. Compare Dock/Finder icons under the same macOS appearance setting: the published ICNS matches the source, while macOS 26 can apply its own icon background. The logo remains unchanged.
 

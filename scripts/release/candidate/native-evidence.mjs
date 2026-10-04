@@ -1,6 +1,6 @@
-import { verifyMacRuntime } from './mac-runtime.mjs'
+import { verifyMacRuntime } from '../platforms/macos/runtime.mjs'
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs'
-import { readJson, encode, assert } from './model.mjs'
+import { readJson, encode, assert } from '../core/contracts.mjs'
 const platform = process.argv[2]
 assert(['macos-arm64', 'macos-x64', 'linux-x64'].includes(platform), 'Unknown platform')
 const candidate = readJson('.release/candidate.json')

@@ -31,7 +31,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-      VITE_SENTRY_DSN: ${{ inputs.release && vars.SENTRY_DESKTOP_DSN || '' }}
+      SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,6 +46,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Map public release environment
+        run: node .tooling/scripts/release/core/environment.mjs ${{ inputs.release && 'production' || 'checks' }}
       - uses: dtolnay/rust-toolchain@1.99.0
       - uses: swatinem/rust-cache@v2
         with:
@@ -62,7 +64,7 @@ jobs:
           revision="$(git -C .tooling rev-parse HEAD)"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "RELEASE_RECIPE_REVISION=$revision" >> "$GITHUB_ENV"
-          node .tooling/scripts/release/builds.mjs matrix
+          node .tooling/scripts/release/build/builds.mjs matrix
       - name: Install pinned audit tools
         uses: taiki-e/install-action@v2
         with:
@@ -91,7 +93,7 @@ jobs:
           cd /tmp/clipsx-registry
           npm ci
           npm run validate -- --require-current --download-dir .downloads --verify-releases
-          node "$GITHUB_WORKSPACE/.tooling/scripts/release/registry-check.mjs"
+          node "$GITHUB_WORKSPACE/.tooling/scripts/release/build/registry-check.mjs"
       - name: Scan repository for secrets
         if: inputs.release
         uses: gitleaks/gitleaks-action@v2
@@ -133,8 +135,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-      SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
-      VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+      SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
       SENTRY_RELEASE: clipsx-desktop@${{ needs.frontend.outputs.version }}+${{ github.sha }}
       VITE_SENTRY_RELEASE: clipsx-desktop@${{ needs.frontend.outputs.version }}+${{ github.sha }}
     steps:
@@ -156,6 +157,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Map public release environment
+        run: node .tooling/scripts/release/core/environment.mjs ${{ inputs.release && 'production' || 'checks' }}
       - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: ${{ matrix.target }}
@@ -178,7 +181,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.release }}
         run: |
           tar -xzf .release/frontend.tar.gz
-          node .tooling/scripts/release/frontend.mjs verify
+          node .tooling/scripts/release/build/frontend.mjs verify
       - name: Rust quality and auxiliary tests
         if: runner.os == 'Linux'
         run: npm exec -- node .tooling/scripts/release/preflight.mjs quality
@@ -203,7 +206,7 @@ jobs:
             test -d "$symbols"
             tar -h -czf .release/debug-symbols.tar.gz -C "$(dirname "$symbols")" clipsx.dSYM
           fi
-          node .tooling/scripts/release/builds.mjs record
+          node .tooling/scripts/release/build/builds.mjs record
           binary="src-tauri/target/$TARGET/release/clipsx"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           files=("$binary" .release/compiled.json .release/runtime-fixture.wasm)

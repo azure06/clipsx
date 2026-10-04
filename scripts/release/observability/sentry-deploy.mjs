@@ -1,6 +1,6 @@
 // Publication is serialized. Retrying public verification must not add another deploy.
-import { assert } from './model.mjs'
-import { command } from './github.mjs'
+import { assert } from '../core/contracts.mjs'
+import { command } from '../core/github.mjs'
 
 const { SENTRY_AUTH_TOKEN: token, SENTRY_ORG: organization, SENTRY_RELEASE: version } = process.env
 assert(token && organization && version, 'Sentry deployment credentials are required')

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: Successful build run ID (36969301315 for the saved 0.1.0 build)
+        description: Successful saved build run ID
         required: true
         type: string
       candidate_id:
@@ -18,6 +18,9 @@ on:
         type: choice
         default: missing
         options: [missing, all, macos-arm64, macos-x64, linux-x64, windows-x64]
+      notes_ref:
+        description: Optional exact commit or branch for release notes; omitted retries preserve notes
+        type: string
       pr_number:
         description: Optional release PR to select this candidate explicitly
         type: string
@@ -31,7 +34,7 @@ env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
-  VITE_SENTRY_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 jobs:
   select:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' || github.event.workflow_run.conclusion == 'success'
@@ -53,6 +56,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - name: Select verified build and preserve completed packages
         id: select
         env:
@@ -60,8 +65,9 @@ jobs:
           BUILD_ID: ${{ inputs.build_run_id || github.event.workflow_run.id }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           TARGET: ${{ inputs.target || 'missing' }}
+          NOTES_REF: ${{ inputs.notes_ref }}
           PR_NUMBER: ${{ inputs.pr_number }}
-        run: node scripts/release/pipeline.mjs prepare "$BUILD_ID" "$CANDIDATE_ID" "$TARGET" "$PR_NUMBER"
+        run: node scripts/release/pipeline.mjs prepare "$BUILD_ID" "$CANDIDATE_ID" "$TARGET" "$PR_NUMBER" "$NOTES_REF"
   package:
     needs: select
     if: needs.select.outputs.work == 'true'
@@ -92,6 +98,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node .tooling/scripts/release/core/environment.mjs
       - name: Fetch build source as data, without executing its hooks
         shell: bash
         run: |
@@ -202,7 +210,7 @@ jobs:
           if [[ "$RUNNER_OS" == macOS ]]; then
             env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" "$bundle/macos/ClipsX.app/Contents/MacOS/clipsx" --verify-extension-runtime .release/runtime-fixture.wasm | tee -a .release/native-verification.log
           fi
-          node .tooling/scripts/release/native-evidence.mjs "$PLATFORM"
+          node .tooling/scripts/release/candidate/native-evidence.mjs "$PLATFORM"
           node .tooling/scripts/release/pipeline.mjs collect "$PLATFORM" "$bundle"
       - uses: actions/upload-artifact@v4
         if: runner.os != 'Windows'
@@ -227,11 +235,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
       - name: Retain successful outputs, including when another platform failed
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_ID: ${{ needs.select.outputs.candidate-id }}
-        run: node scripts/release/pipeline.mjs stage-prepared "$CANDIDATE_ID"
+          PREPARATION_TARGET: ${{ inputs.target || 'missing' }}
+        run: node scripts/release/pipeline.mjs stage-prepared "$CANDIDATE_ID" "$PREPARATION_TARGET"
       - name: Report preparation failure
         env:
           RESULT: ${{ needs.package.result }}

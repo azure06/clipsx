@@ -7,8 +7,8 @@ import {
   platforms,
   preparationTargets,
 } from './builds.mjs'
-import { digest } from './model.mjs'
-import { inputsDigest } from './inputs.mjs'
+import { digest } from '../core/contracts.mjs'
+import { inputsDigest } from '../core/inputs.mjs'
 
 test('saved executable verifies exact build/platform/frontend and rejects tampered files', () => {
   const bytes = Buffer.from('app'),
@@ -97,7 +97,7 @@ test('selected build inventory stays valid independently of newer runs and rejec
   )
 })
 test('packaging lifecycle never compiles the app and updater credentials only enter finalization', () => {
-  const root = new URL('../../', import.meta.url)
+  const root = new URL('../../../', import.meta.url)
   const packaging = readFileSync(new URL('.github/workflows/release-prepare.yml', root), 'utf8')
   assert(!/tauri\.js build|cargo build|npm run build|preflight/.test(packaging))
   assert(!packaging.includes('TAURI_SIGNING_PRIVATE_KEY'))

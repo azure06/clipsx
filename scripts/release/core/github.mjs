@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { assert, repository, encode, readinessContext, digest } from './model.mjs'
+import { assert, repository, encode, readinessContext, digest } from './contracts.mjs'
 
-export const command = (program, args, options = {}) =>
+const execute = (program, args, options = {}) =>
   execFileSync(
     // Git Bash's GNU tar interprets Windows drive letters as remote hosts.
     program === 'tar' && process.platform === 'win32'
@@ -17,7 +17,13 @@ export const command = (program, args, options = {}) =>
       ...options,
     }
   )
+// A plain external-call adapter lets orchestration tests record side effects.
+export const services = { command: execute }
+export const command = (...args) => services.command(...args)
+const assetCache = new Map()
+export const clearAssetCache = () => assetCache.clear()
 export function api(path, method = 'GET', body) {
+  if (services.api) return services.api(path, method, body)
   const args = ['api', path, '--method', method]
   if (body !== undefined) args.push('--input', '-')
   const output = command('gh', args, {
@@ -41,16 +47,22 @@ export function downloadAsset(release, name, directory) {
   const asset = release.assets.find(item => item.name === name)
   assert(asset, `Missing release asset: ${name}`)
   mkdirSync(directory, { recursive: true })
-  const bytes = execFileSync(
-    'gh',
-    [
-      'api',
-      `repos/${repository}/releases/assets/${asset.id}`,
-      '-H',
-      'Accept: application/octet-stream',
-    ],
-    { maxBuffer: 1024 * 1024 * 1024 }
-  )
+  const key = `${asset.id}:${asset.digest}`
+  const bytes =
+    assetCache.get(key) ||
+    command(
+      'gh',
+      [
+        'api',
+        `repos/${repository}/releases/assets/${asset.id}`,
+        '-H',
+        'Accept: application/octet-stream',
+      ],
+      { maxBuffer: 1024 * 1024 * 1024, encoding: null }
+    )
+  if (asset.digest)
+    assert(digest(bytes) === asset.digest.replace(/^sha256:/, ''), 'Release asset changed')
+  assetCache.set(key, bytes)
   writeFileSync(join(directory, name), bytes)
   return bytes
 }
@@ -69,6 +81,12 @@ export function writeAsset(release, name, value, directory) {
   mkdirSync(directory, { recursive: true })
   const path = join(directory, name)
   writeFileSync(path, typeof value === 'string' ? value : encode(value))
+  if (
+    release.assets.some(
+      item => item.name === name && item.digest === `sha256:${digest(readFileSync(path))}`
+    )
+  )
+    return
   upload(release, [path])
 }
 export function status(sha, state, description, targetUrl) {
@@ -81,7 +99,12 @@ export function status(sha, state, description, targetUrl) {
 }
 export function loadCandidate(release, directory) {
   const bytes = downloadAsset(release, 'candidate.json', directory)
-  return { candidate: JSON.parse(bytes), bytes }
+  const candidate = JSON.parse(bytes)
+  return {
+    candidate,
+    bytes,
+    releaseNotesRevision: candidate.releaseNotesRevision || candidate.sourceRevision,
+  }
 }
 export function workflowArtifacts(runId) {
   assert(/^\d+$/.test(String(runId)), 'Invalid workflow run ID')
@@ -98,12 +121,12 @@ export function workflowArtifacts(runId) {
 export function downloadArtifact(artifact, directory) {
   assert(artifact && !artifact.expired, 'Build artifact missing or expired')
   mkdirSync(directory, { recursive: true })
+  if (services.artifact) return services.artifact(artifact, directory)
   // Artifact IDs are immutable; never resolve a selected candidate through "latest".
-  const zip = execFileSync(
-    'gh',
-    ['api', `repos/${repository}/actions/artifacts/${artifact.id}/zip`],
-    { maxBuffer: 1024 * 1024 * 1024 }
-  )
+  const zip = command('gh', ['api', `repos/${repository}/actions/artifacts/${artifact.id}/zip`], {
+    maxBuffer: 1024 * 1024 * 1024,
+    encoding: null,
+  })
   if (artifact.digest)
     assert(
       digest(zip) === artifact.digest.replace(/^sha256:/, ''),
