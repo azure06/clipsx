@@ -5,7 +5,7 @@ import {
   loadCommandBindings,
   matchCommandShortcut,
 } from '../../shared/keyboard/commands'
-import { formatShortcut } from '../../shared/keyboard/shortcuts'
+import { formatShortcut, getPlatform } from '../../shared/keyboard/shortcuts'
 import {
   lazy,
   Suspense,
@@ -539,7 +539,10 @@ export const AppLayout = () => {
 
   return (
     // Main Container - Single Background Color/Gradient Source
-    <div className="app-frame flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10">
+    <div
+      data-platform={getPlatform()}
+      className="app-frame flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10"
+    >
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
 

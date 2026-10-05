@@ -35,12 +35,17 @@ The main webview's theme provider applies the saved Light/Dark choice to the
 document; Auto follows system theme changes. The native window follows the OS.
 On macOS, the main window's OS theme-change handler forwards the new theme to
 Tauri so the webview's system color-scheme preference remains current.
-CSS compares the document's theme class with the system color-scheme preference
-and strengthens only the outer frame's background opacity when they differ:
-Light over a dark system uses 85%; Dark over a light system uses 75%.
-Matching combinations retain the original 30% Light / 60% Dark opacity.
-All combinations use the original slate colors, internal surfaces and blur;
-there are no alternative palettes or additional theme state/listeners.
+Windows and macOS use native backdrop effects. CSS strengthens the outer frame's
+opacity when the document theme differs from the system: Light over a dark system
+uses 85%; Dark over a light system uses 75%. Matching combinations use 30% Light /
+60% Dark opacity. Linux uses an opaque outer frame in the same slate colors because
+Tauri's native backdrop effects are unavailable there. Internal surfaces and blur
+remain shared; no additional theme state or listeners are used.
+
+Windows and Linux render minimize, maximize/restore and close controls in the
+existing titlebar. Linux uses SVG icons; Windows retains its native-font glyphs
+and Snap overlay. macOS uses native window buttons. Close hides the window;
+Quit from the tray exits the app.
 
 ## Diagnostics and error reporting
 

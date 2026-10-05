@@ -2,11 +2,12 @@ import i18n from '../../i18n/index'
 import { diagnostic } from '../diagnostics'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { Copy, Minus, Square, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useClipboardStore, useUIStore } from '../../stores'
+import { getPlatform } from '../keyboard/shortcuts'
 
-const isWindows = navigator.platform.includes('Win')
 const SNAP_LAYOUT_DELAY_MS = 620
 
 // Decorum's injected titlebar requires window.__TAURI__. Keep that global bridge
@@ -14,10 +15,14 @@ const SNAP_LAYOUT_DELAY_MS = 620
 // trusted main UI renders the controls and invokes only Decorum's scoped Snap API.
 
 export const TitleBar = () => {
+  const platform = getPlatform()
+  const isWindows = platform === 'windows'
+  const hasCustomControls = platform !== 'macos'
   const { t } = useTranslation()
   const activeView = useUIStore(state => state.activeView)
   const clipCount = useClipboardStore(state => state.clips.length)
   const [maximized, setMaximized] = useState(false)
+  const MaximizeIcon = maximized ? Copy : Square
   const snapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearSnapTimer = () => {
@@ -28,7 +33,7 @@ export const TitleBar = () => {
   }
 
   useEffect(() => {
-    if (!isWindows) return
+    if (!hasCustomControls) return
     const appWindow = getCurrentWindow()
     let disposed = false
     void appWindow.isMaximized().then(value => {
@@ -44,7 +49,7 @@ export const TitleBar = () => {
       clearSnapTimer()
       void unlisten.then(stop => stop())
     }
-  }, [])
+  }, [hasCustomControls])
 
   const preventDrag = (event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()
 
@@ -78,14 +83,14 @@ export const TitleBar = () => {
         {t('titleBar.clipCount', { count: clipCount })}
       </div>
 
-      {isWindows && (
+      {hasCustomControls && (
         <div
           className="-mr-3 ml-2 flex h-8 self-stretch"
           aria-label={i18n.t('desktopUi.windowControls')}
         >
           <WindowControl
             label={i18n.t('desktopUi.minimize')}
-            glyph={'\uE921'}
+            glyph={isWindows ? '\uE921' : <Minus size={12} />}
             onClick={() => void getCurrentWindow().minimize()}
             onMouseDown={preventDrag}
           />
@@ -93,18 +98,18 @@ export const TitleBar = () => {
             label={
               maximized ? i18n.t('desktopUi.restoreWindow') : i18n.t('desktopUi.maximizeWindow')
             }
-            glyph={maximized ? '\uE923' : '\uE922'}
+            glyph={isWindows ? maximized ? '\uE923' : '\uE922' : <MaximizeIcon size={12} />}
             onClick={() => {
               clearSnapTimer()
               void getCurrentWindow().toggleMaximize()
             }}
             onMouseDown={preventDrag}
-            onMouseEnter={scheduleSnapLayout}
+            onMouseEnter={isWindows ? scheduleSnapLayout : undefined}
             onMouseLeave={clearSnapTimer}
           />
           <WindowControl
             label={i18n.t('desktopUi.close')}
-            glyph={'\uE8BB'}
+            glyph={isWindows ? '\uE8BB' : <X size={12} />}
             variant="close"
             onClick={() => void getCurrentWindow().close()}
             onMouseDown={preventDrag}
@@ -125,7 +130,7 @@ const WindowControl = ({
   onMouseLeave,
 }: {
   label: string
-  glyph: string
+  glyph: ReactNode
   variant?: 'default' | 'close'
   onClick: () => void
   onMouseDown: (event: MouseEvent<HTMLButtonElement>) => void
@@ -147,7 +152,11 @@ const WindowControl = ({
           ? 'hover:bg-[#e81123] hover:text-white active:bg-[#e81123] active:opacity-80'
           : 'hover:bg-black/10 active:bg-black/15 dark:hover:bg-white/10 dark:active:bg-white/15'
       }`}
-      style={{ fontFamily: "'Segoe Fluent Icons', 'Segoe MDL2 Assets'" }}
+      style={
+        typeof glyph === 'string'
+          ? { fontFamily: "'Segoe Fluent Icons', 'Segoe MDL2 Assets'" }
+          : undefined
+      }
     >
       <span aria-hidden="true">{glyph}</span>
     </button>

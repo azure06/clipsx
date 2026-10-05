@@ -103,6 +103,15 @@ body,
   }
 }
 
+/* Linux has no Tauri native backdrop effect; keep the shell matte in every theme. */
+:root .app-frame[data-platform='linux'] {
+  background-color: var(--color-slate-100);
+}
+
+:root.dark .app-frame[data-platform='linux'] {
+  background-color: var(--color-slate-950);
+}
+
 /* The gradient tail follows the actual rounded perimeter at a constant speed,
    regardless of the search field's aspect ratio. */
 .search-loading-beam {
