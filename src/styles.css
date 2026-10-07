@@ -103,6 +103,33 @@ body,
   }
 }
 
+/* Linux has no Tauri native backdrop effect; keep the shell matte in every theme. */
+:root .app-frame[data-platform='linux'] {
+  background-color: var(--color-slate-100);
+  --app-raised-surface: var(--color-white);
+  --app-surface-border: var(--color-slate-200);
+}
+
+:root.dark .app-frame[data-platform='linux'] {
+  background-color: var(--color-slate-950);
+  --app-raised-surface: color-mix(in oklab, var(--color-slate-100) 5%, transparent);
+  --app-surface-border: color-mix(in oklab, var(--color-white) 10%, transparent);
+}
+
+/* Blur over a solid backdrop cannot distinguish surfaces on its own. */
+.app-frame[data-platform='linux'] .app-raised-surface {
+  background-color: var(--app-raised-surface);
+}
+
+.app-frame[data-platform='linux'] .search-surface {
+  outline: 1px solid var(--app-surface-border);
+  outline-offset: -1px;
+}
+
+.app-frame[data-platform='linux'] .search-surface:focus-within {
+  outline-color: var(--color-violet-500);
+}
+
 /* The gradient tail follows the actual rounded perimeter at a constant speed,
    regardless of the search field's aspect ratio. */
 .search-loading-beam {

@@ -5,7 +5,7 @@ import {
   loadCommandBindings,
   matchCommandShortcut,
 } from '../../shared/keyboard/commands'
-import { formatShortcut } from '../../shared/keyboard/shortcuts'
+import { formatShortcut, getPlatform } from '../../shared/keyboard/shortcuts'
 import {
   lazy,
   Suspense,
@@ -539,7 +539,10 @@ export const AppLayout = () => {
 
   return (
     // Main Container - Single Background Color/Gradient Source
-    <div className="app-frame flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10">
+    <div
+      data-platform={getPlatform()}
+      className="app-frame flex h-screen w-screen flex-col overflow-hidden bg-slate-100/30 dark:bg-slate-950/60 text-gray-900 dark:text-gray-100 font-sans selection:bg-blue-500/30 rounded-xl border border-white/40 dark:border-white/10"
+    >
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
 
@@ -588,7 +591,7 @@ export const AppLayout = () => {
                 <div ref={splitViewRef} className="flex min-h-0 flex-1 overflow-hidden">
                   {/* LEFT PANEL — glass L1, peers with Preview */}
                   <div
-                    className="min-w-0 shrink-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left"
+                    className="app-raised-surface min-w-0 shrink-0 flex flex-col overflow-hidden rounded-2xl bg-slate-100/10 dark:bg-slate-100/5 backdrop-blur-xl animate-slide-in-left"
                     id="history-panel"
                     style={{
                       width: `calc((100% - ${SPLITTER_WIDTH_PX}px) * ${effectiveHistoryRatio})`,
@@ -679,7 +682,7 @@ export const AppLayout = () => {
                         )
                       }
                       return (
-                        <div className="w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl border border-dashed border-slate-200/70 bg-slate-100/10 dark:border-white/5 dark:bg-slate-100/5">
+                        <div className="app-raised-surface w-full flex-1 flex flex-col items-center justify-center animate-fade-in rounded-2xl border border-dashed border-slate-200/70 bg-slate-100/10 dark:border-white/5 dark:bg-slate-100/5">
                           <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                             {t('app.emptyTitle')}
                           </p>
