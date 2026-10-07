@@ -246,7 +246,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
   return (
     <div
       ref={setPreviewContainer}
-      className="relative my-0.5 mr-2 flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/25 backdrop-blur-xl dark:border-white/5 dark:bg-slate-100/5"
+      className="app-raised-surface relative my-0.5 mr-2 flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/70 bg-slate-100/25 backdrop-blur-xl dark:border-white/5 dark:bg-slate-100/5"
     >
       {/* Header: row 1 — type badge + actions */}
       <div className="flex shrink-0 flex-col border-b border-slate-100/10 bg-slate-100/40 dark:border-slate-100/5 dark:bg-slate-100/5">

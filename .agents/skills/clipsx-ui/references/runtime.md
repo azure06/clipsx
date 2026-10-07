@@ -39,8 +39,10 @@ Windows and macOS use native backdrop effects. CSS strengthens the outer frame's
 opacity when the document theme differs from the system: Light over a dark system
 uses 85%; Dark over a light system uses 75%. Matching combinations use 30% Light /
 60% Dark opacity. Linux uses an opaque outer frame in the same slate colors because
-Tauri's native backdrop effects are unavailable there. Internal surfaces and blur
-remain shared; no additional theme state or listeners are used.
+Tauri's native backdrop effects are unavailable there. Search, history and preview
+use a shared raised-surface fill on Linux: white in Light, a 5% slate tint in Dark.
+Search has an inset outline and violet focus indicator. Internal blur remains shared;
+no additional theme state or listeners are used.
 
 Windows and Linux render minimize, maximize/restore and close controls in the
 existing titlebar. Linux uses SVG icons; Windows retains its native-font glyphs

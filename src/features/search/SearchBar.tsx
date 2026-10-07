@@ -296,7 +296,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
     <div className="relative w-full group">
       <div
         aria-busy={isUpdatingResults}
-        className="relative flex items-center backdrop-blur-2xl border-none bg-slate-100/10 dark:bg-transparent rounded-xl shadow-sm shadow-black/4 dark:shadow-2xl"
+        className="search-surface app-raised-surface relative flex items-center backdrop-blur-2xl border-none bg-slate-100/10 dark:bg-transparent rounded-xl shadow-sm shadow-black/4 dark:shadow-2xl"
       >
         {isUpdatingResults && <SearchLoadingBeam />}
 
