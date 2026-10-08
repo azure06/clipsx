@@ -8,7 +8,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{WebviewWindow, Window};
+use tauri::Window;
 
 const BLUR_DELAY: Duration = Duration::from_millis(250);
 const INTERACTION_GUARD: Duration = Duration::from_millis(300);
@@ -34,7 +34,7 @@ impl Default for WindowBehaviorState {
 impl WindowBehaviorState {
     pub fn apply_settings(
         &self,
-        window: &WebviewWindow,
+        window: &Window,
         settings: &AppSettings,
     ) -> Result<(), tauri::Error> {
         window.set_always_on_top(settings.always_on_top)?;

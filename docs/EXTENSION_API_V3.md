@@ -7,6 +7,10 @@ sandboxed detail/dialog UI assets. The current contract is
 local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
+Custom detail/dialog views share the main native window. The system-wide
+show/hide shortcut remains available while a custom view is open or focused;
+native window control and main-webview focus are handled separately.
+
 ## Error reporting
 
 When the user enables desktop error reports, the host attributes unexpected
