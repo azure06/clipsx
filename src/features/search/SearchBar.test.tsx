@@ -37,6 +37,21 @@ const ScopeHarness = ({
 }
 
 describe('SearchBar scope slash commands', () => {
+  it('offers an explicit setup action through the existing Recall callback when unavailable', () => {
+    const onRecall = vi.fn()
+    render(
+      <SearchBar
+        value="water"
+        onChange={vi.fn()}
+        onClear={vi.fn()}
+        canRecall
+        recallAvailable={false}
+        onRecall={onRecall}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Set up Recall' }))
+    expect(onRecall).toHaveBeenCalledOnce()
+  })
   it('shows the result-refresh beam on the search field only while updating', () => {
     const { rerender, container } = render(
       <SearchBar value="water" onChange={vi.fn()} onClear={vi.fn()} isUpdatingResults />
