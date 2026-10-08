@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/azure06/clipsx/security/advisories/new
+    about: Use a private report for vulnerabilities; do not disclose them in public issues.
+  - name: Report a Code of Conduct concern privately
+    url: mailto:support@clipsx.app
+    about: Contact the maintainer privately about harassment or other conduct concerns.

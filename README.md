@@ -84,6 +84,10 @@ Before starting a substantial change, check for an existing issue and read the
 [Contributing Guide](CONTRIBUTING.md). It covers the development setup, checks,
 and system boundaries that keep ClipsX reliable.
 
+Community participation follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+For questions and bug reports, see [support resources](SUPPORT.md); report
+vulnerabilities privately using the [security policy](SECURITY.md).
+
 Thank you to everyone who spends time making the project clearer, safer, or
 more useful.
 
