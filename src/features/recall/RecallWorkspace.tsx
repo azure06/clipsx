@@ -22,6 +22,7 @@ import type { RecallEvidence } from '../../shared/types/v2'
 import type { RecallTurn } from './useRecall'
 import { linkRecallCitations } from './recallMarkdown'
 import './recall.css'
+import { DocumentationLink } from '../../shared/components/DocumentationLink'
 
 type Props = {
   turns: RecallTurn[]
@@ -97,10 +98,13 @@ export function RecallWorkspace({
   )
   if (!latest) {
     return (
-      <div className="flex h-full items-center justify-center rounded-2xl bg-slate-100/10 p-8 text-center text-sm text-gray-500 dark:bg-slate-100/5">
-        {expired
-          ? i18n.t('desktopUi.thisTemporaryRecallSessionExpiredAskAgainToStart')
-          : i18n.t('desktopUi.askAQuestionToRecallSomethingFromYourClipboard')}
+      <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl bg-slate-100/10 p-8 text-center text-sm text-gray-500 dark:bg-slate-100/5">
+        <p>
+          {expired
+            ? i18n.t('desktopUi.thisTemporaryRecallSessionExpiredAskAgainToStart')
+            : i18n.t('desktopUi.askAQuestionToRecallSomethingFromYourClipboard')}
+        </p>
+        <DocumentationLink guide="recall" label={i18n.t('documentation.recallGuide')} />
       </div>
     )
   }
@@ -136,17 +140,20 @@ export function RecallWorkspace({
             </div>
           </div>
         </div>
-        <button
-          onClick={onClear}
-          className="recall-new"
-          title={i18n.t('desktopUi.newQuestion')}
-          aria-label={i18n.t('desktopUi.newQuestion')}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span>
-            <Trans i18nKey="desktopUi.new" />
-          </span>
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <DocumentationLink guide="recall" label={i18n.t('documentation.recallGuide')} />
+          <button
+            onClick={onClear}
+            className="recall-new"
+            title={i18n.t('desktopUi.newQuestion')}
+            aria-label={i18n.t('desktopUi.newQuestion')}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>
+              <Trans i18nKey="desktopUi.new" />
+            </span>
+          </button>
+        </div>
       </header>
 
       <div className="recall-body custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">

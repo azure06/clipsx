@@ -296,6 +296,12 @@ and generation assignments. Bounded model inspection derives `embedding` /
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.
 
+Contextual help uses the current app language and the existing external-browser
+command. Models links to the shared Local AI guide and its embedding/generation
+sections; Recall links to its task guide. An unavailable Recall action still
+opens Intelligence, with the visible label "Set up Recall". Browser failures
+offer a localized manual URL and do not alter provider configuration or clips.
+
 ## Startup measurement
 
 Use an isolated profile and a coherent database backup, with reporting and autostart disabled. Record source revision, OS/hardware, fixture size, cache state and warm-up separately. Compare repeated production launches without building during measurement.

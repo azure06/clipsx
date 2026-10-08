@@ -1,4 +1,12 @@
 {
+  "documentation": {
+    "localAiSetup": "ローカルAIの設定ガイド",
+    "chooseEmbedding": "埋め込みモデルの選び方",
+    "chooseGeneration": "生成モデルの選び方",
+    "recallGuide": "Recallガイド",
+    "openFailed": "ガイドを開けませんでした",
+    "openManually": "ブラウザーで次のアドレスを開いてください：{{url}}"
+  },
   "common": {
     "cancel": "キャンセル",
     "close": "閉じる",
