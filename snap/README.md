@@ -1,5 +1,8 @@
 # Snap packaging
 
+Listing screenshots, the demo video and the featured banner are stored in
+[store-assets/](store-assets/README.md).
+
 The recipe wraps the immutable published Linux x64 Debian executable; it does
 not compile ClipsX. The download is pinned to its SHA-256 checksum. Updating
 the version requires updating the source URL and checksum together.
