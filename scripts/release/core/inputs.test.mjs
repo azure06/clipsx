@@ -4,7 +4,14 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { classify, route, appInputs, inputsDigest, assertPublicEnvironment } from './inputs.mjs'
+import {
+  classify,
+  route,
+  decisions,
+  appInputs,
+  inputsDigest,
+  assertPublicEnvironment,
+} from './inputs.mjs'
 import { selectedCandidate, assertMutable } from './contracts.mjs'
 
 test('routing classifies app, recipes, docs, packaging and unknown files conservatively', () => {
@@ -39,6 +46,26 @@ test('routing classifies app, recipes, docs, packaging and unknown files conserv
     assert(!route([path]))
   assert(route(['docs/MODELS.md', 'src/new.ts']))
 })
+test('community health files receive documentation checks without changing app inputs', () => {
+  const paths = [
+    'CODE_OF_CONDUCT.md',
+    'SECURITY.md',
+    'SUPPORT.md',
+    '.github/PULL_REQUEST_TEMPLATE.md',
+    '.github/ISSUE_TEMPLATE/bug_report.yml',
+    '.github/ISSUE_TEMPLATE/feature_request.yaml',
+    '.github/ISSUE_TEMPLATE/question.md',
+    '.github/ISSUE_TEMPLATE/config.yml',
+  ]
+  for (const path of paths) assert.equal(classify(path), 'docs', path)
+  assert.deepEqual(decisions(paths), { app: false, build: false, tooling: false, docs: true })
+  assert.equal(route(paths), false)
+  assert.equal(route([...paths, 'src/App.tsx']), true)
+  assert.equal(classify('.github/ISSUE_TEMPLATE/helper.js'), 'release')
+  assert.equal(classify('.github/workflows/checks.yml'), 'recipe')
+  assert.equal(classify('SECURITY.toml'), 'app')
+})
+
 test('app inventory tolerates docs/tooling commits and detects additions/deletions/config changes', t => {
   const root = mkdtempSync(join(tmpdir(), 'clipsx-inputs-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -56,6 +83,12 @@ test('app inventory tolerates docs/tooling commits and detects additions/deletio
   const original = inputsDigest(appInputs('HEAD', root))
   writeFileSync(join(root, 'docs/MODELS.md'), 'new docs')
   writeFileSync(join(root, 'scripts/release/sign-windows.ps1'), 'new signing')
+  writeFileSync(join(root, 'CODE_OF_CONDUCT.md'), 'conduct')
+  writeFileSync(join(root, 'SECURITY.md'), 'security reporting')
+  writeFileSync(join(root, 'SUPPORT.md'), 'support')
+  mkdirSync(join(root, '.github/ISSUE_TEMPLATE'), { recursive: true })
+  writeFileSync(join(root, '.github/PULL_REQUEST_TEMPLATE.md'), 'pull request template')
+  writeFileSync(join(root, '.github/ISSUE_TEMPLATE/bug_report.yml'), 'name: Bug report')
   git('add', '.')
   git('commit', '-m', 'tooling')
   assert.equal(inputsDigest(appInputs('HEAD', root)), original)

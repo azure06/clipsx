@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem with ClipsX.
+title: '[Bug]: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve ClipsX. Search existing issues before reporting.
+        This report is public: use harmless sample clipboard data and redact sensitive details.
+        Do not upload clipboard databases, credentials, or unrelated clipboard history.
+        For vulnerabilities, use [private vulnerability reporting](https://github.com/azure06/clipsx/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: ClipsX version or commit
+      description: Include the release version, or the commit if running from source.
+      placeholder: 'Example: 0.1.3 or a commit SHA'
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux (X11)
+        - Linux (Wayland)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment details
+      description: OS version, CPU architecture, and installation method; for Linux, include distribution and desktop session. Listing a platform here does not imply support.
+      placeholder: 'Example: Windows 11 x64, installer from GitHub Releases'
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal, harmless sample and the source or destination app when clipboard formats are involved.
+      placeholder: |
+        1. Copy this synthetic sample from ...
+        2. In ClipsX, ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Relevant extension package IDs and versions, frequency, workarounds, or sanitized screenshots and short log excerpts. Review every attachment for private data.
