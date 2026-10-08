@@ -115,6 +115,7 @@ foreign-types = "0.5"
 ashpd = { version = "0.13.13", features = ["open_uri"] }
 x11rb = { version = "0.13", features = ["xtest"] }
 [dev-dependencies]
+tauri = { version = "2.11.3", features = ["test"] }
 wat = "=1.247.0"
 wit-parser = "0.247.0"
 

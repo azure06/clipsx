@@ -1770,7 +1770,7 @@ async fn execute_clipboard_output_impl(
         return Ok(());
     }
     let focus_target = host_state.take_paste_target();
-    if let Some(window) = app.get_webview_window("main") {
+    if let Ok(window) = host::main_window(&app) {
         if let Err(error) = window.hide() {
             let message = error.to_string();
             let _ = app.emit("paste-failed", &message);
