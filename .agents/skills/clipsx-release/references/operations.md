@@ -102,7 +102,7 @@ changes. Both routes report the aggregate required `CI` gate.
 
 The app-input inventory contains tracked paths, modes and Git blobs, including
 new/deleted files. Its digest compares a saved build with release source; it is
-not a cross-commit build cache. Reuse always selects a build explicitly. Changes
+not a cross-commit build cache. Reuse always selects a build explicitly. Source comparison retains every recorded input even if later routing rules classify it as documentation, and also checks newly added application inputs. Changes
 to public production variables require an explicit new build and fail reuse.
 
 Internal `candidate.json` schema **2** records build source revision/tree,

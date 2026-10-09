@@ -64,7 +64,7 @@ export function classify(path) {
 }
 const git = (args, cwd = process.cwd()) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
-export function appInputs(ref = 'HEAD', cwd) {
+export function appInputs(ref = 'HEAD', cwd, recordedPaths = []) {
   assert(/^[a-f0-9]{40}$/.test(ref) || ref === 'HEAD', 'Use an exact source commit')
   return git(['ls-tree', '-r', '-z', ref], cwd)
     .split('\0')
@@ -75,13 +75,15 @@ export function appInputs(ref = 'HEAD', cwd) {
       assert(type === 'blob', 'Submodules are not supported release inputs')
       return { path, mode, blob }
     })
-    .filter(item => classify(item.path) === 'app')
+    .filter(item => classify(item.path) === 'app' || recordedPaths.includes(item.path))
     .sort((a, b) => a.path.localeCompare(b.path))
 }
 export const inputsDigest = inputs => digest(encode(inputs))
 export function assertAppInputs(candidate, ref) {
+  // Retain inputs recorded by older routing rules, while also detecting new app inputs.
+  const recordedPaths = candidate.build.appInputs.map(item => item.path)
   assert(
-    inputsDigest(appInputs(ref)) === candidate.build.appInputsSha256,
+    inputsDigest(appInputs(ref, undefined, recordedPaths)) === candidate.build.appInputsSha256,
     'App inputs differ from selected build; select/build the intended app revision'
   )
 }
