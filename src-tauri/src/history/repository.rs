@@ -783,7 +783,7 @@ impl HistoryRepository {
         }
         Ok(presentations)
     }
-    async fn tags_for(&self, clip_id: &str) -> Result<Vec<Tag>> {
+    pub(crate) async fn tags_for(&self, clip_id: &str) -> Result<Vec<Tag>> {
         let rows=sqlx::query("SELECT t.id,t.name,t.color FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name").bind(clip_id).fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
@@ -1626,6 +1626,20 @@ impl HistoryRepository {
         Ok(())
     }
     pub async fn asset(&self, binary_id: &str) -> Result<(Vec<u8>, String)> {
+        self.asset_with_limit(binary_id, None).await
+    }
+    pub(crate) async fn bounded_asset(
+        &self,
+        binary_id: &str,
+        limit: usize,
+    ) -> Result<(Vec<u8>, String)> {
+        self.asset_with_limit(binary_id, Some(limit)).await
+    }
+    async fn asset_with_limit(
+        &self,
+        binary_id: &str,
+        limit: Option<usize>,
+    ) -> Result<(Vec<u8>, String)> {
         let row=sqlx::query("SELECT b.sha256,b.relative_path,COALESCE(r.canonical_mime_type,'application/octet-stream') FROM clip_binary_files b JOIN clip_representations r ON r.binary_file_id=b.id AND r.lifecycle_state='ready' JOIN clip_items c ON c.id=r.clip_id AND c.lifecycle_state='ready' WHERE b.id=? AND b.lifecycle_state='ready' LIMIT 1").bind(binary_id).fetch_optional(&self.pool).await?.context("asset not found")?;
         let expected: String = row.get(0);
         let relative: String = row.get(1);
@@ -1642,7 +1656,21 @@ impl HistoryRepository {
         if !canonical.starts_with(root) {
             bail!("managed asset escaped its root")
         }
-        let bytes = fs::read(canonical)?;
+        let bytes = if let Some(limit) = limit {
+            use std::io::Read;
+            let file = fs::File::open(canonical)?;
+            if file.metadata()?.len() > limit as u64 {
+                return Err(crate::failure::FailureCode::ResourceLimit.failure().into());
+            }
+            let mut bytes = Vec::new();
+            file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
+                return Err(crate::failure::FailureCode::ResourceLimit.failure().into());
+            }
+            bytes
+        } else {
+            fs::read(canonical)?
+        };
         if sha256(&bytes) != expected {
             bail!("managed asset hash mismatch")
         }

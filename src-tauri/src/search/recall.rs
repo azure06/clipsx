@@ -400,6 +400,7 @@ fn stage(channel: &Channel<RecallEvent>, request_id: &str, value: &str) -> Resul
 
 fn search_request(request: &RecallTurnRequest, query: String) -> SearchRequest {
     SearchRequest {
+        eligibility: Default::default(),
         query,
         scope: request.scope.clone(),
         tag_id: request.tag_id.clone(),

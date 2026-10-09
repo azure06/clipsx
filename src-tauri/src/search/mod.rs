@@ -103,6 +103,22 @@ pub struct SearchRequest {
     pub representation_families: Vec<String>,
     #[serde(default)]
     pub facet_ids: Vec<String>,
+    #[serde(default)]
+    pub eligibility: SearchEligibility,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SearchEligibility {
+    pub captured_after: Option<i64>,
+    pub captured_before: Option<i64>,
+    #[serde(default)]
+    pub source_app_ids: Vec<String>,
+    #[serde(default)]
+    pub excluded_clip_ids: Vec<String>,
+    // Only a trusted Rust service can opt into assistant access policy.
+    #[serde(skip)]
+    pub assistant: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -540,6 +556,11 @@ pub async fn search(
     let search_started = Instant::now();
     let raw = request.query.trim();
     if raw.is_empty()
+        && !request.eligibility.assistant
+        && request.eligibility.captured_after.is_none()
+        && request.eligibility.captured_before.is_none()
+        && request.eligibility.source_app_ids.is_empty()
+        && request.eligibility.excluded_clip_ids.is_empty()
         && request.representation_families.is_empty()
         && request.facet_ids.is_empty()
         && request.tag_id.is_none()
@@ -636,6 +657,8 @@ pub async fn search(
             &request.facet_ids,
             selected_for_fingerprint,
             &settings.syntax_mode,
+            &request.eligibility,
+            request.eligibility.assistant,
         ))?
         .as_bytes(),
     );
@@ -772,6 +795,36 @@ pub(crate) async fn eligible_clip_ids(
 fn eligibility_filter(request: &SearchRequest) -> Result<(String, Vec<String>)> {
     let mut sql = String::from("WHERE c.lifecycle_state='ready'");
     let mut bindings = Vec::new();
+    let eligibility = &request.eligibility;
+    if eligibility.source_app_ids.len() > 50 || eligibility.excluded_clip_ids.len() > 256 {
+        anyhow::bail!("search filter limit exceeded");
+    }
+    if let (Some(after), Some(before)) = (eligibility.captured_after, eligibility.captured_before) {
+        if after > before {
+            anyhow::bail!("capture time range is invalid");
+        }
+    }
+    if eligibility.assistant {
+        sql.push_str(" AND NOT EXISTS(SELECT 1 FROM content_clip_facets secret WHERE secret.clip_id=c.id AND secret.facet_id='core.security.secret')");
+    }
+    if let Some(after) = eligibility.captured_after {
+        sql.push_str(" AND c.captured_at>=?");
+        bindings.push(after.to_string());
+    }
+    if let Some(before) = eligibility.captured_before {
+        sql.push_str(" AND c.captured_at<=?");
+        bindings.push(before.to_string());
+    }
+    if !eligibility.source_app_ids.is_empty() {
+        sql.push_str(" AND EXISTS(SELECT 1 FROM json_each(?) apps WHERE apps.value=COALESCE(c.source_app_id,c.source_app_name))");
+        bindings.push(serde_json::to_string(&eligibility.source_app_ids)?);
+    }
+    if !eligibility.excluded_clip_ids.is_empty() {
+        sql.push_str(
+            " AND NOT EXISTS(SELECT 1 FROM json_each(?) excluded WHERE excluded.value=c.id)",
+        );
+        bindings.push(serde_json::to_string(&eligibility.excluded_clip_ids)?);
+    }
     match request.scope.as_deref().unwrap_or("all") {
         "favorites" => sql.push_str(" AND c.is_favorite=1"),
         "pinned" => sql.push_str(" AND c.is_pinned=1"),
@@ -918,6 +971,7 @@ mod tests {
 
     fn request(query: &str) -> SearchRequest {
         SearchRequest {
+            eligibility: Default::default(),
             query: query.into(),
             scope: Some("all".into()),
             tag_id: None,

@@ -1,0 +1,20 @@
+// Generated from src-tauri/src/recall/contracts.rs. Do not edit.
+export type RetrievalMode = "keyword" | "hybrid";
+export type TextKind = "captured" | "ocr" | "note";
+export type ClipFilters = { scope: string | null, tagId: string | null, capturedAfter: number | null, capturedBefore: number | null, sourceAppIds: Array<string>, excludedClipIds: Array<string>, representationFamilies: Array<string>, facetIds: Array<string>, };
+export type ClipSearchRequest = { query: string, mode: RetrievalMode | null, filters: ClipFilters | null, limit: number | null, cursor: string | null, };
+export type ClipReadRequest = { clipId: string, representationId: string | null, kind: TextKind | null, pageBytes: number | null, cursor: string | null, };
+export type ClipImageRequest = { clipId: string, representationId: string, };
+export type RepresentationDescriptor = { id: string, mimeType: string | null, family: string, storageKind: string, byteLength: number, fingerprint: string, imageAvailable: boolean, };
+export type ClipTag = { id: string, name: string, };
+export type ClipMetadata = { id: string, revision: string, capturedAt: number, sourceAppId: string | null, sourceAppName: string | null, favorite: boolean, pinned: boolean, tags: Array<ClipTag>, representations: Array<RepresentationDescriptor>, ocrStatus: string, };
+export type WarningCode = "filters_bounded" | "source_changed" | "retrieval_incomplete" | "ocr_pending" | "text_unavailable";
+export type ClipboardWarning = { code: WarningCode, };
+export type ClipMatch = { clip: ClipMetadata, snippet: string | null, rank: number, sources: Array<string>, };
+export type RetrievalOutcome = { source: string, status: string, };
+export type ClipSearchResult = { apiVersion: number, items: Array<ClipMatch>, nextCursor: string | null, exhaustive: boolean, sourceOutcomes: Array<RetrievalOutcome>, warnings: Array<ClipboardWarning>, };
+export type ClipReadResult = { apiVersion: number, clip: ClipMetadata, representationId: string | null, kind: TextKind, text: string, textFingerprint: string | null, totalBytes: number, nextCursor: string | null, warnings: Array<ClipboardWarning>, };
+export type ClipImageResult = { apiVersion: number, clipId: string, representationId: string, revision: string, sourceFingerprint: string, mimeType: string, data: string, originalWidth: number, originalHeight: number, width: number, height: number, resized: boolean, };
+export type ClipboardStatus = { apiVersion: number, now: number, timezone: string | null, keywordReady: boolean, semanticReady: boolean, tools: Array<string>, resultLimit: number, organizationLimit: number, defaultTextPageBytes: number, maxTextPageBytes: number, maxImageBytes: number, };
+export type SourceApplication = { id: string, name: string, };
+export type ClipboardFilters = { apiVersion: number, tags: Array<ClipTag>, sourceApplications: Array<SourceApplication>, representationFamilies: Array<string>, facetIds: Array<string>, warnings: Array<ClipboardWarning>, };

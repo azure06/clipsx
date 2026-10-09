@@ -3,6 +3,8 @@ identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
   "allow-ai-http-start", "allow-ai-http-acknowledge", "allow-ai-http-cancel",
+  "allow-assistant-clipboard-status", "allow-assistant-clipboard-filters",
+  "allow-assistant-search-clips", "allow-assistant-read-clip", "allow-assistant-read-clip-image",
   "allow-runtime-gate-begin", "allow-runtime-gate-tool", "allow-runtime-gate-finish",
   "allow-reset-app-settings",
   "allow-get-settings-effects",

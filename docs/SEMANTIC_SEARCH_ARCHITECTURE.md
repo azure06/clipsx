@@ -254,6 +254,42 @@ native authentication receipts, cancellation, and the actual webview user agent.
 Normal builds omit the fixture HTML entry. Live provider/model support must be
 verified separately with configured credentials.
 
+### Assistant clipboard reads
+
+The Rust `ClipboardService` owns version 1 assistant read contracts. Its Tauri
+adapters expose status, filters, keyword/hybrid search, text pages, and verified
+image previews. These contracts are independent of the current temporary Recall
+answer UI. Assistant access excludes `core.security.secret` clips; ordinary
+History keeps its existing access policy. Eligibility is checked again when a
+clip or image is read, including direct access by ID.
+
+Capture-time ranges, source application IDs, and excluded clip IDs participate
+in the shared SQL predicate before keyword and semantic candidate selection.
+Search defaults to keyword retrieval, 20 results, and a maximum of 50. An empty
+assistant query browses recent eligible clips. Hybrid failures retain keyword
+results; source outcomes and typed warnings describe unavailable or incomplete
+retrieval. Semantic shortlist results are approximate. Ranking scores are not
+confidence estimates. Cursors bind to filters and assistant eligibility.
+
+Text pages default to 8 KiB and cannot exceed 32 KiB. Captured text, notes, and
+existing OCR are separate inputs; pending OCR is reported without starting or
+waiting for work. Continuation cursors bind to the clip revision, selected
+representation, content kind, and text fingerprint, and preserve UTF-8 boundaries.
+Revisions include captured identity and organization state; copying/access counts
+do not invalidate them.
+
+Image reads accept clip and representation IDs only. PNG/JPEG previews verify
+managed-file ownership and hash before decoding with a 64 MiB allocation limit.
+The longest returned edge is at most 2,048 pixels; base64 payloads are at most
+4 MiB. Results include source fingerprints, original/returned dimensions, and
+resizing status. Search includes representation descriptors rather than image
+bytes. File-list descriptors grant no access to referenced files.
+
+Rust DTOs derive TypeScript with `ts-rs` and JSON schemas with `schemars`.
+`generated_contracts_match` verifies checked-in declarations during native tests.
+Set `CLIPSX_GENERATE_CONTRACTS=1` and run that test to regenerate them. Formatting
+excludes the generated file so CI can compare its declarations deterministically.
+
 ## Qualification
 
 Run ignored scale tests in release mode using the application binary target:
