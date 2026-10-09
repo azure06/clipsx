@@ -2932,6 +2932,7 @@ fn recover_startup(
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         .manage(crate::recall::transport::Transport::default())
+        .manage(crate::recall::mcp::McpRuntime::default())
         .plugin(crate::app::diagnostics::log_plugin())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = host::show_main_window(app);
@@ -3187,6 +3188,11 @@ pub(crate) fn run() {
                     workers: crate::app::workers::BackgroundWorkers::default(),
                     recall: Default::default(),
                 });
+                let mcp_history=history.clone();let mcp_app=app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let runtime=mcp_app.state::<crate::recall::mcp::McpRuntime>();
+                    let _=runtime.reconcile(mcp_history,Some(mcp_app.clone())).await;
+                });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
                 // Rebuild any stale FTS projections from previous sessions.
@@ -3391,6 +3397,12 @@ pub(crate) fn run() {
             crate::recall::ipc::assistant_organize_clips,
             crate::recall::ipc::assistant_undo_action,
             crate::recall::ipc::assistant_action_activity,
+            crate::recall::ipc::mcp_integration_status,
+            crate::recall::ipc::mcp_configure,
+            crate::recall::ipc::mcp_list_grants,
+            crate::recall::ipc::mcp_issue_grant,
+            crate::recall::ipc::mcp_revoke_grant,
+            crate::recall::ipc::mcp_test_access,
             show_main_window_command,
             set_tray_labels,
             get_release_info,

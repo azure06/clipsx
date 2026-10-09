@@ -33,7 +33,6 @@ impl Actor {
             ..Self::native()
         }
     }
-    #[cfg(test)]
     pub fn mcp(grant_id: &str) -> Self {
         Self {
             id: format!("mcp:{grant_id}"),

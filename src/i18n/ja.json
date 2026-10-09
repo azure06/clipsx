@@ -1172,5 +1172,50 @@
     "submitted": "レポートを送信しました。レポートID：{{eventId}}。処理の完了はまだ確認されていません。",
     "crashSaved": "クラッシュレポートを保存しました。",
     "saved": "診断情報を保存しました。"
+  },
+  "mcp": {
+    "integrations": "連携",
+    "title": "他のアシスタント向けクリップボードツール",
+    "description": "MCPを使って対応するアシスタントをローカルのクリップボードに接続します。",
+    "enabled": "MCPを有効にする",
+    "loading": "連携を読み込み中…",
+    "state": {
+      "running": "稼働中",
+      "disabled": "無効",
+      "failed": "確認が必要"
+    },
+    "portUnavailable": "このポートは使用できません。別のポートを選んで適用してください。",
+    "operationFailed": "操作に失敗しました。設定を確認して再試行してください。",
+    "refresh": "更新",
+    "port": "ポート",
+    "apply": "適用",
+    "endpoint": "エンドポイント",
+    "clientName": "クライアント名",
+    "allowWrites": "作成と整理を許可する",
+    "createGrant": "アクセストークンを作成",
+    "showOnce": "今すぐトークンを保存してください。ClipsXは検証用の値のみを保存し、再表示できません。",
+    "tokenFor": "{{name}}のトークン",
+    "dismiss": "トークンを閉じる",
+    "revoked": "失効済み",
+    "readWrite": "読み取りと書き込み",
+    "readOnly": "読み取りのみ",
+    "rotate": "トークンを更新",
+    "revoke": "失効させる",
+    "testToken": "テストするトークン（または上に表示されたトークン）",
+    "testConnection": "接続をテスト",
+    "testPassed": "接続しました。{{count}}個のツールが利用できます。",
+    "setup": "設定方法",
+    "setupHint": "クライアントごとに別のトークンを作成します。クライアントの環境変数CLIPSX_MCP_TOKENに設定し、共有するプロジェクトファイルには保存しないでください。",
+    "codex": "Codex CLI",
+    "claude": "Claude Code: .mcp.json",
+    "generic": "他のクライアント：このエンドポイントとAuthorization: Bearerヘッダーを指定し、Streamable HTTPで接続します。",
+    "localOnly": "ClipsXを起動しておく必要があります。ウィンドウを隠してもMCPは稼働します。クラウドのクライアントには対応するローカルブリッジやトンネルが必要です。",
+    "activity": "最近のクリップボード操作",
+    "action": {
+      "create": "クリップを作成",
+      "organize": "クリップを整理",
+      "undo": "操作を取り消し"
+    },
+    "undo": "取り消す"
   }
 }

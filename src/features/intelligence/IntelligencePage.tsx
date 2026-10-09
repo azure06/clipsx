@@ -1,3 +1,4 @@
+import { IntegrationsPanel } from './IntegrationsPanel'
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../i18n/index'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -104,7 +105,7 @@ type ActiveIndexAction = {
 }
 
 const intelligenceSections: Array<{
-  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision'
+  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations'
   label: string
   description: string
 }> = [
@@ -151,6 +152,15 @@ const intelligenceSections: Array<{
     },
     get description() {
       return i18n.t('desktopUi.imageUnderstanding')
+    },
+  },
+  {
+    id: 'integrations',
+    get label() {
+      return i18n.t('mcp.integrations')
+    },
+    get description() {
+      return i18n.t('mcp.description')
     },
   },
 ]
@@ -654,6 +664,7 @@ export const IntelligencePage = () => {
           ))}
         </nav>
 
+        {activeSection === 'integrations' && <IntegrationsPanel />}
         {activeSection === 'overview' && (
           <div
             role="tabpanel"

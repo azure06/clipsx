@@ -1,0 +1,366 @@
+use super::{
+    contracts::*,
+    mcp::*,
+    service_tests::{capture, make_secret, repository},
+};
+use reqwest::Client;
+use serde_json::{json, Value};
+
+async fn rpc(
+    client: &Client,
+    url: &str,
+    token: &str,
+    session: Option<&str>,
+    body: Value,
+) -> (reqwest::StatusCode, Option<String>, Value) {
+    let mut request = client
+        .post(url)
+        .bearer_auth(token)
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25")
+        .json(&body);
+    if let Some(id) = session {
+        request = request.header("mcp-session-id", id);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .map(|v| v.to_str().unwrap().to_string());
+    let text = response.text().await.unwrap();
+    let value = if text.trim().starts_with('{') {
+        serde_json::from_str(&text).unwrap()
+    } else {
+        text.lines()
+            .filter_map(|s| s.strip_prefix("data:"))
+            .filter_map(|s| serde_json::from_str::<Value>(s).ok())
+            .next_back()
+            .unwrap_or(Value::Null)
+    };
+    (status, session, value)
+}
+async fn initialize(client: &Client, url: &str, token: &str) -> String {
+    let (status,session,result)=rpc(client,url,token,None,json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ClipsX protocol fixture","version":"1"}}})).await;
+    assert!(status.is_success(), "{status}: {result}");
+    assert_eq!(result["result"]["serverInfo"]["name"], "ClipsX");
+    let session = session.unwrap();
+    let (status, _, _) = rpc(
+        client,
+        url,
+        token,
+        Some(&session),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await;
+    assert!(status.is_success());
+    session
+}
+async fn call(
+    client: &Client,
+    url: &str,
+    token: &str,
+    session: &str,
+    name: &str,
+    args: Value,
+) -> Value {
+    let (status,_,result)=rpc(client,url,token,Some(session),json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":name,"arguments":args}})).await;
+    assert!(status.is_success(), "{status}: {result}");
+    result["result"].clone()
+}
+
+#[tokio::test]
+async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
+    let (_temp, service) = repository().await;
+    let public = capture(&service, "find this public evidence", "editor", 100).await;
+    let secret = capture(&service, "find this secret evidence", "editor", 200).await;
+    make_secret(&service, &secret).await;
+    // Ephemeral binding is a fixture-only setting; public configuration rejects port zero.
+    sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES('assistant.mcp','{\"enabled\":true,\"port\":0}',0)").execute(&service.history.pool).await.unwrap();
+    let runtime = McpRuntime::default();
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    let url = runtime.status(&service.history).await.unwrap().endpoint;
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let read = issue(&service.history, "read fixture", false, None)
+        .await
+        .unwrap();
+    let write = issue(&service.history, "write fixture", true, None)
+        .await
+        .unwrap();
+    assert_eq!(client.post(&url).send().await.unwrap().status(), 401);
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth(&read.token)
+            .header("origin", "https://untrusted.example")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        client
+            .post(&url)
+            .bearer_auth(&read.token)
+            .header("host", "untrusted.example")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    let read_session = initialize(&client, &url, &read.token).await;
+    assert_eq!(
+        test_access(&runtime, &service.history, &read.token)
+            .await
+            .unwrap(),
+        5
+    );
+    let write_session = initialize(&client, &url, &write.token).await;
+    let (_, _, discovery) = rpc(
+        &client,
+        &url,
+        &read.token,
+        Some(&read_session),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert_eq!(discovery["result"]["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        discovery["result"]["tools"][2]["inputSchema"]["additionalProperties"],
+        false
+    );
+    let result = call(
+        &client,
+        &url,
+        &read.token,
+        &read_session,
+        "search_clips",
+        json!({"query":"find"}),
+    )
+    .await;
+    assert_eq!(
+        result["structuredContent"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        result["structuredContent"]["items"][0]["clip"]["id"],
+        public
+    );
+    assert_eq!(
+        call(
+            &client,
+            &url,
+            &read.token,
+            &read_session,
+            "read_clip",
+            json!({"clipId":secret})
+        )
+        .await["isError"],
+        true
+    );
+    let create = json!({"requestId":crate::history::new_id(),"format":"plain_text","text":"MCP created fixture"});
+    let denied = call(
+        &client,
+        &url,
+        &read.token,
+        &read_session,
+        "create_clip",
+        create.clone(),
+    )
+    .await;
+    assert!(denied["isError"] == true || denied.is_null());
+    let cross = rpc(
+        &client,
+        &url,
+        &write.token,
+        Some(&read_session),
+        json!({"jsonrpc":"2.0","id":9,"method":"tools/list"}),
+    )
+    .await;
+    assert!(!cross.0.is_success());
+    let created = call(
+        &client,
+        &url,
+        &write.token,
+        &write_session,
+        "create_clip",
+        create.clone(),
+    )
+    .await;
+    assert_ne!(created["isError"], true);
+    let replay = call(
+        &client,
+        &url,
+        &write.token,
+        &write_session,
+        "create_clip",
+        create,
+    )
+    .await;
+    assert_eq!(
+        created["structuredContent"]["actionId"],
+        replay["structuredContent"]["actionId"]
+    );
+    let target = created["structuredContent"]["clips"][0].clone();
+    let organized=call(&client,&url,&write.token,&write_session,"organize_clips",json!({"requestId":crate::history::new_id(),"clips":[target],"favorite":true,"addTags":["MCP"]})).await;
+    let undone=call(&client,&url,&write.token,&write_session,"undo_clipboard_action",json!({"requestId":crate::history::new_id(),"actionId":organized["structuredContent"]["actionId"]})).await;
+    assert_ne!(undone["isError"], true);
+    let mut image = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut image, image::ImageFormat::Png)
+        .unwrap();
+    let (image_id, _) = service
+        .history
+        .capture(
+            crate::history::CapturedSnapshot {
+                token: 10,
+                source_app_id: None,
+                source_app_name: None,
+                format_observations: vec![],
+                representations: vec![crate::history::CapturedRepresentation {
+                    format_key: "image/png".into(),
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type: None,
+                    platform: if cfg!(target_os = "windows") {
+                        "windows"
+                    } else if cfg!(target_os = "macos") {
+                        "macos"
+                    } else {
+                        "linux_x11"
+                    }
+                    .into(),
+                    capture_priority: 0,
+                    payload: crate::history::CapturedPayload::Binary(image.into_inner()),
+                }],
+            },
+            &crate::history::CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    let rep = service.metadata(&image_id).await.unwrap().representations[0]
+        .id
+        .clone();
+    let image = call(
+        &client,
+        &url,
+        &read.token,
+        &read_session,
+        "read_clip_image",
+        json!({"clipId":image_id,"representationId":rep}),
+    )
+    .await;
+    assert_eq!(image["content"][0]["type"], "image");
+    assert_eq!(image["content"][0]["mimeType"], "image/png");
+    assert!(image["structuredContent"].get("data").is_none());
+    let stored: String =
+        sqlx::query_scalar("SELECT token_sha256 FROM assistant_mcp_grants WHERE id=?")
+            .bind(&read.grant.id)
+            .fetch_one(&service.history.pool)
+            .await
+            .unwrap();
+    assert_ne!(stored, read.token);
+    let rotated = issue(
+        &service.history,
+        "read fixture",
+        false,
+        Some(&read.grant.id),
+    )
+    .await
+    .unwrap();
+    runtime.invalidate(&read.grant.id).await;
+    assert_eq!(
+        rpc(
+            &client,
+            &url,
+            &read.token,
+            Some(&read_session),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+        )
+        .await
+        .0,
+        401
+    );
+    initialize(&client, &url, &rotated.token).await;
+    revoke(&service.history, &write.grant.id).await.unwrap();
+    runtime.invalidate(&write.grant.id).await;
+    assert_eq!(
+        rpc(
+            &client,
+            &url,
+            &write.token,
+            Some(&write_session),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+        )
+        .await
+        .0,
+        401
+    );
+    configure(
+        &service.history,
+        McpConfiguration {
+            enabled: false,
+            port: 39389,
+        },
+    )
+    .await
+    .unwrap();
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime.status(&service.history).await.unwrap().state,
+        "disabled"
+    );
+    assert!(client.post(&url).send().await.is_err());
+}
+
+#[tokio::test]
+async fn port_failure_is_isolated_and_defaults_are_disabled() {
+    let (_temp, service) = repository().await;
+    let runtime = McpRuntime::default();
+    assert_eq!(
+        runtime.status(&service.history).await.unwrap().state,
+        "disabled"
+    );
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    configure(
+        &service.history,
+        McpConfiguration {
+            enabled: true,
+            port,
+        },
+    )
+    .await
+    .unwrap();
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime
+            .status(&service.history)
+            .await
+            .unwrap()
+            .diagnostic
+            .as_deref(),
+        Some("port_unavailable")
+    );
+    assert!(!capture(&service, "capture still works", "editor", 0)
+        .await
+        .is_empty());
+}

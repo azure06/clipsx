@@ -41,7 +41,7 @@ function ProviderGate({ run, done }: { run: ProbeRun; done: (passed: boolean) =>
   }, [runtime, done])
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root aria-label="Runtime fixture" />
+      <ThreadPrimitive.Root aria-label="Recall" />
     </AssistantRuntimeProvider>
   )
 }

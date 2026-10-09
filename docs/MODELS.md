@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 16. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 17. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -463,3 +463,7 @@ default; an installed-language override is optional.
 Restart recovers interrupted jobs. Configuration changes cancel stale work;
 enablement/language changes rebuild only OCR and related search data. Image
 bytes remain unchanged on failure, cancellation, or disablement.
+
+## Local MCP grants
+
+`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.

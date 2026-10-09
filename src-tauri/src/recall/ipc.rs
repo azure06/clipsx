@@ -148,3 +148,84 @@ pub async fn assistant_action_activity(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn mcp_integration_status(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+) -> Result<McpIntegrationStatus, OperationFailure> {
+    service(&webview, &state)?;
+    runtime.status(&state.history).await.map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_configure(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    app: tauri::AppHandle,
+    configuration: McpConfiguration,
+) -> Result<McpIntegrationStatus, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::configure(&state.history, configuration)
+        .await
+        .map_err(public_failure)?;
+    runtime
+        .reconcile(state.history.clone(), Some(app))
+        .await
+        .map_err(public_failure)?;
+    runtime.status(&state.history).await.map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_list_grants(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<Vec<McpGrant>, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::grants(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_issue_grant(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    name: String,
+    can_write: bool,
+    rotate_id: Option<String>,
+) -> Result<McpGrantSecret, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::mcp::issue(&state.history, &name, can_write, rotate_id.as_deref())
+        .await
+        .map_err(public_failure)?;
+    runtime.invalidate(&result.grant.id).await;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn mcp_revoke_grant(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::revoke(&state.history, &id)
+        .await
+        .map_err(public_failure)?;
+    runtime.invalidate(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_test_access(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    token: String,
+) -> Result<u32, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::test_access(&runtime, &state.history, &token)
+        .await
+        .map_err(public_failure)
+}

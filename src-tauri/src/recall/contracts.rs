@@ -144,6 +144,23 @@ dto!(ClipboardActivity {
     undo_available: bool
 });
 
+dto!(McpConfiguration {
+    enabled: bool,
+    port: u16
+});
+dto!(McpGrant {
+    id: String,
+    name: String,
+    can_write: bool,
+    created_at: f64,
+    revoked: bool
+});
+dto!(McpGrantSecret {
+    grant: McpGrant,
+    token: String
+});
+dto!(McpIntegrationStatus { configuration: McpConfiguration, endpoint: String, state: String, diagnostic: Option<String> });
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,6 +196,10 @@ mod tests {
             UndoClipboardRequest::decl(&config),
             ClipboardActionResult::decl(&config),
             ClipboardActivity::decl(&config),
+            McpConfiguration::decl(&config),
+            McpGrant::decl(&config),
+            McpGrantSecret::decl(&config),
+            McpIntegrationStatus::decl(&config),
         ];
         let generated = format!(
             "// Generated from src-tauri/src/recall/contracts.rs. Do not edit.\n{}\n",

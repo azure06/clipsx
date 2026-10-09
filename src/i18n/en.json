@@ -1172,5 +1172,50 @@
     "submitted": "Report submitted. Report ID: {{eventId}}. Processing has not yet been confirmed.",
     "crashSaved": "Crash report saved.",
     "saved": "Diagnostics saved."
+  },
+  "mcp": {
+    "integrations": "Integrations",
+    "title": "Clipboard tools for other assistants",
+    "description": "Connect compatible assistants to your local clipboard through MCP.",
+    "enabled": "Enable MCP",
+    "loading": "Loading integrations…",
+    "state": {
+      "running": "Running",
+      "disabled": "Disabled",
+      "failed": "Needs attention"
+    },
+    "portUnavailable": "This port is unavailable. Choose another port and apply.",
+    "operationFailed": "The operation failed. Check the configuration and retry.",
+    "refresh": "Refresh",
+    "port": "Port",
+    "apply": "Apply",
+    "endpoint": "Endpoint",
+    "clientName": "Client name",
+    "allowWrites": "Allow creation and organization",
+    "createGrant": "Create access token",
+    "showOnce": "Save this token now. ClipsX stores only its verifier and cannot show it again.",
+    "tokenFor": "Token for {{name}}",
+    "dismiss": "Dismiss token",
+    "revoked": "Revoked",
+    "readWrite": "Read and write",
+    "readOnly": "Read only",
+    "rotate": "Rotate token",
+    "revoke": "Revoke",
+    "testToken": "Token to test (or use the token shown above)",
+    "testConnection": "Test connection",
+    "testPassed": "Connected; {{count}} tools available.",
+    "setup": "Setup instructions",
+    "setupHint": "Create a separate token for each client. Set CLIPSX_MCP_TOKEN in the environment of that client; keep it out of shared project files.",
+    "codex": "Codex CLI",
+    "claude": "Claude Code: .mcp.json",
+    "generic": "Other clients: use Streamable HTTP with this endpoint and an Authorization: Bearer header.",
+    "localOnly": "ClipsX must be running. Hiding the window keeps MCP active. Cloud clients need a supported local bridge or tunnel.",
+    "activity": "Recent clipboard actions",
+    "action": {
+      "create": "Created a clip",
+      "organize": "Organized clips",
+      "undo": "Undid an action"
+    },
+    "undo": "Undo"
   }
 }

@@ -9,7 +9,7 @@ use crate::{
 };
 use std::io::Cursor;
 
-async fn repository() -> (tempfile::TempDir, ClipboardService) {
+pub(super) async fn repository() -> (tempfile::TempDir, ClipboardService) {
     let temp = tempfile::tempdir().unwrap();
     let roots = AppRoots {
         data: temp.path().join("data"),
@@ -21,7 +21,12 @@ async fn repository() -> (tempfile::TempDir, ClipboardService) {
         .unwrap();
     (temp, ClipboardService::new(history))
 }
-async fn capture(service: &ClipboardService, text: &str, app: &str, timestamp: i64) -> String {
+pub(super) async fn capture(
+    service: &ClipboardService,
+    text: &str,
+    app: &str,
+    timestamp: i64,
+) -> String {
     let (id, _) = service
         .history
         .capture(
@@ -72,7 +77,7 @@ fn read(clip: &str) -> ClipReadRequest {
         cursor: None,
     }
 }
-async fn make_secret(service: &ClipboardService, id: &str) {
+pub(super) async fn make_secret(service: &ClipboardService, id: &str) {
     let representation = service.metadata(id).await.unwrap().representations[0]
         .id
         .clone();

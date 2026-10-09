@@ -27,3 +27,7 @@ export type OrganizeClipsRequest = { requestId: string, clips: Array<ClipRevisio
 export type UndoClipboardRequest = { requestId: string, actionId: string, };
 export type ClipboardActionResult = { apiVersion: number, actionId: string, operation: string, clips: Array<ClipRevision>, removedClipIds: Array<string>, undoAvailable: boolean, expiresAt: number, };
 export type ClipboardActivity = { actionId: string, operation: string, actorId: string, createdAt: number, undoAvailable: boolean, };
+export type McpConfiguration = { enabled: boolean, port: number, };
+export type McpGrant = { id: string, name: string, canWrite: boolean, createdAt: number, revoked: boolean, };
+export type McpGrantSecret = { grant: McpGrant, token: string, };
+export type McpIntegrationStatus = { configuration: McpConfiguration, endpoint: string, state: string, diagnostic: string | null, };
