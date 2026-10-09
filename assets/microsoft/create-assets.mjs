@@ -1,3 +1,6 @@
+import { URL } from 'node:url';
+import { Buffer } from 'node:buffer';
+import { log } from 'node:console';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -87,4 +90,4 @@ const thumbs = await Promise.all(assets.map((a) => sharp(path.join(output, `${a.
 await sharp({ create: { width: 1920, height: Math.ceil(assets.length / 2) * 540, channels: 3, background: '#d8e0ed' } })
   .composite(thumbs.map((input, i) => ({ input, left: (i % 2) * 960, top: Math.floor(i / 2) * 540 })))
   .png().toFile(path.join(output, 'contact-sheet.png'));
-console.log(`Created ${assets.length} separate 1920 × 1080 PNGs, editable SVGs, rounded source cutouts, and a contact sheet.`);
+log(`Created ${assets.length} separate 1920 × 1080 PNGs, editable SVGs, rounded source cutouts, and a contact sheet.`);

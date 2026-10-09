@@ -40,7 +40,7 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](.agents/skills/clipsx-release/references/operations.md) covers distributable-build
 requirements.
 
-Experimental Linux Snap packaging instructions are in [snap/README.md](snap/README.md).
+See [Snap packaging instructions](assets/snap/README.md) for experimental Linux packaging.
 
 To run a development binary against production services, populate the ignored
 `.env` with the public Supabase URL/publishable key and reviewed website origin,

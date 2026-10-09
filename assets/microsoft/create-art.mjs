@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+import { log } from 'node:console';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,5 +77,5 @@ await sharp(Buffer.from(poster)).png().toFile(path.join(art, `${posterName}.png`
 await fs.copyFile(path.join(art, `${posterName}.png`), path.join(upload, `${posterName}.png`));
 for (const name of ['box-art-brand-blue-1080x1080','box-art-brand-blue-2160x2160',posterName]) {
   const metadata = await sharp(path.join(upload, `${name}.png`)).metadata();
-  console.log(`${name}: ${metadata.width} × ${metadata.height} PNG`);
+  log(`${name}: ${metadata.width} × ${metadata.height} PNG`);
 }
