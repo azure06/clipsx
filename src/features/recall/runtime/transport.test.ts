@@ -1,52 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRustFetch } from './transport'
-import type { BridgeCommands, BridgeRequest } from './transport'
+import type { BridgeCommands } from './transport'
 import { createFixtureAdapter, FIXTURE_IMAGE } from './fixtures/adapter'
-import streams from './fixtures/streams.json'
+import { fixtureBridge } from './fixtures/bridge'
 import type { ChatProvider } from './providers'
-
-function fixtureBridge(provider: ChatProvider) {
-  const requests: BridgeRequest[] = []
-  const waits = new Map<string, () => void>()
-  let cancelled = false
-  const commands: BridgeCommands = {
-    start: vi.fn<BridgeCommands['start']>((request, receive) => {
-      requests.push(request)
-      const records = requests.length === 1 ? streams[provider].tool : streams[provider].text
-      receive({ type: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } })
-      void (async () => {
-        let sequence = 0
-        for (const record of records) {
-          const bytes = new TextEncoder().encode(`data: ${JSON.stringify(record)}\n\n`)
-          // Split inside JSON and UTF-8 to exercise streaming parser boundaries.
-          for (let offset = 0; offset < bytes.length; offset += 13) {
-            if (cancelled) return
-            await new Promise<void>(resolve => {
-              waits.set(request.requestId, resolve)
-              receive({
-                type: 'chunk',
-                sequence: ++sequence,
-                bytes: [...bytes.slice(offset, offset + 13)],
-              })
-            })
-          }
-        }
-        receive({ type: 'terminal', code: null })
-      })()
-      return Promise.resolve()
-    }),
-    acknowledge: vi.fn<BridgeCommands['acknowledge']>(requestId => {
-      waits.get(requestId)?.()
-      return Promise.resolve()
-    }),
-    cancel: vi.fn<BridgeCommands['cancel']>(requestId => {
-      cancelled = true
-      waits.get(requestId)?.()
-      return Promise.resolve()
-    }),
-  }
-  return { commands, requests }
-}
 
 describe('Recall runtime gate', () => {
   it('acknowledges a chunk only after its consumer requests it', async () => {

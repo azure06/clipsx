@@ -29,6 +29,8 @@ pub struct RunConnection {
     pub provider: Provider,
     pub base_url: url::Url,
     pub credential: Option<String>,
+    pub organization: Option<String>,
+    pub project: Option<String>,
     #[cfg(feature = "recall-runtime-probe")]
     pub fixture_destination: Option<url::Url>,
 }
@@ -61,6 +63,7 @@ pub enum HttpEvent {
 }
 
 struct ActiveRequest {
+    run_id: String,
     cancel: watch::Sender<bool>,
     acknowledge: mpsc::Sender<u32>,
 }
@@ -89,6 +92,9 @@ impl Transport {
     pub fn finish_run(&self, run_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.runs.remove(run_id);
+            for request in inner.requests.values().filter(|r| r.run_id == run_id) {
+                let _ = request.cancel.send(true);
+            }
         }
     }
 
@@ -116,6 +122,7 @@ impl Transport {
         inner.requests.insert(
             request.request_id.clone(),
             ActiveRequest {
+                run_id: request.run_id.clone(),
                 cancel,
                 acknowledge,
             },
@@ -229,6 +236,19 @@ fn validate_request(
         reqwest::header::CONTENT_TYPE,
         "application/json".parse().unwrap(),
     );
+    if matches!(connection.provider, Provider::Openai) {
+        for (name, value) in [
+            ("openai-organization", &connection.organization),
+            ("openai-project", &connection.project),
+        ] {
+            if let Some(value) = value {
+                headers.insert(
+                    reqwest::header::HeaderName::from_static(name),
+                    value.parse().map_err(|_| "invalid_configuration")?,
+                );
+            }
+        }
+    }
     if let Some(credential) = &connection.credential {
         let (name, value) = match connection.provider {
             Provider::Anthropic => ("x-api-key", credential.clone()),
@@ -383,6 +403,8 @@ mod tests {
             provider,
             base_url: "https://provider.example/v1".parse().unwrap(),
             credential: Some("host-private-key".into()),
+            organization: None,
+            project: None,
             #[cfg(feature = "recall-runtime-probe")]
             fixture_destination: None,
         }

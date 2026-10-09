@@ -3,7 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import type { LanguageModel } from 'ai'
+import type { LanguageModel, ToolSet } from 'ai'
 
 export type ChatProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter'
 
@@ -34,5 +34,19 @@ export function createChatModel(
       return createOpenRouter(options).chat(modelId)
     case 'ollama':
       return createOpenAICompatible({ ...options, name: 'ollama' }).chatModel(modelId)
+  }
+}
+
+export function createNativeWebTools(connection: ChatConnection, transport: typeof fetch): ToolSet {
+  const options = { baseURL: connection.baseUrl, apiKey: TRANSPORT_PLACEHOLDER, fetch: transport }
+  switch (connection.provider) {
+    case 'openai':
+      return { web_search: createOpenAI(options).tools.webSearch({ searchContextSize: 'low' }) }
+    case 'anthropic':
+      return { web_search: createAnthropic(options).tools.webSearch_20250305({ maxUses: 3 }) }
+    case 'gemini':
+      return { google_search: createGoogleGenerativeAI(options).tools.googleSearch({}) }
+    default:
+      return {}
   }
 }

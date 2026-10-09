@@ -212,6 +212,20 @@ dto!(AiDiscoveredModel {
     capabilities: AiCapabilities
 });
 
+dto!(AssistantToolDefinition {
+    name: String,
+    description: String,
+    input_schema_json: String
+});
+dto!(AssistantRunRequest { run_id: String, preset_id: String, filters: Option<ClipFilters>, attachments: Vec<ClipRevision>, web_enabled: bool });
+dto!(AssistantRunContext { run_id: String, connection: AiConnection, preset: AiModelPreset, filters: ClipFilters, attachments: Vec<ClipReadResult>, status: ClipboardStatus, tools: Vec<AssistantToolDefinition>, web_route: String });
+dto!(WebSource {
+    url: String,
+    title: String,
+    content: String
+});
+dto!(WebEvidence { sources: Vec<WebSource>, incomplete: bool });
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +281,11 @@ mod tests {
             AiConnectionState::decl(&config),
             AiConfigurationState::decl(&config),
             AiDiscoveredModel::decl(&config),
+            AssistantToolDefinition::decl(&config),
+            AssistantRunRequest::decl(&config),
+            AssistantRunContext::decl(&config),
+            WebSource::decl(&config),
+            WebEvidence::decl(&config),
         ];
         let generated = format!(
             "// Generated from src-tauri/src/recall/contracts.rs. Do not edit.\n{}\n",

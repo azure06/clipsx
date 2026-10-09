@@ -2933,6 +2933,7 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         .manage(crate::recall::transport::Transport::default())
         .manage(crate::recall::mcp::McpRuntime::default())
+        .manage(crate::recall::agent::AgentRuntime::default())
         .plugin(crate::app::diagnostics::log_plugin())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = host::show_main_window(app);
@@ -3409,6 +3410,10 @@ pub(crate) fn run() {
             crate::recall::ipc::ai_configuration_import,
             crate::recall::ipc::ai_set_credential,
             crate::recall::ipc::ai_discover_models,
+            crate::recall::ipc::assistant_run_begin,
+            crate::recall::ipc::assistant_run_finish,
+            crate::recall::ipc::assistant_run_tool,
+            crate::recall::ipc::assistant_verify_tools,
             show_main_window_command,
             set_tray_labels,
             get_release_info,

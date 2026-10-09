@@ -26,7 +26,6 @@ impl Actor {
             model: None,
         }
     }
-    #[cfg(test)]
     pub fn native_run(model: ModelAttribution) -> Self {
         Self {
             model: Some(model),

@@ -87,6 +87,63 @@ pub async fn assistant_clipboard_status(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn assistant_run_begin(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    transport: State<'_, super::transport::Transport>,
+    request: AssistantRunRequest,
+) -> Result<AssistantRunContext, OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .begin(&state.history, &transport, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_run_finish(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    transport: State<'_, super::transport::Transport>,
+    run_id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime.finish(&transport, &run_id).await;
+    Ok(())
+}
+#[tauri::command]
+pub async fn assistant_run_tool(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    app: tauri::AppHandle,
+    run_id: String,
+    name: String,
+    arguments: String,
+) -> Result<serde_json::Value, OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .tool(&state.history, Some(&app), &run_id, &name, &arguments)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_verify_tools(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    run_id: String,
+    supported: bool,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .verify_tools(&state.history, &run_id, supported)
+        .await
+        .map_err(public_failure)
+}
 #[tauri::command]
 pub async fn assistant_clipboard_filters(
     webview: tauri::Webview,

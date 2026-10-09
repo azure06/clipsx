@@ -67,6 +67,8 @@ fn runtime_gate_begin(
             provider,
             base_url: base_url.parse().unwrap(),
             credential: Some(PRIVATE_SENTINEL.into()),
+            organization: None,
+            project: None,
             fixture_destination: Some(probe.endpoint.clone()),
         },
     )?;

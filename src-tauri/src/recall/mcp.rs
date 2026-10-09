@@ -38,7 +38,7 @@ use tower::ServiceExt;
 
 #[derive(Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+pub(crate) struct Empty {}
 #[derive(Clone)]
 struct ClipboardMcp {
     service: ClipboardService,

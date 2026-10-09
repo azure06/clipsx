@@ -1,4 +1,7 @@
 //! Recall's restricted native transport. Clipboard services remain Rust-owned.
+pub mod agent;
+#[cfg(test)]
+mod agent_tests;
 pub mod configuration;
 #[cfg(test)]
 mod configuration_tests;
