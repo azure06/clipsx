@@ -2931,6 +2931,7 @@ fn recover_startup(
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
+        .manage(crate::recall::transport::Transport::default())
         .plugin(crate::app::diagnostics::log_plugin())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = host::show_main_window(app);
@@ -3378,6 +3379,9 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(route_webview_invokes(tauri::generate_handler![
+            crate::recall::transport::ai_http_start,
+            crate::recall::transport::ai_http_acknowledge,
+            crate::recall::transport::ai_http_cancel,
             show_main_window_command,
             set_tray_labels,
             get_release_info,

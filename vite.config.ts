@@ -35,6 +35,13 @@ export default defineConfig({
     target: 'esnext',
     sourcemap: true,
     rollupOptions: {
+      input:
+        process.env['CLIPSX_RECALL_RUNTIME_PROBE'] === '1'
+          ? {
+              app: path.resolve(import.meta.dirname, 'index.html'),
+              recallGate: path.resolve(import.meta.dirname, 'recall-runtime-gate.html'),
+            }
+          : undefined,
       output: {
         manualChunks(id) {
           if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/'))

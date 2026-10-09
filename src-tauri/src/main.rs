@@ -13,6 +13,7 @@ mod history;
 mod ipc;
 mod output;
 mod providers;
+mod recall;
 mod search;
 mod share;
 mod shared;

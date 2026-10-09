@@ -220,9 +220,39 @@ Host state owns citations, turns, cancellation, and ordered events. Adapters
 receive prepared bounded messages and declare streaming, cancellation, execution
 location, and context-budget capabilities.
 
-Ollama is the only shipped generation adapter. Prompts and answers are not logged,
+Ollama is the only enabled generation adapter in the current Recall interface. Prompts and answers are not logged,
 persistently cached, or stored as canonical metadata. Hosted adapters require an
 explicit authorization and data-handling policy.
+
+### Native SDK transport
+
+The separate Recall runtime modules use pinned AI SDK provider adapters and an
+assistant-ui custom model adapter in the existing webview. OpenAI uses Responses;
+Anthropic and Gemini use their native adapters; OpenRouter uses its maintained
+adapter; Ollama uses OpenAI-compatible chat completions. These modules are not
+loaded by History startup and do not enable hosted generation in the current UI.
+
+Rust binds a request to a host-resolved run and saved provider destination. The
+renderer receives a transport placeholder rather than a credential. Rust checks
+origin, provider API path, method, query parameters, and headers before injecting
+authentication. Remote endpoints require HTTPS; only loopback Ollama permits
+HTTP. Redirects are rejected, and provider failure bodies are not forwarded.
+
+Requests are bounded to 8 MiB, responses to 32 MiB, and concurrent requests to two.
+Ordered Tauri events carry response headers, chunks of at most 64 KiB, and one
+terminal outcome. The host waits for each chunk's consumption acknowledgement;
+Stop cancels a pending request, including a cancellation during startup. No Node
+or Bun process is part of the application runtime.
+
+The opt-in `recall-runtime-probe` build feature runs synthetic provider responses
+in a hidden production webview without opening application storage or telemetry.
+It is a verification tool, not a live-provider capability test. Build with
+`CLIPSX_RECALL_RUNTIME_PROBE=1` and
+`npx tauri build --no-bundle --features recall-runtime-probe`, then run
+`npm run test:recall-runtime`. The report records provider tool/image round trips,
+native authentication receipts, cancellation, and the actual webview user agent.
+Normal builds omit the fixture HTML entry. Live provider/model support must be
+verified separately with configured credentials.
 
 ## Qualification
 

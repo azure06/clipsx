@@ -1,0 +1,409 @@
+{
+  "openai": {
+    "tool": [
+      {
+        "type": "response.created",
+        "response": {
+          "id": "resp_fixture",
+          "created_at": 1,
+          "model": "fixture-model"
+        }
+      },
+      {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+          "type": "function_call",
+          "id": "fc_fixture",
+          "call_id": "call_fixture",
+          "name": "search_clips",
+          "arguments": ""
+        }
+      },
+      {
+        "type": "response.function_call_arguments.delta",
+        "item_id": "fc_fixture",
+        "output_index": 0,
+        "delta": "{\"query\":\"fixture\"}"
+      },
+      {
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+          "type": "function_call",
+          "id": "fc_fixture",
+          "call_id": "call_fixture",
+          "name": "search_clips",
+          "status": "completed",
+          "arguments": "{\"query\":\"fixture\"}"
+        }
+      },
+      {
+        "type": "response.completed",
+        "response": {}
+      }
+    ],
+    "text": [
+      {
+        "type": "response.created",
+        "response": {
+          "id": "resp_text",
+          "created_at": 1,
+          "model": "fixture-model"
+        }
+      },
+      {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+          "type": "message",
+          "id": "msg_fixture"
+        }
+      },
+      {
+        "type": "response.output_text.delta",
+        "item_id": "msg_fixture",
+        "output_index": 0,
+        "delta": "Recall "
+      },
+      {
+        "type": "response.output_text.delta",
+        "item_id": "msg_fixture",
+        "output_index": 0,
+        "delta": "verified"
+      },
+      {
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+          "type": "message",
+          "id": "msg_fixture",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Recall verified",
+              "annotations": []
+            }
+          ]
+        }
+      },
+      {
+        "type": "response.completed",
+        "response": {}
+      }
+    ]
+  },
+  "anthropic": {
+    "tool": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixture",
+          "model": "fixture-model",
+          "role": "assistant",
+          "usage": {
+            "input_tokens": 10
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "tool_use",
+          "id": "call_fixture",
+          "name": "search_clips",
+          "input": {}
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{\"query\":\"fixture\"}"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "tool_use"
+        },
+        "usage": {
+          "output_tokens": 3
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ],
+    "text": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixture",
+          "model": "fixture-model",
+          "role": "assistant",
+          "usage": {
+            "input_tokens": 10
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": "Recall "
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "text_delta",
+          "text": "verified"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 3
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ]
+  },
+  "gemini": {
+    "tool": [
+      {
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "functionCall": {
+                    "name": "search_clips",
+                    "args": {
+                      "query": "fixture"
+                    }
+                  }
+                }
+              ]
+            },
+            "finishReason": "STOP",
+            "index": 0
+          }
+        ]
+      }
+    ],
+    "text": [
+      {
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "Recall "
+                }
+              ]
+            },
+            "index": 0
+          }
+        ]
+      },
+      {
+        "candidates": [
+          {
+            "content": {
+              "role": "model",
+              "parts": [
+                {
+                  "text": "verified"
+                }
+              ]
+            },
+            "finishReason": "STOP",
+            "index": 0
+          }
+        ]
+      }
+    ]
+  },
+  "ollama": {
+    "tool": [
+      {
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "tool_calls": [
+                {
+                  "index": 0,
+                  "id": "call_fixture",
+                  "type": "function",
+                  "function": {
+                    "name": "search_clips",
+                    "arguments": "{\"query\":\"fixture\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "index": 0,
+            "delta": {},
+            "finish_reason": "tool_calls"
+          }
+        ]
+      }
+    ],
+    "text": [
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "content": "Recall "
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "content": "verified"
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {},
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    ]
+  },
+  "openrouter": {
+    "tool": [
+      {
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "tool_calls": [
+                {
+                  "index": 0,
+                  "id": "call_fixture",
+                  "type": "function",
+                  "function": {
+                    "name": "search_clips",
+                    "arguments": "{\"query\":\"fixture\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "choices": [
+          {
+            "index": 0,
+            "delta": {},
+            "finish_reason": "tool_calls"
+          }
+        ]
+      }
+    ],
+    "text": [
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "content": "Recall "
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "content": "verified"
+            },
+            "finish_reason": null
+          }
+        ]
+      },
+      {
+        "id": "fixture",
+        "model": "fixture-model",
+        "created": 1,
+        "choices": [
+          {
+            "index": 0,
+            "delta": {},
+            "finish_reason": "stop"
+          }
+        ]
+      }
+    ]
+  }
+}

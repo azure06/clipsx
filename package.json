@@ -30,6 +30,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx",
+    "test:recall-runtime": "node scripts/verify-recall-runtime.mjs",
     "extension:pack": "cargo run --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool --features extension-tools -- pack",
     "extension:validate": "cargo run --manifest-path src-tauri/Cargo.toml --bin clipsx-extension-tool --features extension-tools -- validate",
     "test:all": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml --all-features --bin clipsx",
@@ -42,6 +43,12 @@
     "pre-commit": "npm run format && npm run type-check"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.78",
+    "@ai-sdk/google": "4.0.93",
+    "@ai-sdk/openai": "4.0.91",
+    "@ai-sdk/openai-compatible": "3.0.67",
+    "@assistant-ui/react": "0.15.25",
+    "@openrouter/ai-sdk-provider": "3.1.0",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-label": "^2.1.15",
@@ -62,6 +69,7 @@
     "@tauri-apps/plugin-fs": "^2.6.0",
     "@tauri-apps/plugin-shell": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.13.1",
+    "ai": "7.0.136",
     "clsx": "^2.1.1",
     "i18next": "^26.4.2",
     "lucide-react": "^0.577.0",
@@ -71,6 +79,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0",
+    "zod": "4.3.6",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
