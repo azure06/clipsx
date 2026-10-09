@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 17. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 18. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -48,7 +48,7 @@ flowchart TB
 | `provider_runtime_diagnostics` | Operational | Records the latest model-provider connection and capability health observations. | Provider catalog, embedding, and generation services | Replaceable operational state. Safe to overwrite or clear; not user configuration. |
 | `system_managed_file_deletions` | Operational | Durably records managed files that should be deleted after database changes commit. | Database deletion triggers; consumed by the managed-file GC worker | Queue entries remain until cleanup succeeds. The worker rechecks references and retries failures to avoid orphaned files after crashes. |
 
-Model configuration uses three device-local keys with distinct ownership:
+Legacy Rust generation and semantic indexing retain three device-local keys with distinct ownership. Named AI configurations are stored separately:
 
 | Key | Owner | Stored value |
 | --- | --- | --- |
@@ -467,3 +467,11 @@ bytes remain unchanged on failure, cancellation, or disablement.
 ## Local MCP grants
 
 `assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
+
+## Named AI configurations
+
+`ai_connections` stores stable IDs, names, provider kinds, API base URLs, enablement, whitelisted nonsecret options, protected credential references, and curated connection-test state. `ai_model_presets` stores model IDs, purpose, context/output limits, namespaced provider options, and capabilities with their observation source. Unknown capabilities remain unknown. `ai_selections` independently selects default chat, active embeddings, and optional Tavily web search; its migration marker makes the original Ollama assignments idempotent. Multiple connections for one provider coexist.
+
+Configuration stays device-local and outside configuration sync. The version-1 AI JSON document includes connections, presets, and selections; it excludes credentials, conversations, MCP grants, and operational diagnostics. Imports reject unknown fields, invalid options, duplicate IDs, insecure endpoints, missing references, and incompatible selections before writes. Stable-ID merges preserve omitted records. Imported connections require locally configured credentials. Changes to the selected embedding identity require a successful native probe before application. Hosted indexing requires explicit enablement; no hosted fallback occurs.
+
+AI credentials use a separate protected namespace with no renderer read API. Windows stores per-connection DPAPI-protected files in `ai-credentials` under the application data directory. macOS/Linux use `com.infiniti.clipsx.ai` keyring entries and nonsecret reference files for factory-reset cleanup. Credential updates do not change embedding-space identity or rebuild an index. Credential references and raw credentials are never exported, returned through MCP, or included in diagnostics.

@@ -20,6 +20,64 @@ fn service(
 }
 
 #[tauri::command]
+pub async fn ai_configuration_state(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::state(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_configuration_export(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfiguration, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_configuration_import(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    configuration: AiConfiguration,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::configuration::import(&state.history, configuration)
+        .await
+        .map_err(public_failure)?;
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    Ok(result)
+}
+#[tauri::command]
+pub async fn ai_set_credential(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    connection_id: String,
+    value: Option<String>,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::set_credential(&state.history, &connection_id, value)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_discover_models(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<AiDiscoveredModel>, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::discover(&state.history, &connection_id)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
 pub async fn assistant_clipboard_status(
     webview: tauri::Webview,
     state: State<'_, AppState>,

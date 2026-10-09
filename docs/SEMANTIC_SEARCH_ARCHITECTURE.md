@@ -322,10 +322,10 @@ recovery on each advertised platform.
 | Capability                        | Current implementation                                                   |
 | --------------------------------- | ------------------------------------------------------------------------ |
 | Keyword search                    | Always-available FTS5; exact words/prefixes                              |
-| Meaning Search                    | Optional local Ollama embeddings                                         |
+| Meaning Search                    | Optional Ollama or explicitly enabled hosted text embeddings                                         |
 | Recall                            | Explicit question answered by a configured local Ollama generation model |
 | OCR                               | Native platform providers above                                          |
-| Hosted models / visual embeddings | No shipped runtime                                                       |
+| Hosted text embeddings            | Native OpenAI, OpenRouter, and Gemini adapters; credentials and opt-in required                                                       |
 | Ollama network                    | Loopback endpoints only                                                  |
 
 One derived FTS document per clip combines notes, tags, ready text, and completed
@@ -356,8 +356,7 @@ started, including note saves, may finish. Status events are coalesced to one
 start per 500 ms, one active refresh, and one trailing refresh; unmounted
 consumers ignore late responses.
 
-The Models screen owns the shared Ollama connection and independent embedding
-and generation assignments. Bounded model inspection derives `embedding` /
+AI configurations owns named provider connections, model presets, and independent chat, embedding, and web selections. The legacy Models controls retain the shared Ollama connection and Rust generation assignments. Bounded model inspection derives `embedding` /
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.
@@ -373,3 +372,11 @@ offer a localized manual URL and do not alter provider configuration or clips.
 Use an isolated profile and a coherent database backup, with reporting and autostart disabled. Record source revision, OS/hardware, fixture size, cache state and warm-up separately. Compare repeated production launches without building during measurement.
 
 `clipsx.first-history-paint` is a Performance API mark after two animation frames with nonempty history mounted; it is a paint proxy, not pixel detection. Distinguish process-launch from webview-navigation latency. Windows native process CPU samples exclude WebView2 child processes. Retain raw results with the measurement; one machine’s timings are not product guarantees.
+
+## Native embedding configuration
+
+Background embedding jobs resolve the saved preset and protected credential in Rust, without mounting Recall or invoking the webview. Ollama retains its existing model-digest identity and preprocessing compatibility. OpenAI and OpenRouter use the text embeddings endpoint; Gemini uses bounded batchEmbedContents requests. Anthropic has no embedding adapter. Inputs and response vectors are bounded; vectors must have the expected count, order, finite values, nonzero norm, and verified dimensions. Hosted vectors are normalized locally.
+
+A space identifies provider/model, endpoint, dimensions, preprocessing, normalization, and query/document task policy. Gemini taskType retrieval and embedding-2 retrieval prefixes are distinct policies. Hosted credentials and display names are excluded from identity. Replacement presets are probed for both query and document dimensions before configuration changes. The existing generation activation remains atomic; query/index operations refuse mismatched hosted space identities. Keyword results remain available while semantic retrieval is unavailable.
+
+Configuration and protocol fixtures do not certify a live provider or model. See the [data model](MODELS.md#named-ai-configurations) for persistence, migration, import validation, and protected storage. Protocol references: [OpenAI embeddings](https://developers.openai.com/api/reference/resources/embeddings/methods/create), [OpenRouter embeddings](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings), [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings).

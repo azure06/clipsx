@@ -2,6 +2,11 @@
 identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
+  "allow-ai-configuration-state",
+  "allow-ai-configuration-export",
+  "allow-ai-configuration-import",
+  "allow-ai-set-credential",
+  "allow-ai-discover-models",
   "allow-mcp-integration-status", "allow-mcp-configure", "allow-mcp-list-grants", "allow-mcp-issue-grant", "allow-mcp-revoke-grant",
             "allow-mcp-test-access",
   "allow-ai-http-start", "allow-ai-http-acknowledge", "allow-ai-http-cancel",

@@ -161,6 +161,57 @@ dto!(McpGrantSecret {
 });
 dto!(McpIntegrationStatus { configuration: McpConfiguration, endpoint: String, state: String, diagnostic: Option<String> });
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AiProviderKind {
+    Ollama,
+    Openai,
+    Anthropic,
+    Gemini,
+    Openrouter,
+    Tavily,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiModelPurpose {
+    Chat,
+    Embedding,
+}
+dto!(AiConnectionOptions { organization: Option<String>, project: Option<String> });
+dto!(AiConnection {
+    id: String,
+    name: String,
+    provider: AiProviderKind,
+    base_url: String,
+    enabled: bool,
+    options: AiConnectionOptions
+});
+dto!(AiCapabilities { tools: Option<bool>, vision: Option<bool>, web_search: Option<bool>, source: Option<String> });
+dto!(OpenaiPresetOptions { reasoning_effort: Option<String> });
+dto!(AnthropicPresetOptions { thinking_budget: Option<u32> });
+dto!(GeminiPresetOptions { thinking_budget: Option<u32> });
+dto!(EmbeddingPresetOptions { dimensions: Option<u32>, task_policy: String, hosted_indexing_enabled: bool });
+dto!(AiPresetOptions { temperature: Option<f64>, openai: Option<OpenaiPresetOptions>, anthropic: Option<AnthropicPresetOptions>, gemini: Option<GeminiPresetOptions>, embedding: Option<EmbeddingPresetOptions> });
+dto!(AiModelPreset {
+    id: String,
+    name: String,
+    connection_id: String,
+    model_id: String,
+    purpose: AiModelPurpose,
+    context_limit: u32,
+    output_limit: u32,
+    options: AiPresetOptions,
+    capabilities: AiCapabilities
+});
+dto!(AiSelections { default_chat: Option<String>, active_embedding: Option<String>, web_search: Option<String> });
+dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
+dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
+dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
+dto!(AiDiscoveredModel {
+    id: String,
+    capabilities: AiCapabilities
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +251,22 @@ mod tests {
             McpGrant::decl(&config),
             McpGrantSecret::decl(&config),
             McpIntegrationStatus::decl(&config),
+            AiProviderKind::decl(&config),
+            AiModelPurpose::decl(&config),
+            AiConnectionOptions::decl(&config),
+            AiConnection::decl(&config),
+            AiCapabilities::decl(&config),
+            OpenaiPresetOptions::decl(&config),
+            AnthropicPresetOptions::decl(&config),
+            GeminiPresetOptions::decl(&config),
+            EmbeddingPresetOptions::decl(&config),
+            AiPresetOptions::decl(&config),
+            AiModelPreset::decl(&config),
+            AiSelections::decl(&config),
+            AiConfiguration::decl(&config),
+            AiConnectionState::decl(&config),
+            AiConfigurationState::decl(&config),
+            AiDiscoveredModel::decl(&config),
         ];
         let generated = format!(
             "// Generated from src-tauri/src/recall/contracts.rs. Do not edit.\n{}\n",

@@ -1,3 +1,4 @@
+import { AiConfigurationsPanel } from './AiConfigurationsPanel'
 import { IntegrationsPanel } from './IntegrationsPanel'
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../i18n/index'
@@ -105,10 +106,19 @@ type ActiveIndexAction = {
 }
 
 const intelligenceSections: Array<{
-  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations'
+  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations' | 'connections'
   label: string
   description: string
 }> = [
+  {
+    id: 'connections',
+    get label() {
+      return i18n.t('aiConfig.title')
+    },
+    get description() {
+      return i18n.t('aiConfig.sectionDescription')
+    },
+  },
   {
     id: 'overview',
     get label() {
@@ -664,6 +674,7 @@ export const IntelligencePage = () => {
           ))}
         </nav>
 
+        {activeSection === 'connections' && <AiConfigurationsPanel />}
         {activeSection === 'integrations' && <IntegrationsPanel />}
         {activeSection === 'overview' && (
           <div

@@ -16,6 +16,10 @@ pub struct TextEmbeddingSpace {
 #[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TextEmbeddingProvider: Send + Sync {
+    /// Hosted adapters can verify immutable space policy without a paid network probe.
+    fn descriptor_for_dimensions(&self, _dimensions: usize) -> Option<TextEmbeddingSpace> {
+        None
+    }
     async fn describe(&self) -> ProviderResult<TextEmbeddingSpace>;
     async fn embed_documents(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>>;
     async fn embed_queries(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>>;

@@ -10,6 +10,14 @@ use std::{
 };
 
 const AUTH_SERVICE: &str = "com.infiniti.clipsx";
+#[cfg(target_os = "windows")]
+pub(crate) fn protect_private_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    backend::protect(bytes).map_err(|_| "credential_storage_unavailable".into())
+}
+#[cfg(target_os = "windows")]
+pub(crate) fn unprotect_private_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    backend::unprotect(bytes).map_err(|_| "credential_storage_unavailable".into())
+}
 pub const AUTH_STORAGE_KEY: &str = "sb-clipsx-auth-token";
 #[cfg(target_os = "windows")]
 const MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
@@ -232,11 +240,11 @@ mod backend {
         }
     }
 
-    fn protect(value: &[u8]) -> Result<Vec<u8>, String> {
+    pub(super) fn protect(value: &[u8]) -> Result<Vec<u8>, String> {
         crypt(value, true)
     }
 
-    fn unprotect(value: &[u8]) -> Result<Vec<u8>, String> {
+    pub(super) fn unprotect(value: &[u8]) -> Result<Vec<u8>, String> {
         crypt(value, false)
     }
 

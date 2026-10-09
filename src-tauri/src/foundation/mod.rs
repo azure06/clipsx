@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 17;
+pub const SCHEMA_VERSION: i64 = 18;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +255,11 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
     }
     let mut deleted = Vec::new();
     let mut failures = Vec::new();
+    #[cfg(not(target_os = "windows"))]
+    if let Err(error) = crate::recall::credentials::reset_owned(&roots.data.join("ai-credentials"))
+    {
+        failures.push(error.to_string());
+    }
     for path in [
         roots.database(),
         roots.database().with_extension("db-wal"),
@@ -262,6 +267,7 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
         roots.clipboard_data(),
         roots.extensions(),
         roots.search_index(),
+        roots.data.join("ai-credentials"),
     ] {
         match remove_owned(&path, &roots.data) {
             Ok(true) => deleted.push(path.display().to_string()),

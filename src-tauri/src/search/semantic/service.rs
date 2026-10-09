@@ -98,15 +98,23 @@ struct Generation {
 
 pub async fn configure(repo: &HistoryRepository, model: String) -> Result<ProviderStatus> {
     model_catalog::require_model(repo, &model, ModelCapability::TextEmbedding).await?;
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let mut config = TextEmbeddingProviderConfig {
+    let config = TextEmbeddingProviderConfig {
         provider_id: OLLAMA_TEXT_EMBEDDING_ID.into(),
         model,
         enabled: true,
         minimum_similarity_percent: None,
     };
+    let endpoint = model_catalog::endpoint(repo).await?;
     let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
     let descriptor = provider.describe().await?;
+    configure_descriptor(repo, config, descriptor).await
+}
+
+pub async fn configure_descriptor(
+    repo: &HistoryRepository,
+    mut config: TextEmbeddingProviderConfig,
+    descriptor: TextEmbeddingSpace,
+) -> Result<ProviderStatus> {
     let compatibility = compatibility_sha256(&descriptor)?;
     let space_id = sqlx::query_scalar::<_, String>(
         "SELECT id FROM search_embedding_spaces WHERE compatibility_sha256=?",
@@ -381,8 +389,9 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
             .bind(&generation.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let provider = providers::text_embedding_provider(&config, &endpoint, Some(&model))?;
+    let provider =
+        crate::recall::configuration::resolve_embedding(repo, &config, Some(&model)).await?;
+    ensure_space_compatible(repo, &generation.space_id, provider.as_ref()).await?;
     let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
     if generation.status == "active" {
         sqlx::query(
@@ -1074,8 +1083,7 @@ pub async fn clear_space(repo: &HistoryRepository, _space: &str) -> Result<()> {
 
 async fn reset_configured_text_index(repo: &HistoryRepository) -> Result<Generation> {
     let config = enabled_config(repo).await?;
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
+    let provider = crate::recall::configuration::resolve_embedding(repo, &config, None).await?;
     let descriptor = match provider.describe().await {
         Ok(descriptor) => descriptor,
         Err(error) => {
@@ -1266,8 +1274,7 @@ pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn validate_configured_provider(repo: &HistoryRepository) -> Result<()> {
     let config = enabled_config(repo).await?;
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let provider = providers::text_embedding_provider(&config, &endpoint, None)?;
+    let provider = crate::recall::configuration::resolve_embedding(repo, &config, None).await?;
     match provider.describe().await {
         Ok(_) => {
             record_provider_success(repo, &config.provider_id).await?;
@@ -1295,10 +1302,32 @@ pub async fn semantic_matches(
             .bind(&active.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let endpoint = model_catalog::endpoint(repo).await?;
-    let provider = providers::text_embedding_provider(&config, &endpoint, Some(&model))?;
+    let provider =
+        crate::recall::configuration::resolve_embedding(repo, &config, Some(&model)).await?;
+    ensure_space_compatible(repo, &active.space_id, provider.as_ref()).await?;
     semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
         .await
+}
+
+async fn ensure_space_compatible(
+    repo: &HistoryRepository,
+    space_id: &str,
+    provider: &dyn TextEmbeddingProvider,
+) -> Result<()> {
+    let (expected, dimensions): (String, i64) = sqlx::query_as(
+        "SELECT compatibility_sha256,dimensions FROM search_embedding_spaces WHERE id=?",
+    )
+    .bind(space_id)
+    .fetch_one(&repo.pool)
+    .await?;
+    let Some(descriptor) = provider.descriptor_for_dimensions(dimensions as usize) else {
+        return Ok(());
+    };
+    let actual = compatibility_sha256(&descriptor)?;
+    if expected != actual {
+        bail!("embedding space changed; validate the selected preset before using this index");
+    }
+    Ok(())
 }
 
 pub(crate) async fn minimum_similarity_percent(repo: &HistoryRepository) -> Result<Option<u8>> {

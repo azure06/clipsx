@@ -3180,6 +3180,7 @@ pub(crate) fn run() {
                     Ok(services) => services,
                     Err(error) => { recover_startup(app.handle(), Some(roots), "services_initialize", &error); return Ok(()); }
                 };
+                if let Err(error)=tauri::async_runtime::block_on(crate::recall::configuration::migrate_legacy(&history)) { recover_startup(app.handle(),Some(roots),"ai_configuration_migrate",&error); return Ok(()); }
                 crate::diagnostic!("startup.services.ready");
                 app.manage(AppState {
                     roots: roots.clone(),
@@ -3403,6 +3404,11 @@ pub(crate) fn run() {
             crate::recall::ipc::mcp_issue_grant,
             crate::recall::ipc::mcp_revoke_grant,
             crate::recall::ipc::mcp_test_access,
+            crate::recall::ipc::ai_configuration_state,
+            crate::recall::ipc::ai_configuration_export,
+            crate::recall::ipc::ai_configuration_import,
+            crate::recall::ipc::ai_set_credential,
+            crate::recall::ipc::ai_discover_models,
             show_main_window_command,
             set_tray_labels,
             get_release_info,
