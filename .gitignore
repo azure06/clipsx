@@ -59,3 +59,9 @@ docs/deploy.txt
 .release/
 
 /tools/release-verify/target/
+
+# Snapcraft packaging outputs
+/parts/
+/stage/
+/prime/
+/*.snap

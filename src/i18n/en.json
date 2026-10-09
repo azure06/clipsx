@@ -1,4 +1,12 @@
 {
+  "documentation": {
+    "localAiSetup": "Local AI setup guide",
+    "chooseEmbedding": "Choose an embedding model",
+    "chooseGeneration": "Choose a generation model",
+    "recallGuide": "Recall guide",
+    "openFailed": "Could not open the guide",
+    "openManually": "Open this address in your browser: {{url}}"
+  },
   "common": {
     "cancel": "Cancel",
     "close": "Close",

@@ -122,10 +122,17 @@ fn shortcut_window_action(visible: bool, focused: bool, minimized: bool) -> Main
     }
 }
 
+pub(crate) fn main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<tauri::Window<R>, String> {
+    // Custom extension views make this a multi-webview window, so Tauri's
+    // single-webview get_webview_window accessor no longer finds it.
+    app.get_window("main")
+        .ok_or_else(|| "main window is unavailable".to_owned())
+}
+
 fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+    let window = main_window(app)?;
     let state = app
         .try_state::<HostState>()
         .ok_or_else(|| "window host state is unavailable".to_owned())?;
@@ -148,12 +155,7 @@ fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<()
     Ok(())
 }
 
-fn run_activation(
-    app: &tauri::AppHandle,
-    window: &tauri::WebviewWindow,
-    id: u64,
-    focus_search: bool,
-) {
+fn run_activation(app: &tauri::AppHandle, window: &tauri::Window, id: u64, focus_search: bool) {
     let started = Instant::now();
     let stage = Arc::new(AtomicU8::new(ActivationStage::Scheduled as u8));
     let completed = Arc::new(AtomicBool::new(false));
@@ -179,7 +181,7 @@ fn run_activation(
 
 fn perform_activation(
     app: &tauri::AppHandle,
-    window: &tauri::WebviewWindow,
+    window: &tauri::Window,
     focus_search: bool,
     stage: &AtomicU8,
 ) -> Result<(), String> {
@@ -241,7 +243,7 @@ pub fn show_main_window_and_focus_search(app: &tauri::AppHandle) -> Result<(), S
 }
 
 #[cfg(target_os = "windows")]
-fn activate_native_window(window: &tauri::WebviewWindow) -> bool {
+fn activate_native_window(window: &tauri::Window) -> bool {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, GetForegroundWindow, SetForegroundWindow,
@@ -259,12 +261,12 @@ fn activate_native_window(window: &tauri::WebviewWindow) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn activate_native_window(_window: &tauri::WebviewWindow) -> bool {
+fn activate_native_window(_window: &tauri::Window) -> bool {
     true
 }
 
 #[cfg(target_os = "windows")]
-fn main_window_is_active(window: &tauri::WebviewWindow) -> bool {
+fn main_window_is_active(window: &tauri::Window) -> bool {
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GetForegroundWindow};
 
     window
@@ -274,14 +276,12 @@ fn main_window_is_active(window: &tauri::WebviewWindow) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn main_window_is_active(window: &tauri::WebviewWindow) -> bool {
+fn main_window_is_active(window: &tauri::Window) -> bool {
     window.is_focused().unwrap_or(false)
 }
 
 pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
+    let window = main_window(app)?;
     let visible = window.is_visible().unwrap_or(false);
     let focused = main_window_is_active(&window);
     let minimized = window.is_minimized().unwrap_or(false);
@@ -294,6 +294,43 @@ pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_window_lookup_survives_extension_webview() {
+        let app = tauri::test::mock_app();
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        assert!(app.get_webview_window("main").is_some());
+        let window = main_window(app.handle()).unwrap();
+        let child = window
+            .add_child(
+                tauri::webview::WebviewBuilder::new("extension-test", tauri::WebviewUrl::default())
+                    .focused(false),
+                tauri::LogicalPosition::new(0.0, 0.0),
+                tauri::LogicalSize::new(200.0, 100.0),
+            )
+            .unwrap();
+
+        // Adding a child invalidates the single-webview accessor even when the
+        // child is hidden and has never received focus.
+        child.hide().unwrap();
+        assert!(app.get_webview_window("main").is_none());
+        assert_eq!(main_window(app.handle()).unwrap().label(), "main");
+        assert_eq!(app.get_webview("main").unwrap().window().label(), "main");
+        child.show().unwrap();
+        child.set_focus().unwrap();
+        assert_eq!(main_window(app.handle()).unwrap().label(), "main");
+    }
+
+    #[test]
+    fn missing_main_window_is_reported() {
+        let app = tauri::test::mock_app();
+        assert_eq!(
+            main_window(app.handle()).unwrap_err(),
+            "main window is unavailable"
+        );
+    }
 
     #[test]
     fn shortcut_hides_only_an_active_window() {

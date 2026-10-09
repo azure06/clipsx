@@ -40,6 +40,8 @@ the generated content-security policy can allow the configured authentication
 origin. The [release guide](.agents/skills/clipsx-release/references/operations.md) covers distributable-build
 requirements.
 
+See [Snap packaging instructions](assets/snap/README.md) for experimental Linux packaging.
+
 To run a development binary against production services, populate the ignored
 `.env` with the public Supabase URL/publishable key and reviewed website origin,
 then run:
@@ -81,6 +83,10 @@ Published targets are Windows x64, macOS Apple Silicon and Intel, and Linux/X11 
 Before starting a substantial change, check for an existing issue and read the
 [Contributing Guide](CONTRIBUTING.md). It covers the development setup, checks,
 and system boundaries that keep ClipsX reliable.
+
+Community participation follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+For questions and bug reports, see [support resources](SUPPORT.md); report
+vulnerabilities privately using the [security policy](SECURITY.md).
 
 Thank you to everyone who spends time making the project clearer, safer, or
 more useful.

@@ -370,7 +370,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               type="button"
               onClick={onRecall}
               disabled={isRecalling}
-              className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 disabled:opacity-50 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
+              className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1.5 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:opacity-50 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
               title={
                 recallAvailable
                   ? t('desktopUi.askRecallShortcut', { shortcut: recallShortcut })
@@ -380,8 +380,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               <Sparkles className={`h-3.5 w-3.5 ${isRecalling ? 'animate-pulse' : ''}`} />
               {isRecalling
                 ? t('desktopUi.readingSeconds', { count: recallElapsedSeconds })
-                : 'Recall'}
-              {!isRecalling && (
+                : recallAvailable
+                  ? 'Recall'
+                  : t('desktopUi.setUpRecall')}
+              {!isRecalling && recallAvailable && (
                 <span aria-hidden="true" className="hidden lg:inline opacity-60">
                   {recallShortcut}
                 </span>

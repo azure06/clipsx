@@ -38,6 +38,24 @@ const toastTitles = (): string[] =>
   (toastMock.mock.calls as Array<[{ title: string }]>).map(([value]) => value.title)
 
 describe('IntelligencePage indexing actions', () => {
+  it('keeps setup help reachable when the connection has no capable models', async () => {
+    const originalImplementation = invokeMock.getMockImplementation()!
+    invokeMock.mockImplementation((command: string) =>
+      command === 'get_model_provider_connection'
+        ? Promise.resolve({ ...connection, models: [] })
+        : (originalImplementation(command) as Promise<unknown>)
+    )
+    render(<IntelligencePage />)
+    await screen.findByText('No installed model reports embedding support.')
+    expect(screen.getByRole('button', { name: 'Local AI setup guide' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose an embedding model' }))
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('open_external_url', {
+        url: 'https://docs.clipsx.app/local-ai#embedding-models',
+      })
+    )
+    expect(screen.getByRole('button', { name: 'Choose a generation model' })).toBeEnabled()
+  })
   let currentStatus: TextEmbeddingStatus
   let failNextStatusRefresh: boolean
   const connection = {

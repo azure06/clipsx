@@ -33,6 +33,7 @@ import type {
 } from '../../shared/types/v2'
 import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
+import { DocumentationLink } from '../../shared/components/DocumentationLink'
 
 type ModelCapability = 'text_embedding' | 'text_generation'
 
@@ -1276,6 +1277,11 @@ export const IntelligencePage = () => {
                 </div>
               )}
 
+              <DocumentationLink
+                guide="localAi"
+                anchor="starting-setup"
+                label={i18n.t('documentation.localAiSetup')}
+              />
               {(connectionError || connection?.diagnostic) && (
                 <p className="rounded-lg border border-amber-300/35 bg-amber-50/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/15 dark:bg-amber-500/[0.08] dark:text-amber-300">
                   {connectionError ?? connection?.diagnostic}
@@ -1333,6 +1339,11 @@ export const IntelligencePage = () => {
                     <Trans i18nKey="desktopUi.isNotAvailableAsAnEmbeddingModelOnThis" />
                   </p>
                 )}
+                <DocumentationLink
+                  guide="localAi"
+                  anchor="embedding-models"
+                  label={i18n.t('documentation.chooseEmbedding')}
+                />
                 {configError && (
                   <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-400">
                     {configError}
@@ -1420,6 +1431,11 @@ export const IntelligencePage = () => {
                       <Trans i18nKey="desktopUi.isNotAvailableForTextGenerationOnThisConnection" />
                     </p>
                   )}
+                <DocumentationLink
+                  guide="localAi"
+                  anchor="generation-models"
+                  label={i18n.t('documentation.chooseGeneration')}
+                />
                 {generationStatus?.enabled && generationStatus.diagnostic && (
                   <p className="text-xs text-amber-600 dark:text-amber-400">
                     {generationStatus.diagnostic}

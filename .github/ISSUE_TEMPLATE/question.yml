@@ -1,0 +1,27 @@
+name: Question or help
+description: Ask about installation, configuration, or using ClipsX.
+title: '[Question]: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the README, release notes, and existing issues first.
+        This question is public. Do not include clipboard history, credentials, or private account details.
+        See [support resources](https://github.com/azure06/clipsx/blob/main/SUPPORT.md) for private contact options.
+  - type: textarea
+    id: question
+    attributes:
+      label: What do you need help with?
+      description: Explain what you want to do and what you have tried.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: If relevant, include ClipsX version, operating system, installation method, and extension versions.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Use harmless sample data and review screenshots or log excerpts for sensitive information.

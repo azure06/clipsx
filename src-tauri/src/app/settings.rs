@@ -109,7 +109,7 @@ impl SettingsLifecycle {
                     .is_ok()
             },
             || {
-                app.get_webview_window("main").is_some_and(|window| {
+                super::host::main_window(app).is_ok_and(|window| {
                     host.window_behavior
                         .apply_settings(&window, &settings)
                         .is_ok()

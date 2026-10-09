@@ -46,6 +46,12 @@ export function classify(path) {
   )
     return 'recipe'
   if (
+    /^(CODE_OF_CONDUCT|SECURITY|SUPPORT)\.md$/.test(path) ||
+    path === '.github/PULL_REQUEST_TEMPLATE.md' ||
+    /^\.github\/ISSUE_TEMPLATE\/[^/]+\.(md|ya?ml)$/.test(path)
+  )
+    return 'docs'
+  if (
     path.startsWith('scripts/release/') ||
     path.startsWith('.github/') ||
     path.startsWith('tools/release-verify/')
