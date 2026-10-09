@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,7 +440,7 @@ mod tests {
             .await
             .unwrap();
         let migrator = migrations::canonical();
-        for migration in migrator.iter() {
+        for migration in migrator.iter().filter(|migration| migration.version <= 15) {
             let crlf = migration.sql.as_str().replace("\n", "\r\n");
             let hash = sha2::Sha384::digest(crlf.as_bytes()).to_vec();
             sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=?")
@@ -561,7 +561,7 @@ mod tests {
             prepare(&roots).await.unwrap(),
             SchemaState::MissingMigration(999)
         );
-        assert!(!startup_status(SchemaState::NewerSchema(16)).reset_available);
+        assert!(!startup_status(SchemaState::NewerSchema(SCHEMA_VERSION + 1)).reset_available);
     }
 
     #[test]

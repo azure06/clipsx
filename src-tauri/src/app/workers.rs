@@ -93,6 +93,15 @@ impl SingleWorker {
             let mut cleanup_reported = false;
             let mut indexing_reported = false;
             loop {
+                match crate::recall::mutations::process_index_intents(&history).await {
+                    Ok(count) if count > 0 => continue,
+                    Ok(_) => {}
+                    Err(_) => {
+                        crate::diagnostic!("assistant.index_intents.failed");
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
+                }
                 let cleanup_result = embeddings::process_cleanup(&history).await;
                 let cleanup_count = match &cleanup_result {
                     Ok(count) => {
@@ -197,7 +206,12 @@ impl SingleWorker {
                 .await
                 .is_ok_and(|status| status.enabled && status.pending_jobs > 0);
             let cleanup_pending = embeddings::cleanup_pending(&history).await.unwrap_or(false);
-            if indexing_pending || cleanup_pending {
+            let intents_pending: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_index_intents)")
+                    .fetch_one(&history.pool)
+                    .await
+                    .unwrap_or(false);
+            if indexing_pending || cleanup_pending || intents_pending {
                 guard.wake_text_index(app.clone(), history.clone());
             }
             let _ = app.emit(

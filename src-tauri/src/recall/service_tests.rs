@@ -80,6 +80,200 @@ async fn make_secret(service: &ClipboardService, id: &str) {
     sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version) VALUES(?,'core.security.secret',?,'fixture','1')").bind(id).bind(representation).execute(&service.history.pool).await.unwrap();
 }
 
+fn creation(text: &str) -> CreateClipRequest {
+    CreateClipRequest {
+        request_id: crate::history::new_id(),
+        text: text.into(),
+        format: CreatedTextFormat::Markdown,
+        sources: None,
+        model: None,
+    }
+}
+fn organization_request(clip: ClipMetadata) -> OrganizeClipsRequest {
+    OrganizeClipsRequest {
+        request_id: crate::history::new_id(),
+        clips: vec![ClipRevision {
+            clip_id: clip.id,
+            revision: clip.revision,
+        }],
+        note: Some("new note".into()),
+        favorite: Some(true),
+        pinned: Some(true),
+        add_tags: Some(vec!["project".into()]),
+        remove_tags: None,
+    }
+}
+
+#[tokio::test]
+async fn mutations_are_idempotent_atomic_and_restart_safe_with_guarded_undo() {
+    use super::mutations::{process_index_intents, Actor};
+    let (_temp, service) = repository().await;
+    let actor = Actor::native_run(ModelAttribution {
+        provider: "ollama".into(),
+        model: "fixture".into(),
+    });
+    let source = capture(&service, "original", "editor", 100).await;
+    let metadata = service.metadata(&source).await.unwrap();
+    let mut request = creation("corrected text");
+    request.sources = Some(vec![SourceReference {
+        clip_id: source.clone(),
+        representation_id: metadata.representations[0].id.clone(),
+        fingerprint: metadata.representations[0].fingerprint.clone(),
+    }]);
+    let (first, second) = tokio::join!(
+        service.create(&actor, request.clone()),
+        service.create(&actor, request.clone())
+    );
+    let first = first.unwrap();
+    assert_eq!(first.action_id, second.unwrap().action_id);
+    let generated = first.clips[0].clip_id.clone();
+    assert_eq!(service.read(read(&source)).await.unwrap().text, "original");
+    let mut conflict = request.clone();
+    conflict.text = "different arguments".into();
+    assert!(service.create(&actor, conflict).await.is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM assistant_index_intents")
+            .fetch_one(&service.history.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let restarted = ClipboardService::new(service.history.clone());
+    assert_eq!(
+        restarted.create(&actor, request).await.unwrap().action_id,
+        first.action_id
+    );
+    assert_eq!(process_index_intents(&service.history).await.unwrap(), 1);
+    assert_eq!(
+        service
+            .search(query("corrected", ClipFilters::default()))
+            .await
+            .unwrap()
+            .items[0]
+            .clip
+            .id,
+        generated
+    );
+    let patch = organization_request(service.metadata(&generated).await.unwrap());
+    let organized = service.organize(&actor, patch.clone()).await.unwrap();
+    assert_eq!(
+        service.organize(&actor, patch).await.unwrap().action_id,
+        organized.action_id
+    );
+    let undo = UndoClipboardRequest {
+        request_id: crate::history::new_id(),
+        action_id: organized.action_id,
+    };
+    let undone = service.undo(&actor, undo.clone()).await.unwrap();
+    assert_eq!(
+        service.undo(&actor, undo).await.unwrap().action_id,
+        undone.action_id
+    );
+    let clip = service.metadata(&generated).await.unwrap();
+    assert!(!clip.favorite && !clip.pinned && clip.tags.is_empty());
+    assert!(
+        service
+            .undo(
+                &actor,
+                UndoClipboardRequest {
+                    request_id: crate::history::new_id(),
+                    action_id: first.action_id
+                }
+            )
+            .await
+            .is_err(),
+        "Even reverted later edits invalidate the original creation undo"
+    );
+    let fresh = service
+        .create(&actor, creation("another generated item"))
+        .await
+        .unwrap();
+    let deleted = fresh.clips[0].clip_id.clone();
+    service
+        .undo(
+            &actor,
+            UndoClipboardRequest {
+                request_id: crate::history::new_id(),
+                action_id: fresh.action_id,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(service.metadata(&deleted).await.is_err());
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM search_semantic_cleanup WHERE clip_id=?)"
+    )
+    .bind(&deleted)
+    .fetch_one(&service.history.pool)
+    .await
+    .unwrap());
+    let attribution: String = sqlx::query_scalar(
+        "SELECT attribution_source FROM assistant_clip_provenance WHERE clip_id=?",
+    )
+    .bind(&generated)
+    .fetch_one(&service.history.pool)
+    .await
+    .unwrap();
+    assert_eq!(attribution, "host_verified");
+}
+
+#[tokio::test]
+async fn failed_batches_roll_back_tags_actions_and_index_intents_and_secret_writes_are_rejected() {
+    use super::mutations::Actor;
+    let (_temp, service) = repository().await;
+    let actor = Actor::mcp("fixture-client");
+    let first = capture(&service, "first", "editor", 100).await;
+    let second = capture(&service, "second", "editor", 200).await;
+    let mut patch = organization_request(service.metadata(&first).await.unwrap());
+    patch.clips.push(ClipRevision {
+        clip_id: second.clone(),
+        revision: "stale".into(),
+    });
+    assert!(service.organize(&actor, patch).await.is_err());
+    assert!(!service.metadata(&first).await.unwrap().favorite);
+    for table in [
+        "catalog_tags",
+        "assistant_actions",
+        "assistant_index_intents",
+    ] {
+        let sql = format!("SELECT count(*) FROM {table}");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                .fetch_one(&service.history.pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    let metadata = service.metadata(&second).await.unwrap();
+    let patch = organization_request(metadata.clone());
+    make_secret(&service, &second).await;
+    assert!(service.organize(&actor, patch).await.is_err());
+    let mut create = creation("cannot use secret source");
+    create.sources = Some(vec![SourceReference {
+        clip_id: second,
+        representation_id: metadata.representations[0].id.clone(),
+        fingerprint: metadata.representations[0].fingerprint.clone(),
+    }]);
+    assert!(service.create(&actor, create).await.is_err());
+    let mut external = creation("client supplied attribution");
+    external.model = Some(ModelAttribution {
+        provider: "openai".into(),
+        model: "client claim".into(),
+    });
+    let result = service.create(&actor, external).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT attribution_source FROM assistant_clip_provenance WHERE clip_id=?"
+        )
+        .bind(&result.clips[0].clip_id)
+        .fetch_one(&service.history.pool)
+        .await
+        .unwrap(),
+        "client_supplied"
+    );
+}
+
 #[tokio::test]
 async fn assistant_filtering_precedes_both_candidate_sources_and_history_is_preserved() {
     let (_temp, service) = repository().await;

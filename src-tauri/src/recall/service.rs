@@ -83,6 +83,12 @@ impl ClipboardService {
                 "search_clips",
                 "read_clip",
                 "read_clip_image",
+                "create_clip",
+                "organize_clips",
+                "undo_clipboard_action",
+                "create_clip",
+                "organize_clips",
+                "undo_clipboard_action",
             ]
             .into_iter()
             .map(str::to_string)
@@ -147,16 +153,26 @@ impl ClipboardService {
     }
 
     pub async fn metadata(&self, clip_id: &str) -> Result<ClipMetadata> {
-        self.require_eligible(clip_id).await?;
-        let row = sqlx::query("SELECT capture_sha256,captured_at,source_app_id,source_app_name,is_favorite,is_pinned,note FROM clip_items WHERE id=? AND lifecycle_state='ready'").bind(clip_id).fetch_one(&self.history.pool).await?;
-        let tags = self.history.tags_for(clip_id).await?;
-        let representations = sqlx::query("SELECT r.id,r.canonical_mime_type,r.format_family,r.storage_kind,COALESCE(t.utf8_byte_length,b.byte_length,0),COALESCE(t.sha256,b.sha256,'') FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal,r.id LIMIT 65").bind(clip_id).fetch_all(&self.history.pool).await?;
+        let mut connection = self.history.pool.acquire().await?;
+        self.metadata_in(&mut connection, clip_id).await
+    }
+
+    pub(crate) async fn metadata_in(
+        &self,
+        connection: &mut sqlx::SqliteConnection,
+        clip_id: &str,
+    ) -> Result<ClipMetadata> {
+        require_eligible_in(connection, clip_id).await?;
+        let row = sqlx::query("SELECT capture_sha256,captured_at,source_app_id,source_app_name,is_favorite,is_pinned,note,assistant_revision FROM clip_items WHERE id=? AND lifecycle_state='ready'").bind(clip_id).fetch_one(&mut *connection).await?;
+        let tags: Vec<crate::history::Tag> = sqlx::query("SELECT t.id,t.name,t.color FROM catalog_tags t JOIN catalog_clip_tags ct ON ct.tag_id=t.id WHERE ct.clip_id=? ORDER BY t.name,t.id LIMIT 65").bind(clip_id).fetch_all(&mut *connection).await?.into_iter().map(|r| crate::history::Tag { id:r.get(0), name:r.get(1), color:r.get(2) }).collect();
+        let representations = sqlx::query("SELECT r.id,r.canonical_mime_type,r.format_family,r.storage_kind,COALESCE(t.utf8_byte_length,b.byte_length,0),COALESCE(t.sha256,b.sha256,'') FROM clip_representations r LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id AND b.lifecycle_state='ready' WHERE r.clip_id=? AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal,r.id LIMIT 65").bind(clip_id).fetch_all(&mut *connection).await?;
         if tags.len() > 64 || representations.len() > 64 {
             return Err(FailureCode::ResourceLimit.failure().into());
         }
         let revision = crate::history::sha256(
             serde_json::to_vec(&(
                 clip_id,
+                row.get::<i64, _>(7),
                 row.get::<String, _>(0),
                 row.get::<i64, _>(1),
                 row.get::<Option<String>, _>(2),
@@ -172,8 +188,8 @@ impl ClipboardService {
             ))?
             .as_slice(),
         );
-        let ocr_status: Option<String> = sqlx::query_scalar("SELECT j.status FROM artifact_jobs j JOIN clip_representations r ON r.id=j.target_representation_id WHERE r.clip_id=? AND j.artifact_kind='ocr' AND j.producer_id='builtin.artifact.ocr' AND j.producer_version='3' ORDER BY j.requested_at DESC LIMIT 1").bind(clip_id).fetch_optional(&self.history.pool).await?;
-        self.require_eligible(clip_id).await?;
+        let ocr_status: Option<String> = sqlx::query_scalar("SELECT j.status FROM artifact_jobs j JOIN clip_representations r ON r.id=j.target_representation_id WHERE r.clip_id=? AND j.artifact_kind='ocr' AND j.producer_id='builtin.artifact.ocr' AND j.producer_version='3' ORDER BY j.requested_at DESC LIMIT 1").bind(clip_id).fetch_optional(&mut *connection).await?;
+        require_eligible_in(connection, clip_id).await?;
         Ok(ClipMetadata {
             id: clip_id.into(),
             revision,
@@ -567,4 +583,20 @@ fn image_preview(bytes: &[u8], mime: &str) -> Result<ImagePreview> {
         }
         edge = edge * 3 / 4;
     }
+}
+
+pub(crate) async fn require_eligible_in(
+    connection: &mut sqlx::SqliteConnection,
+    clip_id: &str,
+) -> Result<()> {
+    validate_id(clip_id)?;
+    let sql=format!("SELECT EXISTS(SELECT 1 FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready' AND {SECRET_PREDICATE})");
+    let eligible: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(clip_id)
+        .fetch_one(connection)
+        .await?;
+    if !eligible {
+        return Err(FailureCode::InvalidInput.failure().into());
+    }
+    Ok(())
 }

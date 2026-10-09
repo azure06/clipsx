@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The published baseline is `clipsx-local-v3`, schema version 15. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 16. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -102,6 +102,16 @@ flowchart TB
 | `clip_transform_provenance` | Canonical | Links a saved output clip to its source and transform description. | “Save as New Clip” after a successful transform | Owned by the saved output clip. Source links become null if the source is deleted; bounded snapshots preserve provenance. |
 
 Renderer choice is deliberately absent: it is UI policy, not persisted clip state. Shared binary rows outlive one clip when another representation still references the same hash.
+
+### Assistant clipboard actions
+
+`assistant_clip_provenance` is owned by the generated clip. It records the authenticated actor, origin, verified source representation IDs and fingerprints, and optional model attribution. Native attribution comes from the host run; external model names are explicitly client-supplied. Source fingerprints remain meaningful when source clips disappear; source references do not own their clips.
+
+`assistant_actions` retains request IDs, argument hashes, recorded results, prior organization fields, and resulting revision tokens for 30 days, independently of clip retention. Mutation and action writes share one transaction. Reusing an actor's request ID with different arguments conflicts. Undo restores organization or deletes an unchanged generated clip; later edits invalidate it, including edits subsequently reverted. These records stay local and are excluded from sync.
+
+`clip_items.assistant_revision` advances for changes relevant to assistant access or editing. Assistant revision tokens also cover canonical representation fingerprints and organization metadata. Access counts and UI recency touches do not invalidate an operation.
+
+`assistant_index_intents` records pending FTS and semantic projection work in the mutation transaction. The Rust indexing worker drains it even when semantic indexing is disabled or Recall is unmounted; conditional acknowledgement preserves newer work. Deletion uses the existing semantic cleanup and managed-file queues. Identical canonical payloads may belong to distinct saved clips; capture still performs its ordinary fingerprint lookup, while request IDs govern assistant creation retries.
 
 ### File lists versus managed binary payloads
 

@@ -254,7 +254,7 @@ native authentication receipts, cancellation, and the actual webview user agent.
 Normal builds omit the fixture HTML entry. Live provider/model support must be
 verified separately with configured credentials.
 
-### Assistant clipboard reads
+### Assistant clipboard operations
 
 The Rust `ClipboardService` owns version 1 assistant read contracts. Its Tauri
 adapters expose status, filters, keyword/hybrid search, text pages, and verified

@@ -110,6 +110,40 @@ dto!(ClipboardFilters {
     api_version: u32, tags: Vec<ClipTag>, source_applications: Vec<SourceApplication>, representation_families: Vec<String>, facet_ids: Vec<String>, warnings: Vec<ClipboardWarning>,
 });
 
+dto!(SourceReference {
+    clip_id: String,
+    representation_id: String,
+    fingerprint: String
+});
+dto!(ModelAttribution {
+    provider: String,
+    model: String
+});
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CreatedTextFormat {
+    PlainText,
+    Markdown,
+}
+dto!(CreateClipRequest { request_id: String, text: String, format: CreatedTextFormat, sources: Option<Vec<SourceReference>>, model: Option<ModelAttribution> });
+dto!(ClipRevision {
+    clip_id: String,
+    revision: String
+});
+dto!(OrganizeClipsRequest { request_id: String, clips: Vec<ClipRevision>, note: Option<String>, favorite: Option<bool>, pinned: Option<bool>, add_tags: Option<Vec<String>>, remove_tags: Option<Vec<String>> });
+dto!(UndoClipboardRequest {
+    request_id: String,
+    action_id: String
+});
+dto!(ClipboardActionResult { api_version: u32, action_id: String, operation: String, clips: Vec<ClipRevision>, removed_clip_ids: Vec<String>, undo_available: bool, expires_at: f64 });
+dto!(ClipboardActivity {
+    action_id: String,
+    operation: String,
+    actor_id: String,
+    created_at: f64,
+    undo_available: bool
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +170,15 @@ mod tests {
             ClipboardStatus::decl(&config),
             SourceApplication::decl(&config),
             ClipboardFilters::decl(&config),
+            SourceReference::decl(&config),
+            ModelAttribution::decl(&config),
+            CreatedTextFormat::decl(&config),
+            CreateClipRequest::decl(&config),
+            ClipRevision::decl(&config),
+            OrganizeClipsRequest::decl(&config),
+            UndoClipboardRequest::decl(&config),
+            ClipboardActionResult::decl(&config),
+            ClipboardActivity::decl(&config),
         ];
         let generated = format!(
             "// Generated from src-tauri/src/recall/contracts.rs. Do not edit.\n{}\n",
