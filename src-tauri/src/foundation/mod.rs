@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 18;
+pub const SCHEMA_VERSION: i64 = 19;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +268,7 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
         roots.extensions(),
         roots.search_index(),
         roots.data.join("ai-credentials"),
+        roots.data.join("recall-attachments"),
     ] {
         match remove_owned(&path, &roots.data) {
             Ok(true) => deleted.push(path.display().to_string()),

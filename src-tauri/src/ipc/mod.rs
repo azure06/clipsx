@@ -3182,6 +3182,7 @@ pub(crate) fn run() {
                     Err(error) => { recover_startup(app.handle(), Some(roots), "services_initialize", &error); return Ok(()); }
                 };
                 if let Err(error)=tauri::async_runtime::block_on(crate::recall::configuration::migrate_legacy(&history)) { recover_startup(app.handle(),Some(roots),"ai_configuration_migrate",&error); return Ok(()); }
+                if let Err(error)=tauri::async_runtime::block_on(crate::recall::conversations::recover(&history)) { recover_startup(app.handle(),Some(roots),"recall_conversations_recover",&error); return Ok(()); }
                 crate::diagnostic!("startup.services.ready");
                 app.manage(AppState {
                     roots: roots.clone(),
@@ -3411,6 +3412,15 @@ pub(crate) fn run() {
             crate::recall::ipc::ai_set_credential,
             crate::recall::ipc::ai_discover_models,
             crate::recall::ipc::assistant_run_begin,
+crate::recall::ipc::recall_thread_initialize,
+crate::recall::ipc::recall_thread_list,
+crate::recall::ipc::recall_thread_load,
+crate::recall::ipc::recall_thread_update,
+crate::recall::ipc::recall_thread_delete,
+crate::recall::ipc::recall_message_append,
+crate::recall::ipc::recall_run_start,
+crate::recall::ipc::recall_run_checkpoint,
+crate::recall::ipc::recall_snapshot_image,
             crate::recall::ipc::assistant_run_finish,
             crate::recall::ipc::assistant_run_tool,
             crate::recall::ipc::assistant_verify_tools,

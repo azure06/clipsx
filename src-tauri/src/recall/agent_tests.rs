@@ -8,7 +8,7 @@ use super::{
 use crate::history::new_id;
 use serde_json::json;
 
-async fn setup(
+pub(super) async fn setup(
     tools: Option<bool>,
 ) -> (
     tempfile::TempDir,
@@ -60,7 +60,7 @@ async fn setup(
     .unwrap();
     (root, service, preset)
 }
-fn request(preset: &AiModelPreset) -> AssistantRunRequest {
+pub(super) fn request(preset: &AiModelPreset) -> AssistantRunRequest {
     AssistantRunRequest {
         run_id: new_id(),
         preset_id: preset.id.clone(),

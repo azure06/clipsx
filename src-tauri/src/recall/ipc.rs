@@ -344,3 +344,107 @@ pub async fn mcp_test_access(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn recall_thread_initialize(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    local_id: String,
+) -> Result<RecallThread, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::initialize(&state.history, &local_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_list(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    offset: u32,
+) -> Result<Vec<RecallThread>, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::list(&state.history, offset)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_load(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<RecallHistory, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::load(&state.history, &thread_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_update(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: RecallThreadUpdate,
+) -> Result<RecallThread, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::update(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_delete(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::delete(&state.history, &thread_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_message_append(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    message: RecallMessage,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::append(&state.history, &thread_id, message)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_run_start(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    request: RecallRunStart,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .persist_run(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_run_checkpoint(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: RecallCheckpoint,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::checkpoint(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_snapshot_image(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    snapshot_id: String,
+) -> Result<String, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::read_snapshot_image(&state.history, &thread_id, &snapshot_id)
+        .await
+        .map_err(public_failure)
+}

@@ -6,6 +6,9 @@ pub mod configuration;
 #[cfg(test)]
 mod configuration_tests;
 pub mod contracts;
+#[cfg(test)]
+mod conversation_tests;
+pub mod conversations;
 pub mod credentials;
 pub mod ipc;
 pub mod mcp;

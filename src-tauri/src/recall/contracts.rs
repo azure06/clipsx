@@ -226,6 +226,19 @@ dto!(WebSource {
 });
 dto!(WebEvidence { sources: Vec<WebSource>, incomplete: bool });
 
+dto!(RecallThread { id: String, local_id: String, title: String, archived: bool, preset_id: Option<String>, web_enabled: bool, head_message_id: Option<String>, created_at: i64, updated_at: i64 });
+dto!(RecallMessage { id: String, parent_id: Option<String>, role: String, content_json: String, status_json: Option<String>, metadata_json: String, created_at: i64 });
+dto!(RecallHistory { thread: RecallThread, messages: Vec<RecallMessage>, sources: Vec<RecallSourceSnapshot> });
+dto!(RecallThreadUpdate { thread_id: String, title: String, archived: bool, preset_id: Option<String>, web_enabled: bool });
+dto!(RecallRunStart {
+    thread_id: String,
+    run_id: String,
+    message_id: String,
+    parent_id: String
+});
+dto!(RecallCheckpoint { run_id: String, sequence: u32, content_json: String, metadata_json: String, status_json: Option<String>, terminal: bool });
+dto!(RecallSourceSnapshot { id: String, message_id: String, clip_id: String, snapshot_json: String, asset_hash: Option<String>, available: bool });
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,6 +299,13 @@ mod tests {
             AssistantRunContext::decl(&config),
             WebSource::decl(&config),
             WebEvidence::decl(&config),
+            RecallThread::decl(&config),
+            RecallMessage::decl(&config),
+            RecallHistory::decl(&config),
+            RecallThreadUpdate::decl(&config),
+            RecallRunStart::decl(&config),
+            RecallCheckpoint::decl(&config),
+            RecallSourceSnapshot::decl(&config),
         ];
         let generated = format!(
             "// Generated from src-tauri/src/recall/contracts.rs. Do not edit.\n{}\n",

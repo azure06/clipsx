@@ -4,6 +4,7 @@ import type {
   ChatModelAdapter,
   ChatModelRunResult,
   ThreadAssistantMessagePart,
+  ChatModelRunOptions,
 } from '@assistant-ui/react'
 import type { AssistantRunContext, AssistantRunRequest } from '../contracts.generated'
 import { createChatModel, createNativeWebTools } from './providers'
@@ -19,7 +20,7 @@ export interface RecallAdapterOptions {
   configuration(): Omit<AssistantRunRequest, 'runId'>
   bridge?: NativeAgentBridge
   transport?: (runId: string) => typeof fetch
-  onStart?: (context: AssistantRunContext) => Promise<void> | void
+  onStart?: (context: AssistantRunContext, input: ChatModelRunOptions) => Promise<void> | void
   onResult?: (name: string, result: unknown) => void
   onCheckpoint?: (
     runId: string,
@@ -31,7 +32,8 @@ export interface RecallAdapterOptions {
 export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAdapter {
   const bridge = options.bridge ?? nativeAgentBridge
   return {
-    async *run({ messages, abortSignal }) {
+    async *run(input) {
+      const { messages, abortSignal } = input
       const runId = crypto.randomUUID()
       const selection = structuredClone(options.configuration())
       let begun = false
@@ -62,7 +64,7 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           await bridge.finish(runId)
           abortSignal.throwIfAborted()
         }
-        await options.onStart?.(context)
+        await options.onStart?.(context, input)
         const connection = context.connection as ChatConnection
         const transport = (options.transport ?? createRustFetch)(runId)
         const model = createChatModel(connection, context.preset.modelId, transport)

@@ -3,6 +3,15 @@ identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
   "allow-assistant-run-begin",
+"allow-recall-thread-initialize",
+"allow-recall-thread-list",
+"allow-recall-thread-load",
+"allow-recall-thread-update",
+"allow-recall-thread-delete",
+"allow-recall-message-append",
+"allow-recall-run-start",
+"allow-recall-run-checkpoint",
+"allow-recall-snapshot-image",
   "allow-assistant-run-finish",
   "allow-assistant-run-tool",
   "allow-assistant-verify-tools",

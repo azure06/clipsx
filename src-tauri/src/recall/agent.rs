@@ -188,6 +188,14 @@ impl AgentRuntime {
             .cloned()
             .context("run_unavailable")
     }
+    pub async fn persist_run(
+        &self,
+        history: &HistoryRepository,
+        request: RecallRunStart,
+    ) -> Result<()> {
+        let run = self.get(&request.run_id).await?;
+        super::conversations::start_run(history, request, &run.context).await
+    }
     pub async fn finish(&self, transport: &Transport, id: &str) {
         let mut guard = self.run.lock().await;
         if guard.as_ref().is_some_and(|r| r.context.run_id == id) {
@@ -290,11 +298,14 @@ impl AgentRuntime {
                     Ok(serde_json::to_value(service.search(request).await?)?)
                 }
                 "read_clip" => Ok(serde_json::to_value(
-                    service.read(serde_json::from_value(value)?).await?,
+                    super::conversations::record_read(history, id, serde_json::from_value(value)?)
+                        .await?,
                 )?),
-                "read_clip_image" => Ok(serde_json::to_value(
-                    service.image(serde_json::from_value(value)?).await?,
-                )?),
+                "read_clip_image" => {
+                    let image = service.image(serde_json::from_value(value)?).await?;
+                    super::conversations::record_image(history, id, &image).await?;
+                    Ok(serde_json::to_value(image)?)
+                }
                 "web_search" | "web_extract" => web_tool(&run, name, value).await,
                 _ => bail!("unsupported_tool"),
             }

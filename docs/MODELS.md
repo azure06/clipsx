@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 18. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 19. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -475,3 +475,13 @@ bytes remain unchanged on failure, cancellation, or disablement.
 Configuration stays device-local and outside configuration sync. The version-1 AI JSON document includes connections, presets, and selections; it excludes credentials, conversations, MCP grants, and operational diagnostics. Imports reject unknown fields, invalid options, duplicate IDs, insecure endpoints, missing references, and incompatible selections before writes. Stable-ID merges preserve omitted records. Imported connections require locally configured credentials. Changes to the selected embedding identity require a successful native probe before application. Hosted indexing requires explicit enablement; no hosted fallback occurs.
 
 AI credentials use a separate protected namespace with no renderer read API. Windows stores per-connection DPAPI-protected files in `ai-credentials` under the application data directory. macOS/Linux use `com.infiniti.clipsx.ai` keyring entries and nonsecret reference files for factory-reset cleanup. Credential updates do not change embedding-space identity or rebuild an index. Credential references and raw credentials are never exported, returned through MCP, or included in diagnostics.
+
+## Local Recall conversations
+
+`recall_threads` stores device-local titles, archive state, the chosen chat preset, web enablement, and the selected message head. Web research defaults off. `recall_messages` stores typed content parts, metadata, status, and parent links within a thread; edits and regenerated answers form branches instead of overwriting user messages. Parent links cannot cross threads. Messages are bounded to 512 KiB of content and 16 KiB of metadata; a thread permits 2,000 messages and 16 MiB of message content/metadata. Thread listings use bounded pages.
+
+`recall_runs` records the frozen nonsecret provider/model context, reply identity, ordered checkpoints, and terminal state. User messages are saved before model requests. Streaming checkpoints occur at most once per second and terminal state is saved immediately. Startup marks running records interrupted; loaders never resume or replay their tool actions. Late or post-terminal checkpoints cannot replace a settled reply. Stop a run before deleting its thread.
+
+`recall_source_snapshots` retains bounded verified text/OCR/metadata and managed image references independently of source clips. Clipboard links become unavailable when a source is removed or excluded from assistant access. Snapshots contain at most 32 sources per reply and 8 MiB of text/metadata per thread. Image previews are copied to the owned `recall-attachments` directory, keyed by content hash; reads verify size, ownership, and hash. Deleting a chat cascades its messages, runs, and snapshots, then removes image files with no remaining references. Startup reconciles orphaned image files.
+
+Conversations and their attachments remain outside clipboard and configuration sync. Clearing clipboard history does not clear saved chats; deleting a chat does not delete captured clips. Factory reset removes the owned chat attachments along with the local database. assistant-ui history and thread-list adapters use these native APIs without hosted persistence.
