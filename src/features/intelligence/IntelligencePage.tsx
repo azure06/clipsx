@@ -181,7 +181,9 @@ const indexActionLabel: Record<IndexAction, string> = {
   retry: i18n.t('desktopUi.retry'),
 }
 
-export const IntelligencePage = () => {
+export const IntelligencePage = ({
+  initialSection = 'connections',
+}: { initialSection?: (typeof intelligenceSections)[number]['id'] } = {}) => {
   useTranslation()
 
   const [connection, setConnection] = useState<ModelProviderConnectionStatus | null>(null)
@@ -211,7 +213,7 @@ export const IntelligencePage = () => {
   const [ocrStatus, setOcrStatus] = useState<OcrRuntimeStatus | null>(null)
   const [ocrSaving, setOcrSaving] = useState(false)
   const [activeSection, setActiveSection] =
-    useState<(typeof intelligenceSections)[number]['id']>('models')
+    useState<(typeof intelligenceSections)[number]['id']>(initialSection)
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
 

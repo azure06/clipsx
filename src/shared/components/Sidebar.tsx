@@ -1,4 +1,13 @@
-import { Blocks, CircleAlert, Layers, Loader2, Settings, Sparkles, User } from 'lucide-react'
+import {
+  Blocks,
+  CircleAlert,
+  Layers,
+  MessagesSquare,
+  Loader2,
+  Settings,
+  Sparkles,
+  User,
+} from 'lucide-react'
 import { useAuthStore, useUIStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 
@@ -64,6 +73,19 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'clipsx' && (
+            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveView('recall')}
+          title={t('recallPage.title')}
+          aria-label={t('recallPage.title')}
+          aria-current={activeView === 'recall' ? 'page' : undefined}
+          className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 ${activeView === 'recall' ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'}`}
+        >
+          <MessagesSquare className="h-4 w-4" strokeWidth={1.5} />
+          {activeView === 'recall' && (
             <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
           )}
         </button>

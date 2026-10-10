@@ -61,7 +61,8 @@
     "plugins": "Extensions",
     "settings": "Settings",
     "clipCount_one": "{{count}} clip",
-    "clipCount_other": "{{count}} clips"
+    "clipCount_other": "{{count}} clips",
+    "recall": "Recall"
   },
   "app": {
     "emptyTitle": "Capture Something First",
@@ -461,11 +462,11 @@
     "resetDefaults": "Reset to Default Settings",
     "dangerZone": "Danger Zone",
     "deleteAllData": "Delete All Clipboard Data",
-    "deleteAllConfirm": "Are you sure you want to delete ALL clipboard history? This action cannot be undone!",
+    "deleteAllConfirm": "Are you sure you want to delete ALL clipboard history? This action cannot be undone. Saved Recall conversations are retained.",
     "deleteAllSuccess": "All clipboard data has been deleted.",
     "resetConfirm": "Are you sure you want to reset all settings to defaults?",
     "clearAllData": "Clear All Clipboard Data",
-    "clearAllDescription": "Permanently delete all clipboard history. This action cannot be undone.",
+    "clearAllDescription": "Permanently delete all clipboard history. Saved Recall conversations are retained. This action cannot be undone.",
     "latestVersion": "Latest version: {{version}}",
     "updaterKeyMissing": "This build does not have an updater public key configured yet.",
     "updateInstalled": "The update was installed successfully. Restart the app to apply it.",
@@ -1369,6 +1370,15 @@
       "web_extract": "Read web sources"
     },
     "missingSource": "Source clip unavailable",
-    "moreResults": "More results"
+    "moreResults": "More results",
+    "toolsUnavailable": "Clipboard tool support could not be verified. This answer uses ordinary chat; no clipboard actions were run.",
+    "filters": "Filters",
+    "filtersActive": "Active",
+    "sourceKinds": {
+      "captured": "Captured text",
+      "ocr": "OCR",
+      "note": "Notes"
+    },
+    "threadSettings": "Conversation settings"
   }
 }

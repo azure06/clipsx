@@ -39,5 +39,4 @@ pub struct AppState {
     pub history: HistoryRepository,
     pub extensions: ExtensionService,
     pub workers: super::workers::BackgroundWorkers,
-    pub recall: crate::search::recall::RecallRuntime,
 }

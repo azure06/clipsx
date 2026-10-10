@@ -46,7 +46,7 @@ const textClass =
   'w-full resize-none rounded-lg border border-slate-200 bg-slate-50/60 p-2 text-sm outline-none focus:ring-2 focus:ring-violet-500/50 dark:border-white/10 dark:bg-white/5'
 function MarkdownText({ text }: TextMessagePartProps) {
   return (
-    <div className="prose prose-sm max-w-none break-words dark:prose-invert [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+    <div className="max-w-none break-words text-sm [&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_code]:rounded [&_code]:bg-slate-200/60 [&_code]:px-1 dark:[&_code]:bg-white/10 [&_pre]:rounded-lg [&_pre]:bg-slate-200/60 [&_pre]:p-2 dark:[&_pre]:bg-white/5 [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_pre]:max-w-full [&_pre]:overflow-x-auto">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
@@ -168,6 +168,11 @@ function TranscriptMessage() {
         {typeof custom['model'] === 'string' && (
           <p className="mt-2 text-[10px] text-slate-500">
             {String(custom['provider'])} · {custom['model']}
+          </p>
+        )}
+        {custom['toolsUnavailable'] === true && (
+          <p className="text-xs text-amber-600 dark:text-amber-300">
+            {t('recallPage.toolsUnavailable')}
           </p>
         )}
         {custom['contextOmitted'] === true && (

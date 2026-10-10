@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useTranslation } from 'react-i18next'
 import { Button, Input, Select, Switch, Tabs } from '../../shared/components/ui'
+import { DocumentationLink } from '../../shared/components/DocumentationLink'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import type { ClipDetail, ClipSummary } from '../../shared/types/v2'
 import { useUIStore } from '../../stores/uiStore'
@@ -22,10 +23,17 @@ import { RecallChat } from './RecallChat'
 import { conversationStore, createConversationThreadAdapter } from './conversations'
 
 export interface RecallPageProps {
+  onInitialAskConsumed?: () => void
+  initialAsk?: boolean
   initialQuery?: string
   initialFilters?: ClipFilters
 }
-export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }: RecallPageProps) {
+export function RecallPage({
+  initialQuery = '',
+  initialFilters = emptyFilters,
+  initialAsk = false,
+  onInitialAskConsumed,
+}: RecallPageProps) {
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const [query, setQuery] = useState(initialQuery)
@@ -37,11 +45,15 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
   const [thread, setThread] = useState<RecallThread | null>(null)
   const [threadOffset, setThreadOffset] = useState(0)
   const [attachments, setAttachments] = useState<ClipRevision[]>([])
-  const [ask, setAsk] = useState<{ id: string; text: string } | null>(null)
+  const [ask, setAsk] = useState<{ id: string; text: string } | null>(() =>
+    initialAsk && initialQuery.trim()
+      ? { id: crypto.randomUUID(), text: initialQuery.trim() }
+      : null
+  )
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const [pane, setPane] = useState('find')
+  const [pane, setPane] = useState(initialAsk ? 'chat' : 'find')
   const [title, setTitle] = useState('')
   const [preview, setPreview] = useState<ClipSummary | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -232,6 +244,9 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
         </span>
       </button>
       <div className="mt-1 flex flex-wrap gap-1">
+        <Button size="sm" variant="ghost" onClick={() => openSource(item.clip.id)}>
+          {t('recallPage.preview')}
+        </Button>
         <Button size="sm" variant="ghost" onClick={() => copy(item.clip.id)}>
           {t('recallPage.copy')}
         </Button>
@@ -288,84 +303,100 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
             {t('recallPage.ask')}
           </Button>
         </form>
-        <div className="grid grid-cols-2 gap-2">
-          <Select
-            value={filters.scope ?? 'all'}
-            onChange={scope => setFilters(current => ({ ...current, scope }))}
-            ariaLabel={t('recallPage.scope')}
-            options={[
-              { value: 'all', label: t('recallPage.all') },
-              { value: 'favorites', label: t('recallPage.favorites') },
-              { value: 'pinned', label: t('recallPage.pinned') },
-            ]}
-          />
-          <Select
-            value={filters.sourceAppIds[0] ?? 'all'}
-            onChange={app =>
-              setFilters(current => ({ ...current, sourceAppIds: app === 'all' ? [] : [app] }))
-            }
-            ariaLabel={t('recallPage.application')}
-            options={[
-              { value: 'all', label: t('recallPage.allApplications') },
-              ...(facets?.sourceApplications ?? []).map(app => ({
-                value: app.id,
-                label: app.name,
-              })),
-            ]}
-          />
-          <Select
-            value={filters.tagId ?? 'all'}
-            onChange={tag =>
-              setFilters(current => ({ ...current, tagId: tag === 'all' ? null : tag }))
-            }
-            ariaLabel={t('recallPage.tag')}
-            options={[
-              { value: 'all', label: t('recallPage.allTags') },
-              ...(facets?.tags ?? []).map(tag => ({ value: tag.id, label: tag.name })),
-            ]}
-          />
-          <Select
-            value={filters.representationFamilies[0] ?? 'all'}
-            onChange={family =>
-              setFilters(current => ({
-                ...current,
-                representationFamilies: family === 'all' ? [] : [family],
-              }))
-            }
-            ariaLabel={t('recallPage.format')}
-            options={[
-              { value: 'all', label: t('recallPage.allFormats') },
-              ...(facets?.representationFamilies ?? []).map(family => ({
-                value: family,
-                label: family,
-              })),
-            ]}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input
-            type="datetime-local"
-            label={t('recallPage.after')}
-            value={filters.capturedAfter ? localDate(filters.capturedAfter) : ''}
-            onChange={value =>
-              setFilters(current => ({
-                ...current,
-                capturedAfter: value ? new Date(value).getTime() : null,
-              }))
-            }
-          />
-          <Input
-            type="datetime-local"
-            label={t('recallPage.before')}
-            value={filters.capturedBefore ? localDate(filters.capturedBefore) : ''}
-            onChange={value =>
-              setFilters(current => ({
-                ...current,
-                capturedBefore: value ? new Date(value).getTime() : null,
-              }))
-            }
-          />
-        </div>
+        <details className="text-xs">
+          <summary className="cursor-pointer rounded py-1 text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-300">
+            {t('recallPage.filters')}
+            {(filters.scope && filters.scope !== 'all') ||
+            filters.tagId ||
+            filters.capturedAfter ||
+            filters.capturedBefore ||
+            filters.sourceAppIds.length ||
+            filters.representationFamilies.length ||
+            filters.facetIds.length
+              ? ' · ' + t('recallPage.filtersActive')
+              : ''}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                value={filters.scope ?? 'all'}
+                onChange={scope => setFilters(current => ({ ...current, scope }))}
+                ariaLabel={t('recallPage.scope')}
+                options={[
+                  { value: 'all', label: t('recallPage.all') },
+                  { value: 'favorites', label: t('recallPage.favorites') },
+                  { value: 'pinned', label: t('recallPage.pinned') },
+                ]}
+              />
+              <Select
+                value={filters.sourceAppIds[0] ?? 'all'}
+                onChange={app =>
+                  setFilters(current => ({ ...current, sourceAppIds: app === 'all' ? [] : [app] }))
+                }
+                ariaLabel={t('recallPage.application')}
+                options={[
+                  { value: 'all', label: t('recallPage.allApplications') },
+                  ...(facets?.sourceApplications ?? []).map(app => ({
+                    value: app.id,
+                    label: app.name,
+                  })),
+                ]}
+              />
+              <Select
+                value={filters.tagId ?? 'all'}
+                onChange={tag =>
+                  setFilters(current => ({ ...current, tagId: tag === 'all' ? null : tag }))
+                }
+                ariaLabel={t('recallPage.tag')}
+                options={[
+                  { value: 'all', label: t('recallPage.allTags') },
+                  ...(facets?.tags ?? []).map(tag => ({ value: tag.id, label: tag.name })),
+                ]}
+              />
+              <Select
+                value={filters.representationFamilies[0] ?? 'all'}
+                onChange={family =>
+                  setFilters(current => ({
+                    ...current,
+                    representationFamilies: family === 'all' ? [] : [family],
+                  }))
+                }
+                ariaLabel={t('recallPage.format')}
+                options={[
+                  { value: 'all', label: t('recallPage.allFormats') },
+                  ...(facets?.representationFamilies ?? []).map(family => ({
+                    value: family,
+                    label: family,
+                  })),
+                ]}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="datetime-local"
+                label={t('recallPage.after')}
+                value={filters.capturedAfter ? localDate(filters.capturedAfter) : ''}
+                onChange={value =>
+                  setFilters(current => ({
+                    ...current,
+                    capturedAfter: value ? new Date(value).getTime() : null,
+                  }))
+                }
+              />
+              <Input
+                type="datetime-local"
+                label={t('recallPage.before')}
+                value={filters.capturedBefore ? localDate(filters.capturedBefore) : ''}
+                onChange={value =>
+                  setFilters(current => ({
+                    ...current,
+                    capturedBefore: value ? new Date(value).getTime() : null,
+                  }))
+                }
+              />
+            </div>
+          </div>
+        </details>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="mb-2 flex items-center justify-between text-[10px] text-slate-500">
@@ -407,16 +438,6 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
           <p className="mt-3 text-xs text-amber-600">{t('recallPage.retrievalIncomplete')}</p>
         )}
       </div>
-      {selected && (
-        <div className="shrink-0 border-t border-slate-200 p-3 dark:border-white/10">
-          <p className="mb-2 line-clamp-2 whitespace-pre-wrap break-words text-xs">
-            {selected.snippet || t('recallPage.imageOrFiles')}
-          </p>
-          <Button size="sm" variant="outline" onClick={() => openSource(selected.clip.id)}>
-            {t('recallPage.preview')}
-          </Button>
-        </div>
-      )}
     </section>
   )
   const chat = (
@@ -470,52 +491,57 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
           )}
         </div>
         {thread && (
-          <div className="flex flex-wrap items-end gap-2">
-            <Input
-              aria-label={t('recallPage.threadTitle')}
-              value={title}
-              onChange={setTitle}
-              className="min-w-0 flex-1"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() =>
-                void perform(async () => {
-                  await threadAdapter.rename(thread.id, title)
-                  setThread({ ...thread, title })
-                  await reloadThreads()
-                })
-              }
-            >
-              {t('recallPage.rename')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy || running}
-              onClick={() =>
-                void perform(async () => {
-                  await (thread.archived
-                    ? threadAdapter.unarchive(thread.id)
-                    : threadAdapter.archive(thread.id))
-                  setThread({ ...thread, archived: !thread.archived })
-                  await reloadThreads()
-                })
-              }
-            >
-              {thread.archived ? t('recallPage.unarchive') : t('recallPage.archive')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy || running}
-              onClick={() => setDeleteOpen(true)}
-            >
-              {t('recallPage.deleteThread')}
-            </Button>
-          </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer rounded py-1 text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-300">
+              {t('recallPage.threadSettings')}
+            </summary>
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <Input
+                aria-label={t('recallPage.threadTitle')}
+                value={title}
+                onChange={setTitle}
+                className="min-w-0 flex-1"
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void perform(async () => {
+                    await threadAdapter.rename(thread.id, title)
+                    setThread({ ...thread, title })
+                    await reloadThreads()
+                  })
+                }
+              >
+                {t('recallPage.rename')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || running}
+                onClick={() =>
+                  void perform(async () => {
+                    await (thread.archived
+                      ? threadAdapter.unarchive(thread.id)
+                      : threadAdapter.archive(thread.id))
+                    setThread({ ...thread, archived: !thread.archived })
+                    await reloadThreads()
+                  })
+                }
+              >
+                {thread.archived ? t('recallPage.unarchive') : t('recallPage.archive')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || running}
+                onClick={() => setDeleteOpen(true)}
+              >
+                {t('recallPage.deleteThread')}
+              </Button>
+            </div>
+          </details>
         )}
         <div className="flex flex-wrap items-end gap-3">
           <Select
@@ -580,7 +606,10 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
           filters={search.filters}
           attachments={attachments}
           ask={ask}
-          onAskConsumed={() => setAsk(null)}
+          onAskConsumed={() => {
+            setAsk(null)
+            if (initialAsk) onInitialAskConsumed?.()
+          }}
           onRunning={setRunning}
           onComplete={() => {
             void reloadThreads().catch(() => undefined)
@@ -595,7 +624,10 @@ export function RecallPage({ initialQuery = '', initialFilters = emptyFilters }:
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-white/10">
-        <h1 className="text-sm font-semibold">{t('recallPage.title')}</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-sm font-semibold">{t('recallPage.title')}</h1>
+          <DocumentationLink guide="recall" label={t('documentation.recallGuide')} />
+        </div>
         <p className="text-[10px] text-slate-500">{t('recallPage.subtitle')}</p>
       </header>
       {error && (

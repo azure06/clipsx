@@ -34,7 +34,7 @@ export function SavedSource({
     <details className="my-2 rounded-lg border border-slate-200 p-2 text-xs dark:border-white/10">
       <summary className="cursor-pointer focus-visible:outline-violet-500">
         {t('recallPage.sourcePreview')} · {source.clipId.slice(0, 8)}
-        {kind ? ' · ' + kind : ''}
+        {kind ? ' · ' + t(`recallPage.sourceKinds.${kind}`, { defaultValue: kind }) : ''}
       </summary>
       {source.available ? (
         <Button size="sm" variant="ghost" onClick={() => open(source.clipId)}>

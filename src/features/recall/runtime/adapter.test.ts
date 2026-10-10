@@ -7,6 +7,7 @@ import { createRecallAdapter } from './adapter'
 import { fixtureBridge } from './fixtures/bridge'
 import { createRustFetch } from './transport'
 import { fitContext, fitStepContext } from './context'
+import streams from './fixtures/streams.json'
 
 function question(text: string): ThreadMessage {
   return {
@@ -77,6 +78,55 @@ describe('Native Recall agent', () => {
       expect(checkpoint.mock.calls.length).toBeLessThanOrEqual(2)
     }
   )
+  it('retries a rejected unknown-capability probe as ordinary chat without tools or actions', async () => {
+    const context = fixtureContext('ollama')
+    context.preset.capabilities.tools = null
+    context.tools.push({
+      name: 'get_clipboard_status',
+      description: 'Status',
+      inputSchemaJson: JSON.stringify({ type: 'object', properties: {} }),
+    })
+    const native = {
+      begin: vi.fn<NativeAgentBridge['begin']>(request =>
+        Promise.resolve({ ...context, runId: request.runId })
+      ),
+      finish: vi.fn(() => Promise.resolve()),
+      tool: vi.fn(),
+      verifyTools: vi.fn(),
+    }
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error('Recall transport: provider_rejected'))
+      .mockResolvedValueOnce(
+        new Response(
+          streams.ollama.text.map(record => 'data: ' + JSON.stringify(record) + '\n\n').join(''),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      )
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge: native,
+      transport: () => transport,
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected stream')
+    let last: ChatModelRunResult | undefined
+    for await (const update of updates) last = update
+    expect(last?.status).toEqual({ type: 'complete', reason: 'stop' })
+    expect(last?.metadata?.custom).toMatchObject({ toolsAvailable: false, toolsUnavailable: true })
+    expect(native.tool).not.toHaveBeenCalled()
+    expect(native.verifyTools).not.toHaveBeenCalled()
+    expect(transport).toHaveBeenCalledTimes(2)
+    const encoded = transport.mock.calls[1]?.[1]?.body
+    if (typeof encoded !== 'string') throw new Error('Expected JSON request')
+    const body = JSON.parse(encoded) as { tools?: unknown[] }
+    expect(body.tools ?? []).toEqual([])
+  })
   it('stops before contacting a provider when already cancelled', async () => {
     const native = { begin: vi.fn(), finish: vi.fn(), tool: vi.fn(), verifyTools: vi.fn() }
     const controller = new AbortController()

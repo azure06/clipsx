@@ -57,7 +57,7 @@ export const Tabs = ({
             key={tab.id}
             value={tab.id}
             disabled={tab.disabled}
-            className={`group flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all duration-200 border-b-2 relative overflow-hidden cursor-pointer data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 data-[state=inactive]:border-transparent data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 hover:scale-105 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`group outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all duration-200 border-b-2 relative overflow-hidden cursor-pointer data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 data-[state=inactive]:border-transparent data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 hover:scale-105 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {tab.icon && (
               <span className="transition-transform duration-200 group-hover:scale-110">

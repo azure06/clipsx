@@ -190,39 +190,7 @@ actual active bytes and estimates replacement space from the existing index.
 
 ## Recall
 
-Recall starts only when the user submits a question. It searches eligible
-history independently of visible rows or pagination.
-While a Recall request runs, the search bar shows elapsed seconds from that
-request's start; the timer stops on its terminal event and resets for a new turn.
-
-```text
-Question + fixed search scope
-  -> up to 100 candidates
-  -> deduplicate and exclude core.security.secret clips
-  -> select matching passages; keyword-centred fallback without embeddings
-  -> snapshot citations/fingerprints and recheck eligibility
-  -> fit provider context budget with room for answer
-  -> stream stages, evidence, text, and one terminal event
-```
-
-| Bound                    | Maximum                                          |
-| ------------------------ | ------------------------------------------------ |
-| Question                 | 2 KiB                                            |
-| Evidence                 | 10 passages; 2 KiB each; 20 KiB total            |
-| Answer                   | 32 KiB; provider request also caps output tokens |
-| Temporary session        | 10 completed turns / 1 MiB retention budget      |
-| Inactivity expiry        | 30 minutes                                       |
-| Active answer generation | One across the app's Recall runtime              |
-
-Secret-faceted clips cannot be included by override. Clipboard text is delimited
-as untrusted prompt data; answers are labelled generated and fallible.
-Host state owns citations, turns, cancellation, and ordered events. Adapters
-receive prepared bounded messages and declare streaming, cancellation, execution
-location, and context-budget capabilities.
-
-Ollama is the only enabled generation adapter in the current Recall interface. Prompts and answers are not logged,
-persistently cached, or stored as canonical metadata. Hosted adapters require an
-explicit authorization and data-handling policy.
+Recall is a separate, lazily loaded workspace. History remains the startup page. History's Ask action and shortcut open Recall with the current query and filters and explicitly submit one turn; reopening the workspace does not replay that submission. Search input alone never starts generation. Saved conversations, source snapshots, and interrupted-run recovery follow the [data model](MODELS.md).
 
 ### Native SDK transport
 
@@ -230,7 +198,7 @@ The separate Recall runtime modules use pinned AI SDK provider adapters and an
 assistant-ui custom model adapter in the existing webview. OpenAI uses Responses;
 Anthropic and Gemini use their native adapters; OpenRouter uses its maintained
 adapter; Ollama uses OpenAI-compatible chat completions. These modules are not
-loaded by History startup and do not enable hosted generation in the current UI.
+loaded by History startup. The Recall workspace uses the selected named chat preset.
 
 Rust binds a request to a host-resolved run and saved provider destination. The
 renderer receives a transport placeholder rather than a credential. Rust checks
@@ -258,8 +226,8 @@ verified separately with configured credentials.
 
 The Rust `ClipboardService` owns version 1 assistant read contracts. Its Tauri
 adapters expose status, filters, keyword/hybrid search, text pages, and verified
-image previews. These contracts are independent of the current temporary Recall
-answer UI. Assistant access excludes `core.security.secret` clips; ordinary
+image previews. Both the Recall workspace and external MCP clients use these
+contracts. Assistant access excludes `core.security.secret` clips; ordinary
 History keeps its existing access policy. Eligibility is checked again when a
 clip or image is read, including direct access by ID.
 
@@ -323,7 +291,7 @@ recovery on each advertised platform.
 | --------------------------------- | ------------------------------------------------------------------------ |
 | Keyword search                    | Always-available FTS5; exact words/prefixes                              |
 | Meaning Search                    | Optional Ollama or explicitly enabled hosted text embeddings                                         |
-| Recall                            | Explicit question answered by a configured local Ollama generation model |
+| Recall                            | Explicit chat with a named provider preset and shared clipboard tools |
 | OCR                               | Native platform providers above                                          |
 | Hosted text embeddings            | Native OpenAI, OpenRouter, and Gemini adapters; credentials and opt-in required                                                       |
 | Ollama network                    | Loopback endpoints only                                                  |
@@ -356,15 +324,14 @@ started, including note saves, may finish. Status events are coalesced to one
 start per 500 ms, one active refresh, and one trailing refresh; unmounted
 consumers ignore late responses.
 
-AI configurations owns named provider connections, model presets, and independent chat, embedding, and web selections. The legacy Models controls retain the shared Ollama connection and Rust generation assignments. Bounded model inspection derives `embedding` /
+AI configurations is the default Intelligence section and owns named provider connections, model presets, and independent chat, embedding, and web selections. The legacy Models controls retain the shared Ollama connection and Rust generation assignments. Bounded model inspection derives `embedding` /
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.
 
 Contextual help uses the current app language and the existing external-browser
 command. Models links to the shared Local AI guide and its embedding/generation
-sections; Recall links to its task guide. An unavailable Recall action still
-opens Intelligence, with the visible label "Set up Recall". Browser failures
+sections; Recall links to its task guide. Recall remains available for retrieval without a chat preset and offers configuration guidance for chat. Browser failures
 offer a localized manual URL and do not alter provider configuration or clips.
 
 ## Startup measurement
@@ -385,7 +352,7 @@ Configuration and protocol fixtures do not certify a live provider or model. See
 
 The lazy TypeScript runtime uses one AI SDK tool loop, rendered through an assistant-ui custom adapter. OpenAI Responses, Anthropic, Gemini, OpenRouter, and Ollama chat use the authenticated Rust streaming bridge. Rust freezes the selected connection, preset, filters, attachments, and web setting per run; credentials remain in protected storage. One native run is admitted at a time.
 
-Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. Models configured without tool support provide ordinary chat. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
+Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
 
 Provider-neutral conversation context preserves the latest question and labels clipboard evidence. Every model step checks a conservative context budget, omitting older history where possible and stopping rather than sending oversized tool evidence. Only verified managed image bytes become labelled inline image context; renderer messages never authorize downloading remote images. Length-limited and filtered responses remain incomplete.
 

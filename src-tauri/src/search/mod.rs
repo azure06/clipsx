@@ -1,5 +1,4 @@
 //! Search projection, FTS queries, and hybrid ranking.
-pub mod recall;
 pub mod semantic;
 use crate::history::{now_ms, ClipSummary, HistoryRepository};
 use anyhow::{Context, Result};

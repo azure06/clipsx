@@ -61,7 +61,8 @@
     "plugins": "拡張機能",
     "settings": "設定",
     "clipCount_one": "{{count}}件のクリップ",
-    "clipCount_other": "{{count}}件のクリップ"
+    "clipCount_other": "{{count}}件のクリップ",
+    "recall": "リコール"
   },
   "app": {
     "emptyTitle": "まず何かをコピーしてください",
@@ -461,11 +462,11 @@
     "resetDefaults": "既定の設定にリセット",
     "dangerZone": "危険な操作",
     "deleteAllData": "クリップボードデータをすべて削除",
-    "deleteAllConfirm": "クリップボード履歴をすべて削除しますか？この操作は元に戻せません。",
+    "deleteAllConfirm": "クリップボード履歴をすべて削除しますか？この操作は元に戻せません。保存したRecallの会話は残ります。",
     "deleteAllSuccess": "クリップボードデータをすべて削除しました。",
     "resetConfirm": "すべての設定を既定値にリセットしますか？",
     "clearAllData": "クリップボードデータをすべて消去",
-    "clearAllDescription": "クリップボード履歴を完全に削除します。この操作は元に戻せません。",
+    "clearAllDescription": "クリップボード履歴を完全に削除します。保存したRecallの会話は残ります。この操作は元に戻せません。",
     "latestVersion": "最新バージョン：{{version}}",
     "updaterKeyMissing": "このビルドにはアップデーターの公開鍵がまだ設定されていません。",
     "updateInstalled": "アップデートをインストールしました。アプリを再起動して適用してください。",
@@ -1369,6 +1370,15 @@
       "web_extract": "ウェブ資料を読む"
     },
     "missingSource": "参照クリップは利用できません",
-    "moreResults": "さらに表示"
+    "moreResults": "さらに表示",
+    "toolsUnavailable": "クリップボードツールの対応を確認できませんでした。この回答は通常のチャットです。クリップボードの操作は実行されていません。",
+    "filters": "絞り込み",
+    "filtersActive": "適用中",
+    "sourceKinds": {
+      "captured": "取得したテキスト",
+      "ocr": "OCR",
+      "note": "メモ"
+    },
+    "threadSettings": "会話の設定"
   }
 }

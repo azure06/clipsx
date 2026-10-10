@@ -101,6 +101,25 @@ vi.mock('../intelligence/IntelligencePage', () => ({
   IntelligencePage: () => <div data-testid="intelligence-view" />,
 }))
 
+vi.mock('../recall/RecallPage', () => ({
+  RecallPage: (props: {
+    initialQuery?: string
+    initialFilters?: { scope?: string | null; tagId?: string | null }
+    initialAsk?: boolean
+    onInitialAskConsumed?: () => void
+  }) => (
+    <div
+      data-testid="recall-view"
+      data-query={props.initialQuery}
+      data-scope={props.initialFilters?.scope}
+      data-tag={props.initialFilters?.tagId}
+      data-submit={String(props.initialAsk)}
+    >
+      <button onClick={props.onInitialAskConsumed}>Consume request</button>
+    </div>
+  ),
+}))
+
 vi.mock('./UpdateBanner', () => ({
   UpdateBanner: () => null,
 }))
@@ -362,6 +381,23 @@ describe('AppLayout search focus ownership', () => {
     expect(screen.getByTestId('sidebar')).toBeInTheDocument()
     act(() => useUIStore.getState().setActiveView('clipsx'))
     expect(screen.getByTestId('clipboard-history')).toBeInTheDocument()
+  })
+
+  it('opens Recall with the current History scope and consumes the Ask request once', async () => {
+    useUIStore.setState({ activeView: 'clipsx', searchQuery: 'launch notes' })
+    useClipboardStore.setState({ activeTab: 'favorites', tagFilter: 'project-tag' })
+    render(<AppLayout />)
+    fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true })
+    const page = await screen.findByTestId('recall-view')
+    expect(page).toHaveAttribute('data-query', 'launch notes')
+    expect(page).toHaveAttribute('data-scope', 'favorites')
+    expect(page).toHaveAttribute('data-tag', 'project-tag')
+    expect(page).toHaveAttribute('data-submit', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Consume request' }))
+    act(() => useUIStore.getState().setActiveView('clipsx'))
+    act(() => useUIStore.getState().setActiveView('recall'))
+    expect(await screen.findByTestId('recall-view')).toHaveAttribute('data-submit', 'false')
+    expect(invokeMock.mock.calls.some(([command]) => command === 'start_recall_turn')).toBe(false)
   })
 
   it('does not install a duplicate clip invalidation controller in the layout', () => {
