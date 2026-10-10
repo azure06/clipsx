@@ -392,3 +392,9 @@ Provider-neutral conversation context preserves the latest question and labels c
 Web access defaults off. Explicitly enabled turns use verified native provider search capabilities or the selected Tavily connection. Missing web configuration returns setup guidance without changing the chat provider. Tavily search and extraction have bounded calls and content; web citations remain separate from clipboard sources. Retrieved content is evidence, not instructions.
 
 Runtime fixtures verify provider protocol translation, streaming, tool execution, and cancellation; they do not establish live model capability or platform availability.
+
+## Recall workspace interaction
+
+The Recall workspace separates Find from Chat. Find schedules keyword retrieval after 75 ms and semantic enrichment after 250 ms of inactivity, pauses during IME composition, and ignores superseded responses. Keyword rows retain their order; semantic-only results appear separately. Enter requests retrieval immediately, while Ask and the chat composer submit explicit model turns. Search and copying do not require a chat preset. Dismissal excludes a clip only within the current query and filter context.
+
+The paired panes become persistent tabs in narrow windows. Selection is keyed by clip ID; enrichment does not move focus. Search results support keyboard navigation, explicit copy, source preview, and attachments visible before submission. Chat displays tool activity, model attribution, guarded Undo, and saved source evidence. Missing original clips are labelled unavailable without removing retained text or managed image snapshots. Image snapshots load only on an explicit preview request. Chat deletion uses an explicit confirmation explaining its independent retention.

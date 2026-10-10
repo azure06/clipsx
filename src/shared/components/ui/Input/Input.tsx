@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import type { ReactNode, ComponentPropsWithoutRef } from 'react'
 
-type InputType = 'text' | 'number' | 'email' | 'password'
+type InputType = 'text' | 'number' | 'email' | 'password' | 'datetime-local'
 
 export type InputProps = Omit<
   ComponentPropsWithoutRef<'input'>,

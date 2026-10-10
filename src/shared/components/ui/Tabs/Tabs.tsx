@@ -17,6 +17,11 @@ export type TabsProps = {
   readonly onTabChange?: (tabId: string) => void
   readonly orientation?: TabsOrientation
   readonly className?: string
+  readonly activeTab?: string
+  readonly keepMounted?: boolean
+  readonly listClassName?: string
+  readonly panelsClassName?: string
+  readonly panelClassName?: string
 }
 
 export const Tabs = ({
@@ -25,18 +30,24 @@ export const Tabs = ({
   onTabChange,
   orientation = 'horizontal',
   className = '',
+  activeTab,
+  keepMounted = false,
+  listClassName = '',
+  panelsClassName = '',
+  panelClassName = '',
 }: TabsProps) => {
   const isVertical = orientation === 'vertical'
 
   return (
     <TabsPrimitive.Root
       defaultValue={defaultTab || tabs[0]?.id}
+      value={activeTab}
       onValueChange={onTabChange}
       orientation={orientation}
       className={`flex ${isVertical ? 'flex-row gap-4' : 'flex-col'} ${className}`}
     >
       <TabsPrimitive.List
-        className={`flex ${isVertical ? 'flex-col' : 'flex-row gap-0.5'} ${
+        className={`flex ${listClassName} ${isVertical ? 'flex-col' : 'flex-row gap-0.5'} ${
           !isVertical &&
           'border-b border-gray-200 dark:border-gray-800 bg-slate-100/60 dark:bg-slate-900/30 px-3'
         }`}
@@ -54,16 +65,22 @@ export const Tabs = ({
               </span>
             )}
             {tab.label}
-            <TabsPrimitive.Content value={tab.id} asChild>
-              <span className="data-[state=active]:absolute data-[state=active]:inset-x-0 data-[state=active]:bottom-0 data-[state=active]:h-0.5 data-[state=active]:bg-linear-to-r data-[state=active]:from-blue-500 data-[state=active]:to-violet-500 data-[state=active]:animate-pulse" />
-            </TabsPrimitive.Content>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-linear-to-r from-blue-500 to-violet-500 opacity-0 group-data-[state=active]:opacity-100"
+            />
           </TabsPrimitive.Trigger>
         ))}
       </TabsPrimitive.List>
 
-      <div className="flex-1">
+      <div className={`flex-1 ${panelsClassName}`}>
         {tabs.map(tab => (
-          <TabsPrimitive.Content key={tab.id} value={tab.id} className="focus:outline-none">
+          <TabsPrimitive.Content
+            key={tab.id}
+            value={tab.id}
+            forceMount={keepMounted ? true : undefined}
+            className={`focus:outline-none ${keepMounted ? 'data-[state=inactive]:hidden' : ''} ${panelClassName}`}
+          >
             {tab.content}
           </TabsPrimitive.Content>
         ))}
