@@ -327,6 +327,97 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
 }
 
 #[tokio::test]
+#[ignore = "Requires CLIPSX_CODEX_BINARY pointing to an installed Codex CLI; starts no model turn"]
+async fn codex_client_workflows() {
+    let codex = std::env::var("CLIPSX_CODEX_BINARY").expect("Set CLIPSX_CODEX_BINARY");
+    let (root, service) = repository().await;
+    let public = capture(&service, "external fixture evidence", "fixture", 100).await;
+    let secret = capture(&service, "external fixture secret", "fixture", 200).await;
+    make_secret(&service, &secret).await;
+    let mut image = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut image, image::ImageFormat::Png)
+        .unwrap();
+    let (image_id, _) = service
+        .history
+        .capture(
+            crate::history::CapturedSnapshot {
+                token: 300,
+                source_app_id: None,
+                source_app_name: None,
+                format_observations: vec![],
+                representations: vec![crate::history::CapturedRepresentation {
+                    format_key: "image/png".into(),
+                    canonical_mime_type: Some("image/png".into()),
+                    native_type: None,
+                    platform: std::env::consts::OS.into(),
+                    capture_priority: 0,
+                    payload: crate::history::CapturedPayload::Binary(image.into_inner()),
+                }],
+            },
+            &crate::history::CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    let image_representation = service.metadata(&image_id).await.unwrap().representations[0]
+        .id
+        .clone();
+    sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES('assistant.mcp','{\"enabled\":true,\"port\":0}',0)")
+        .execute(&service.history.pool).await.unwrap();
+    let runtime = McpRuntime::default();
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    let read = issue(&service.history, "Codex read fixture", false, None)
+        .await
+        .unwrap();
+    let write = issue(&service.history, "Codex write fixture", true, None)
+        .await
+        .unwrap();
+    let input = json!({
+        "root":root.path(), "codex":codex,
+        "endpoint":runtime.status(&service.history).await.unwrap().endpoint,
+        "readToken":read.token, "writeToken":write.token,
+        "clipId":public, "secretId":secret, "imageId":image_id, "imageRepresentationId":image_representation,
+    });
+    let output = tokio::task::spawn_blocking(move || {
+        use std::{
+            io::Write,
+            process::{Command, Stdio},
+        };
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../scripts/verify-codex-mcp.mjs");
+        let mut child = Command::new("node")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.to_string().as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+    drop(runtime);
+    assert!(
+        output.status.success(),
+        "Codex fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], true);
+    assert_eq!(report["modelTurns"], 0);
+    println!("{report}");
+}
+
+#[tokio::test]
 async fn port_failure_is_isolated_and_defaults_are_disabled() {
     let (_temp, service) = repository().await;
     let runtime = McpRuntime::default();
