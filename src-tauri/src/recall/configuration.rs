@@ -12,6 +12,45 @@ use anyhow::{bail, Context, Result};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
+// Serialize imports and recovery so an older activation cannot overtake a newer save.
+static EMBEDDING_ACTIVATION_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum EmbeddingActivation {
+    Enable {
+        config: providers::TextEmbeddingProviderConfig,
+        space: Box<TextEmbeddingSpace>,
+    },
+    Disable,
+}
+
+/// Replay only a previously validated, nonsecret activation; no provider probe is needed.
+pub async fn reconcile_embedding_activation(repo: &HistoryRepository) -> Result<bool> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    reconcile_embedding_activation_locked(repo).await
+}
+
+async fn reconcile_embedding_activation_locked(repo: &HistoryRepository) -> Result<bool> {
+    let intent: Option<String> =
+        sqlx::query_scalar("SELECT intent_json FROM ai_embedding_activation WHERE singleton=1")
+            .fetch_optional(&repo.pool)
+            .await?;
+    let Some(intent) = intent else {
+        return Ok(false);
+    };
+    match serde_json::from_str::<EmbeddingActivation>(&intent)? {
+        EmbeddingActivation::Enable { config, space } => {
+            crate::search::semantic::configure_descriptor(repo, config, *space).await?;
+        }
+        EmbeddingActivation::Disable => crate::search::semantic::disable(repo).await?,
+    }
+    sqlx::query("DELETE FROM ai_embedding_activation WHERE singleton=1 AND intent_json=?")
+        .bind(intent)
+        .execute(&repo.pool)
+        .await?;
+    Ok(true)
+}
+
 pub fn unknown_capabilities() -> AiCapabilities {
     AiCapabilities {
         tools: None,
@@ -434,6 +473,7 @@ pub async fn import(
     repo: &HistoryRepository,
     incoming: AiConfiguration,
 ) -> Result<AiConfigurationState> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
     if serde_json::to_vec(&incoming)?.len() > 1024 * 1024 {
         bail!("configuration_too_large");
     }
@@ -520,12 +560,22 @@ pub async fn import(
         bail!("configuration_changed");
     }
     persist(&mut tx, &merged).await?;
-    tx.commit().await?;
-    if let Some((config, space)) = validated {
-        crate::search::semantic::configure_descriptor(repo, config, space).await?;
-    } else if changed && merged.selections.active_embedding.is_none() {
-        crate::search::semantic::disable(repo).await?;
+    if changed {
+        let intent = match validated {
+            Some((config, space)) => EmbeddingActivation::Enable {
+                config,
+                space: Box::new(space),
+            },
+            None => EmbeddingActivation::Disable,
+        };
+        sqlx::query("INSERT INTO ai_embedding_activation(singleton,intent_json,updated_at) VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET intent_json=excluded.intent_json,updated_at=excluded.updated_at")
+            .bind(serde_json::to_string(&intent)?)
+            .bind(now_ms())
+            .execute(&mut *tx)
+            .await?;
     }
+    tx.commit().await?;
+    reconcile_embedding_activation_locked(repo).await?;
     state(repo).await
 }
 pub async fn connection(repo: &HistoryRepository, id: &str) -> Result<AiConnection> {

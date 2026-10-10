@@ -103,6 +103,21 @@ impl SingleWorker {
                     }
                 }
                 let cleanup_result = embeddings::process_cleanup(&history).await;
+                match crate::recall::configuration::reconcile_embedding_activation(&history).await {
+                    Ok(true) => {
+                        validated = false;
+                        let _ = app.emit("embedding-space-changed", ());
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        crate::diagnostic!("ai.embedding.activation.failed");
+                        let _ = app.emit("embedding-index-failed", "embedding_activation_pending");
+                        let delay = delays[retry.min(delays.len() - 1)];
+                        retry = (retry + 1).min(delays.len() - 1);
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                }
                 let cleanup_count = match &cleanup_result {
                     Ok(count) => {
                         cleanup_reported = false;
@@ -211,7 +226,12 @@ impl SingleWorker {
                     .fetch_one(&history.pool)
                     .await
                     .unwrap_or(false);
-            if indexing_pending || cleanup_pending || intents_pending {
+            let activation_pending: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ai_embedding_activation)")
+                    .fetch_one(&history.pool)
+                    .await
+                    .unwrap_or(false);
+            if indexing_pending || cleanup_pending || intents_pending || activation_pending {
                 guard.wake_text_index(app.clone(), history.clone());
             }
             let _ = app.emit(

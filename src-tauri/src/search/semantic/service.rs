@@ -159,6 +159,14 @@ pub async fn configure_descriptor(
         && building_space.as_ref().map(|value| value.space_id.as_str()) != Some(space_id.as_str())
     {
         create_building_generation(repo, &space_id).await?;
+    } else if let Some(building) = building_space.filter(|value| value.space_id == space_id) {
+        // A prior activation may have stopped after creating the generation but
+        // before enqueueing every clip. Preserve completed work while filling gaps.
+        sqlx::query("INSERT INTO search_index_jobs(id,generation_id,clip_id,status,requested_at) SELECT lower(hex(randomblob(16))),?,id,'pending',? FROM clip_items WHERE lifecycle_state='ready' ON CONFLICT(generation_id,clip_id) DO NOTHING")
+            .bind(&building.id)
+            .bind(now_ms())
+            .execute(&repo.pool)
+            .await?;
     }
     status(repo).await
 }

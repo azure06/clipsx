@@ -49,9 +49,9 @@ pub async fn ai_configuration_import(
     service(&webview, &state)?;
     let result = super::configuration::import(&state.history, configuration)
         .await
-        .map_err(public_failure)?;
+        .map_err(public_failure);
     crate::app::workers::wake_text_index(&app, state.history.clone());
-    Ok(result)
+    result
 }
 #[tauri::command]
 pub async fn ai_set_credential(
