@@ -76,13 +76,19 @@ export function createClipboardTools(
                 return result
               } catch (error) {
                 abortSignal?.throwIfAborted()
+                const code =
+                  isRecord(error) && typeof error['code'] === 'string'
+                    ? error['code']
+                    : 'tool_failed'
                 const result = {
-                  error:
-                    isRecord(error) && typeof error['code'] === 'string'
-                      ? error['code']
-                      : 'tool_failed',
+                  error: code,
                   message:
-                    'Operation failed. Do not claim it succeeded; inspect current state before retrying a mutation with the same request ID.',
+                    code === 'invalid_parameters'
+                      ? 'Arguments were rejected before commit. Match the required fields and enum values in the tool schema.' +
+                        (definition.name === 'create_clip'
+                          ? ' Include the complete text and format="plain_text" or "markdown".'
+                          : '')
+                      : 'Operation failed. Do not claim it succeeded; inspect current state before retrying a mutation with the same request ID.',
                 }
                 state.onResult?.(definition.name, result)
                 return result

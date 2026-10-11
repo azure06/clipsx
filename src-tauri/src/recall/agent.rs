@@ -235,7 +235,8 @@ impl AgentRuntime {
             return Err(FailureCode::InputLimit.failure().into());
         }
         let run = self.get(id).await?;
-        let value: Value = serde_json::from_str(arguments)?;
+        let value: Value = serde_json::from_str(arguments)
+            .map_err(|_| FailureCode::InvalidParameters.failure())?;
         let write = matches!(
             name,
             "create_clip" | "organize_clips" | "undo_clipboard_action"
@@ -255,17 +256,13 @@ impl AgentRuntime {
             });
             // Once a mutation starts, let its transaction finish and publish the committed outcome.
             let result = match name {
-                "create_clip" => {
-                    service
-                        .create(&actor, serde_json::from_value(value)?)
-                        .await?
-                }
+                "create_clip" => service.create(&actor, parse_tool_arguments(value)?).await?,
                 "organize_clips" => {
                     service
-                        .organize(&actor, serde_json::from_value(value)?)
+                        .organize(&actor, parse_tool_arguments(value)?)
                         .await?
                 }
-                _ => service.undo(&actor, serde_json::from_value(value)?).await?,
+                _ => service.undo(&actor, parse_tool_arguments(value)?).await?,
             };
             if let Some(app) = app {
                 super::ipc::action_committed(app, history, &result);
@@ -277,20 +274,20 @@ impl AgentRuntime {
         let operation = async {
             match name {
                 "get_clipboard_status" => {
-                    let _: super::mcp::Empty = serde_json::from_value(value)?;
+                    let _: super::mcp::Empty = parse_tool_arguments(value)?;
                     let result = service.status().await?;
                     run.status_read.store(true, Ordering::Release);
                     Ok(serde_json::to_value(result)?)
                 }
                 "list_clipboard_filters" => {
-                    let _: super::mcp::Empty = serde_json::from_value(value)?;
+                    let _: super::mcp::Empty = parse_tool_arguments(value)?;
                     Ok(serde_json::to_value(service.filters().await?)?)
                 }
                 "search_clips" => {
                     if run.searches.fetch_add(1, Ordering::AcqRel) >= 3 {
                         bail!("search_round_limit");
                     }
-                    let mut request: ClipSearchRequest = serde_json::from_value(value)?;
+                    let mut request: ClipSearchRequest = parse_tool_arguments(value)?;
                     request.filters = Some(constrain_filters(
                         request.filters.unwrap_or_default(),
                         &run.context.filters,
@@ -298,11 +295,11 @@ impl AgentRuntime {
                     Ok(serde_json::to_value(service.search(request).await?)?)
                 }
                 "read_clip" => Ok(serde_json::to_value(
-                    super::conversations::record_read(history, id, serde_json::from_value(value)?)
+                    super::conversations::record_read(history, id, parse_tool_arguments(value)?)
                         .await?,
                 )?),
                 "read_clip_image" => {
-                    let image = service.image(serde_json::from_value(value)?).await?;
+                    let image = service.image(parse_tool_arguments(value)?).await?;
                     super::conversations::record_image(history, id, &image).await?;
                     Ok(serde_json::to_value(image)?)
                 }
@@ -377,13 +374,13 @@ async fn web_tool(run: &Run, name: &str, value: Value) -> Result<Value> {
     }
     let base = configuration::validate_connection(connection)?;
     let body = if name == "web_search" {
-        let request: WebSearchRequest = serde_json::from_value(value)?;
+        let request: WebSearchRequest = parse_tool_arguments(value)?;
         if request.query.is_empty() || request.query.len() > 8192 {
             bail!("input_limit");
         }
         json!({"query":request.query,"max_results":5,"search_depth":"basic","include_raw_content":false,"include_images":false})
     } else {
-        let request: WebExtractRequest = serde_json::from_value(value)?;
+        let request: WebExtractRequest = parse_tool_arguments(value)?;
         if request.urls.is_empty()
             || request.urls.len() > 3
             || request.query.is_empty()

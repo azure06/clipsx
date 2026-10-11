@@ -233,7 +233,9 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
                     content[index] = {
                       ...call,
                       result: part.type === 'tool-result' ? part.output : { error: 'tool_failed' },
-                      isError: part.type === 'tool-error',
+                      isError:
+                        part.type === 'tool-error' ||
+                        (isRecord(part.output) && typeof part.output['error'] === 'string'),
                     }
                 }
               }

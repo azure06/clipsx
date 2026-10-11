@@ -1,4 +1,5 @@
 //! Local MCP transport. Every authenticated grant owns an isolated session manager.
+use super::contracts::parse_tool_arguments as parse;
 use super::{
     contracts::*,
     mutations::Actor,
@@ -86,7 +87,14 @@ impl ClipboardMcp {
         let output = match name {
             "get_clipboard_status" => {
                 parse::<Empty>(arguments)?;
-                structured(self.service.status().await?)?
+                let mut status = self.service.status().await?;
+                let allowed = tools(self.can_write);
+                status.tools.retain(|name| {
+                    allowed
+                        .iter()
+                        .any(|tool| tool.name.as_ref() == name.as_str())
+                });
+                structured(status)?
             }
             "list_clipboard_filters" => {
                 parse::<Empty>(arguments)?;
@@ -176,9 +184,6 @@ impl ServerHandler for ClipboardMcp {
         .into())
     }
 }
-fn parse<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {
-    serde_json::from_value(value).map_err(|_| FailureCode::InvalidParameters.failure().into())
-}
 fn structured<T: Serialize>(value: T) -> Result<CallToolResult> {
     Ok(CallToolResult::structured(serde_json::to_value(value)?))
 }
@@ -229,7 +234,7 @@ pub fn tools(write: bool) -> Vec<Tool> {
     }
     if write {
         tools.extend([
-        definition::<CreateClipRequest,ClipboardActionResult>("create_clip","Save new plain text or Markdown with verified source fingerprints and optional client-supplied model attribution. Preserve originals; do not change OS clipboard. Stable request ID required; retries retained 30 days.",false,false),
+        definition::<CreateClipRequest,ClipboardActionResult>("create_clip","Save a new clip. Required text contains the complete content; format must be plain_text or markdown. Optional sources use representation IDs and representation fingerprints from read_clip. Preserve originals; do not change OS clipboard. Stable request ID required; retries retained 30 days. External model attribution is client-supplied.",false,false),
         definition::<OrganizeClipsRequest,ClipboardActionResult>("organize_clips","Atomically change notes, tags, favorites and pins for up to 50 explicit IDs with current revisions. Stable request ID required. Empty note clears it; unspecified fields remain unchanged.",false,true),
         definition::<UndoClipboardRequest,ClipboardActionResult>("undo_clipboard_action","Undo this client's action within 30 days, only when affected revisions still match. Restores organization or deletes an unchanged generated clip. Refuses later edits.",false,true),
     ]);

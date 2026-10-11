@@ -48,7 +48,12 @@ for (const phase of ['first', 'restart']) {
     report = {
       passed: false,
       phase,
-      failure: exitCode === 2 ? 'native_watchdog_timeout' : 'native_probe_no_report',
+      failure:
+        exitCode === 3
+          ? 'native_probe_feature_required'
+          : exitCode === 2
+            ? 'native_watchdog_timeout'
+            : 'native_probe_no_report',
     }
   }
   console.log(JSON.stringify({ ...report, reportDirectory: directory }, null, 2))

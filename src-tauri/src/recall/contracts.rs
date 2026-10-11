@@ -3,6 +3,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+/// Both assistant transports reject malformed arguments without exposing their contents.
+pub(super) fn parse_tool_arguments<T: serde::de::DeserializeOwned>(
+    value: serde_json::Value,
+) -> anyhow::Result<T> {
+    serde_json::from_value(value).map_err(|_| {
+        crate::failure::FailureCode::InvalidParameters
+            .failure()
+            .into()
+    })
+}
+
 macro_rules! dto {
     ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
         #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]

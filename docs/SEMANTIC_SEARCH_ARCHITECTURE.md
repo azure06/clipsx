@@ -219,7 +219,8 @@ It is a verification tool, not a live-provider capability test. Build with
 `npx tauri build --no-bundle --features recall-runtime-probe`, then run
 `npm run test:recall-runtime`. The report records provider tool/image round trips,
 native authentication receipts, cancellation, and the actual webview user agent.
-Normal builds omit the fixture HTML entry. Live provider/model support must be
+Normal builds omit the fixture HTML entry and reject probe command-line flags
+before application initialization. Live provider/model support must be
 verified separately with configured credentials.
 
 The same opt-in build includes an isolated native acceptance runner. Run
@@ -361,7 +362,7 @@ Configuration and protocol fixtures do not certify a live provider or model. See
 
 The lazy TypeScript runtime uses one AI SDK tool loop, rendered through an assistant-ui custom adapter. OpenAI Responses, Anthropic, Gemini, OpenRouter, and Ollama chat use the authenticated Rust streaming bridge. Rust freezes the selected connection, preset, filters, attachments, and web setting per run; credentials remain in protected storage. One native run is admitted at a time.
 
-Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. This capability-only step receives a status instruction; the user's task and prior context are restored with the status result for the next step. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
+Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. Both transports classify malformed tool arguments as `invalid_parameters` without echoing their contents or recording a mutation; the native agent receives schema guidance for correcting them. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. This capability-only step receives a status instruction; the user's task and prior context are restored with the status result for the next step. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
 
 Provider-neutral conversation context preserves the latest question and labels clipboard evidence. Every model step checks a conservative context budget, omitting older history where possible and stopping rather than sending oversized tool evidence. Only verified managed image bytes become labelled inline image context; renderer messages never authorize downloading remote images. Length-limited and filtered responses remain incomplete.
 

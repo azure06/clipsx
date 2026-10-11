@@ -162,6 +162,68 @@ async fn run_freezes_actor_filters_and_limits_with_no_secret_access() {
     runtime.finish(&transport, &next.run_id).await;
 }
 #[tokio::test]
+async fn malformed_tool_arguments_have_a_safe_category_and_never_record_a_write() {
+    let (_root, service, preset) = setup(Some(true)).await;
+    let runtime = AgentRuntime::default();
+    let transport = Transport::default();
+    let context = runtime
+        .begin(&service.history, &transport, request(&preset))
+        .await
+        .unwrap();
+    let unique: std::collections::HashSet<_> = context.status.tools.iter().collect();
+    assert_eq!(unique.len(), context.status.tools.len());
+    let request_id = new_id();
+    for (name, arguments) in [
+        ("create_clip", "{".to_string()),
+        (
+            "create_clip",
+            json!({"requestId":request_id,"format":"private-invalid-format"}).to_string(),
+        ),
+        ("read_clip", json!({"clipId":42}).to_string()),
+    ] {
+        let error = runtime
+            .tool(&service.history, None, &context.run_id, name, &arguments)
+            .await
+            .unwrap_err();
+        let failure = super::service::public_failure(error);
+        assert_eq!(failure.code, crate::failure::FailureCode::InvalidParameters);
+        assert!(!serde_json::to_string(&failure).unwrap().contains("private"));
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM assistant_actions")
+        .fetch_one(&service.history.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let valid = json!({"requestId":request_id,"text":"corrected content","format":"plain_text"})
+        .to_string();
+    let action = runtime
+        .tool(
+            &service.history,
+            None,
+            &context.run_id,
+            "create_clip",
+            &valid,
+        )
+        .await
+        .unwrap();
+    assert_eq!(action["clips"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        action,
+        runtime
+            .tool(
+                &service.history,
+                None,
+                &context.run_id,
+                "create_clip",
+                &valid
+            )
+            .await
+            .unwrap()
+    );
+    runtime.finish(&transport, &context.run_id).await;
+}
+
+#[tokio::test]
 async fn unknown_tools_require_read_only_verification_and_web_never_silently_switches() {
     let (_root, service, preset) = setup(None).await;
     let runtime = AgentRuntime::default();

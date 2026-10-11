@@ -29,17 +29,25 @@ async fn acceptance_probe_finish(
     app: tauri::AppHandle,
     probe: State<'_, Probe>,
     state: State<'_, AppState>,
-    report: Value,
+    mut report: Value,
 ) -> Result<(), String> {
     if webview.label() != "main" {
         return Err("access_denied".into());
     }
     if probe.phase == "first" && report["passed"] == true {
-        state
-            .history
-            .delete(probe.fixture["sourceId"].as_str().unwrap())
-            .await
-            .map_err(|_| "source_cleanup_failed")?;
+        let provenance: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_clip_provenance p WHERE p.clip_id=? AND p.origin='native_assistant' AND p.attribution_source='host_verified' AND EXISTS(SELECT 1 FROM json_each(p.sources_json) WHERE json_extract(value,'$.clipId')=?)) AND (SELECT COUNT(*) FROM assistant_clip_provenance)=1")
+            .bind(report["generatedClipId"].as_str().unwrap_or_default())
+            .bind(probe.fixture["sourceId"].as_str().unwrap())
+            .fetch_one(&state.history.pool).await.map_err(|_| "provenance_check_failed")?;
+        if provenance {
+            state
+                .history
+                .delete(probe.fixture["sourceId"].as_str().unwrap())
+                .await
+                .map_err(|_| "source_cleanup_failed")?;
+        } else {
+            report = json!({"passed":false,"failure":"generated_provenance_mismatch"});
+        }
     }
     std::fs::write(
         probe.root.join(format!("{}.json", probe.phase)),

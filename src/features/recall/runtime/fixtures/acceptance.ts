@@ -106,7 +106,7 @@ async function verify() {
     content: [
       {
         type: 'text',
-        text: 'Search clipboard using search_clips query "native acceptance". Read the matching text clip using read_clip. Save exactly "NATIVE ACCEPTANCE SAVED" as a new plain text clip using create_clip, linked to the source representation and fingerprint returned by read_clip. Finally tell me the launch code from the evidence and the saved clip ID. Perform the actual tools; do not merely describe them.',
+        text: 'Use search_clips with query "native acceptance", then read_clip on the matching text clip. Call create_clip with text="NATIVE ACCEPTANCE SAVED", format="plain_text", and sources containing the clip ID, representation ID, and representation fingerprint from read_clip. Finally report the launch code and committed saved clip ID. Perform the tools.',
       },
     ],
   }
@@ -136,7 +136,7 @@ async function verify() {
     'model_tools_missing'
   )
   const created = outcomes.get('create_clip') as ClipboardActionResult
-  check(created.clips.length === 1, 'generated_clip_missing')
+  check(Array.isArray(created.clips) && created.clips.length === 1, 'generated_clip_missing')
   const generated = await invoke<ClipReadResult>('assistant_read_clip', {
     request: { clipId: created.clips[0]!.clipId },
   })
@@ -205,6 +205,7 @@ async function verify() {
       phase,
       model: last.metadata?.custom?.['model'],
       searchReadCreate: true,
+      generatedClipId: created.clips[0]!.clipId,
       savedConversation: true,
       imageSnapshot: true,
       idempotency: true,

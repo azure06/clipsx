@@ -124,6 +124,27 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
         5
     );
     let write_session = initialize(&client, &url, &write.token).await;
+    for (token, session, expected) in [
+        (&read.token, &read_session, 5),
+        (&write.token, &write_session, 8),
+    ] {
+        let status = call(
+            &client,
+            &url,
+            token,
+            session,
+            "get_clipboard_status",
+            json!({}),
+        )
+        .await;
+        assert_eq!(
+            status["structuredContent"]["tools"]
+                .as_array()
+                .unwrap()
+                .len(),
+            expected
+        );
+    }
     let (_, _, discovery) = rpc(
         &client,
         &url,

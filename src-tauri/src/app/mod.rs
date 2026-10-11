@@ -13,6 +13,15 @@ pub(crate) mod window_chrome;
 pub(crate) mod workers;
 
 pub fn run() {
+    #[cfg(not(feature = "recall-runtime-probe"))]
+    if std::env::args_os().nth(1).is_some_and(|argument| {
+        matches!(
+            argument.to_str(),
+            Some("--verify-recall-acceptance" | "--verify-recall-runtime")
+        )
+    }) {
+        std::process::exit(3);
+    }
     #[cfg(feature = "recall-runtime-probe")]
     if std::env::args_os().nth(1).as_deref()
         == Some(std::ffi::OsStr::new("--verify-recall-acceptance"))

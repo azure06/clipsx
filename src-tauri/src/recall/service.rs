@@ -86,9 +86,6 @@ impl ClipboardService {
                 "create_clip",
                 "organize_clips",
                 "undo_clipboard_action",
-                "create_clip",
-                "organize_clips",
-                "undo_clipboard_action",
             ]
             .into_iter()
             .map(str::to_string)

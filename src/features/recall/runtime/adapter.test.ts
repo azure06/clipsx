@@ -78,6 +78,40 @@ describe('Native Recall agent', () => {
       expect(checkpoint.mock.calls.length).toBeLessThanOrEqual(2)
     }
   )
+  it('marks structured Rust tool failures as failed in the displayed and persisted message', async () => {
+    const context = fixtureContext('ollama')
+    const native = {
+      begin: vi.fn<NativeAgentBridge['begin']>(request =>
+        Promise.resolve({ ...context, runId: request.runId })
+      ),
+      finish: vi.fn(async () => {}),
+      verifyTools: vi.fn(async () => {}),
+      tool: vi
+        .fn<NativeAgentBridge['tool']>()
+        .mockRejectedValue({ code: 'invalid_parameters', message: 'private host content' }),
+    }
+    const { commands } = fixtureBridge('ollama')
+    const checkpoint = vi.fn(async () => {})
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge: native,
+      transport: id => createRustFetch(id, commands),
+      onCheckpoint: checkpoint,
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected stream')
+    let last: ChatModelRunResult | undefined
+    for await (const update of updates) last = update
+    const call = last?.content?.find(part => part.type === 'tool-call')
+    expect(call).toMatchObject({ isError: true, result: { error: 'invalid_parameters' } })
+    expect(JSON.stringify(checkpoint.mock.calls)).not.toContain('private host content')
+    expect(JSON.stringify(checkpoint.mock.calls)).toContain('"isError":true')
+  })
   it('isolates the capability probe and restores the user task after a verified round trip', async () => {
     const context = fixtureContext('ollama')
     context.preset.capabilities.tools = null

@@ -5,6 +5,30 @@ import type { NativeAgentBridge } from './native'
 import { fixtureContext } from './fixtures/context'
 
 describe('Rust tool callbacks', () => {
+  it('gives schema guidance for rejected arguments without exposing raw host errors', async () => {
+    const context = fixtureContext()
+    context.tools = [
+      { name: 'create_clip', description: 'Save', inputSchemaJson: '{"type":"object"}' },
+    ]
+    const bridge = {
+      begin: vi.fn(),
+      finish: vi.fn(),
+      verifyTools: vi.fn(),
+      tool: vi
+        .fn<NativeAgentBridge['tool']>()
+        .mockRejectedValue({ code: 'invalid_parameters', message: 'private provider content' }),
+    }
+    const tools = createClipboardTools(context, bridge, { searches: 0, images: [], imageBytes: 0 })
+    const result: unknown = await tools['create_clip']!.execute!(
+      { format: 'text/plain' },
+      { toolCallId: 'invalid', messages: [], context: undefined }
+    )
+    expect(result).toMatchObject({
+      error: 'invalid_parameters',
+    })
+    expect(JSON.stringify(result)).toContain('plain_text')
+    expect(JSON.stringify(result)).not.toContain('private provider content')
+  })
   it('reuses an admitted mutation and rejects changed arguments with the same call ID', async () => {
     const context = fixtureContext()
     context.tools = [
