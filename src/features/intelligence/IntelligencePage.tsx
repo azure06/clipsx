@@ -22,7 +22,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Wand2,
 } from 'lucide-react'
 import type {
   FailedTextEmbeddingJob,
@@ -486,7 +485,7 @@ export const IntelligencePage = ({
               {section.id === 'search' && (
                 <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.7} />
               )}
-              {section.id === 'models' && <Wand2 className="h-3.5 w-3.5" strokeWidth={1.7} />}
+              {section.id === 'models' && <Sparkles className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'indexing' && <Database className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'vision' && <ScanSearch className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.label}

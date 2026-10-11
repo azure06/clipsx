@@ -109,6 +109,19 @@ pub async fn ai_set_credential(
     Ok(())
 }
 #[tauri::command]
+pub async fn ai_test_connection(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    connection: AiConnection,
+    credential: Option<String>,
+) -> Result<usize, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::test_connection(&state.history, &connection, credential)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
 pub async fn ai_discover_models(
     webview: tauri::Webview,
     state: State<'_, AppState>,

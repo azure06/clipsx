@@ -97,7 +97,7 @@ async fn inspect_listed_model(client: &OllamaClient, listed: ListedModel) -> Mod
         Ok(value) => {
             let capabilities = parse_capabilities(&value);
             let inspection_diagnostic = capabilities.is_empty().then(|| {
-                "Ollama did not report embedding or completion support for this model".into()
+                "Ollama did not report embedding, completion, or decision support for this model".into()
             });
             ModelDescriptor {
                 id: listed.id,
@@ -133,6 +133,9 @@ fn parse_capabilities(value: &serde_json::Value) -> Vec<ModelCapability> {
             "completion" if !capabilities.contains(&ModelCapability::TextGeneration) => {
                 capabilities.push(ModelCapability::TextGeneration)
             }
+            "decision" if !capabilities.contains(&ModelCapability::Decision) => {
+                capabilities.push(ModelCapability::Decision)
+            }
             _ => {}
         }
     }
@@ -151,13 +154,14 @@ mod tests {
     #[test]
     fn classifies_supported_capabilities_without_guessing() {
         let capabilities = parse_capabilities(&serde_json::json!({
-            "capabilities": ["completion", "embedding", "vision", "completion"]
+            "capabilities": ["completion", "embedding", "vision", "completion", "decision", "decision"]
         }));
         assert_eq!(
             capabilities,
             vec![
                 ModelCapability::TextGeneration,
-                ModelCapability::TextEmbedding
+                ModelCapability::TextEmbedding,
+                ModelCapability::Decision
             ]
         );
         assert!(parse_capabilities(&serde_json::json!({})).is_empty());

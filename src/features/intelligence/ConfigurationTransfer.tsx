@@ -10,7 +10,7 @@ import type {
   AiConfigurationState,
   AiSelections,
 } from '../recall/contracts.generated'
-import { ModelSettingsDialog } from './ModelSettingsDialog'
+import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { providerNames } from './modelConfiguration'
 
 const selectionKeys: Array<keyof AiSelections> = [
@@ -84,7 +84,7 @@ export function ConfigurationTransfer({
     return document
   }
   return (
-    <ModelSettingsDialog
+    <ModelSettingsPanel
       title={t(mode === 'import' ? 'modelsWorkspace.importTitle' : 'modelsWorkspace.exportTitle')}
       description={t('modelsWorkspace.transferHelp')}
       busy={busy}
@@ -327,6 +327,6 @@ export function ConfigurationTransfer({
           )}
         </div>
       </div>
-    </ModelSettingsDialog>
+    </ModelSettingsPanel>
   )
 }

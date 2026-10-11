@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { Button, Input, Select, Switch } from '../../shared/components/ui'
 import type { AiConnection } from '../recall/contracts.generated'
 import { endpoints, providerNames } from './modelConfiguration'
-import { ModelSettingsDialog } from './ModelSettingsDialog'
+import { ModelSettingsPanel } from './ModelSettingsPanel'
+import { ProviderIcon } from './ProviderIcon'
 
 export function ConnectionEditor({
   initial,
@@ -25,28 +27,65 @@ export function ConnectionEditor({
   onClose: () => void
 }) {
   const { t } = useTranslation()
-  const [connection, setConnection] = useState(initial)
-  const [credential, setCredential] = useState('')
+  const [connection, updateConnection] = useState(initial)
+  const [credential, updateCredential] = useState('')
+  const [testing, setTesting] = useState(false)
+  const testingRef = useRef(false)
+  const [testResult, setTestResult] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
+  const setConnection = (value: AiConnection) => {
+    updateConnection(value)
+    setTestResult(null)
+    setTestError(null)
+  }
+  const setCredential = (value: string) => {
+    updateCredential(value)
+    setTestResult(null)
+    setTestError(null)
+  }
+  const pending = busy || testing
+  const draft = () => ({
+    ...connection,
+    name: connection.name.trim(),
+    baseUrl: connection.baseUrl.trim(),
+  })
+  const testConnection = async () => {
+    if (testingRef.current || busy) return
+    testingRef.current = true
+    setTesting(true)
+    setTestResult(null)
+    setTestError(null)
+    try {
+      const count = await invoke<number>('ai_test_connection', {
+        connection: draft(),
+        credential: credential || null,
+      })
+      setTestResult(t('modelsWorkspace.connectionTestPassed', { count }))
+    } catch (failure) {
+      const code =
+        typeof failure === 'object' && failure && 'code' in failure ? String(failure.code) : ''
+      setTestError(t(`modelsWorkspace.failures.${code}`, { defaultValue: t('aiConfig.error') }))
+    } finally {
+      testingRef.current = false
+      setTesting(false)
+    }
+  }
   return (
-    <ModelSettingsDialog
+    <ModelSettingsPanel
+      icon={<ProviderIcon provider={connection.provider} />}
       title={t(saved ? 'modelsWorkspace.editProvider' : 'modelsWorkspace.addProvider')}
       description={t('modelsWorkspace.connectionDescription')}
       onClose={onClose}
-      busy={busy}
+      busy={pending}
     >
       <form
         className="space-y-4"
         onSubmit={event => {
           event.preventDefault()
-          const value = credential
-          setCredential('')
-          void onSave(
-            { ...connection, name: connection.name.trim(), baseUrl: connection.baseUrl.trim() },
-            value
-          )
+          if (!pending) void onSave(draft(), credential)
         }}
       >
-        <fieldset disabled={busy} className="space-y-4">
+        <fieldset disabled={pending} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
               required
@@ -59,19 +98,20 @@ export function ConnectionEditor({
             <Select
               label={t('aiConfig.provider')}
               value={connection.provider}
-              disabled={saved}
+              disabled={saved || pending}
               options={Object.entries(providerNames).map(([value, label]) => ({
                 value: value as AiConnection['provider'],
                 label,
               }))}
-              onChange={provider =>
+              onChange={provider => {
+                setCredential('')
                 setConnection({
                   ...connection,
                   provider,
                   baseUrl: endpoints[provider],
                   options: { organization: null, project: null },
                 })
-              }
+              }}
             />
           </div>
           <Input
@@ -85,6 +125,7 @@ export function ConnectionEditor({
             label={t('aiConfig.credential')}
             type="password"
             autoComplete="new-password"
+            maxLength={8192}
             value={credential}
             onChange={setCredential}
             helperText={t(
@@ -128,35 +169,60 @@ export function ConnectionEditor({
             onChange={enabled => setConnection({ ...connection, enabled })}
           />
         </fieldset>
+        {testResult && (
+          <p role="status" className="text-xs text-emerald-700 dark:text-emerald-400">
+            {testResult}
+          </p>
+        )}
+        {testError && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+            {testError}
+          </p>
+        )}
         {error && (
           <p role="alert" className="text-xs text-red-600 dark:text-red-400">
             {error}
           </p>
         )}
         <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200/70 pt-4 dark:border-white/10">
+          {connection.provider !== 'tavily' && (
+            <Button
+              variant="outline"
+              size="sm"
+              isLoading={testing}
+              disabled={busy || !connection.name.trim() || !connection.baseUrl.trim()}
+              onClick={() => void testConnection()}
+            >
+              {t('modelsWorkspace.testConnection')}
+            </Button>
+          )}
           {credentialConfigured && (
             <Button
               variant="ghost"
               size="sm"
-              disabled={busy}
-              onClick={() => void onRemoveCredential()}
+              disabled={pending}
+              onClick={() => {
+                setTestResult(null)
+                setTestError(null)
+                void onRemoveCredential()
+              }}
             >
               {t('aiConfig.removeCredential')}
             </Button>
           )}
-          <Button variant="outline" size="sm" disabled={busy} onClick={onClose}>
+          <Button variant="outline" size="sm" disabled={pending} onClick={onClose}>
             {t('common.cancel')}
           </Button>
           <Button
             type="submit"
             size="sm"
             isLoading={busy}
-            disabled={!connection.name.trim() || !connection.baseUrl.trim()}
+            disabled={testing || !connection.name.trim() || !connection.baseUrl.trim()}
           >
             {t('aiConfig.saveConnection')}
           </Button>
         </div>
       </form>
-    </ModelSettingsDialog>
+    </ModelSettingsPanel>
   )
 }

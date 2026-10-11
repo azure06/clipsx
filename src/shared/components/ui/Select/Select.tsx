@@ -57,9 +57,13 @@ export const Select = <T extends string = string>({
       key={option.value}
       value={option.value}
       disabled={option.disabled}
-      className={cn(dropdownItemClass, 'px-8 py-1.5')}
+      className={cn(dropdownItemClass, 'w-full overflow-hidden px-8 py-1.5')}
     >
-      <SelectPrimitive.ItemText className="truncate">{option.label}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText className="min-w-0 flex-1">
+        <span className="block truncate" title={option.label}>
+          {option.label}
+        </span>
+      </SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator className="absolute left-2 inline-flex items-center">
         <Check className="h-4 w-4 text-violet-500" />
       </SelectPrimitive.ItemIndicator>
@@ -101,7 +105,7 @@ export const Select = <T extends string = string>({
             sideOffset={4}
             collisionPadding={8}
           >
-            <SelectPrimitive.Viewport className="p-1">
+            <SelectPrimitive.Viewport className="w-full min-w-0 p-1">
               {options.map(item)}
               {groups
                 .filter(group => group.options.length)

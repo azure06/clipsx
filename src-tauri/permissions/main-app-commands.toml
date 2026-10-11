@@ -22,6 +22,7 @@ permissions = [
   "allow-ai-test-decision",
   "allow-ai-set-credential",
   "allow-ai-discover-models",
+  "allow-ai-test-connection",
   "allow-mcp-integration-status", "allow-mcp-configure", "allow-mcp-list-grants", "allow-mcp-issue-grant", "allow-mcp-revoke-grant",
             "allow-mcp-test-access",
   "allow-ai-http-start", "allow-ai-http-acknowledge", "allow-ai-http-cancel",

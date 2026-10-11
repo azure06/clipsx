@@ -1383,6 +1383,31 @@
     "threadSettings": "Conversation settings"
   },
   "modelsWorkspace": {
+    "connectionTestPassed": "Connected. Discovered {{count}} models. This checks catalog access; model execution is verified separately.",
+    "filterModels": "Search models",
+    "chooseModel": "Model",
+    "selectModel": "Select a model…",
+    "noCompatibleModels": "No compatible models found. Refresh the list, show models with unknown capabilities, or enter an ID manually.",
+    "savedModelUnavailable": "Saved model: {{model}}. Its compatibility is not confirmed in this list.",
+    "showUnknownModels": "Include models with unknown capabilities",
+    "enterManualModel": "Enter a model ID manually",
+    "manualModelHelp": "Compatibility will be checked when the model is used.",
+    "catalogReported": "Compatibility reported by the provider.",
+    "catalogInferred": "Purpose identified from a known model family; execution is not yet verified.",
+
+    "installedModels": "Installed models",
+    "availableModels": "Available models",
+    "catalogHelp": "Discover models from this connection, then configure one for a feature.",
+    "catalogEmpty": "Discover models to browse this connection. You can also add a model ID manually below.",
+    "unknownPurpose": "Capability not reported",
+
+    "activeTitle": "Active models",
+    "savedTitle": "Saved configurations",
+    "savedHelp": "Manage connections and the models available for each feature.",
+    "manage": "Manage",
+    "allConfigurations": "All configurations",
+    "modelCount": "{{count}} models",
+
     "title": "Models, your way",
     "description": "Connect your providers once. Choose the right model for each feature.",
     "sectionDescription": "Providers, models, and feature assignments",

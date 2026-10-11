@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { RefreshCw } from 'lucide-react'
 import { Button, Input, Select, Switch } from '../../shared/components/ui'
 import type { AiConnection, AiDiscoveredModel, AiModelPreset } from '../recall/contracts.generated'
-import { ModelSettingsDialog } from './ModelSettingsDialog'
+import { ModelSettingsPanel } from './ModelSettingsPanel'
+import { ProviderIcon } from './ProviderIcon'
+import { SearchableSelect } from '../../shared/components/ui/SearchableSelect'
 import { emptyPreset } from './modelConfiguration'
 
 export function ModelEditor({
@@ -27,6 +29,16 @@ export function ModelEditor({
 }) {
   const { t } = useTranslation()
   const [preset, setPreset] = useState(initial)
+  const [manual, setManual] = useState(false)
+  const [showUnknown, setShowUnknown] = useState(false)
+  const availableModels = models.filter(
+    model => model.purposes?.includes(preset.purpose) || (showUnknown && model.purposes == null)
+  )
+  const selectedModel = models.find(model => model.id === preset.modelId)
+  const compatible =
+    selectedModel?.purposes?.includes(preset.purpose) ||
+    (showUnknown && selectedModel && selectedModel.purposes == null)
+  const canSave = Boolean(preset.name.trim() && preset.modelId.trim() && (manual || compatible))
   const embedding = preset.options.embedding
   const setEmbedding = (patch: Partial<NonNullable<typeof embedding>>) =>
     setPreset({ ...preset, options: { ...preset.options, embedding: { ...embedding!, ...patch } } })
@@ -44,7 +56,8 @@ export function ModelEditor({
     },
   ]
   return (
-    <ModelSettingsDialog
+    <ModelSettingsPanel
+      icon={<ProviderIcon provider={connection.provider} />}
       title={t('modelsWorkspace.modelEditorTitle', { name: connection.name })}
       description={t('modelsWorkspace.modelDescription')}
       onClose={onClose}
@@ -54,86 +67,54 @@ export function ModelEditor({
         className="space-y-4"
         onSubmit={event => {
           event.preventDefault()
+          if (!canSave) return
           void onSave({ ...preset, name: preset.name.trim(), modelId: preset.modelId.trim() })
         }}
       >
-        <fieldset disabled={busy} className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input
-              required
-              autoFocus
-              label={t('aiConfig.presetName')}
-              value={preset.name}
-              maxLength={128}
-              onChange={name => setPreset({ ...preset, name })}
-            />
-            <Select
-              label={t('aiConfig.purpose')}
-              value={preset.purpose}
-              options={purposeOptions}
-              onChange={purpose =>
-                setPreset({
-                  ...preset,
-                  purpose,
-                  options: {
-                    ...emptyPreset(connection.id).options,
-                    embedding:
-                      purpose === 'embedding'
-                        ? {
-                            dimensions: null,
-                            taskPolicy:
-                              connection.provider === 'gemini'
-                                ? 'gemini_retrieval_v1'
-                                : 'symmetric',
-                            hostedIndexingEnabled: false,
-                          }
-                        : null,
-                  },
-                  capabilities: emptyPreset(connection.id).capabilities,
-                })
-              }
-            />
+        <fieldset disabled={busy} className="space-y-4 [&>div]:w-full">
+          <div className="rounded-xl bg-violet-500/5 px-4 py-3">
+            <p className="text-[10px] font-medium text-slate-500">{t('aiConfig.provider')}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-800 dark:text-slate-100">
+              {connection.name}
+            </p>
           </div>
-          <div className="rounded-xl border border-slate-200/70 bg-white/55 p-3 dark:border-white/10 dark:bg-white/[.025]">
-            <Input
-              required
-              label={t('aiConfig.modelId')}
-              value={preset.modelId}
-              maxLength={256}
-              placeholder={preset.purpose === 'decision' ? 'laya' : undefined}
-              onChange={modelId =>
-                setPreset({
-                  ...preset,
-                  modelId,
-                  capabilities: emptyPreset(connection.id).capabilities,
-                })
-              }
-            />
-            <div className="mt-3 flex items-end gap-2">
-              {models.length > 0 && (
-                <div className="min-w-0 flex-1">
-                  <Select
-                    label={t('aiConfig.discoveredModels')}
-                    value={models.some(m => m.id === preset.modelId) ? preset.modelId : 'none'}
-                    options={[
-                      { value: 'none', label: t('aiConfig.manualModel') },
-                      ...models.map(m => ({ value: m.id, label: m.id })),
-                    ]}
-                    onChange={modelId => {
-                      const model = models.find(m => m.id === modelId)
-                      if (model)
-                        setPreset({
-                          ...preset,
-                          modelId,
-                          name: preset.name || modelId,
-                          capabilities: model.capabilities,
-                        })
-                    }}
-                  />
-                </div>
-              )}
+          <Select
+            label={t('aiConfig.purpose')}
+            value={preset.purpose}
+            options={purposeOptions}
+            onChange={purpose => {
+              setPreset({
+                ...preset,
+                purpose,
+                modelId: '',
+                name: preset.name === preset.modelId ? '' : preset.name,
+                options: {
+                  ...emptyPreset(connection.id).options,
+                  embedding:
+                    purpose === 'embedding'
+                      ? {
+                          dimensions: null,
+                          taskPolicy:
+                            connection.provider === 'gemini' ? 'gemini_retrieval_v1' : 'symmetric',
+                          hostedIndexingEnabled: false,
+                        }
+                      : null,
+                },
+                capabilities: emptyPreset(connection.id).capabilities,
+              })
+            }}
+          />
+          <div className="space-y-3 [&>div]:w-full">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                {t(
+                  connection.provider === 'ollama'
+                    ? 'modelsWorkspace.installedModels'
+                    : 'modelsWorkspace.availableModels'
+                )}
+              </p>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 disabled={busy}
                 leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
@@ -142,7 +123,88 @@ export function ModelEditor({
                 {t('aiConfig.discover')}
               </Button>
             </div>
+            {!manual && (
+              <>
+                <SearchableSelect
+                  label={t('modelsWorkspace.chooseModel')}
+                  value={preset.modelId}
+                  disabled={busy}
+                  placeholder={t('modelsWorkspace.selectModel')}
+                  searchLabel={t('modelsWorkspace.filterModels')}
+                  emptyLabel={t('modelsWorkspace.noCompatibleModels')}
+                  options={availableModels.map(model => ({ value: model.id, label: model.id }))}
+                  onChange={modelId => {
+                    const model = models.find(item => item.id === modelId)
+                    setPreset({
+                      ...preset,
+                      modelId: model?.id ?? '',
+                      name:
+                        !preset.name || preset.name === preset.modelId
+                          ? (model?.id ?? '')
+                          : preset.name,
+                      capabilities: model?.capabilities ?? emptyPreset(connection.id).capabilities,
+                    })
+                  }}
+                />
+                {!availableModels.length && (
+                  <p role="status" className="text-xs text-slate-500">
+                    {t(busy ? 'aiConfig.loading' : 'modelsWorkspace.noCompatibleModels')}
+                  </p>
+                )}
+                {preset.modelId && !compatible && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    {t('modelsWorkspace.savedModelUnavailable', { model: preset.modelId })}
+                  </p>
+                )}
+                {models.some(model => model.purposes == null) && (
+                  <Switch
+                    label={t('modelsWorkspace.showUnknownModels')}
+                    checked={showUnknown}
+                    onChange={setShowUnknown}
+                  />
+                )}
+                {selectedModel && (
+                  <p className="text-[11px] text-slate-500">
+                    {t(
+                      selectedModel.purposes == null
+                        ? 'modelsWorkspace.unknownPurpose'
+                        : selectedModel.capabilities.source === 'clipsx_model_family'
+                          ? 'modelsWorkspace.catalogInferred'
+                          : 'modelsWorkspace.catalogReported'
+                    )}
+                  </p>
+                )}
+              </>
+            )}
+            <Switch
+              label={t('modelsWorkspace.enterManualModel')}
+              checked={manual}
+              onChange={setManual}
+            />
+            {manual && (
+              <Input
+                required
+                label={t('aiConfig.modelId')}
+                value={preset.modelId}
+                maxLength={256}
+                helperText={t('modelsWorkspace.manualModelHelp')}
+                onChange={modelId =>
+                  setPreset({
+                    ...preset,
+                    modelId,
+                    capabilities: emptyPreset(connection.id).capabilities,
+                  })
+                }
+              />
+            )}
           </div>
+          <Input
+            required
+            label={t('aiConfig.presetName')}
+            value={preset.name}
+            maxLength={128}
+            onChange={name => setPreset({ ...preset, name })}
+          />
           <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
             {t(
               preset.purpose === 'decision'
@@ -305,16 +367,11 @@ export function ModelEditor({
           <Button variant="outline" size="sm" disabled={busy} onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button
-            type="submit"
-            size="sm"
-            isLoading={busy}
-            disabled={!preset.name.trim() || !preset.modelId.trim()}
-          >
+          <Button type="submit" size="sm" isLoading={busy} disabled={!canSave}>
             {t('aiConfig.savePreset')}
           </Button>
         </div>
       </form>
-    </ModelSettingsDialog>
+    </ModelSettingsPanel>
   )
 }

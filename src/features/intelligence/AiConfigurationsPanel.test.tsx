@@ -79,14 +79,16 @@ beforeEach(() => {
 it('uses focused editors, preserves several same-provider connections, and keeps credentials out of configuration', async () => {
   const user = userEvent.setup()
   render(<AiConfigurationsPanel />)
-  await screen.findByText('Which models power ClipsX?')
+  await screen.findByText('Models, your way')
+  expect(screen.getAllByRole('button', { name: 'Add provider' })).toHaveLength(1)
   expect(screen.queryByLabelText('Connection name')).not.toBeInTheDocument()
   await user.click(screen.getAllByRole('button', { name: 'Add provider' })[0]!)
-  const dialog = screen.getByRole('dialog')
+  expect(screen.queryByText('Models, your way')).not.toBeInTheDocument()
+  const dialog = screen.getByRole('region', { name: 'Add provider' })
   await user.type(within(dialog).getByLabelText('Connection name'), 'Ollama home')
   await user.type(within(dialog).getByLabelText('API credential'), 'private-fixture-key')
   await user.click(within(dialog).getByRole('button', { name: 'Save connection' }))
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByLabelText('Connection name')).not.toBeInTheDocument())
   expect(mocks.invoke).toHaveBeenCalledWith(
     'ai_set_credential',
     expect.objectContaining({ value: 'private-fixture-key' })
@@ -94,11 +96,45 @@ it('uses focused editors, preserves several same-provider connections, and keeps
   expect(
     JSON.stringify(mocks.invoke.mock.calls.filter(call => call[0] === 'ai_configuration_import'))
   ).not.toContain('private-fixture-key')
+  await user.click(screen.getByRole('button', { name: /All configurations/ }))
   await user.click(screen.getAllByRole('button', { name: 'Add provider' })[0]!)
   await user.type(screen.getByLabelText('Connection name'), 'Ollama office')
   await user.click(screen.getByRole('button', { name: 'Save connection' }))
   await waitFor(() => expect(state.configuration.connections).toHaveLength(2))
   expect(state.configuration.connections.map(c => c.name)).toEqual(['Ollama home', 'Ollama office'])
+})
+
+it('offers the guide on the overview and tests drafts without saving them', async () => {
+  const user = userEvent.setup()
+  const original = mocks.invoke.getMockImplementation() as (
+    command: string,
+    args?: Record<string, unknown>
+  ) => Promise<unknown>
+  mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) =>
+    command === 'ai_test_connection' ? Promise.resolve(3) : original(command, args)
+  )
+  render(<AiConfigurationsPanel />)
+  await screen.findByRole('button', { name: 'Local AI setup guide' })
+  await user.click(screen.getByRole('button', { name: 'Add provider' }))
+  await user.type(screen.getByLabelText('Connection name'), 'Draft provider')
+  await user.type(screen.getByLabelText('API credential'), 'draft-key')
+  await user.click(screen.getByRole('button', { name: 'Test connection' }))
+  await screen.findByText(/Connected. Discovered 3 models/)
+  const testCall = mocks.invoke.mock.calls.find(([command]) => command === 'ai_test_connection')
+  expect(testCall?.[1]).toMatchObject({
+    connection: { name: 'Draft provider' },
+    credential: 'draft-key',
+  })
+  expect(
+    mocks.invoke.mock.calls.some(
+      ([command]) => command === 'ai_configuration_import' || command === 'ai_set_credential'
+    )
+  ).toBe(false)
+  await user.type(screen.getByLabelText('API base URL'), '/changed')
+  expect(screen.queryByText(/Connected. Discovered/)).not.toBeInTheDocument()
+  await user.click(screen.getByRole('combobox', { name: 'Provider' }))
+  await user.click(screen.getByRole('option', { name: 'OpenAI' }))
+  expect(screen.getByLabelText('API credential')).toHaveValue('')
 })
 
 it('assigns a hosted chat preset to extension generation independently of Recall and embeddings', async () => {
@@ -120,7 +156,8 @@ it('assigns a hosted chat preset to extension generation independently of Recall
   state.configuration.presets = [chat, embedding]
   state.configuration.selections.defaultChat = chat.id
   render(<AiConfigurationsPanel />)
-  await screen.findByText('Which models power ClipsX?')
+  await screen.findByText('Models, your way')
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
   await user.click(screen.getByRole('combobox', { name: 'Extension text generation' }))
   expect(screen.queryByRole('option', { name: 'Work OpenAI / Search' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('option', { name: 'Work OpenAI / Work chat' }))
@@ -189,11 +226,56 @@ it('tests decision models explicitly and does not turn on automation', async () 
     { ...emptyPreset(connection.id), name: 'Decider', modelId: 'laya', purpose: 'decision' },
   ]
   render(<AiConfigurationsPanel />)
-  await user.click(await screen.findByRole('button', { name: /Home Ollama/ }))
+  await user.click(await screen.findByRole('button', { name: /Manage/ }))
   await user.click(screen.getByRole('button', { name: 'Test decision' }))
   await screen.findByText(/Synthetic test returned/)
   expect(mocks.invoke).toHaveBeenCalledWith('ai_test_decision', {
     presetId: state.configuration.presets[0]!.id,
   })
   expect(mocks.invoke.mock.calls.some(call => call[0] === 'ai_configuration_import')).toBe(false)
+})
+
+it('browses installed models by reported purpose and configures a selected embedding', async () => {
+  const user = userEvent.setup()
+  const connection = { ...emptyConnection(), name: 'Home Ollama' }
+  state.configuration.connections = [connection]
+  const invoke = mocks.invoke.getMockImplementation()!
+  mocks.invoke.mockImplementation((command, args) =>
+    command === 'ai_discover_models'
+      ? Promise.resolve([
+          {
+            id: 'embed-local',
+            purposes: ['embedding'],
+            capabilities: { tools: null, vision: null, webSearch: null, source: null },
+          },
+          {
+            id: 'chat-local',
+            purposes: ['chat'],
+            capabilities: { tools: null, vision: null, webSearch: null, source: null },
+          },
+          {
+            id: 'decision-local',
+            purposes: ['decision'],
+            capabilities: { tools: null, vision: null, webSearch: null, source: null },
+          },
+        ])
+      : (invoke(command, args) as unknown)
+  )
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: /Manage/ }))
+  expect(screen.queryByText('Active models')).not.toBeInTheDocument()
+  await user.click(screen.getAllByRole('button', { name: 'Add model' })[0]!)
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('ai_discover_models', { connectionId: connection.id })
+  )
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Purpose' })).not.toBeDisabled())
+  await user.click(screen.getByRole('combobox', { name: 'Purpose' }))
+  await user.click(screen.getByRole('option', { name: 'Text embeddings' }))
+  await user.click(screen.getByRole('combobox', { name: 'Model' }))
+  expect(screen.queryByRole('option', { name: 'chat-local' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: 'decision-local' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('option', { name: 'embed-local' }))
+  expect(screen.queryByLabelText('Model ID')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Save preset' }))
+  await waitFor(() => expect(state.configuration.presets[0]?.purpose).toBe('embedding'))
 })

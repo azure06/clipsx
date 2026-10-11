@@ -235,6 +235,7 @@ dto!(AiConnectionState { connection_id: String, credential_configured: bool, las
 dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
 dto!(AiDiscoveredModel {
     id: String,
+    purposes: Option<Vec<AiModelPurpose>>,
     capabilities: AiCapabilities
 });
 

@@ -33,6 +33,7 @@ fn main() {
             "ai_test_decision",
             "ai_set_credential",
             "ai_discover_models",
+            "ai_test_connection",
             "assistant_run_begin",
             "recall_thread_initialize",
             "recall_thread_list",

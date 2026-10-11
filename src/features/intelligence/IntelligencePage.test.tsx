@@ -263,7 +263,7 @@ describe('IntelligencePage indexing actions', () => {
   it('separates model assignments from indexing operations', async () => {
     render(<IntelligencePage initialSection="models" />)
 
-    expect(await screen.findByText('Which models power ClipsX?')).toBeInTheDocument()
+    expect(await screen.findByText('Active models')).toBeInTheDocument()
     expect(screen.queryByLabelText('Generation endpoint')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reindex all' })).not.toBeInTheDocument()
 

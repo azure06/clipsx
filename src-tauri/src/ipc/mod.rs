@@ -3371,6 +3371,7 @@ pub(crate) fn run() {
             crate::recall::ipc::ai_test_decision,
             crate::recall::ipc::ai_set_credential,
             crate::recall::ipc::ai_discover_models,
+            crate::recall::ipc::ai_test_connection,
             crate::recall::ipc::assistant_run_begin,
 crate::recall::ipc::recall_thread_initialize,
 crate::recall::ipc::recall_thread_list,

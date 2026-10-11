@@ -764,78 +764,134 @@ pub async fn resolve_embedding(
     )?)
 }
 
+// None means unknown, while an empty list means the catalog reports no supported ClipsX use.
+fn catalog_purposes(
+    provider: AiProviderKind,
+    row: &serde_json::Value,
+    id: &str,
+) -> Option<Vec<AiModelPurpose>> {
+    let contains = |values: &serde_json::Value, name: &str| {
+        values
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(name)))
+    };
+    match provider {
+        AiProviderKind::Anthropic => Some(vec![AiModelPurpose::Chat]),
+        AiProviderKind::Gemini => {
+            let methods = &row["supportedGenerationMethods"];
+            methods.as_array()?;
+            let mut purposes = Vec::new();
+            if contains(methods, "generateContent") {
+                purposes.push(AiModelPurpose::Chat);
+            }
+            if contains(methods, "embedContent") || contains(methods, "batchEmbedContents") {
+                purposes.push(AiModelPurpose::Embedding);
+            }
+            Some(purposes)
+        }
+        AiProviderKind::Openrouter => {
+            let modalities = &row["architecture"]["output_modalities"];
+            modalities.as_array()?;
+            let mut purposes = Vec::new();
+            if contains(modalities, "text") {
+                purposes.push(AiModelPurpose::Chat);
+            }
+            if contains(modalities, "embeddings") {
+                purposes.push(AiModelPurpose::Embedding);
+            }
+            Some(purposes)
+        }
+        AiProviderKind::Openai => {
+            if [
+                "text-embedding-3-small",
+                "text-embedding-3-large",
+                "text-embedding-ada-002",
+            ]
+            .contains(&id)
+            {
+                Some(vec![AiModelPurpose::Embedding])
+            } else if ["audio", "realtime", "transcribe", "tts", "image"]
+                .iter()
+                .any(|part| id.contains(part))
+            {
+                Some(Vec::new())
+            } else if ["gpt-4", "gpt-5", "gpt-6", "o1", "o3", "o4"]
+                .iter()
+                .any(|prefix| id.starts_with(prefix))
+            {
+                Some(vec![AiModelPurpose::Chat])
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn catalog_purposes_distinguish_reported_inferred_and_unknown_models() {
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Gemini,
+                &json!({"supportedGenerationMethods":["embedContent"]}),
+                "embed"
+            ),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Gemini,
+                &json!({"supportedGenerationMethods":["generateContent"]}),
+                "chat"
+            ),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Openrouter,
+                &json!({"architecture":{"output_modalities":["embeddings"]}}),
+                "embed"
+            ),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Anthropic, &json!({}), "claude"),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "text-embedding-3-small"),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o"),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o-mini-tts"),
+            Some(vec![])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "custom-unknown"),
+            None
+        );
+    }
+}
+
 pub async fn discover(repo: &HistoryRepository, id: &str) -> Result<Vec<AiDiscoveredModel>> {
     let connection = connection(repo, id).await?;
     if !connection.enabled {
         bail!("connection_disabled");
     }
-    let result = async {
-        let base = validate_connection(&connection)?;
-        if connection.provider == AiProviderKind::Ollama {
-            return Ok(providers::ollama::discover_models(base.as_str())
-                .await?
-                .into_iter()
-                .take(500)
-                .map(|v| AiDiscoveredModel {
-                    id: v.id,
-                    capabilities: unknown_capabilities(),
-                })
-                .collect());
-        }
-        if connection.provider == AiProviderKind::Tavily {
-            bail!("model_discovery_unavailable");
-        }
-        let credential = credentials::get(repo, id)
-            .await?
-            .context("credential_required")?;
-        let value = providers::hosted_embedding::request_json(
-            &connection,
-            &base.join("models")?,
-            &credential,
-            None,
-        )
-        .await?;
-        let rows = value[if connection.provider == AiProviderKind::Gemini {
-            "models"
-        } else {
-            "data"
-        }]
-        .as_array()
-        .context("invalid_model_catalog")?;
-        Ok(rows
-            .iter()
-            .take(500)
-            .filter_map(|row| {
-                let id = row[if connection.provider == AiProviderKind::Gemini {
-                    "name"
-                } else {
-                    "id"
-                }]
-                .as_str()?
-                .strip_prefix("models/")
-                .unwrap_or(
-                    row[if connection.provider == AiProviderKind::Gemini {
-                        "name"
-                    } else {
-                        "id"
-                    }]
-                    .as_str()?,
-                )
-                .to_string();
-                if id.is_empty() || id.len() > 256 {
-                    return None;
-                }
-                let mut capabilities = unknown_capabilities();
-                if let Some(parameters) = row["supported_parameters"].as_array() {
-                    capabilities.tools =
-                        Some(parameters.iter().any(|v| v.as_str() == Some("tools")));
-                    capabilities.source = Some("provider_catalog".into());
-                }
-                Some(AiDiscoveredModel { id, capabilities })
-            })
-            .collect::<Vec<_>>())
-    }
-    .await;
+    let credential = if connection.provider == AiProviderKind::Ollama {
+        None
+    } else {
+        credentials::get(repo, id).await?
+    };
+    let result = discover_connection(&connection, credential.as_deref()).await;
     let code = if result.is_ok() {
         "ready"
     } else if result
@@ -854,4 +910,163 @@ pub async fn discover(repo: &HistoryRepository, id: &str) -> Result<Vec<AiDiscov
         .execute(&repo.pool)
         .await?;
     result
+}
+
+// Draft checks deliberately do not write configuration, credentials or test observations.
+pub async fn test_connection(
+    repo: &HistoryRepository,
+    draft: &AiConnection,
+    credential: Option<String>,
+) -> Result<usize> {
+    validate_connection(draft)?;
+    if let Some(value) = &credential {
+        bounded(value, 8192)?;
+    }
+    let credential = if credential.is_some() || draft.provider == AiProviderKind::Ollama {
+        credential
+    } else {
+        let saved = export(repo)
+            .await?
+            .connections
+            .into_iter()
+            .find(|saved| saved.id == draft.id)
+            .context("credential_required")?;
+        // A saved key must never follow a draft to a different destination.
+        if saved.provider != draft.provider
+            || validate_connection(&saved)? != validate_connection(draft)?
+        {
+            bail!("credential_required");
+        }
+        credentials::get(repo, &draft.id).await?
+    };
+    Ok(discover_connection(draft, credential.as_deref())
+        .await?
+        .len())
+}
+
+async fn discover_connection(
+    connection: &AiConnection,
+    credential: Option<&str>,
+) -> Result<Vec<AiDiscoveredModel>> {
+    let base = validate_connection(connection)?;
+    if connection.provider == AiProviderKind::Ollama {
+        return Ok(providers::ollama::discover_models(base.as_str())
+            .await?
+            .into_iter()
+            .take(500)
+            .map(|v| AiDiscoveredModel {
+                id: v.id,
+                purposes: (!v.capabilities.is_empty()).then(|| {
+                    v.capabilities
+                        .iter()
+                        .map(|capability| match capability {
+                            providers::model_catalog::ModelCapability::TextEmbedding => {
+                                AiModelPurpose::Embedding
+                            }
+                            providers::model_catalog::ModelCapability::TextGeneration => {
+                                AiModelPurpose::Chat
+                            }
+                            providers::model_catalog::ModelCapability::Decision => {
+                                AiModelPurpose::Decision
+                            }
+                        })
+                        .collect()
+                }),
+                capabilities: unknown_capabilities(),
+            })
+            .collect());
+    }
+    if connection.provider == AiProviderKind::Tavily {
+        bail!("model_discovery_unavailable");
+    }
+    let credential = credential.context("credential_required")?;
+    if connection.provider == AiProviderKind::Openrouter {
+        // Catalog visibility alone does not prove that the supplied key is valid.
+        providers::hosted_embedding::request_json(connection, &base.join("key")?, credential, None)
+            .await?;
+    }
+    let value = providers::hosted_embedding::request_json(
+        connection,
+        &base.join("models")?,
+        credential,
+        None,
+    )
+    .await?;
+    let mut rows = value[if connection.provider == AiProviderKind::Gemini {
+        "models"
+    } else {
+        "data"
+    }]
+    .as_array()
+    .context("invalid_model_catalog")?
+    .clone();
+    rows.truncate(500);
+    if connection.provider == AiProviderKind::Openrouter {
+        let embeddings = providers::hosted_embedding::request_json(
+            connection,
+            &base.join("embeddings/models")?,
+            credential,
+            None,
+        )
+        .await?;
+        for row in embeddings["data"]
+            .as_array()
+            .context("invalid_model_catalog")?
+            .iter()
+            .take(500)
+        {
+            let mut row = row.clone();
+            row["architecture"]["output_modalities"] = serde_json::json!(["embeddings"]);
+            rows.push(row);
+        }
+    }
+    Ok(rows
+        .iter()
+        .take(1000)
+        .filter_map(|row| {
+            let id = row[if connection.provider == AiProviderKind::Gemini {
+                "name"
+            } else {
+                "id"
+            }]
+            .as_str()?
+            .strip_prefix("models/")
+            .unwrap_or(
+                row[if connection.provider == AiProviderKind::Gemini {
+                    "name"
+                } else {
+                    "id"
+                }]
+                .as_str()?,
+            )
+            .to_string();
+            if id.is_empty() || id.len() > 256 {
+                return None;
+            }
+            if row["lifecycle"].as_str() == Some("retired") {
+                return None;
+            }
+            let purposes = catalog_purposes(connection.provider, row, &id);
+            let mut capabilities = unknown_capabilities();
+            if purposes.is_some() {
+                capabilities.source = Some(
+                    if connection.provider == AiProviderKind::Openai {
+                        "clipsx_model_family"
+                    } else {
+                        "provider_catalog"
+                    }
+                    .into(),
+                );
+            }
+            if let Some(parameters) = row["supported_parameters"].as_array() {
+                capabilities.tools = Some(parameters.iter().any(|v| v.as_str() == Some("tools")));
+                capabilities.source = Some("provider_catalog".into());
+            }
+            Some(AiDiscoveredModel {
+                id,
+                purposes,
+                capabilities,
+            })
+        })
+        .collect::<Vec<_>>())
 }

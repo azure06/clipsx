@@ -1383,6 +1383,31 @@
     "threadSettings": "会話の設定"
   },
   "modelsWorkspace": {
+    "connectionTestPassed": "接続できました。{{count}} 件のモデルを取得しました。モデル一覧へのアクセスを確認しました。モデルの実行は別途確認が必要です。",
+    "filterModels": "モデルを検索",
+    "chooseModel": "モデル",
+    "selectModel": "モデルを選択…",
+    "noCompatibleModels": "対応モデルがありません。一覧を更新するか、機能不明のモデルを表示するか、IDを手動で入力してください。",
+    "savedModelUnavailable": "保存済みモデル: {{model}}。この一覧では対応状況を確認できません。",
+    "showUnknownModels": "機能が不明なモデルも表示",
+    "enterManualModel": "モデルIDを手動で入力",
+    "manualModelHelp": "モデルの使用時に対応状況が確認されます。",
+    "catalogReported": "プロバイダーが報告した対応機能です。",
+    "catalogInferred": "既知のモデル系列から用途を判定しています。動作は未検証です。",
+
+    "installedModels": "インストール済みのモデル",
+    "availableModels": "利用可能なモデル",
+    "catalogHelp": "この接続のモデルを取得して、機能に使用するモデルを設定します。",
+    "catalogEmpty": "モデルを取得して一覧を表示します。下でモデルIDを手動で追加することもできます。",
+    "unknownPurpose": "機能情報なし",
+
+    "activeTitle": "使用中のモデル",
+    "savedTitle": "保存済みの構成",
+    "savedHelp": "接続と各機能で利用できるモデルを管理します。",
+    "manage": "管理",
+    "allConfigurations": "すべての構成",
+    "modelCount": "モデル {{count}} 件",
+
     "title": "モデルを自由に選ぶ",
     "description": "プロバイダーを接続し、機能ごとに最適なモデルを選びます。",
     "sectionDescription": "プロバイダー、モデル、機能への割り当て",

@@ -32,6 +32,58 @@ fn document(connections: Vec<AiConnection>) -> AiConfiguration {
     }
 }
 
+#[tokio::test]
+async fn draft_connection_test_does_not_save_configuration() {
+    let (_root, service) = repository().await;
+    let before = serde_json::to_value(export(&service.history).await.unwrap()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut draft = connection(AiProviderKind::Ollama, "Unsaved fixture");
+    draft.base_url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().route(
+        "/api/tags",
+        axum::routing::get(|| async { serde_json::json!({"models": []}).to_string() }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    assert_eq!(
+        test_connection(&service.history, &draft, None)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        serde_json::to_value(export(&service.history).await.unwrap()).unwrap(),
+        before
+    );
+    assert!(credentials::get(&service.history, &draft.id)
+        .await
+        .unwrap()
+        .is_none());
+    server.abort();
+}
+
+#[tokio::test]
+async fn draft_connection_test_requires_a_key_for_a_changed_destination() {
+    let (_root, service) = repository().await;
+    let saved = connection(AiProviderKind::Openai, "Saved");
+    import(&service.history, document(vec![saved.clone()]))
+        .await
+        .unwrap();
+    let mut draft = saved;
+    draft.base_url = "https://different.example.test/v1".into();
+    assert_eq!(
+        test_connection(&service.history, &draft, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "credential_required"
+    );
+    assert!(
+        test_connection(&service.history, &draft, Some("bad\nkey".into()))
+            .await
+            .is_err()
+    );
+}
+
 async fn embedding_fixture() -> (AiConfiguration, tokio::task::JoinHandle<()>) {
     use axum::{
         routing::{get, post},
