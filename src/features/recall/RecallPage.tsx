@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Sparkles, Search, X, Plus, SlidersHorizontal, Paperclip, ArrowLeft } from 'lucide-react'
+import { Sparkles, Search, X, SlidersHorizontal, Paperclip, ArrowLeft, PanelLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button, Input, Select, Switch, Tabs } from '../../shared/components/ui'
 import { DocumentationLink } from '../../shared/components/DocumentationLink'
@@ -21,6 +21,7 @@ import type {
 } from './contracts.generated'
 import { emptyFilters, useProgressiveSearch } from './useProgressiveSearch'
 import { RecallChat } from './RecallChat'
+import { ThreadSidebar } from './ThreadSidebar'
 import { conversationStore, createConversationThreadAdapter } from './conversations'
 
 export interface RecallPageProps {
@@ -55,12 +56,12 @@ export function RecallPage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
   const [searchOpen, setSearchOpen] = useState(Boolean(initialQuery) && !initialAsk)
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024)
   const [pane, setPane] = useState(initialQuery && !initialAsk ? 'find' : 'chat')
   const [attachmentLabels, setAttachmentLabels] = useState<Record<string, string>>({})
   const busyRef = useRef(false)
-  const [title, setTitle] = useState('')
   const [preview, setPreview] = useState<ClipSummary | null>(null)
-  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const searchToggle = useRef<HTMLButtonElement | null>(null)
   const previewFocus = useRef<HTMLElement | null>(null)
   const threadAdapter = useMemo(() => createConversationThreadAdapter(), [])
@@ -124,7 +125,6 @@ export function RecallPage({
         setThreads(previous =>
           previous.some(row => row.id === current.id) ? previous : [current, ...previous]
         )
-        setTitle(current.title)
       }
     }
     void load().catch(() => {
@@ -179,7 +179,6 @@ export function RecallPage({
   const changeThread = async (id: string) => {
     const data = await conversationStore.load(id)
     setThread(data.thread)
-    setTitle(data.thread.title)
     setAttachments([])
     setAttachmentLabels({})
     setAsk(null)
@@ -529,8 +528,8 @@ export function RecallPage({
   )
   const composerExtras = (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200/70 pb-2 dark:border-white/10">
-        <div className="min-w-0 flex-1 [&>div]:w-full">
+      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+        <div className="min-w-0 max-w-[180px] [&>div]:w-full">
           <Select
             className="w-full text-xs"
             value={presetId ?? ''}
@@ -597,109 +596,8 @@ export function RecallPage({
   )
   const chat = (
     <section className="flex h-full min-h-0 flex-col" aria-label={t('recallPage.chat')}>
-      <div className="shrink-0 space-y-2 border-b border-slate-200 p-3 dark:border-white/10">
-        <div className="flex flex-wrap items-end gap-2">
-          <Select
-            ariaLabel={t('recallPage.thread')}
-            value={thread?.id ?? ''}
-            options={threads.map(row => ({
-              value: row.id,
-              label:
-                (row.archived ? t('recallPage.archivedPrefix') : '') +
-                (row.title || t('recallPage.untitled')),
-            }))}
-            disabled={busy || running}
-            onChange={id => void perform(() => changeThread(id))}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || running}
-            onClick={() =>
-              void perform(async () => {
-                const next = await conversationStore.initialize(crypto.randomUUID())
-                setThread(next)
-                setTitle('')
-                setAttachments([])
-                setAttachmentLabels({})
-                setAsk(null)
-                await reloadThreads()
-              })
-            }
-          >
-            <Plus size={13} aria-hidden="true" />
-            {t('recallPage.newThread')}
-          </Button>
-          {threads.length >= 200 && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() =>
-                void perform(async () => {
-                  const more = await conversationStore.list(threadOffset)
-                  setThreads(current => [...current, ...more])
-                  setThreadOffset(threadOffset + more.length)
-                })
-              }
-            >
-              {t('recallPage.moreThreads')}
-            </Button>
-          )}
-        </div>
-        {thread && (
-          <details className="text-xs">
-            <summary className="cursor-pointer rounded py-1 text-slate-600 outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-300">
-              {t('recallPage.threadSettings')}
-            </summary>
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <Input
-                aria-label={t('recallPage.threadTitle')}
-                value={title}
-                onChange={setTitle}
-                className="min-w-0 flex-1"
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  void perform(async () => {
-                    await threadAdapter.rename(thread.id, title)
-                    setThread({ ...thread, title })
-                    await reloadThreads()
-                  })
-                }
-              >
-                {t('recallPage.rename')}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || running}
-                onClick={() =>
-                  void perform(async () => {
-                    await (thread.archived
-                      ? threadAdapter.unarchive(thread.id)
-                      : threadAdapter.archive(thread.id))
-                    setThread({ ...thread, archived: !thread.archived })
-                    await reloadThreads()
-                  })
-                }
-              >
-                {thread.archived ? t('recallPage.unarchive') : t('recallPage.archive')}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || running}
-                onClick={() => setDeleteOpen(true)}
-              >
-                {t('recallPage.deleteThread')}
-              </Button>
-            </div>
-          </details>
-        )}
+      {/* Slim scope bar — only thing above the chat */}
+      <div className="shrink-0 border-b border-slate-200 px-3 py-1.5 flex items-center gap-2 dark:border-white/10">
         <button
           type="button"
           onClick={openSearch}
@@ -738,12 +636,22 @@ export function RecallPage({
   )
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-white/10">
+      <header className="shrink-0 border-b border-slate-200 px-4 py-1.5 dark:border-white/10">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="flex items-center gap-2 text-sm font-semibold">
-            <Sparkles size={16} className="text-violet-500" aria-hidden="true" />
-            {t('recallPage.title')}
-          </h1>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={t('recallPage.toggleSidebar')}
+              onClick={() => setSidebarOpen(prev => !prev)}
+            >
+              <PanelLeft size={14} aria-hidden="true" />
+            </Button>
+            <h1 className="flex items-center gap-2 text-sm font-semibold">
+              <Sparkles size={16} className="text-violet-500" aria-hidden="true" />
+              {t('recallPage.title')}
+            </h1>
+          </div>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
@@ -758,27 +666,75 @@ export function RecallPage({
             <DocumentationLink guide="recall" label={t('documentation.recallGuide')} />
           </div>
         </div>
-        <p className="text-[10px] text-slate-500">{t('recallPage.subtitle')}</p>
       </header>
       {error && (
         <p role="alert" className="p-3 text-xs text-red-600">
           {t('recallPage.operationFailed')}
         </p>
       )}
-      <Tabs
-        className="min-h-0 flex-1"
-        activeTab={pane}
-        onTabChange={setPane}
-        keepMounted
-        listClassName="hidden"
-        panelsClassName={`min-h-0 grid grid-cols-1 overflow-hidden ${searchOpen ? 'lg:grid-cols-[minmax(0,1fr)_340px]' : ''}`}
-        panelClassName={`min-h-0 h-full ${searchOpen ? 'lg:data-[state=inactive]:block' : ''}`}
-        tabs={[
-          { id: 'chat', label: t('recallPage.chat'), content: chat },
-          { id: 'find', label: t('recallPage.find'), content: find },
-        ]}
-      />
-      <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <div className="flex min-h-0 flex-1">
+        <ThreadSidebar
+          threads={threads}
+          thread={thread}
+          busy={busy}
+          running={running}
+          threadOffset={threadOffset}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen(prev => !prev)}
+          onSelectThread={id => void perform(() => changeThread(id))}
+          onNewThread={() =>
+            void perform(async () => {
+              const next = await conversationStore.initialize(crypto.randomUUID())
+              setThread(next)
+              setAttachments([])
+              setAttachmentLabels({})
+              setAsk(null)
+              await reloadThreads()
+            })
+          }
+          onLoadMore={() =>
+            void perform(async () => {
+              const more = await conversationStore.list(threadOffset)
+              setThreads(current => [...current, ...more])
+              setThreadOffset(threadOffset + more.length)
+            })
+          }
+          onRename={(id, title) =>
+            void perform(async () => {
+              await threadAdapter.rename(id, title)
+              if (thread?.id === id) setThread({ ...thread, title })
+              await reloadThreads()
+            })
+          }
+          onArchive={(id, archived) =>
+            void perform(async () => {
+              await (archived ? threadAdapter.unarchive(id) : threadAdapter.archive(id))
+              if (thread?.id === id) setThread({ ...thread, archived: !archived })
+              await reloadThreads()
+            })
+          }
+          onDelete={id => setDeleteTargetId(id)}
+        />
+        <Tabs
+          className="min-h-0 flex-1"
+          activeTab={pane}
+          onTabChange={setPane}
+          keepMounted
+          listClassName="hidden"
+          panelsClassName={`min-h-0 grid grid-cols-1 overflow-hidden ${searchOpen ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}
+          panelClassName={`min-h-0 h-full ${searchOpen ? 'lg:data-[state=inactive]:block' : ''}`}
+          tabs={[
+            { id: 'chat', label: t('recallPage.chat'), content: chat },
+            { id: 'find', label: t('recallPage.find'), content: find },
+          ]}
+        />
+      </div>
+      <Dialog.Root
+        open={deleteTargetId !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteTargetId(null)
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-black/30" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-200 bg-slate-50 p-4 outline-none dark:border-white/10 dark:bg-slate-950">
@@ -799,18 +755,17 @@ export function RecallPage({
                 disabled={busy || running}
                 onClick={() =>
                   void perform(async () => {
-                    if (!thread) return
-                    await threadAdapter.delete(thread.id)
+                    if (!deleteTargetId) return
+                    await threadAdapter.delete(deleteTargetId)
                     const rows = await conversationStore.list(0)
                     const next =
                       rows.find(row => !row.archived) ??
                       (await conversationStore.initialize(crypto.randomUUID()))
                     setThread(next)
-                    setTitle(next.title)
                     setAttachments([])
                     setAttachmentLabels({})
                     setAsk(null)
-                    setDeleteOpen(false)
+                    setDeleteTargetId(null)
                     await reloadThreads()
                   })
                 }

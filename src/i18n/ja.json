@@ -1417,6 +1417,7 @@
       "note": "メモ"
     },
     "threadSettings": "会話の設定",
+    "toggleSidebar": "会話一覧を切り替え",
     "browseClips": "クリップを検索",
     "allEligibleClips": "機密以外のすべてのクリップ · 検索範囲を変更",
     "excludedCount": "{{count}}件を除外",

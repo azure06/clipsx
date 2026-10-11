@@ -218,10 +218,10 @@ function TranscriptMessage() {
       }}
     >
       <MessagePrimitive.Root
-        className={`rounded-lg p-3 ${role === 'user' ? 'ml-8 border border-slate-200 bg-slate-100/70 dark:border-white/10 dark:bg-white/5' : 'mr-2'}`}
+        className={`rounded-lg p-2.5 ${role === 'user' ? 'ml-8 border border-slate-200 bg-slate-100/70 dark:border-white/10 dark:bg-white/5' : 'mr-2'}`}
       >
         <AuiIf condition={s => !s.message.composer.isEditing}>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+          <p className="mb-1 text-[10px] text-slate-400">
             {role === 'user' ? t('recallPage.you') : t('recallPage.assistant')}
           </p>
           <MessagePrimitive.Parts
@@ -393,10 +393,10 @@ export function RecallChat(props: RecallChatProps) {
       <SavedSources.Provider value={{ threadId: props.thread.id, sources }}>
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
-            <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-4 py-5 [scrollbar-gutter:stable]">
+            <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [scrollbar-gutter:stable]">
               <AuiIf condition={s => s.thread.isEmpty}>
-                <div className="mx-auto flex max-w-xl flex-col items-center px-3 py-10 text-center">
-                  <div className="mb-4 flex size-11 items-center justify-center rounded-2xl border border-violet-200/60 bg-violet-50 text-violet-600 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
+                <div className="mx-auto flex max-w-xl flex-col items-center px-3 py-6 text-center">
+                  <div className="mb-4 flex size-9 items-center justify-center rounded-2xl border border-violet-200/60 bg-violet-50 text-violet-600 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
                     <Sparkles size={22} aria-hidden="true" />
                   </div>
                   <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
@@ -423,7 +423,7 @@ export function RecallChat(props: RecallChatProps) {
                   )}
                 </div>
               </AuiIf>
-              <div className="mx-auto w-full max-w-3xl space-y-4">
+              <div className="mx-auto w-full max-w-3xl space-y-3">
                 <ThreadPrimitive.Messages
                   components={{
                     UserMessage: TranscriptMessage,
@@ -451,7 +451,7 @@ export function RecallChat(props: RecallChatProps) {
                 <ComposerPrimitive.Root>
                   <ComposerPrimitive.Input
                     disabled={!props.preset}
-                    className="max-h-48 min-h-16 w-full resize-none bg-transparent px-1 py-2 text-sm outline-none placeholder:text-slate-400"
+                    className="max-h-48 min-h-[48px] w-full resize-none bg-transparent px-1 py-2 text-sm outline-none placeholder:text-slate-400"
                     placeholder={t('recallPage.composerPlaceholder')}
                     aria-label={t('recallPage.message')}
                     rows={2}

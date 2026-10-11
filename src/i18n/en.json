@@ -1417,6 +1417,7 @@
       "note": "Notes"
     },
     "threadSettings": "Conversation settings",
+    "toggleSidebar": "Toggle conversations",
     "browseClips": "Search clips",
     "allEligibleClips": "All nonsecret clips · adjust search scope",
     "excludedCount": "{{count}} excluded",
