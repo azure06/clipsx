@@ -6,6 +6,60 @@ use super::{
 use reqwest::Client;
 use serde_json::{json, Value};
 
+#[test]
+fn tool_inputs_expose_nested_types_without_schema_references() {
+    fn assert_inline(value: &Value) {
+        match value {
+            Value::Object(object) => {
+                assert!(
+                    !object.contains_key("$ref"),
+                    "Tool inputs must survive provider schema decoding"
+                );
+                assert!(!object.contains_key("$defs"));
+                for value in object.values() {
+                    assert_inline(value);
+                }
+            }
+            Value::Array(values) => values.iter().for_each(assert_inline),
+            _ => {}
+        }
+    }
+    let definitions = tools(true);
+    for tool in &definitions {
+        assert_inline(&json!(tool.input_schema));
+        assert_eq!(tool.input_schema["additionalProperties"], false);
+    }
+    let schema = |name: &str| {
+        json!(
+            definitions
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap()
+                .input_schema
+        )
+    };
+    let create = schema("create_clip");
+    assert_eq!(
+        create["properties"]["format"]["enum"],
+        json!(["plain_text", "markdown"])
+    );
+    let source = &create["properties"]["sources"]["items"];
+    assert_eq!(source["type"], "object");
+    assert_eq!(
+        source["required"],
+        json!(["clipId", "representationId", "fingerprint"])
+    );
+    assert_eq!(source["additionalProperties"], false);
+    let filters = &schema("search_clips")["properties"]["filters"];
+    assert_eq!(filters["properties"]["sourceAppIds"]["type"], "array");
+    assert_eq!(
+        filters["properties"]["capturedAfter"]["type"],
+        json!(["integer", "null"])
+    );
+    let revision = &schema("organize_clips")["properties"]["clips"]["items"];
+    assert_eq!(revision["required"], json!(["clipId", "revision"]));
+}
+
 async fn rpc(
     client: &Client,
     url: &str,

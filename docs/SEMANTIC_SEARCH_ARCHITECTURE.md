@@ -241,6 +241,11 @@ contracts. Assistant access excludes `core.security.secret` clips; ordinary
 History keeps its existing access policy. Eligibility is checked again when a
 clip or image is read, including direct access by ID.
 
+Assistant tool input schemas inline nested types, including source references,
+filters, revision tokens, and format enums. Both transports publish the same
+generated contracts without relying on provider support for JSON Schema `$ref`.
+Rust remains authoritative for argument validation and mutation admission.
+
 Capture-time ranges, source application IDs, and excluded clip IDs participate
 in the shared SQL predicate before keyword and semantic candidate selection.
 Search defaults to keyword retrieval, 20 results, and a maximum of 50. An empty

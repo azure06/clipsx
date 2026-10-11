@@ -193,7 +193,13 @@ fn definition<I: JsonSchema, O: JsonSchema>(
     read: bool,
     destructive: bool,
 ) -> Tool {
-    let input = serde_json::to_value(schemars::schema_for!(I))
+    // Ollama's ToolProperty decoder does not retain $ref. Inline nested types so
+    // models receive the actual enum values and source/filter/revision fields.
+    let input_schema = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true)
+        .into_generator()
+        .into_root_schema_for::<I>();
+    let input = serde_json::to_value(input_schema)
         .unwrap()
         .as_object()
         .unwrap()
