@@ -17,6 +17,7 @@ import {
   Languages,
   Loader2,
   Plus,
+  Plug,
   RefreshCw,
   ScanSearch,
   SlidersHorizontal,
@@ -487,6 +488,7 @@ export const IntelligencePage = ({
               )}
               {section.id === 'models' && <Sparkles className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'indexing' && <Database className="h-3.5 w-3.5" strokeWidth={1.7} />}
+              {section.id === 'integrations' && <Plug className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'vision' && <ScanSearch className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.label}
             </button>
