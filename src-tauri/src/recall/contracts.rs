@@ -187,6 +187,7 @@ pub enum AiProviderKind {
 pub enum AiModelPurpose {
     Chat,
     Embedding,
+    Decision,
 }
 dto!(AiConnectionOptions { organization: Option<String>, project: Option<String> });
 dto!(AiConnection {
@@ -214,7 +215,21 @@ dto!(AiModelPreset {
     options: AiPresetOptions,
     capabilities: AiCapabilities
 });
-dto!(AiSelections { default_chat: Option<String>, active_embedding: Option<String>, web_search: Option<String> });
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiSelections {
+    pub default_chat: Option<String>,
+    pub active_embedding: Option<String>,
+    pub web_search: Option<String>,
+    #[serde(default)]
+    pub extension_generation: Option<String>,
+    #[serde(default)]
+    pub default_decision: Option<String>,
+}
+dto!(DecisionTestResult {
+    choice: String,
+    confidence: f64
+});
 dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
 dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
 dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
@@ -301,6 +316,7 @@ mod tests {
             AiPresetOptions::decl(&config),
             AiModelPreset::decl(&config),
             AiSelections::decl(&config),
+            DecisionTestResult::decl(&config),
             AiConfiguration::decl(&config),
             AiConnectionState::decl(&config),
             AiConfigurationState::decl(&config),

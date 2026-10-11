@@ -7,6 +7,7 @@ pub mod error;
 pub mod generation;
 pub mod hosted_embedding;
 pub mod model_catalog;
+pub mod named_generation;
 pub mod native_ocr;
 pub mod ollama;
 pub mod registry;

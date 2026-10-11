@@ -40,29 +40,16 @@ const toastTitles = (): string[] =>
 describe('IntelligencePage indexing actions', () => {
   it('opens named AI configurations by default for Recall setup', () => {
     render(<IntelligencePage />)
-    expect(screen.getByRole('tab', { name: 'AI configurations' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('keeps setup help reachable when the connection has no capable models', async () => {
-    const originalImplementation = invokeMock.getMockImplementation()!
-    invokeMock.mockImplementation((command: string) =>
-      command === 'get_model_provider_connection'
-        ? Promise.resolve({ ...connection, models: [] })
-        : (originalImplementation(command) as Promise<unknown>)
+  it('routes the former connections destination into the unified Models tab', () => {
+    render(<IntelligencePage initialSection="connections" />)
+    expect(screen.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: 'AI configurations' })).not.toBeInTheDocument()
+    expect(invokeMock.mock.calls.some(call => call[0] === 'get_model_provider_connection')).toBe(
+      false
     )
-    render(<IntelligencePage initialSection="models" />)
-    await screen.findByText('No installed model reports embedding support.')
-    expect(screen.getByRole('button', { name: 'Local AI setup guide' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Choose an embedding model' }))
-    await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith('open_external_url', {
-        url: 'https://docs.clipsx.app/local-ai#embedding-models',
-      })
-    )
-    expect(screen.getByRole('button', { name: 'Choose a generation model' })).toBeEnabled()
   })
   let currentStatus: TextEmbeddingStatus
   let failNextStatusRefresh: boolean
@@ -138,6 +125,11 @@ describe('IntelligencePage indexing actions', () => {
       }
     )
     invokeMock.mockImplementation((command: string) => {
+      if (command === 'ai_configuration_state')
+        return Promise.resolve({
+          configuration: { version: 2, connections: [], presets: [], selections: {} },
+          connectionStates: [],
+        })
       if (command === 'get_text_embedding_status') {
         if (failNextStatusRefresh) {
           failNextStatusRefresh = false
@@ -268,25 +260,16 @@ describe('IntelligencePage indexing actions', () => {
     expect(toastTitles()).not.toContain('Index missing complete')
   })
 
-  it('confirms a successful disconnect', async () => {
-    render(<IntelligencePage initialSection="models" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
-
-    await waitFor(() => expect(toastTitles()).toContain('Meaning Search disabled'))
-  })
-
-  it('uses one connection and separates model assignment from indexing', async () => {
+  it('separates model assignments from indexing operations', async () => {
     render(<IntelligencePage initialSection="models" />)
 
-    expect(await screen.findByText('Ollama Connection')).toBeInTheDocument()
-    expect(screen.getByText('1 embedding')).toBeInTheDocument()
-    expect(screen.getByText('1 generative')).toBeInTheDocument()
+    expect(await screen.findByText('Which models power ClipsX?')).toBeInTheDocument()
     expect(screen.queryByLabelText('Generation endpoint')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reindex all' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Indexing' }))
     expect(await screen.findByRole('button', { name: 'Reindex all' })).toBeInTheDocument()
-    expect(screen.queryByText('Ollama Connection')).not.toBeInTheDocument()
+    expect(screen.queryByText('Which models power ClipsX?')).not.toBeInTheDocument()
   })
 
   it('persists a device-local meaning threshold from Search settings', async () => {

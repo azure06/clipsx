@@ -3,8 +3,8 @@
 | Tool           | What it does                                                        | Needs a model?         |
 | -------------- | ------------------------------------------------------------------- | ---------------------- |
 | Keyword search | Finds words, prefixes, identifiers, paths, and code using FTS5      | No                     |
-| Meaning Search | Finds related wording using text embeddings                         | Local embedding model  |
-| Recall         | Answers an explicit question using retrieved passages and citations | Local generation model |
+| Meaning Search | Finds related wording using text embeddings                         | Named embedding preset |
+| Recall         | Answers an explicit question using retrieved passages and citations | Named chat preset |
 
 An **embedding** is a list of numbers representing text meaning. Similar vectors
 suggest related text. A **generation model** writes an answer. An **index
@@ -190,6 +190,10 @@ actual active bytes and estimates replacement space from the existing index.
 
 ## Recall
 
+Intelligence → Models is the common configuration workspace. Its Usage & defaults view assigns independent named presets to Recall, semantic search, and extension generation, plus a reserved decision preset and optional Tavily connection. Selecting a named provider shows its configured models; connection/model editors keep advanced options collapsed. Narrow windows replace the connection navigation with a selector. JSON file import/export and read-only validation previews follow the [configuration contract](MODELS.md#named-ai-configurations).
+
+Decision presets currently use local Ollama's [System One API](https://github.com/ollama/ollama/blob/main/docs/capabilities/decision.mdx). An explicit test sends a fixed synthetic classification input, validates the returned choice and probabilities, and never reads clipboard data. Confidence measures preference among labels rather than correctness. Decision models are separate from chat and embeddings; their selection reserves a default without enabling automation.
+
 Recall is a separate, lazily loaded workspace. History remains the startup page. History's Ask action and shortcut open Recall with the current query and filters and explicitly submit one turn; reopening the workspace does not replay that submission. Search input alone never starts generation. Saved conversations, source snapshots, and interrupted-run recovery follow the [data model](MODELS.md).
 
 ### Native SDK transport
@@ -339,7 +343,7 @@ started, including note saves, may finish. Status events are coalesced to one
 start per 500 ms, one active refresh, and one trailing refresh; unmounted
 consumers ignore late responses.
 
-AI configurations is the default Intelligence section and owns named provider connections, model presets, and independent chat, embedding, and web selections. The legacy Models controls retain the shared Ollama connection and Rust generation assignments. Bounded model inspection derives `embedding` /
+Models is the default Intelligence section; its shared configuration workspace is described under Recall above. Bounded Ollama model inspection derives `embedding` /
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.

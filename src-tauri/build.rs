@@ -29,6 +29,8 @@ fn main() {
             "ai_configuration_state",
             "ai_configuration_export",
             "ai_configuration_import",
+            "ai_configuration_preview",
+            "ai_test_decision",
             "ai_set_credential",
             "ai_discover_models",
             "assistant_run_begin",

@@ -18,6 +18,8 @@ permissions = [
   "allow-ai-configuration-state",
   "allow-ai-configuration-export",
   "allow-ai-configuration-import",
+  "allow-ai-configuration-preview",
+  "allow-ai-test-decision",
   "allow-ai-set-credential",
   "allow-ai-discover-models",
   "allow-mcp-integration-status", "allow-mcp-configure", "allow-mcp-list-grants", "allow-mcp-issue-grant", "allow-mcp-revoke-grant",

@@ -40,6 +40,31 @@ pub async fn ai_configuration_export(
         .map_err(public_failure)
 }
 #[tauri::command]
+pub async fn ai_configuration_preview(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    configuration: AiConfiguration,
+) -> Result<AiConfiguration, OperationFailure> {
+    service(&webview, &state)?;
+    let current = super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)?;
+    super::configuration::merge(&current, configuration).map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn ai_test_decision(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+) -> Result<DecisionTestResult, OperationFailure> {
+    service(&webview, &state)?;
+    super::decision::test(&state.history, &preset_id)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
 pub async fn ai_configuration_import(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -51,11 +76,21 @@ pub async fn ai_configuration_import(
         .await
         .map_err(public_failure);
     crate::app::workers::wake_text_index(&app, state.history.clone());
+    if result.is_ok() {
+        let _ = app.emit("generation-provider-status-changed", ());
+        let _ = app.emit("ai-configuration-changed", ());
+        state.workers.extensions.wake_extensions(
+            app.clone(),
+            state.history.clone(),
+            state.extensions.clone(),
+        );
+    }
     result
 }
 #[tauri::command]
 pub async fn ai_set_credential(
     webview: tauri::Webview,
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     connection_id: String,
     value: Option<String>,
@@ -63,7 +98,15 @@ pub async fn ai_set_credential(
     service(&webview, &state)?;
     super::configuration::set_credential(&state.history, &connection_id, value)
         .await
-        .map_err(public_failure)
+        .map_err(public_failure)?;
+    let _ = app.emit("generation-provider-status-changed", ());
+    let _ = app.emit("ai-configuration-changed", ());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    state
+        .workers
+        .extensions
+        .wake_extensions(app, state.history.clone(), state.extensions.clone());
+    Ok(())
 }
 #[tauri::command]
 pub async fn ai_discover_models(

@@ -53,6 +53,7 @@ pub(super) async fn setup(
                 default_chat: Some(preset.id.clone()),
                 active_embedding: None,
                 web_search: None,
+                ..AiSelections::default()
             },
         },
     )

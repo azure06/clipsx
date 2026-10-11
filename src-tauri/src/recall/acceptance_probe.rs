@@ -139,6 +139,7 @@ pub fn run(root: PathBuf, phase: String, model: String) -> Result<()> {
                         default_chat: Some(preset.id.clone()),
                         active_embedding: None,
                         web_search: None,
+                        ..AiSelections::default()
                     },
                 },
             )

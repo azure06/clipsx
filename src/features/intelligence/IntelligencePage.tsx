@@ -17,14 +17,11 @@ import {
   Languages,
   Loader2,
   Plus,
-  PlugZap,
   RefreshCw,
   ScanSearch,
-  Server,
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Unplug,
   Wand2,
 } from 'lucide-react'
 import type {
@@ -35,9 +32,6 @@ import type {
 } from '../../shared/types/v2'
 import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
-import { DocumentationLink } from '../../shared/components/DocumentationLink'
-
-type ModelCapability = 'text_embedding' | 'text_generation'
 
 const phaseLabel = (phase: TextEmbeddingStatus['phase'] | undefined) =>
   phase === 'checking'
@@ -45,22 +39,6 @@ const phaseLabel = (phase: TextEmbeddingStatus['phase'] | undefined) =>
     : phase === 'validating_model'
       ? i18n.t('desktopUi.validatingModel')
       : i18n.t(`search.sourceState.${phase ?? 'not_configured'}`)
-type ModelDescriptor = {
-  id: string
-  digest: string | null
-  size: number | null
-  capabilities: ModelCapability[]
-  inspectionDiagnostic: string | null
-}
-type ModelProviderConnectionStatus = {
-  providerId: string
-  displayName: string
-  configured: boolean
-  endpoint: string | null
-  state: 'not_configured' | 'ready' | 'degraded'
-  diagnostic: string | null
-  models: ModelDescriptor[]
-}
 type SearchSettings = { syntaxMode: 'simple' | 'advanced'; enabledSourceIds: string[] }
 type OcrLanguage = { id: string; label: string }
 type OcrRuntimeStatus = {
@@ -96,9 +74,6 @@ const explainOllamaDiagnostic = (diagnostic: string): string => {
 }
 
 const toErrorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-const OLLAMA_PROVIDER_ID = 'builtin.model_provider.ollama'
-const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434'
-
 type IndexAction = 'reindex' | 'index_missing' | 'retry'
 type ActiveIndexAction = {
   kind: IndexAction
@@ -106,19 +81,10 @@ type ActiveIndexAction = {
 }
 
 const intelligenceSections: Array<{
-  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations' | 'connections'
+  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations'
   label: string
   description: string
 }> = [
-  {
-    id: 'connections',
-    get label() {
-      return i18n.t('aiConfig.title')
-    },
-    get description() {
-      return i18n.t('aiConfig.sectionDescription')
-    },
-  },
   {
     id: 'overview',
     get label() {
@@ -143,7 +109,7 @@ const intelligenceSections: Array<{
       return i18n.t('desktopUi.models')
     },
     get description() {
-      return i18n.t('desktopUi.localOllamaModelsAndProviders')
+      return i18n.t('modelsWorkspace.sectionDescription')
     },
   },
   {
@@ -182,25 +148,15 @@ const indexActionLabel: Record<IndexAction, string> = {
 }
 
 export const IntelligencePage = ({
-  initialSection = 'connections',
-}: { initialSection?: (typeof intelligenceSections)[number]['id'] } = {}) => {
+  initialSection = 'models',
+}: { initialSection?: (typeof intelligenceSections)[number]['id'] | 'connections' } = {}) => {
   useTranslation()
 
-  const [connection, setConnection] = useState<ModelProviderConnectionStatus | null>(null)
-  const [endpointDraft, setEndpointDraft] = useState(DEFAULT_OLLAMA_ENDPOINT)
-  const [loadingConnection, setLoadingConnection] = useState(false)
-  const [savingConnection, setSavingConnection] = useState(false)
-  const [editingConnection, setEditingConnection] = useState(false)
-  const [connectionError, setConnectionError] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState('')
-  const [connecting, setConnecting] = useState(false)
-  const [configError, setConfigError] = useState<string | null>(null)
   const [status, setStatus] = useState<TextEmbeddingStatus | null>(null)
   const [failedJobs, setFailedJobs] = useState<FailedTextEmbeddingJob[]>([])
   const [showAffectedClips, setShowAffectedClips] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [activeIndexAction, setActiveIndexAction] = useState<ActiveIndexAction | null>(null)
-  const [disconnecting, setDisconnecting] = useState(false)
   const [clearingIndex, setClearingIndex] = useState(false)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
   const [searchSettings, setSearchSettings] = useState<SearchSettings | null>(null)
@@ -208,12 +164,11 @@ export const IntelligencePage = ({
   const [thresholdDraft, setThresholdDraft] = useState('70')
   const [thresholdSaving, setThresholdSaving] = useState(false)
   const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
-  const [generationModel, setGenerationModel] = useState('')
-  const [generationSaving, setGenerationSaving] = useState(false)
   const [ocrStatus, setOcrStatus] = useState<OcrRuntimeStatus | null>(null)
   const [ocrSaving, setOcrSaving] = useState(false)
-  const [activeSection, setActiveSection] =
-    useState<(typeof intelligenceSections)[number]['id']>(initialSection)
+  const [activeSection, setActiveSection] = useState<(typeof intelligenceSections)[number]['id']>(
+    initialSection === 'connections' ? 'models' : initialSection
+  )
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
 
@@ -240,9 +195,7 @@ export const IntelligencePage = ({
       if (ocr) setOcrStatus(ocr)
       if (generation) {
         setGenerationStatus(generation)
-        if (generation.model) setGenerationModel(generation.model)
       }
-      if (s.model) setSelectedModel(s.model)
       if (s.phase === 'ready') lastFailureToastRef.current = null
       return s
     } catch (e) {
@@ -260,25 +213,6 @@ export const IntelligencePage = ({
   useEffect(() => {
     void loadStatus()
   }, [loadStatus])
-
-  const loadConnection = useCallback(async () => {
-    setLoadingConnection(true)
-    setConnectionError(null)
-    try {
-      const next = await invoke<ModelProviderConnectionStatus>('get_model_provider_connection')
-      setConnection(next)
-      if (next.endpoint) setEndpointDraft(next.endpoint)
-      await loadStatus()
-    } catch (error) {
-      setConnectionError(toErrorMessage(error))
-    } finally {
-      setLoadingConnection(false)
-    }
-  }, [loadStatus])
-
-  useEffect(() => {
-    if (activeSection === 'models') void loadConnection()
-  }, [activeSection, loadConnection])
 
   useEffect(() => {
     const u1 = listen('embedding-provider-status-changed', () => void loadStatus())
@@ -298,6 +232,7 @@ export const IntelligencePage = ({
       }
     })
     const u6 = listen('ocr-status-changed', () => void loadStatus())
+    const u8 = listen('ai-configuration-changed', () => void loadStatus())
     const u7 = listen<string>('ocr-worker-failed', event => {
       void loadStatus()
       toast({
@@ -314,6 +249,7 @@ export const IntelligencePage = ({
       void u5.then(f => f())
       void u6.then(f => f())
       void u7.then(f => f())
+      void u8.then(f => f())
     }
   }, [loadStatus, toast])
 
@@ -337,103 +273,6 @@ export const IntelligencePage = ({
     }
     setActiveIndexAction(null)
   }, [status, activeIndexAction, toast])
-
-  const handleSaveConnection = async () => {
-    if (!endpointDraft.trim() || savingConnection) return
-    setSavingConnection(true)
-    setConnectionError(null)
-    try {
-      const next = await invoke<ModelProviderConnectionStatus>('save_model_provider_connection', {
-        providerId: OLLAMA_PROVIDER_ID,
-        endpoint: endpointDraft.trim(),
-      })
-      setConnection(next)
-      setEndpointDraft(next.endpoint ?? endpointDraft)
-      setEditingConnection(false)
-      await loadStatus()
-      toast({
-        title: i18n.t('desktopUi.ollamaConnected'),
-        type: 'success',
-      })
-    } catch (error) {
-      setConnectionError(toErrorMessage(error))
-    } finally {
-      setSavingConnection(false)
-    }
-  }
-
-  const handleConnect = async () => {
-    if (!selectedModel) return
-    setConnecting(true)
-    setConfigError(null)
-    try {
-      const next = await invoke<TextEmbeddingStatus>('configure_text_embedding_provider', {
-        model: selectedModel,
-      })
-      setStatus(next)
-    } catch (e) {
-      setConfigError(toErrorMessage(e))
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  const handleDisconnect = async () => {
-    setDisconnecting(true)
-    try {
-      await invoke('disable_text_embedding_provider')
-      await loadStatus()
-      toast({
-        title: i18n.t('desktopUi.meaningSearchDisabled'),
-        type: 'success',
-      })
-    } catch (e) {
-      toast({
-        title: i18n.t('desktopUi.disconnectFailed'),
-        description: toErrorMessage(e),
-        type: 'error',
-      })
-    } finally {
-      setDisconnecting(false)
-    }
-  }
-
-  const handleGenerationConnect = async () => {
-    if (!generationModel) return
-    setGenerationSaving(true)
-    try {
-      const next = await invoke<GenerationProviderStatus>('configure_text_generation_provider', {
-        model: generationModel,
-      })
-      setGenerationStatus(next)
-      toast({
-        title: i18n.t('desktopUi.localTextGenerationConfigured'),
-        type: 'success',
-      })
-    } catch (e) {
-      toast({
-        title: i18n.t('desktopUi.generationSetupFailed'),
-        description: toErrorMessage(e),
-        type: 'error',
-      })
-    } finally {
-      setGenerationSaving(false)
-    }
-  }
-
-  const handleGenerationDisconnect = async () => {
-    setGenerationSaving(true)
-    try {
-      await invoke('disable_text_generation_provider')
-      await loadStatus()
-      toast({
-        title: i18n.t('desktopUi.localTextGenerationDisabled'),
-        type: 'success',
-      })
-    } finally {
-      setGenerationSaving(false)
-    }
-  }
 
   const saveOcrSettings = async (enabled: boolean, language: string) => {
     if (!ocrStatus || ocrSaving) return
@@ -573,27 +412,6 @@ export const IntelligencePage = ({
   const thresholdDraftIsValid =
     Number.isInteger(parsedThreshold) && parsedThreshold >= 1 && parsedThreshold <= 100
 
-  const connectionReady = connection?.state === 'ready'
-  const embeddingModels = (connection?.models ?? []).filter(model =>
-    model.capabilities.includes('text_embedding')
-  )
-  const generationModels = (connection?.models ?? []).filter(model =>
-    model.capabilities.includes('text_generation')
-  )
-  const modelOptions = (models: ModelDescriptor[], selected: string) => {
-    const options = models.map(model => ({
-      value: model.id,
-      label: `${model.id}${model.size ? ` (${formatBytes(model.size)})` : ''}`,
-    }))
-    if (selected && !models.some(model => model.id === selected)) {
-      options.unshift({
-        value: selected,
-        label: i18n.t('desktopUi.modelUnavailable', { model: selected }),
-      })
-    }
-    return options
-  }
-
   // Progress bar math
   const indexing = status?.phase === 'indexing'
   const total = status?.eligibleClips ?? 0
@@ -620,7 +438,7 @@ export const IntelligencePage = ({
   }
 
   return (
-    <div className="relative flex h-full flex-col overflow-auto p-8">
+    <div className="relative flex h-full flex-col overflow-auto p-4 sm:p-8">
       <div
         aria-hidden
         className="animate-dot-drift pointer-events-none absolute inset-0 opacity-[0.4] dark:opacity-[0.25]"
@@ -676,7 +494,7 @@ export const IntelligencePage = ({
           ))}
         </nav>
 
-        {activeSection === 'connections' && <AiConfigurationsPanel />}
+        {activeSection === 'models' && <AiConfigurationsPanel />}
         {activeSection === 'integrations' && <IntegrationsPanel />}
         {activeSection === 'overview' && (
           <div
@@ -1203,298 +1021,6 @@ export const IntelligencePage = ({
                 <Trans i18nKey="desktopUi.semanticSearchOverScreenshotsAndImagesFindABeach" />
               </p>
             </section>
-          </div>
-        )}
-
-        {activeSection === 'models' && (
-          <div role="tabpanel" className="space-y-4">
-            <section className="space-y-4 rounded-2xl border border-violet-200/70 bg-linear-to-br from-violet-500/[0.08] via-slate-100/30 to-transparent p-5 dark:border-violet-400/15 dark:from-violet-500/[0.12] dark:via-white/[0.025]">
-              <div className="flex items-center gap-2">
-                <Server className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
-                <div>
-                  <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    <Trans i18nKey="desktopUi.ollamaConnection" />
-                  </h2>
-                  <p className="mt-0.5 text-[11px] text-gray-500">
-                    <Trans i18nKey="desktopUi.oneLocalModelLibraryForEveryClipsxIntelligenceCapability" />
-                  </p>
-                </div>
-                <span
-                  className={`ml-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${connectionReady ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : connection?.configured ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
-                >
-                  {loadingConnection ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : connectionReady ? (
-                    <CheckCircle2 className="h-3 w-3" />
-                  ) : (
-                    <Circle className="h-3 w-3" />
-                  )}
-                  {loadingConnection
-                    ? i18n.t('desktopUi.checking')
-                    : connectionReady
-                      ? i18n.t('desktopUi.connectedStatus')
-                      : connection?.configured
-                        ? i18n.t('desktopUi.unavailable')
-                        : i18n.t('desktopUi.notConnectedStatus')}
-                </span>
-              </div>
-
-              {connection?.configured && !editingConnection ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/60 bg-white/45 px-3 py-2.5 dark:border-white/5 dark:bg-black/10">
-                  <Server className="h-3.5 w-3.5 text-gray-400" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-700 dark:text-slate-200">
-                    {connection.endpoint}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
-                    isLoading={loadingConnection}
-                    disabled={loadingConnection}
-                    onClick={() => void loadConnection()}
-                  >
-                    <Trans i18nKey="desktopUi.refresh" />
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => setEditingConnection(true)}>
-                    <Trans i18nKey="desktopUi.change" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  <div className="flex min-w-60 flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-white/10 dark:bg-slate-100/5">
-                    <Server className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                    <input
-                      aria-label={i18n.t('desktopUi.ollamaEndpoint')}
-                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
-                      placeholder={DEFAULT_OLLAMA_ENDPOINT}
-                      value={endpointDraft}
-                      onChange={event => setEndpointDraft(event.target.value)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') void handleSaveConnection()
-                      }}
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    leftIcon={<PlugZap className="h-3.5 w-3.5" />}
-                    isLoading={savingConnection}
-                    disabled={savingConnection || !endpointDraft.trim()}
-                    onClick={() => void handleSaveConnection()}
-                  >
-                    {connection?.configured
-                      ? i18n.t('desktopUi.useEndpoint')
-                      : i18n.t('desktopUi.connect')}
-                  </Button>
-                  {connection?.configured && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setEndpointDraft(connection.endpoint ?? DEFAULT_OLLAMA_ENDPOINT)
-                        setConnectionError(null)
-                        setEditingConnection(false)
-                      }}
-                    >
-                      <Trans i18nKey="desktopUi.cancel" />
-                    </Button>
-                  )}
-                </div>
-              )}
-
-              <DocumentationLink
-                guide="localAi"
-                anchor="starting-setup"
-                label={i18n.t('documentation.localAiSetup')}
-              />
-              {(connectionError || connection?.diagnostic) && (
-                <p className="rounded-lg border border-amber-300/35 bg-amber-50/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/15 dark:bg-amber-500/[0.08] dark:text-amber-300">
-                  {connectionError ?? connection?.diagnostic}
-                </p>
-              )}
-              {connectionReady && (
-                <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
-                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {connection.models.length} <Trans i18nKey="desktopUi.installed" />
-                  </span>
-                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {embeddingModels.length} <Trans i18nKey="desktopUi.embedding" />
-                  </span>
-                  <span className="rounded-full bg-white/65 px-2 py-1 dark:bg-white/5">
-                    {generationModels.length} <Trans i18nKey="desktopUi.generative" />
-                  </span>
-                </div>
-              )}
-            </section>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <section className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
-                <div className="flex items-center gap-2">
-                  <BrainCircuit className="h-4 w-4 text-violet-400" strokeWidth={1.5} />
-                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    <Trans i18nKey="desktopUi.semanticSearch" />
-                  </span>
-                  <span className="ml-auto rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400">
-                    {phaseLabel(status?.phase)}
-                  </span>
-                </div>
-                <p className="text-xs leading-5 text-gray-500">
-                  <Trans i18nKey="desktopUi.understandMeaningWithAnEmbeddingModelChangingVectorSpaces" />
-                </p>
-                <Select
-                  className="w-full py-2"
-                  value={selectedModel}
-                  onChange={setSelectedModel}
-                  options={modelOptions(embeddingModels, selectedModel)}
-                  placeholder={
-                    connectionReady
-                      ? i18n.t('desktopUi.chooseAnEmbeddingModel')
-                      : i18n.t('desktopUi.connectOllamaFirst')
-                  }
-                  disabled={!connectionReady || embeddingModels.length === 0}
-                />
-                {connectionReady && embeddingModels.length === 0 && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    <Trans i18nKey="desktopUi.noInstalledModelReportsEmbeddingSupport" />
-                  </p>
-                )}
-                {selectedModel && !embeddingModels.some(model => model.id === selectedModel) && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    {selectedModel}{' '}
-                    <Trans i18nKey="desktopUi.isNotAvailableAsAnEmbeddingModelOnThis" />
-                  </p>
-                )}
-                <DocumentationLink
-                  guide="localAi"
-                  anchor="embedding-models"
-                  label={i18n.t('documentation.chooseEmbedding')}
-                />
-                {configError && (
-                  <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-900/20 dark:text-red-400">
-                    {configError}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    isLoading={connecting}
-                    disabled={
-                      connecting ||
-                      !connectionReady ||
-                      !embeddingModels.some(model => model.id === selectedModel)
-                    }
-                    onClick={() => void handleConnect()}
-                  >
-                    {status?.enabled ? i18n.t('desktopUi.update') : i18n.t('desktopUi.enable')}
-                  </Button>
-                  {status?.enabled && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      leftIcon={<Unplug className="h-3.5 w-3.5" />}
-                      isLoading={disconnecting}
-                      disabled={disconnecting}
-                      onClick={() => void handleDisconnect()}
-                    >
-                      <Trans i18nKey="desktopUi.disable" />
-                    </Button>
-                  )}
-                  {isConfigured && status && (
-                    <button
-                      type="button"
-                      className="ml-auto text-[11px] font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400"
-                      onClick={() => setActiveSection('indexing')}
-                    >
-                      {status.indexedClips.toLocaleString()} /{' '}
-                      {status.eligibleClips.toLocaleString()}{' '}
-                      <Trans i18nKey="desktopUi.indexedfb7a" />
-                    </button>
-                  )}
-                </div>
-              </section>
-
-              <section className="space-y-4 rounded-2xl border border-slate-200/60 bg-slate-100/30 p-5 dark:border-white/10 dark:bg-slate-100/5">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-pink-400" strokeWidth={1.5} />
-                  <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    <Trans i18nKey="desktopUi.localTextGeneration" />
-                  </span>
-                  <span
-                    className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${generationStatus?.available ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-slate-200/70 text-gray-500 dark:bg-white/10'}`}
-                  >
-                    {generationStatus?.available
-                      ? i18n.t('desktopUi.available')
-                      : generationStatus?.enabled
-                        ? i18n.t('desktopUi.needsAttention')
-                        : i18n.t('desktopUi.notConfigured')}
-                  </span>
-                </div>
-                <p className="text-xs leading-5 text-gray-500">
-                  <Trans i18nKey="desktopUi.extensionsCanRequestGenerationWithoutLearningYourEndpointOr" />
-                </p>
-                <Select
-                  className="w-full py-2"
-                  value={generationModel}
-                  onChange={setGenerationModel}
-                  options={modelOptions(generationModels, generationModel)}
-                  placeholder={
-                    connectionReady
-                      ? i18n.t('desktopUi.chooseAGenerativeModel')
-                      : i18n.t('desktopUi.connectOllamaFirst')
-                  }
-                  disabled={!connectionReady || generationModels.length === 0}
-                />
-                {connectionReady && generationModels.length === 0 && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    <Trans i18nKey="desktopUi.noInstalledModelReportsCompletionSupport" />
-                  </p>
-                )}
-                {generationModel &&
-                  !generationModels.some(model => model.id === generationModel) && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      {generationModel}{' '}
-                      <Trans i18nKey="desktopUi.isNotAvailableForTextGenerationOnThisConnection" />
-                    </p>
-                  )}
-                <DocumentationLink
-                  guide="localAi"
-                  anchor="generation-models"
-                  label={i18n.t('documentation.chooseGeneration')}
-                />
-                {generationStatus?.enabled && generationStatus.diagnostic && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    {generationStatus.diagnostic}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    isLoading={generationSaving}
-                    disabled={
-                      generationSaving ||
-                      !connectionReady ||
-                      !generationModels.some(model => model.id === generationModel)
-                    }
-                    onClick={() => void handleGenerationConnect()}
-                  >
-                    {generationStatus?.enabled
-                      ? i18n.t('desktopUi.update')
-                      : i18n.t('desktopUi.enable')}
-                  </Button>
-                  {generationStatus?.enabled && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      leftIcon={<Unplug className="h-3.5 w-3.5" />}
-                      isLoading={generationSaving}
-                      disabled={generationSaving}
-                      onClick={() => void handleGenerationDisconnect()}
-                    >
-                      <Trans i18nKey="desktopUi.disable" />
-                    </Button>
-                  )}
-                </div>
-              </section>
-            </div>
           </div>
         )}
       </div>

@@ -12,6 +12,7 @@ pub mod contracts;
 mod conversation_tests;
 pub mod conversations;
 pub mod credentials;
+pub mod decision;
 pub mod ipc;
 pub mod mcp;
 #[cfg(test)]

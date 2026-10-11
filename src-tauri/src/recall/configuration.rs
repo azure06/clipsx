@@ -117,7 +117,10 @@ fn bounded(value: &str, max: usize) -> Result<()> {
     Ok(())
 }
 fn validate(document: &AiConfiguration) -> Result<()> {
-    if document.version != 1 || document.connections.len() > 64 || document.presets.len() > 256 {
+    if ![1, 2].contains(&document.version)
+        || document.connections.len() > 64
+        || document.presets.len() > 256
+    {
         bail!("invalid_configuration");
     }
     let mut ids = HashSet::new();
@@ -151,6 +154,15 @@ fn validate(document: &AiConfiguration) -> Result<()> {
             bail!("invalid_model_limits");
         }
         let opts = &preset.options;
+        if preset.purpose == AiModelPurpose::Decision
+            && (connection.provider != AiProviderKind::Ollama
+                || opts.temperature.is_some()
+                || opts.openai.is_some()
+                || opts.anthropic.is_some()
+                || opts.gemini.is_some())
+        {
+            bail!("unsupported_decision_provider");
+        }
         if opts
             .temperature
             .is_some_and(|v| !v.is_finite() || !(0.0..=2.0).contains(&v))
@@ -225,6 +237,14 @@ fn validate(document: &AiConfiguration) -> Result<()> {
     for (id, purpose) in [
         (&document.selections.default_chat, AiModelPurpose::Chat),
         (
+            &document.selections.extension_generation,
+            AiModelPurpose::Chat,
+        ),
+        (
+            &document.selections.default_decision,
+            AiModelPurpose::Decision,
+        ),
+        (
             &document.selections.active_embedding,
             AiModelPurpose::Embedding,
         ),
@@ -276,6 +296,7 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
         default_chat: None,
         active_embedding: None,
         web_search: None,
+        ..AiSelections::default()
     };
     for (key, id) in sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT selection_key,selected_id FROM ai_selections",
@@ -287,11 +308,13 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
             "default_chat" => selections.default_chat = id,
             "active_embedding" => selections.active_embedding = id,
             "web_search" => selections.web_search = id,
+            "extension_generation" => selections.extension_generation = id,
+            "default_decision" => selections.default_decision = id,
             _ => (),
         }
     }
     Ok(AiConfiguration {
-        version: 1,
+        version: 2,
         connections,
         presets,
         selections,
@@ -299,7 +322,7 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
 }
 async fn persist(tx: &mut SqliteConnection, document: &AiConfiguration) -> Result<()> {
     for connection in &document.connections {
-        sqlx::query("INSERT INTO ai_connections(id,configuration_json,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET configuration_json=excluded.configuration_json,updated_at=excluded.updated_at")
+        sqlx::query("INSERT INTO ai_connections(id,configuration_json,credential_ref,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_test_at=CASE WHEN configuration_json=excluded.configuration_json THEN last_test_at ELSE NULL END,last_test_code=CASE WHEN configuration_json=excluded.configuration_json THEN last_test_code ELSE NULL END,configuration_json=excluded.configuration_json,updated_at=excluded.updated_at")
         .bind(&connection.id).bind(serde_json::to_string(connection)?).bind(format!("ai:{}",connection.id)).bind(now_ms()).bind(now_ms()).execute(&mut *tx).await?;
     }
     for preset in &document.presets {
@@ -310,6 +333,11 @@ async fn persist(tx: &mut SqliteConnection, document: &AiConfiguration) -> Resul
         ("default_chat", &document.selections.default_chat),
         ("active_embedding", &document.selections.active_embedding),
         ("web_search", &document.selections.web_search),
+        (
+            "extension_generation",
+            &document.selections.extension_generation,
+        ),
+        ("default_decision", &document.selections.default_decision),
     ] {
         sqlx::query("INSERT INTO ai_selections(selection_key,selected_id) VALUES(?,?) ON CONFLICT(selection_key) DO UPDATE SET selected_id=excluded.selected_id").bind(key).bind(id).execute(&mut *tx).await?;
     }
@@ -327,20 +355,6 @@ async fn persist(tx: &mut SqliteConnection, document: &AiConfiguration) -> Resul
             .find(|v| Some(v.id.as_str()) == marker["connectionId"].as_str())
         {
             sqlx::query("UPDATE config_device_values SET value_json=?,updated_at=? WHERE key='providers.ollama.connection'").bind(serde_json::json!({"providerId":"builtin.model_provider.ollama","endpoint":connection.base_url}).to_string()).bind(now_ms()).execute(&mut *tx).await?;
-            if let Some(preset) = document.presets.iter().find(|v| {
-                Some(v.id.as_str()) == marker["generationPresetId"].as_str()
-                    && v.purpose == AiModelPurpose::Chat
-            }) {
-                if preset.connection_id != connection.id {
-                    bail!("legacy_generation_connection_conflict");
-                }
-                let raw=sqlx::query_scalar::<_,String>("SELECT value_json FROM config_device_values WHERE key='providers.generation.text.active'").fetch_one(&mut *tx).await?;
-                let mut value: serde_json::Value = serde_json::from_str(&raw)?;
-                if value.is_object() {
-                    value["model"] = serde_json::json!(preset.model_id);
-                    sqlx::query("UPDATE config_device_values SET value_json=?,updated_at=? WHERE key='providers.generation.text.active'").bind(value.to_string()).bind(now_ms()).execute(&mut *tx).await?;
-                }
-            }
         }
     }
     Ok(())
@@ -353,6 +367,8 @@ pub async fn migrate_legacy(repo: &HistoryRepository) -> Result<()> {
     .fetch_one(&mut *tx)
     .await?;
     if exists {
+        migrate_generation_assignment(&mut tx).await?;
+        tx.commit().await?;
         return Ok(());
     }
     let legacy = sqlx::query_scalar::<_, String>(
@@ -385,6 +401,7 @@ pub async fn migrate_legacy(repo: &HistoryRepository) -> Result<()> {
                 default_chat: None,
                 active_embedding: None,
                 web_search: None,
+                ..AiSelections::default()
             },
         };
         for (key, purpose) in [
@@ -421,6 +438,9 @@ pub async fn migrate_legacy(repo: &HistoryRepository) -> Result<()> {
                     };
                     if purpose == AiModelPurpose::Chat {
                         document.selections.default_chat = Some(preset.id.clone());
+                        if value["enabled"] == true {
+                            document.selections.extension_generation = Some(preset.id.clone());
+                        }
                     } else {
                         document.selections.active_embedding = Some(preset.id.clone());
                     }
@@ -436,7 +456,45 @@ pub async fn migrate_legacy(repo: &HistoryRepository) -> Result<()> {
         .bind(marker)
         .execute(&mut *tx)
         .await?;
+    migrate_generation_assignment(&mut tx).await?;
     tx.commit().await?;
+    Ok(())
+}
+// Backfill an already-migrated installation once, preserving disabled legacy generation.
+async fn migrate_generation_assignment(tx: &mut SqliteConnection) -> Result<()> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ai_selections WHERE selection_key='extension_generation')",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if exists {
+        return Ok(());
+    }
+    let marker: Option<String> = sqlx::query_scalar(
+        "SELECT selected_id FROM ai_selections WHERE selection_key='legacy_migrated'",
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT value_json FROM config_device_values WHERE key='providers.generation.text.active'",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let enabled = raw
+        .as_deref()
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+        .is_some_and(|v| v["enabled"] == true);
+    let id = marker
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+        .and_then(|v| v["generationPresetId"].as_str().map(str::to_owned))
+        .filter(|_| enabled);
+    sqlx::query(
+        "INSERT INTO ai_selections(selection_key,selected_id) VALUES('extension_generation',?)",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 pub async fn export(repo: &HistoryRepository) -> Result<AiConfiguration> {
@@ -474,6 +532,12 @@ pub async fn import(
     incoming: AiConfiguration,
 ) -> Result<AiConfigurationState> {
     let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    let current = export(repo).await?;
+    let merged = merge(&current, incoming)?;
+    import_merged(repo, current, merged).await
+}
+
+pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiConfiguration> {
     if serde_json::to_vec(&incoming)?.len() > 1024 * 1024 {
         bail!("configuration_too_large");
     }
@@ -496,7 +560,6 @@ pub async fn import(
     {
         bail!("invalid_configuration");
     }
-    let current = export(repo).await?;
     let mut merged = current.clone();
     for item in incoming.connections {
         if let Some(old) = merged.connections.iter_mut().find(|v| v.id == item.id) {
@@ -515,11 +578,23 @@ pub async fn import(
             merged.presets.push(item);
         }
     }
-    if incoming.version != 1 {
+    if ![1, 2].contains(&incoming.version) {
         bail!("unsupported_configuration_version");
     }
     merged.selections = incoming.selections;
+    if incoming.version == 1 {
+        merged.selections.extension_generation = current.selections.extension_generation.clone();
+        merged.selections.default_decision = current.selections.default_decision.clone();
+    }
     validate(&merged)?;
+    Ok(merged)
+}
+
+async fn import_merged(
+    repo: &HistoryRepository,
+    current: AiConfiguration,
+    merged: AiConfiguration,
+) -> Result<AiConfigurationState> {
     let changed = serde_json::to_string(&current.selections.active_embedding)?
         != serde_json::to_string(&merged.selections.active_embedding)?
         || current
@@ -593,7 +668,12 @@ pub async fn set_credential(
     value: Option<String>,
 ) -> Result<()> {
     connection(repo, id).await?;
-    credentials::set(repo, id, value).await
+    credentials::set(repo, id, value).await?;
+    sqlx::query("UPDATE ai_connections SET last_test_at=NULL,last_test_code=NULL WHERE id=?")
+        .bind(id)
+        .execute(&repo.pool)
+        .await?;
+    Ok(())
 }
 pub async fn verify_embedding(
     repo: &HistoryRepository,

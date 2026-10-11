@@ -27,6 +27,7 @@ fn document(connections: Vec<AiConnection>) -> AiConfiguration {
             default_chat: None,
             active_embedding: None,
             web_search: None,
+            ..AiSelections::default()
         },
     }
 }
@@ -268,6 +269,10 @@ async fn legacy_assignments_migrate_once_without_changing_existing_index_configu
     assert_eq!(first.presets.len(), 2);
     assert!(first.selections.default_chat.is_some());
     assert!(first.selections.active_embedding.is_some());
+    assert_eq!(
+        first.selections.extension_generation,
+        first.selections.default_chat
+    );
     let retained: String = sqlx::query_scalar(
         "SELECT value_json FROM config_device_values WHERE key='providers.text_embedding.active'",
     )
@@ -275,6 +280,130 @@ async fn legacy_assignments_migrate_once_without_changing_existing_index_configu
     .await
     .unwrap();
     assert_eq!(retained, original);
+}
+
+#[tokio::test]
+async fn feature_assignments_are_independent_and_old_imports_preserve_new_defaults() {
+    let (_root, service) = repository().await;
+    let repo = &service.history;
+    let local = connection(AiProviderKind::Ollama, "Home");
+    let hosted = connection(AiProviderKind::Openai, "Work");
+    let preset = |connection: &AiConnection, purpose| AiModelPreset {
+        id: new_id(),
+        name: "Model".into(),
+        connection_id: connection.id.clone(),
+        model_id: "fixture".into(),
+        purpose,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: default_options(),
+        capabilities: unknown_capabilities(),
+    };
+    let chat = preset(&hosted, AiModelPurpose::Chat);
+    let decision = preset(&local, AiModelPurpose::Decision);
+    let mut config = document(vec![local, hosted]);
+    config.version = 2;
+    config.presets = vec![chat.clone(), decision.clone()];
+    config.selections.extension_generation = Some(chat.id.clone());
+    config.selections.default_decision = Some(decision.id.clone());
+    import(repo, config.clone()).await.unwrap();
+    let saved = export(repo).await.unwrap();
+    assert_eq!(saved.version, 2);
+    assert!(saved.selections.default_chat.is_none());
+    let missing_credential = crate::providers::generation::resolve(repo)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(
+        crate::failure::OperationFailure::from_error(&missing_credential).code,
+        crate::failure::FailureCode::ProviderNotConfigured
+    );
+    credentials::set(
+        repo,
+        &chat.connection_id,
+        Some("fixture-private-credential".into()),
+    )
+    .await
+    .unwrap();
+    let (active, provider) = crate::providers::generation::resolve(repo).await.unwrap();
+    assert_eq!(active.model, chat.model_id);
+    assert!(matches!(
+        provider.capabilities().execution_location,
+        crate::providers::contracts::generation::GenerationExecutionLocation::Remote
+    ));
+    let mut old = config.clone();
+    old.version = 1;
+    old.selections.extension_generation = None;
+    old.selections.default_decision = None;
+    import(repo, old).await.unwrap();
+    assert_eq!(
+        export(repo).await.unwrap().selections.extension_generation,
+        Some(chat.id.clone())
+    );
+    config.selections.extension_generation = Some(decision.id);
+    assert!(import(repo, config.clone()).await.is_err());
+    config.selections.extension_generation = None;
+    config.presets[1].connection_id = chat.connection_id;
+    assert!(import(repo, config).await.is_err());
+    assert_eq!(
+        export(repo).await.unwrap().selections.extension_generation,
+        Some(chat.id)
+    );
+    crate::providers::generation::disable(repo).await.unwrap();
+    assert!(crate::providers::generation::resolve(repo).await.is_err());
+    assert!(export(repo)
+        .await
+        .unwrap()
+        .selections
+        .default_decision
+        .is_some());
+}
+
+#[tokio::test]
+async fn existing_registry_backfills_generation_once_and_keeps_disabled_assignments_disabled() {
+    let (_root, service) = repository().await;
+    let repo = &service.history;
+    let connection = connection(AiProviderKind::Ollama, "Home");
+    let mut config = document(vec![connection.clone()]);
+    let preset = AiModelPreset {
+        id: new_id(),
+        name: "Legacy chat".into(),
+        connection_id: connection.id.clone(),
+        model_id: "fixture".into(),
+        purpose: AiModelPurpose::Chat,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: default_options(),
+        capabilities: unknown_capabilities(),
+    };
+    config.presets.push(preset.clone());
+    import(repo, config).await.unwrap();
+    sqlx::query("DELETE FROM ai_selections WHERE selection_key='extension_generation'")
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE ai_selections SET selected_id=? WHERE selection_key='legacy_migrated'")
+        .bind(
+            serde_json::json!({"connectionId":connection.id,"generationPresetId":preset.id})
+                .to_string(),
+        )
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE config_device_values SET value_json=? WHERE key='providers.generation.text.active'").bind(serde_json::json!({"providerId":"builtin.generation.ollama","model":"fixture","enabled":false}).to_string()).execute(&repo.pool).await.unwrap();
+    assert!(export(repo)
+        .await
+        .unwrap()
+        .selections
+        .extension_generation
+        .is_none());
+    sqlx::query("UPDATE config_device_values SET value_json=? WHERE key='providers.generation.text.active'").bind(serde_json::json!({"providerId":"builtin.generation.ollama","model":"fixture","enabled":true}).to_string()).execute(&repo.pool).await.unwrap();
+    assert!(export(repo)
+        .await
+        .unwrap()
+        .selections
+        .extension_generation
+        .is_none());
 }
 #[tokio::test]
 async fn hosted_indexing_requires_enablement_and_import_is_validated_before_writes() {
@@ -302,6 +431,14 @@ async fn hosted_indexing_requires_enablement_and_import_is_validated_before_writ
     settings.presets.push(preset.clone());
     import(&repo, settings.clone()).await.unwrap();
     settings.selections.active_embedding = Some(preset.id.clone());
+    // Preview is pure validation: no hosted probe, activation, or configuration write.
+    let before = export(&repo).await.unwrap();
+    let preview = merge(&before, settings.clone()).unwrap();
+    assert_eq!(preview.selections.active_embedding, Some(preset.id.clone()));
+    assert_eq!(
+        serde_json::to_value(export(&repo).await.unwrap()).unwrap(),
+        serde_json::to_value(&before).unwrap()
+    );
     assert!(import(&repo, settings)
         .await
         .unwrap_err()

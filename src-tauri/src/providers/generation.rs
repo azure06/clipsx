@@ -61,15 +61,50 @@ pub async fn configure(
     };
     put_config(repo, &config).await?;
     record_success(repo).await?;
+    let mut document = crate::recall::configuration::export(repo).await?;
+    let endpoint = model_catalog::endpoint(repo).await?;
+    let connection = document
+        .connections
+        .iter()
+        .find(|c| {
+            c.provider == crate::recall::contracts::AiProviderKind::Ollama
+                && c.base_url.trim_end_matches('/') == endpoint.trim_end_matches('/')
+        })
+        .context("missing_connection")?
+        .clone();
+    let preset = document
+        .presets
+        .iter()
+        .find(|p| {
+            p.connection_id == connection.id
+                && p.model_id == config.model
+                && p.purpose == crate::recall::contracts::AiModelPurpose::Chat
+        })
+        .cloned()
+        .unwrap_or_else(|| crate::recall::contracts::AiModelPreset {
+            id: crate::history::new_id(),
+            name: config.model.clone(),
+            connection_id: connection.id,
+            model_id: config.model,
+            purpose: crate::recall::contracts::AiModelPurpose::Chat,
+            context_limit: 32768,
+            output_limit: 4096,
+            options: crate::recall::configuration::default_options(),
+            capabilities: crate::recall::configuration::unknown_capabilities(),
+        });
+    document.selections.extension_generation = Some(preset.id.clone());
+    if !document.presets.iter().any(|p| p.id == preset.id) {
+        document.presets.push(preset);
+    }
+    crate::recall::configuration::import(repo, document).await?;
     status(repo).await
 }
 
 pub async fn disable(repo: &HistoryRepository) -> Result<()> {
-    let Some(mut config) = get_config(repo).await? else {
-        return Ok(());
-    };
-    config.enabled = false;
-    put_config(repo, &config).await
+    let mut document = crate::recall::configuration::export(repo).await?;
+    document.selections.extension_generation = None;
+    crate::recall::configuration::import(repo, document).await?;
+    Ok(())
 }
 
 pub async fn status(repo: &HistoryRepository) -> Result<GenerationProviderStatus> {
@@ -82,22 +117,46 @@ pub async fn status(repo: &HistoryRepository) -> Result<GenerationProviderStatus
             model: None,
         });
     };
-    let capability_diagnostic = if config.enabled {
-        model_catalog::require_model(repo, &config.model, ModelCapability::TextGeneration)
-            .await
-            .err()
-            .map(|_| {
-                crate::failure::FailureCode::ModelUnavailable
-                    .message()
-                    .to_owned()
-            })
-    } else {
-        None
-    };
-    let diagnostic = if !config.enabled {
-        Some("Text generation is disabled".into())
-    } else {
-        capability_diagnostic.or(provider_diagnostic(repo).await?)
+    let diagnostic = match resolve(repo).await {
+        Ok((_, provider))
+            if matches!(
+                provider.capabilities().execution_location,
+                super::contracts::generation::GenerationExecutionLocation::Local
+            ) =>
+        {
+            let document = crate::recall::configuration::export(repo).await?;
+            let preset = document
+                .presets
+                .iter()
+                .find(|p| Some(&p.id) == document.selections.extension_generation.as_ref())
+                .context("missing_preset")?;
+            let connection = document
+                .connections
+                .iter()
+                .find(|c| c.id == preset.connection_id)
+                .context("missing_connection")?;
+            match super::ollama::inspect_model(&connection.base_url, &preset.model_id).await {
+                Ok(model)
+                    if model
+                        .capabilities
+                        .contains(&ModelCapability::TextGeneration) =>
+                {
+                    None
+                }
+                _ => Some(
+                    crate::failure::FailureCode::ModelUnavailable
+                        .message()
+                        .to_owned(),
+                ),
+            }
+        }
+        Ok(_) => None,
+        Err(error) => Some(
+            crate::failure::OperationFailure::from_error(&error)
+                .code
+                .message()
+                .to_owned(),
+        ),
     };
     Ok(GenerationProviderStatus {
         enabled: config.enabled,
@@ -109,17 +168,7 @@ pub async fn status(repo: &HistoryRepository) -> Result<GenerationProviderStatus
 }
 
 pub async fn available(repo: &HistoryRepository) -> Result<bool> {
-    let Some(config) = get_config(repo).await? else {
-        return Ok(false);
-    };
-    if !config.enabled {
-        return Ok(false);
-    }
-    Ok(
-        model_catalog::require_model(repo, &config.model, ModelCapability::TextGeneration)
-            .await
-            .is_ok(),
-    )
+    Ok(status(repo).await?.available)
 }
 
 pub async fn generate(repo: &HistoryRepository, prompt: &str) -> Result<String> {
@@ -141,23 +190,43 @@ pub async fn generate(repo: &HistoryRepository, prompt: &str) -> Result<String> 
 pub async fn resolve(
     repo: &HistoryRepository,
 ) -> Result<(GenerationProviderConfig, Box<dyn GenerationProvider>)> {
-    let config = get_config(repo)
-        .await?
-        .ok_or(ProviderError::NotConfigured)?;
-    if !config.enabled {
+    let document = crate::recall::configuration::export(repo).await?;
+    let preset = document
+        .presets
+        .iter()
+        .find(|p| Some(&p.id) == document.selections.extension_generation.as_ref())
+        .ok_or(ProviderError::NotConfigured)?
+        .clone();
+    let config = GenerationProviderConfig {
+        provider_id: format!("ai-generation:{}", preset.id),
+        model: preset.model_id.clone(),
+        enabled: true,
+    };
+    let connection = document
+        .connections
+        .iter()
+        .find(|c| c.id == preset.connection_id)
+        .context("missing_connection")?
+        .clone();
+    if !connection.enabled {
         return Err(ProviderError::Disabled.into());
     }
-    let provider: Box<dyn GenerationProvider> = match config.provider_id.as_str() {
-        PROVIDER_ID => Box::new(OllamaGenerationProvider::new(
-            &model_catalog::endpoint(repo).await?,
-            config.model.clone(),
-        )?),
-        _ => {
-            return Err(
-                ProviderError::InvalidConfiguration("unknown generation provider".into()).into(),
+    let provider: Box<dyn GenerationProvider> =
+        if connection.provider == crate::recall::contracts::AiProviderKind::Ollama {
+            Box::new(
+                OllamaGenerationProvider::new(&connection.base_url, preset.model_id.clone())?
+                    .with_preset(&preset),
             )
-        }
-    };
+        } else {
+            let credential = crate::recall::credentials::get(repo, &connection.id)
+                .await?
+                .ok_or(ProviderError::NotConfigured)?;
+            Box::new(super::named_generation::NamedGenerationProvider {
+                connection,
+                preset,
+                credential,
+            })
+        };
     Ok((config, provider))
 }
 
@@ -196,15 +265,24 @@ pub async fn generate_stream(
 }
 
 async fn get_config(repo: &HistoryRepository) -> Result<Option<GenerationProviderConfig>> {
-    let raw: Option<String> =
-        sqlx::query_scalar("SELECT value_json FROM config_device_values WHERE key=?")
-            .bind(CONFIG_KEY)
-            .fetch_optional(&repo.pool)
-            .await?;
-    match raw.as_deref() {
-        None | Some("null") => Ok(None),
-        Some(value) => Ok(Some(serde_json::from_str(value)?)),
-    }
+    let document = crate::recall::configuration::export(repo).await?;
+    let Some(preset) = document
+        .presets
+        .iter()
+        .find(|p| Some(&p.id) == document.selections.extension_generation.as_ref())
+    else {
+        return Ok(None);
+    };
+    let connection = document
+        .connections
+        .iter()
+        .find(|c| c.id == preset.connection_id)
+        .context("missing_connection")?;
+    Ok(Some(GenerationProviderConfig {
+        provider_id: format!("ai-generation:{}", preset.id),
+        model: preset.model_id.clone(),
+        enabled: connection.enabled,
+    }))
 }
 
 async fn put_config(repo: &HistoryRepository, config: &GenerationProviderConfig) -> Result<()> {
