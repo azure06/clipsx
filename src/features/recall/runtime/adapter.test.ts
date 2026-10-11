@@ -78,6 +78,87 @@ describe('Native Recall agent', () => {
       expect(checkpoint.mock.calls.length).toBeLessThanOrEqual(2)
     }
   )
+  it('isolates the capability probe and restores the user task after a verified round trip', async () => {
+    const context = fixtureContext('ollama')
+    context.preset.capabilities.tools = null
+    context.tools.push({
+      name: 'get_clipboard_status',
+      description: 'Status',
+      inputSchemaJson: JSON.stringify({ type: 'object', properties: {} }),
+    })
+    const native = {
+      begin: vi.fn<NativeAgentBridge['begin']>(request =>
+        Promise.resolve({ ...context, runId: request.runId })
+      ),
+      finish: vi.fn(async () => {}),
+      tool: vi.fn<NativeAgentBridge['tool']>((_id, name) =>
+        Promise.resolve(name === 'get_clipboard_status' ? { apiVersion: 1 } : { evidence: 'found' })
+      ),
+      verifyTools: vi.fn(async () => {}),
+    }
+    const status = [
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_status',
+                  type: 'function',
+                  function: { name: 'get_clipboard_status', arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    ]
+    const records = [status, streams.ollama.tool, streams.ollama.text]
+    const requests: string[] = []
+    const transport = vi.fn<typeof fetch>((_url, init) => {
+      if (typeof init?.body !== 'string') throw new Error('Expected JSON request')
+      requests.push(init.body)
+      return Promise.resolve(
+        new Response(
+          records[requests.length - 1]!.map(record => `data: ${JSON.stringify(record)}\n\n`).join(
+            ''
+          ),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      )
+    })
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge: native,
+      transport: () => transport,
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected stream')
+    let last: ChatModelRunResult | undefined
+    for await (const update of updates) last = update
+    expect(last?.status).toEqual({ type: 'complete', reason: 'stop' })
+    expect(last?.metadata?.custom?.['toolsAvailable']).toBe(true)
+    expect(native.verifyTools).toHaveBeenCalledExactlyOnceWith(expect.any(String), true)
+    expect(requests).toHaveLength(3)
+    expect(requests[0]).not.toContain('Find a relevant clip')
+    expect(requests[0]).toContain('Verify clipboard tool support')
+    expect(requests[1]).toContain('Find a relevant clip')
+    expect(requests[1]).toContain('call_status')
+    expect(requests[1]).not.toContain('Verify clipboard tool support')
+    expect(native.tool).toHaveBeenNthCalledWith(1, expect.any(String), 'get_clipboard_status', {})
+    expect(native.tool).toHaveBeenNthCalledWith(2, expect.any(String), 'search_clips', {
+      query: 'fixture',
+    })
+  })
   it('retries a rejected unknown-capability probe as ordinary chat without tools or actions', async () => {
     const context = fixtureContext('ollama')
     context.preset.capabilities.tools = null

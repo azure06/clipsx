@@ -47,6 +47,8 @@ fn main() {
             "runtime_gate_begin",
             "runtime_gate_tool",
             "runtime_gate_finish",
+            "acceptance_probe_info",
+            "acceptance_probe_finish",
             "auth_storage_get",
             "auth_storage_set",
             "auth_storage_remove",

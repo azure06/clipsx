@@ -3576,7 +3576,9 @@ mod tests {
                 continue;
             }
             // This feature-only HTML entry has its own isolated Tauri builder.
-            if path.ends_with(Path::new("recall/runtime/fixtures/gate.tsx")) {
+            if path.ends_with(Path::new("recall/runtime/fixtures/gate.tsx"))
+                || path.ends_with(Path::new("recall/runtime/fixtures/acceptance.ts"))
+            {
                 continue;
             }
             let name = path.file_name().unwrap().to_string_lossy();
@@ -3618,6 +3620,33 @@ mod tests {
             remainder = arguments;
         }
         commands
+    }
+
+    #[test]
+    fn acceptance_probe_commands_stay_out_of_the_production_handler() {
+        let source = include_str!("../../../src/features/recall/runtime/fixtures/acceptance.ts");
+        let isolated = include_str!("../recall/acceptance_probe.rs")
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let production = include_str!("mod.rs")
+            .split_once(".invoke_handler(route_webview_invokes(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        for command in literal_invocations(source) {
+            assert!(isolated.contains(&command));
+            if command.starts_with("acceptance_probe_") {
+                assert!(!production.contains(&command));
+            } else {
+                assert!(production.contains(&command));
+            }
+        }
     }
 
     #[test]

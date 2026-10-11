@@ -40,6 +40,7 @@ export default defineConfig({
           ? {
               app: path.resolve(import.meta.dirname, 'index.html'),
               recallGate: path.resolve(import.meta.dirname, 'recall-runtime-gate.html'),
+              recallAcceptance: path.resolve(import.meta.dirname, 'recall-acceptance-gate.html'),
             }
           : undefined,
       output: {

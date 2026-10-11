@@ -1,4 +1,6 @@
 //! Recall's restricted native transport. Clipboard services remain Rust-owned.
+#[cfg(feature = "recall-runtime-probe")]
+pub mod acceptance_probe;
 pub mod agent;
 #[cfg(test)]
 mod agent_tests;

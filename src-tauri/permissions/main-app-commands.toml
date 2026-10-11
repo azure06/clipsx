@@ -27,6 +27,7 @@ permissions = [
   "allow-assistant-create-clip", "allow-assistant-organize-clips", "allow-assistant-undo-action", "allow-assistant-action-activity",
   "allow-assistant-search-clips", "allow-assistant-read-clip", "allow-assistant-read-clip-image",
   "allow-runtime-gate-begin", "allow-runtime-gate-tool", "allow-runtime-gate-finish",
+  "allow-acceptance-probe-info", "allow-acceptance-probe-finish",
   "allow-reset-app-settings",
   "allow-get-settings-effects",
   "allow-retry-settings-effects",
