@@ -35,6 +35,30 @@ describe('Native Recall agent', () => {
     '%s shares the native tool adapter in one streamed loop',
     async provider => {
       const context = fixtureContext(provider)
+      context.attachments = [
+        {
+          apiVersion: 1,
+          clip: {
+            id: 'attached',
+            revision: 'r1',
+            capturedAt: 1,
+            sourceAppId: null,
+            sourceAppName: null,
+            favorite: false,
+            pinned: false,
+            tags: [],
+            representations: [],
+            ocrStatus: 'unavailable',
+          },
+          representationId: null,
+          kind: 'captured',
+          text: 'Attached evidence',
+          textFingerprint: 'hash',
+          totalBytes: 17,
+          nextCursor: null,
+          warnings: [],
+        },
+      ]
       const native = {
         begin: vi.fn<NativeAgentBridge['begin']>(request =>
           Promise.resolve({ ...context, runId: request.runId })
@@ -69,6 +93,10 @@ describe('Native Recall agent', () => {
           .join('')
       ).toBe('Recall verified')
       expect(last?.status).toEqual({ type: 'complete', reason: 'stop' })
+      expect(last?.metadata?.custom?.['citations']).toEqual([
+        { number: 1, clipId: 'attached', revision: 'r1' },
+      ])
+      expect(checkpoint).toHaveBeenLastCalledWith(expect.any(String), last, true)
       expect(native.tool).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'search_clips', {
         query: 'fixture',
       })

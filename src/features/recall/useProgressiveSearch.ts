@@ -23,7 +23,8 @@ export function useProgressiveSearch(
   query: string,
   filters: ClipFilters,
   semanticReady: boolean,
-  search: Search = nativeSearch
+  search: Search = nativeSearch,
+  enabled = true
 ) {
   const [keyword, setKeyword] = useState<ClipSearchResult | null>(null)
   const [related, setRelated] = useState<ClipMatch[]>([])
@@ -47,7 +48,7 @@ export function useProgressiveSearch(
     timers.current.forEach(clearTimeout)
     timers.current = []
   }, [])
-  useLayoutEffect(invalidate, [context, invalidate])
+  useLayoutEffect(invalidate, [context, enabled, invalidate])
   const run = useCallback(
     async (mode: 'keyword' | 'hybrid', token: number, requestFilters: ClipFilters) => {
       try {
@@ -98,9 +99,14 @@ export function useProgressiveSearch(
     [query, frozenFilters, frozenExcluded, semanticReady, composing, run, invalidate]
   )
   useEffect(() => {
-    begin()
+    if (enabled) begin()
+    else {
+      invalidate()
+      setPending(false)
+      setPaging(false)
+    }
     return invalidate
-  }, [begin, invalidate])
+  }, [begin, invalidate, enabled])
   const keywordIds = new Set(keyword?.items.map(item => item.clip.id) ?? [])
   const relatedOnly = related.filter(
     item => !keywordIds.has(item.clip.id) && !currentExcluded.includes(item.clip.id)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import * as Dialog from '@radix-ui/react-dialog'
+import { Sparkles, Search, X, Plus, SlidersHorizontal, Paperclip, ArrowLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button, Input, Select, Switch, Tabs } from '../../shared/components/ui'
 import { DocumentationLink } from '../../shared/components/DocumentationLink'
@@ -53,13 +54,23 @@ export function RecallPage({
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const [pane, setPane] = useState(initialAsk ? 'chat' : 'find')
+  const [searchOpen, setSearchOpen] = useState(Boolean(initialQuery) && !initialAsk)
+  const [pane, setPane] = useState(initialQuery && !initialAsk ? 'find' : 'chat')
+  const [attachmentLabels, setAttachmentLabels] = useState<Record<string, string>>({})
+  const busyRef = useRef(false)
   const [title, setTitle] = useState('')
   const [preview, setPreview] = useState<ClipSummary | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const searchToggle = useRef<HTMLButtonElement | null>(null)
   const previewFocus = useRef<HTMLElement | null>(null)
   const threadAdapter = useMemo(() => createConversationThreadAdapter(), [])
-  const search = useProgressiveSearch(query, filters, status?.semanticReady ?? false)
+  const search = useProgressiveSearch(
+    query,
+    filters,
+    status?.semanticReady ?? false,
+    undefined,
+    searchOpen
+  )
   const setFilters = (next: import('react').SetStateAction<ClipFilters>) => {
     search.invalidate()
     storeFilters(next)
@@ -137,12 +148,23 @@ export function RecallPage({
       'clip-deleted',
       'clip-updated',
     ].map(event => listen(event, reload))
+    listeners.push(
+      listen('ai-configuration-changed', () => {
+        void invoke<AiConfiguration>('ai_configuration_export')
+          .then(config => {
+            if (active) setConfiguration(config)
+          })
+          .catch(() => undefined)
+      })
+    )
     return () => {
       active = false
       void Promise.all(listeners).then(stops => stops.forEach(stop => stop()))
     }
   }, [])
   const perform = async (work: () => Promise<void>) => {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusy(true)
     try {
       await work()
@@ -150,6 +172,7 @@ export function RecallPage({
     } catch {
       fail()
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }
@@ -158,6 +181,7 @@ export function RecallPage({
     setThread(data.thread)
     setTitle(data.thread.title)
     setAttachments([])
+    setAttachmentLabels({})
     setAsk(null)
   }
   const saveThread = async (change: Partial<Pick<RecallThread, 'presetId' | 'webEnabled'>>) => {
@@ -189,16 +213,59 @@ export function RecallPage({
     void invoke('execute_clipboard_output', {
       request: { disposition: 'copy', source: { kind: 'original', clipId: id } },
     }).catch(fail)
-  const attach = (item: ClipMatch) =>
+  const attach = (item: ClipMatch) => {
+    if (running || attachments.length >= 10) return
+    setAttachmentLabels(current => ({
+      ...current,
+      [item.clip.id]:
+        item.snippet?.slice(0, 64) || item.clip.sourceAppName || t('recallPage.imageOrFiles'),
+    }))
     setAttachments(current =>
       current.some(a => a.clipId === item.clip.id)
         ? current
         : [...current, { clipId: item.clip.id, revision: item.clip.revision }].slice(0, 10)
     )
+  }
+  const openSearch = () => {
+    setSearchOpen(true)
+    setPane('find')
+  }
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setPane('chat')
+    searchToggle.current?.focus()
+  }
+  const scopeLabels = [
+    filters.scope && filters.scope !== 'all'
+      ? t(`recallPage.${filters.scope}`, { defaultValue: filters.scope })
+      : null,
+    filters.tagId
+      ? (facets?.tags.find(tag => tag.id === filters.tagId)?.name ?? t('recallPage.tag'))
+      : null,
+    ...filters.sourceAppIds.map(
+      id =>
+        facets?.sourceApplications.find(app => app.id === id)?.name ?? t('recallPage.application')
+    ),
+    ...filters.representationFamilies,
+    ...filters.facetIds,
+    filters.capturedAfter
+      ? t('recallPage.after') +
+        ' ' +
+        new Date(filters.capturedAfter).toLocaleDateString(i18n.language)
+      : null,
+    filters.capturedBefore
+      ? t('recallPage.before') +
+        ' ' +
+        new Date(filters.capturedBefore).toLocaleDateString(i18n.language)
+      : null,
+    search.filters.excludedClipIds.length
+      ? t('recallPage.excludedCount', { count: search.filters.excludedClipIds.length })
+      : null,
+  ].filter(Boolean)
   const askNow = () => {
     if (!query.trim() || !preset || running || search.composing) return
     setAsk({ id: crypto.randomUUID(), text: query.trim() })
-    setPane('chat')
+    closeSearch()
   }
   const resultRow = (item: ClipMatch) => (
     <li
@@ -254,7 +321,9 @@ export function RecallPage({
           size="sm"
           variant="ghost"
           onClick={() => attach(item)}
-          disabled={attachments.length >= 10}
+          disabled={
+            running || attachments.length >= 10 || attachments.some(a => a.clipId === item.clip.id)
+          }
         >
           {t('recallPage.attach')}
         </Button>
@@ -266,11 +335,25 @@ export function RecallPage({
   )
   const find = (
     <section
-      className="flex h-full min-h-0 flex-col border-r border-slate-200 dark:border-white/10"
+      className="flex h-full min-h-0 flex-col border-l border-slate-200 bg-slate-50/60 dark:border-white/10 dark:bg-white/[0.015]"
       aria-label={t('recallPage.find')}
     >
       <div className="shrink-0 space-y-2 border-b border-slate-200 p-3 dark:border-white/10">
-        <h2 className="text-sm font-semibold">{t('recallPage.find')}</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Search size={14} aria-hidden="true" />
+            {t('recallPage.find')}
+          </h2>
+          <div className="flex gap-1">
+            <Button size="sm" variant="ghost" className="lg:hidden" onClick={closeSearch}>
+              <ArrowLeft size={13} aria-hidden="true" />
+              {t('recallPage.chat')}
+            </Button>
+            <Button size="sm" variant="ghost" aria-label={t('common.close')} onClick={closeSearch}>
+              <X size={14} aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
         <form
           onSubmit={event => {
             event.preventDefault()
@@ -316,9 +399,10 @@ export function RecallPage({
               ? ' · ' + t('recallPage.filtersActive')
               : ''}
           </summary>
-          <div className="mt-2 space-y-2">
+          <fieldset disabled={running} className="mt-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <Select
+                disabled={running}
                 value={filters.scope ?? 'all'}
                 onChange={scope => setFilters(current => ({ ...current, scope }))}
                 ariaLabel={t('recallPage.scope')}
@@ -329,6 +413,7 @@ export function RecallPage({
                 ]}
               />
               <Select
+                disabled={running}
                 value={filters.sourceAppIds[0] ?? 'all'}
                 onChange={app =>
                   setFilters(current => ({ ...current, sourceAppIds: app === 'all' ? [] : [app] }))
@@ -343,6 +428,7 @@ export function RecallPage({
                 ]}
               />
               <Select
+                disabled={running}
                 value={filters.tagId ?? 'all'}
                 onChange={tag =>
                   setFilters(current => ({ ...current, tagId: tag === 'all' ? null : tag }))
@@ -354,6 +440,7 @@ export function RecallPage({
                 ]}
               />
               <Select
+                disabled={running}
                 value={filters.representationFamilies[0] ?? 'all'}
                 onChange={family =>
                   setFilters(current => ({
@@ -395,7 +482,7 @@ export function RecallPage({
                 }
               />
             </div>
-          </div>
+          </fieldset>
         </details>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -440,6 +527,74 @@ export function RecallPage({
       </div>
     </section>
   )
+  const composerExtras = (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200/70 pb-2 dark:border-white/10">
+        <div className="min-w-0 flex-1 [&>div]:w-full">
+          <Select
+            className="w-full text-xs"
+            value={presetId ?? ''}
+            onChange={presetId => void perform(() => saveThread({ presetId }))}
+            disabled={busy || running || !thread}
+            ariaLabel={t('recallPage.model')}
+            placeholder={t('recallPage.selectModel')}
+            options={(configuration?.presets ?? [])
+              .filter(p => p.purpose === 'chat')
+              .map(p => ({
+                value: p.id,
+                label: p.name + ' · ' + p.modelId,
+                disabled: !configuration?.connections.some(
+                  c => c.id === p.connectionId && c.enabled
+                ),
+              }))}
+          />
+        </div>
+        <Switch
+          checked={thread?.webEnabled ?? false}
+          disabled={busy || running || !thread}
+          label={t('recallPage.webResearch')}
+          onChange={webEnabled => void perform(() => saveThread({ webEnabled }))}
+        />
+      </div>
+      {!preset && (
+        <p className="text-xs text-slate-500">
+          {t('recallPage.setupHelp')}{' '}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => useUIStore.getState().setActiveView('intelligence')}
+          >
+            {t('recallPage.configureModels')}
+          </Button>
+        </p>
+      )}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1" aria-label={t('recallPage.attachedSources')}>
+          {attachments.map(item => (
+            <Button
+              key={item.clipId}
+              size="sm"
+              variant="outline"
+              aria-label={t('recallPage.removeAttachment', {
+                id: attachmentLabels[item.clipId] ?? item.clipId.slice(0, 8),
+              })}
+              disabled={running}
+              className="max-w-64"
+              onClick={() =>
+                setAttachments(current => current.filter(a => a.clipId !== item.clipId))
+              }
+            >
+              <Paperclip size={11} className="shrink-0" aria-hidden="true" />
+              <span className="truncate">
+                {attachmentLabels[item.clipId] ?? item.clipId.slice(0, 8)}
+              </span>
+              <X size={11} className="shrink-0" aria-hidden="true" />
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
   const chat = (
     <section className="flex h-full min-h-0 flex-col" aria-label={t('recallPage.chat')}>
       <div className="shrink-0 space-y-2 border-b border-slate-200 p-3 dark:border-white/10">
@@ -466,11 +621,13 @@ export function RecallPage({
                 setThread(next)
                 setTitle('')
                 setAttachments([])
+                setAttachmentLabels({})
                 setAsk(null)
                 await reloadThreads()
               })
             }
           >
+            <Plus size={13} aria-hidden="true" />
             {t('recallPage.newThread')}
           </Button>
           {threads.length >= 200 && (
@@ -543,64 +700,22 @@ export function RecallPage({
             </div>
           </details>
         )}
-        <div className="flex flex-wrap items-end gap-3">
-          <Select
-            className="min-w-0 flex-1"
-            value={presetId ?? ''}
-            onChange={presetId => void perform(() => saveThread({ presetId }))}
-            disabled={busy || !thread}
-            label={t('recallPage.model')}
-            placeholder={t('recallPage.selectModel')}
-            options={(configuration?.presets ?? [])
-              .filter(p => p.purpose === 'chat')
-              .map(p => ({
-                value: p.id,
-                label: p.name + ' · ' + p.modelId,
-                disabled: !configuration?.connections.some(
-                  c => c.id === p.connectionId && c.enabled
-                ),
-              }))}
-          />
-          <Switch
-            checked={thread?.webEnabled ?? false}
-            disabled={busy || !thread}
-            label={t('recallPage.webResearch')}
-            onChange={webEnabled => void perform(() => saveThread({ webEnabled }))}
-          />
-        </div>
-        {!preset && (
-          <p className="text-xs text-slate-500">
-            {t('recallPage.setupHelp')}{' '}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => useUIStore.getState().setActiveView('intelligence')}
-            >
-              {t('recallPage.configureModels')}
-            </Button>
-          </p>
-        )}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-1" aria-label={t('recallPage.attachedSources')}>
-            {attachments.map(item => (
-              <Button
-                key={item.clipId}
-                size="sm"
-                variant="outline"
-                aria-label={t('recallPage.removeAttachment', { id: item.clipId })}
-                onClick={() =>
-                  setAttachments(current => current.filter(a => a.clipId !== item.clipId))
-                }
-              >
-                {item.clipId.slice(0, 8)} ×
-              </Button>
-            ))}
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={openSearch}
+          className="flex max-w-full items-center gap-1.5 rounded text-left text-[10px] text-slate-500 outline-none hover:text-violet-600 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:hover:text-violet-300"
+        >
+          <SlidersHorizontal size={11} className="shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {scopeLabels.length ? scopeLabels.join(' · ') : t('recallPage.allEligibleClips')}
+          </span>
+        </button>
       </div>
       {thread ? (
         <RecallChat
           key={thread.id}
+          composerExtras={composerExtras}
+          onOpenSearch={openSearch}
           thread={thread}
           preset={preset}
           filters={search.filters}
@@ -625,8 +740,23 @@ export function RecallPage({
     <div className="flex h-full min-h-0 flex-col">
       <header className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-white/10">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-sm font-semibold">{t('recallPage.title')}</h1>
-          <DocumentationLink guide="recall" label={t('documentation.recallGuide')} />
+          <h1 className="flex items-center gap-2 text-sm font-semibold">
+            <Sparkles size={16} className="text-violet-500" aria-hidden="true" />
+            {t('recallPage.title')}
+          </h1>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant={searchOpen ? 'outline' : 'ghost'}
+              ref={searchToggle}
+              aria-expanded={searchOpen}
+              onClick={searchOpen ? closeSearch : openSearch}
+            >
+              <Search size={13} aria-hidden="true" />
+              {t('recallPage.browseClips')}
+            </Button>
+            <DocumentationLink guide="recall" label={t('documentation.recallGuide')} />
+          </div>
         </div>
         <p className="text-[10px] text-slate-500">{t('recallPage.subtitle')}</p>
       </header>
@@ -640,12 +770,12 @@ export function RecallPage({
         activeTab={pane}
         onTabChange={setPane}
         keepMounted
-        listClassName="lg:hidden"
-        panelsClassName="min-h-0 grid grid-cols-1 overflow-hidden lg:grid-cols-2"
-        panelClassName="min-h-0 h-full lg:data-[state=inactive]:block"
+        listClassName="hidden"
+        panelsClassName={`min-h-0 grid grid-cols-1 overflow-hidden ${searchOpen ? 'lg:grid-cols-[minmax(0,1fr)_340px]' : ''}`}
+        panelClassName={`min-h-0 h-full ${searchOpen ? 'lg:data-[state=inactive]:block' : ''}`}
         tabs={[
-          { id: 'find', label: t('recallPage.find'), content: find },
           { id: 'chat', label: t('recallPage.chat'), content: chat },
+          { id: 'find', label: t('recallPage.find'), content: find },
         ]}
       />
       <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
@@ -678,6 +808,7 @@ export function RecallPage({
                     setThread(next)
                     setTitle(next.title)
                     setAttachments([])
+                    setAttachmentLabels({})
                     setAsk(null)
                     setDeleteOpen(false)
                     await reloadThreads()

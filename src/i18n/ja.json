@@ -1317,7 +1317,7 @@
   },
   "recallPage": {
     "title": "Recall",
-    "subtitle": "クリップを素早く探し、質問や作業につなげます。",
+    "subtitle": "クリップを探し、理解し、作業につなげます。",
     "find": "検索",
     "chat": "チャット",
     "search": "クリップを検索",
@@ -1387,8 +1387,8 @@
     "previousBranch": "前の分岐",
     "nextBranch": "次の分岐",
     "saveEdit": "編集して送信",
-    "chatEmpty": "クリップについて質問するか、会話を始めてください。",
-    "chatHelp": "検索からクリップを添付するか、ClipsXに関連情報を探させられます。生成した内容は新しいクリップとして保存されます。",
+    "chatEmpty": "何を思い出したいですか？",
+    "chatHelp": "自然な言葉で質問できます。ClipsXがクリップを検索し、情報を確認して、必要な作業をお手伝いします。",
     "composerPlaceholder": "質問、追加検索、作成を依頼…",
     "message": "メッセージ",
     "composerHelp": "Enterで送信 · Shift+Enterで改行",
@@ -1416,7 +1416,16 @@
       "ocr": "OCR",
       "note": "メモ"
     },
-    "threadSettings": "会話の設定"
+    "threadSettings": "会話の設定",
+    "browseClips": "クリップを検索",
+    "allEligibleClips": "機密以外のすべてのクリップ · 検索範囲を変更",
+    "excludedCount": "{{count}}件を除外",
+    "findExample": "「昨日コピーしたデプロイのメモを探して」",
+    "workExample": "「このクリップを要約して、新しいクリップとして保存して」",
+    "agentWorking": "リクエストを処理中…",
+    "searchCandidates": "見つかった候補 · エージェントが内容を確認できます",
+    "inspectedSources": "確認した情報源",
+    "citation": "情報源{{number}}を表示"
   },
   "modelsWorkspace": {
     "connectionTestPassed": "接続できました。{{count}} 件のモデルを取得しました。モデル一覧へのアクセスを確認しました。モデルの実行は別途確認が必要です。",

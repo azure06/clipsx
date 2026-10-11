@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../shared/components/ui'
@@ -9,12 +9,25 @@ export function SavedSource({
   source,
   threadId,
   open,
+  citation,
+  selected = false,
+  activation = 0,
 }: {
   source: RecallSourceSnapshot
   threadId: string
   open: (id: string) => void
+  citation?: number
+  selected?: boolean
+  activation?: number
 }) {
   const { t } = useTranslation()
+  const details = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (!selected || !details.current) return
+    details.current.open = true
+    details.current.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    details.current.querySelector('summary')?.focus()
+  }, [selected, activation])
   const [image, setImage] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   let text = ''
@@ -31,8 +44,12 @@ export function SavedSource({
     /* Invalid snapshots cannot become executable content. */
   }
   return (
-    <details className="my-2 rounded-lg border border-slate-200 p-2 text-xs dark:border-white/10">
+    <details
+      ref={details}
+      className="my-2 rounded-lg border border-slate-200 p-2 text-xs dark:border-white/10"
+    >
       <summary className="cursor-pointer focus-visible:outline-violet-500">
+        {citation ? `[${citation}] ` : ''}
         {t('recallPage.sourcePreview')} · {source.clipId.slice(0, 8)}
         {kind ? ' · ' + t(`recallPage.sourceKinds.${kind}`, { defaultValue: kind }) : ''}
       </summary>

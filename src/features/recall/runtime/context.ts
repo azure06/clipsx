@@ -1,10 +1,15 @@
 import type { ModelMessage } from 'ai'
 import type { ThreadMessage } from '@assistant-ui/react'
 import type { AssistantRunContext, ClipImageResult } from '../contracts.generated'
+import type { CitationRegistry } from './citations'
 
 const bytes = (value: string) => new TextEncoder().encode(value).length
 /** Conservative byte-based token estimate; keeps the latest question intact. */
-export function fitContext(messages: readonly ThreadMessage[], context: AssistantRunContext) {
+export function fitContext(
+  messages: readonly ThreadMessage[],
+  context: AssistantRunContext,
+  citations?: CitationRegistry
+) {
   const budget = context.preset.contextLimit - context.preset.outputLimit - 1024
   if (budget < 1) throw new Error('context_limit')
   const converted: ModelMessage[] = messages
@@ -35,6 +40,17 @@ export function fitContext(messages: readonly ThreadMessage[], context: Assistan
   let omitted = false
   const evidence: string[] = []
   for (const attachment of context.attachments) {
+    // Register only attachments that actually fit in the model context.
+    const references = citations?.snapshot()
+    const citation = references
+      ? (references.find(
+          c => c.clipId === attachment.clip.id && c.revision === attachment.clip.revision
+        ) ?? {
+          number: references.length + 1,
+          clipId: attachment.clip.id,
+          revision: attachment.clip.revision,
+        })
+      : undefined
     const text = JSON.stringify({
       source: 'clipboard',
       clipId: attachment.clip.id,
@@ -43,9 +59,11 @@ export function fitContext(messages: readonly ThreadMessage[], context: Assistan
       text: attachment.text,
       representations: attachment.clip.representations,
       warnings: attachment.warnings,
+      ...(citation ? { citation } : {}),
     })
     if (bytes(text) <= remaining) {
       evidence.push(text)
+      citations?.register(attachment.clip.id, attachment.clip.revision)
       remaining -= bytes(text)
     } else omitted = true
   }

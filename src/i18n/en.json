@@ -1317,7 +1317,7 @@
   },
   "recallPage": {
     "title": "Recall",
-    "subtitle": "Find clips quickly, then ask or work with them.",
+    "subtitle": "Find, understand, and work with your clipboard.",
     "find": "Find",
     "chat": "Chat",
     "search": "Search clips",
@@ -1387,8 +1387,8 @@
     "previousBranch": "Previous branch",
     "nextBranch": "Next branch",
     "saveEdit": "Send edit",
-    "chatEmpty": "Ask about your clipboard, or start a conversation.",
-    "chatHelp": "Attach clips from Find, or let ClipsX retrieve relevant evidence. Generated items are saved as new clips.",
+    "chatEmpty": "What would you like to recall?",
+    "chatHelp": "Ask naturally. ClipsX can search your clipboard, inspect sources, and help you work with what you find.",
     "composerPlaceholder": "Ask, search further, or create something…",
     "message": "Message",
     "composerHelp": "Enter to send · Shift+Enter for a new line",
@@ -1416,7 +1416,16 @@
       "ocr": "OCR",
       "note": "Notes"
     },
-    "threadSettings": "Conversation settings"
+    "threadSettings": "Conversation settings",
+    "browseClips": "Search clips",
+    "allEligibleClips": "All nonsecret clips · adjust search scope",
+    "excludedCount": "{{count}} excluded",
+    "findExample": "“Find the deployment notes I copied yesterday.”",
+    "workExample": "“Summarize these clips and save the result as a new clip.”",
+    "agentWorking": "Working on your request…",
+    "searchCandidates": "Matches found · the agent can inspect these next",
+    "inspectedSources": "Inspected sources",
+    "citation": "Show source {{number}}"
   },
   "modelsWorkspace": {
     "connectionTestPassed": "Connected. Discovered {{count}} models. This checks catalog access; model execution is verified separately.",

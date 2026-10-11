@@ -15,6 +15,29 @@ const source: RecallSourceSnapshot = {
 }
 describe('saved clipboard evidence', () => {
   beforeEach(() => vi.clearAllMocks())
+  it('opens the retained snapshot when its citation is selected, including deleted originals', () => {
+    const { container, rerender } = render(
+      <SavedSource source={source} threadId="thread" open={vi.fn()} citation={1} />
+    )
+    expect(container.querySelector('details')).not.toHaveAttribute('open')
+    rerender(<SavedSource source={source} threadId="thread" open={vi.fn()} citation={1} selected />)
+    expect(container.querySelector('details')).toHaveAttribute('open')
+    expect(screen.getByText(/\[1\]/)).toHaveFocus()
+    expect(screen.getByText('recallPage.missingSource')).toBeInTheDocument()
+    container.querySelector('details')!.open = false
+    rerender(
+      <SavedSource
+        source={source}
+        threadId="thread"
+        open={vi.fn()}
+        citation={1}
+        selected
+        activation={1}
+      />
+    )
+    expect(container.querySelector('details')).toHaveAttribute('open')
+    expect(invoke).not.toHaveBeenCalled()
+  })
   it('retains inert evidence and marks deleted source links unavailable', () => {
     render(<SavedSource source={source} threadId="thread" open={vi.fn()} />)
     expect(screen.getByText('recallPage.missingSource')).toBeInTheDocument()

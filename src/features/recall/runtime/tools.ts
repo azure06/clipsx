@@ -2,6 +2,7 @@ import { dynamicTool, jsonSchema } from 'ai'
 import type { ToolSet } from 'ai'
 import type { AssistantRunContext, ClipImageResult } from '../contracts.generated'
 import type { NativeAgentBridge } from './native'
+import { CitationRegistry } from './citations'
 
 const writes = new Set(['create_clip', 'organize_clips', 'undo_clipboard_action'])
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -10,6 +11,7 @@ export interface ToolRuntime {
   searches: number
   images: ClipImageResult[]
   imageBytes: number
+  citations?: CitationRegistry
   onResult?: (name: string, result: unknown) => void
 }
 export function createClipboardTools(
@@ -17,6 +19,7 @@ export function createClipboardTools(
   bridge: NativeAgentBridge,
   state: ToolRuntime
 ): ToolSet {
+  const citations = state.citations ?? new CitationRegistry()
   const requestIds = new Map<string, string>()
   const results = new Map<string, Promise<unknown>>()
   const argumentsByCall = new Map<string, string>()
@@ -66,11 +69,29 @@ export function createClipboardTools(
                     return { ...metadata, warning: 'image_context_limit' }
                   state.imageBytes += encoded.length
                   state.images.push(image)
-                  state.onResult?.(definition.name, metadata)
-                  return {
+                  const output = {
                     ...metadata,
+                    citation: citations.register(image.clipId, image.revision),
                     contextAttachment: 'Labelled source image is attached on the next model step.',
                   }
+                  state.onResult?.(definition.name, output)
+                  return output
+                }
+                if (
+                  definition.name === 'read_clip' &&
+                  isRecord(result) &&
+                  isRecord(result['clip']) &&
+                  typeof result['clip']['id'] === 'string' &&
+                  typeof result['clip']['revision'] === 'string' &&
+                  typeof result['text'] === 'string' &&
+                  result['text'].length > 0
+                ) {
+                  const output = {
+                    ...result,
+                    citation: citations.register(result['clip']['id'], result['clip']['revision']),
+                  }
+                  state.onResult?.(definition.name, output)
+                  return output
                 }
                 state.onResult?.(definition.name, result)
                 return result

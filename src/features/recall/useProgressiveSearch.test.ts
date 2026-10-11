@@ -34,6 +34,34 @@ async function advance(ms: number) {
 }
 afterEach(() => vi.useRealTimers())
 describe('Progressive Recall retrieval', () => {
+  it('searches only while the manual view is open and invalidates requests on close', async () => {
+    vi.useFakeTimers()
+    let resolve: (value: ClipSearchResult) => void = () => {}
+    const search = vi.fn(
+      () =>
+        new Promise<ClipSearchResult>(done => {
+          resolve = done
+        })
+    )
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useProgressiveSearch('query', emptyFilters, true, search, enabled),
+      { initialProps: { enabled: false } }
+    )
+    await advance(1000)
+    expect(search).not.toHaveBeenCalled()
+    rerender({ enabled: true })
+    await advance(75)
+    expect(search).toHaveBeenCalledOnce()
+    rerender({ enabled: false })
+    await act(async () => {
+      resolve(page([match('late')]))
+      await Promise.resolve()
+    })
+    await advance(1000)
+    expect(result.current.keyword).toBeNull()
+    expect(result.current.pending).toBe(false)
+    expect(search).toHaveBeenCalledOnce()
+  })
   it('returns keywords before semantic enrichment while keeping keyword order and selection', async () => {
     vi.useFakeTimers()
     const search = vi.fn((request: ClipSearchRequest) =>

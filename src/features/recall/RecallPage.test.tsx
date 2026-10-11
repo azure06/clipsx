@@ -70,6 +70,7 @@ describe('Recall workspace submission', () => {
   it('typing and Enter retrieve without generating; Ask submits explicitly', async () => {
     render(<RecallPage />)
     await screen.findByTestId('chat-submission')
+    fireEvent.click(screen.getByRole('button', { name: 'recallPage.browseClips' }))
     const input = screen.getByRole('textbox', { name: 'recallPage.search' })
     fireEvent.change(input, { target: { value: 'meeting notes' } })
     await waitFor(() =>
@@ -91,6 +92,20 @@ describe('Recall workspace submission', () => {
     expect(
       vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_run_begin')
     ).toBe(false)
+  })
+  it('starts in chat and keeps the same conversation mounted across manual search views', async () => {
+    render(<RecallPage />)
+    const chat = await screen.findByTestId('chat-submission')
+    expect(chat.closest('[role="tabpanel"]')).toHaveAttribute('data-state', 'active')
+    const toggle = screen.getByRole('button', { name: 'recallPage.browseClips' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('chat-submission')).toBe(chat)
+    fireEvent.click(screen.getByRole('button', { name: 'common.close' }))
+    expect(toggle).toHaveFocus()
+    expect(screen.getByTestId('chat-submission')).toBe(chat)
+    expect(chat.closest('[role="tabpanel"]')).toHaveAttribute('data-state', 'active')
   })
   it('keeps keyword search available if chat configuration fails', async () => {
     configurationFails = true
