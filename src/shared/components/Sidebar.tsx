@@ -11,6 +11,9 @@ import {
 import { useAuthStore, useUIStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
 
+const activeIndicatorClass =
+  'absolute -left-1.5 top-1/2 h-8 w-1 -translate-y-1/2 rounded-r-full bg-linear-to-b from-blue-200 via-white to-violet-200 ring-1 ring-inset ring-violet-500/50 shadow-lg shadow-blue-300/30 dark:ring-white/20 dark:shadow-white/25'
+
 type SidebarProps = {
   onAccountClick: () => void
   onSettingsClick: () => void
@@ -72,9 +75,7 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
           title={t('sidebar.clipboard')}
         >
           <Layers className="h-4 w-4" strokeWidth={1.5} />
-          {activeView === 'clipsx' && (
-            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
-          )}
+          {activeView === 'clipsx' && <span aria-hidden="true" className={activeIndicatorClass} />}
         </button>
 
         <button
@@ -85,9 +86,7 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
           className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 ${activeView === 'recall' ? 'text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'}`}
         >
           <MessagesSquare className="h-4 w-4" strokeWidth={1.5} />
-          {activeView === 'recall' && (
-            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
-          )}
+          {activeView === 'recall' && <span aria-hidden="true" className={activeIndicatorClass} />}
         </button>
 
         <button
@@ -101,7 +100,7 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
         >
           <Sparkles className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'intelligence' && (
-            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
+            <span aria-hidden="true" className={activeIndicatorClass} />
           )}
         </button>
 
@@ -116,7 +115,7 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
         >
           <Blocks className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'extensions' && (
-            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
+            <span aria-hidden="true" className={activeIndicatorClass} />
           )}
         </button>
       </div>
@@ -150,7 +149,7 @@ export const Sidebar = ({ onAccountClick, onSettingsClick }: SidebarProps) => {
         >
           <Settings className="h-4 w-4" strokeWidth={1.5} />
           {activeView === 'settings' && (
-            <div className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-blue-500 dark:bg-slate-400" />
+            <span aria-hidden="true" className={activeIndicatorClass} />
           )}
         </button>
       </div>
