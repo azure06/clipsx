@@ -65,6 +65,9 @@ impl AgentRuntime {
             .cloned()
             .context("connection_disabled")?;
         let base = configuration::validate_connection(&connection)?;
+        if let Some(selection) = &request.reasoning {
+            super::reasoning::validate(history, &connection, &preset, selection).await?;
+        }
         let provider = match connection.provider {
             AiProviderKind::Ollama => Provider::Ollama,
             AiProviderKind::Openai => Provider::Openai,
@@ -151,6 +154,7 @@ impl AgentRuntime {
             status: service.status().await?,
             tools,
             web_route: web_route.into(),
+            reasoning: request.reasoning,
         };
         transport
             .bind_run(

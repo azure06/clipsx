@@ -217,6 +217,7 @@ export function createConversationThreadAdapter(
       archived: thread.archived,
       presetId: thread.presetId,
       webEnabled: thread.webEnabled,
+      reasoning: thread.reasoning ?? null,
       ...change,
     })
   }

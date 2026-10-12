@@ -35,6 +35,7 @@ fn main() {
             "ai_discover_models",
             "ai_test_connection",
             "assistant_run_begin",
+            "assistant_model_options",
             "recall_thread_initialize",
             "recall_thread_list",
             "recall_thread_load",

@@ -828,59 +828,6 @@ fn catalog_purposes(
     }
 }
 
-#[cfg(test)]
-mod discovery_tests {
-    use super::*;
-    use serde_json::json;
-    #[test]
-    fn catalog_purposes_distinguish_reported_inferred_and_unknown_models() {
-        assert_eq!(
-            catalog_purposes(
-                AiProviderKind::Gemini,
-                &json!({"supportedGenerationMethods":["embedContent"]}),
-                "embed"
-            ),
-            Some(vec![AiModelPurpose::Embedding])
-        );
-        assert_eq!(
-            catalog_purposes(
-                AiProviderKind::Gemini,
-                &json!({"supportedGenerationMethods":["generateContent"]}),
-                "chat"
-            ),
-            Some(vec![AiModelPurpose::Chat])
-        );
-        assert_eq!(
-            catalog_purposes(
-                AiProviderKind::Openrouter,
-                &json!({"architecture":{"output_modalities":["embeddings"]}}),
-                "embed"
-            ),
-            Some(vec![AiModelPurpose::Embedding])
-        );
-        assert_eq!(
-            catalog_purposes(AiProviderKind::Anthropic, &json!({}), "claude"),
-            Some(vec![AiModelPurpose::Chat])
-        );
-        assert_eq!(
-            catalog_purposes(AiProviderKind::Openai, &json!({}), "text-embedding-3-small"),
-            Some(vec![AiModelPurpose::Embedding])
-        );
-        assert_eq!(
-            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o"),
-            Some(vec![AiModelPurpose::Chat])
-        );
-        assert_eq!(
-            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o-mini-tts"),
-            Some(vec![])
-        );
-        assert_eq!(
-            catalog_purposes(AiProviderKind::Openai, &json!({}), "custom-unknown"),
-            None
-        );
-    }
-}
-
 pub async fn discover(repo: &HistoryRepository, id: &str) -> Result<Vec<AiDiscoveredModel>> {
     let connection = connection(repo, id).await?;
     if !connection.enabled {
@@ -1069,4 +1016,57 @@ async fn discover_connection(
             })
         })
         .collect::<Vec<_>>())
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn catalog_purposes_distinguish_reported_inferred_and_unknown_models() {
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Gemini,
+                &json!({"supportedGenerationMethods":["embedContent"]}),
+                "embed"
+            ),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Gemini,
+                &json!({"supportedGenerationMethods":["generateContent"]}),
+                "chat"
+            ),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Openrouter,
+                &json!({"architecture":{"output_modalities":["embeddings"]}}),
+                "embed"
+            ),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Anthropic, &json!({}), "claude"),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "text-embedding-3-small"),
+            Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o"),
+            Some(vec![AiModelPurpose::Chat])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "gpt-4o-mini-tts"),
+            Some(vec![])
+        );
+        assert_eq!(
+            catalog_purposes(AiProviderKind::Openai, &json!({}), "custom-unknown"),
+            None
+        );
+    }
 }

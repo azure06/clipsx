@@ -68,6 +68,7 @@ pub(super) fn request(preset: &AiModelPreset) -> AssistantRunRequest {
         filters: None,
         attachments: vec![],
         web_enabled: false,
+        reasoning: None,
     }
 }
 #[tokio::test]

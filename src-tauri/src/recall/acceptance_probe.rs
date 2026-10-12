@@ -195,6 +195,7 @@ pub fn run(root: PathBuf, phase: String, model: String) -> Result<()> {
             acceptance_probe_info,
             acceptance_probe_finish,
             super::ipc::assistant_run_begin,
+            super::ipc::assistant_model_options,
             super::ipc::assistant_run_finish,
             super::ipc::assistant_run_tool,
             super::ipc::assistant_verify_tools,

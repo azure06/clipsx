@@ -244,8 +244,27 @@ dto!(AssistantToolDefinition {
     description: String,
     input_schema_json: String
 });
-dto!(AssistantRunRequest { run_id: String, preset_id: String, filters: Option<ClipFilters>, attachments: Vec<ClipRevision>, web_enabled: bool });
-dto!(AssistantRunContext { run_id: String, connection: AiConnection, preset: AiModelPreset, filters: ClipFilters, attachments: Vec<ClipReadResult>, status: ClipboardStatus, tools: Vec<AssistantToolDefinition>, web_route: String });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReasoningSelection {
+    Effort { value: String },
+    Budget { tokens: u32 },
+    Thinking { enabled: bool },
+}
+dto!(AssistantModelOptions { reasoning: Vec<ReasoningSelection>, reasoning_source: Option<String> });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssistantRunRequest {
+    pub run_id: String,
+    pub preset_id: String,
+    pub filters: Option<ClipFilters>,
+    pub attachments: Vec<ClipRevision>,
+    pub web_enabled: bool,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reasoning: Option<ReasoningSelection>,
+}
+dto!(AssistantRunContext { run_id: String, connection: AiConnection, preset: AiModelPreset, filters: ClipFilters, attachments: Vec<ClipReadResult>, status: ClipboardStatus, tools: Vec<AssistantToolDefinition>, web_route: String, reasoning: Option<ReasoningSelection> });
 dto!(WebSource {
     url: String,
     title: String,
@@ -253,10 +272,36 @@ dto!(WebSource {
 });
 dto!(WebEvidence { sources: Vec<WebSource>, incomplete: bool });
 
-dto!(RecallThread { id: String, local_id: String, title: String, archived: bool, preset_id: Option<String>, web_enabled: bool, head_message_id: Option<String>, created_at: i64, updated_at: i64 });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecallThread {
+    pub id: String,
+    pub local_id: String,
+    pub title: String,
+    pub archived: bool,
+    pub preset_id: Option<String>,
+    pub web_enabled: bool,
+    pub head_message_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reasoning: Option<ReasoningSelection>,
+}
 dto!(RecallMessage { id: String, parent_id: Option<String>, role: String, content_json: String, status_json: Option<String>, metadata_json: String, created_at: i64 });
 dto!(RecallHistory { thread: RecallThread, messages: Vec<RecallMessage>, sources: Vec<RecallSourceSnapshot> });
-dto!(RecallThreadUpdate { thread_id: String, title: String, archived: bool, preset_id: Option<String>, web_enabled: bool });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecallThreadUpdate {
+    pub thread_id: String,
+    pub title: String,
+    pub archived: bool,
+    pub preset_id: Option<String>,
+    pub web_enabled: bool,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reasoning: Option<ReasoningSelection>,
+}
 dto!(RecallRunStart {
     thread_id: String,
     run_id: String,
@@ -323,6 +368,8 @@ mod tests {
             AiConfigurationState::decl(&config),
             AiDiscoveredModel::decl(&config),
             AssistantToolDefinition::decl(&config),
+            ReasoningSelection::decl(&config),
+            AssistantModelOptions::decl(&config),
             AssistantRunRequest::decl(&config),
             AssistantRunContext::decl(&config),
             WebSource::decl(&config),

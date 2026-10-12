@@ -124,7 +124,7 @@ describe('Local conversation adapters', () => {
   })
   it('preserves independent model/web selections while renaming or archiving', async () => {
     const { store, history } = storeFixture()
-    history.thread = { ...thread, webEnabled: true }
+    history.thread = { ...thread, webEnabled: true, reasoning: { kind: 'effort', value: 'high' } }
     const adapter = createConversationThreadAdapter(store)
     await adapter.rename('thread', 'New title')
     expect(store.update).toHaveBeenCalledWith({
@@ -133,6 +133,7 @@ describe('Local conversation adapters', () => {
       archived: false,
       presetId: 'preset',
       webEnabled: true,
+      reasoning: { kind: 'effort', value: 'high' },
     })
     await adapter.archive('thread')
     expect(store.update).toHaveBeenLastCalledWith({
@@ -141,6 +142,7 @@ describe('Local conversation adapters', () => {
       archived: true,
       presetId: 'preset',
       webEnabled: true,
+      reasoning: { kind: 'effort', value: 'high' },
     })
     await adapter.delete('thread')
     expect(store.delete).toHaveBeenCalledWith('thread')

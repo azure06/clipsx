@@ -16,6 +16,7 @@ import { fitContext, fitStepContext, imageMessage } from './context'
 import { createClipboardTools, isRecord } from './tools'
 import type { ToolRuntime } from './tools'
 import { CitationRegistry } from './citations'
+import { reasoningProviderOptions } from './reasoning'
 
 export interface RecallAdapterOptions {
   configuration(): Omit<AssistantRunRequest, 'runId'>
@@ -86,6 +87,7 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           presetId: context.preset.id,
           contextOmitted: fitted.omitted,
           webRoute: context.webRoute,
+          reasoning: context.reasoning ?? null,
           citations: state.citations!.snapshot(),
         }
         yield snapshot()
@@ -111,32 +113,7 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
             ? nativeWeb
             : { ...clipboardTools, ...nativeWeb }
         const steps = 8
-        const providerOptions: Record<
-          string,
-          Record<string, string | number | boolean | Record<string, string | number>>
-        > = {}
-        if (connection.provider === 'openai')
-          providerOptions['openai'] = {
-            store: false,
-            ...(context.preset.options.openai?.reasoningEffort
-              ? { reasoningEffort: context.preset.options.openai.reasoningEffort }
-              : {}),
-          }
-        if (connection.provider === 'anthropic' && context.preset.options.anthropic?.thinkingBudget)
-          providerOptions['anthropic'] = {
-            thinking: {
-              type: 'enabled',
-              budgetTokens: context.preset.options.anthropic.thinkingBudget,
-            },
-          }
-        if (
-          connection.provider === 'gemini' &&
-          context.preset.options.gemini?.thinkingBudget !== null &&
-          context.preset.options.gemini?.thinkingBudget !== undefined
-        )
-          providerOptions['google'] = {
-            thinkingConfig: { thinkingBudget: context.preset.options.gemini.thinkingBudget },
-          }
+        const providerOptions = reasoningProviderOptions(context)
         const agent = new ToolLoopAgent({
           model,
           tools,
@@ -198,6 +175,7 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           try {
             const result = await agent.stream({ messages: fitted.messages, abortSignal })
             let textIndex = -1
+            const reasoningParts = new Map<string, number>()
             const calls = new Map<string, number>()
             for await (const part of result.fullStream) {
               abortSignal.throwIfAborted()
@@ -215,6 +193,21 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
                 const text = content[textIndex]
                 if (text?.type === 'text')
                   content[textIndex] = { ...text, text: text.text + part.text }
+              }
+              if (part.type === 'reasoning-start') {
+                reasoningParts.set(part.id, content.length)
+                content.push({ type: 'reasoning', text: '' })
+              }
+              if (part.type === 'reasoning-delta') {
+                let index = reasoningParts.get(part.id)
+                if (index === undefined) {
+                  index = content.length
+                  reasoningParts.set(part.id, index)
+                  content.push({ type: 'reasoning', text: '' })
+                }
+                const reasoning = content[index]
+                if (reasoning?.type === 'reasoning')
+                  content[index] = { ...reasoning, text: reasoning.text + part.text }
               }
               if (part.type === 'tool-call') {
                 calls.set(part.toolCallId, content.length)

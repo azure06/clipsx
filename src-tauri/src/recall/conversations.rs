@@ -20,6 +20,9 @@ fn thread(row: &sqlx::sqlite::SqliteRow) -> RecallThread {
         id: row.get("id"),
         local_id: row.get("local_id"),
         title: row.get("title"),
+        reasoning: row
+            .get::<Option<String>, _>("reasoning_json")
+            .and_then(|value| serde_json::from_str(&value).ok()),
         archived: row.get("archived"),
         preset_id: row.get("preset_id"),
         web_enabled: row.get("web_enabled"),
@@ -64,7 +67,22 @@ pub async fn update(repo: &HistoryRepository, request: RecallThreadUpdate) -> Re
             bail!("missing_chat_preset");
         }
     }
-    let row = sqlx::query("UPDATE recall_threads SET title=?,archived=?,preset_id=?,web_enabled=?,updated_at=? WHERE id=? RETURNING *").bind(request.title).bind(request.archived).bind(request.preset_id).bind(request.web_enabled).bind(now_ms()).bind(request.thread_id).fetch_one(&repo.pool).await?;
+    if let Some(selection) = &request.reasoning {
+        let config = super::configuration::export(repo).await?;
+        let id = request
+            .preset_id
+            .as_ref()
+            .or(config.selections.default_chat.as_ref())
+            .context("missing_chat_preset")?;
+        if !super::reasoning::options(repo, id)
+            .await?
+            .reasoning
+            .contains(selection)
+        {
+            bail!("unsupported_reasoning_option");
+        }
+    }
+    let row = sqlx::query("UPDATE recall_threads SET title=?,archived=?,preset_id=?,web_enabled=?,reasoning_json=?,updated_at=? WHERE id=? RETURNING *").bind(request.title).bind(request.archived).bind(request.preset_id).bind(request.web_enabled).bind(request.reasoning.as_ref().map(serde_json::to_string).transpose()?).bind(now_ms()).bind(request.thread_id).fetch_one(&repo.pool).await?;
     Ok(thread(&row))
 }
 fn validate_message(message: &RecallMessage) -> Result<()> {
@@ -210,7 +228,7 @@ pub async fn start_run(
         content_json: "[]".into(),
         status_json: Some("{\"type\":\"running\"}".into()),
         metadata_json: serde_json::to_string(
-            &json!({"custom":{"runId":context.run_id,"provider":context.connection.provider,"model":context.preset.model_id,"presetId":context.preset.id}}),
+            &json!({"custom":{"runId":context.run_id,"provider":context.connection.provider,"model":context.preset.model_id,"presetId":context.preset.id,"reasoning":context.reasoning}}),
         )?,
         created_at: now_ms(),
     };
@@ -262,6 +280,7 @@ pub async fn checkpoint(repo: &HistoryRepository, request: RecallCheckpoint) -> 
     metadata["custom"]["provider"] = json!(frozen.connection.provider);
     metadata["custom"]["model"] = json!(frozen.preset.model_id);
     metadata["custom"]["presetId"] = json!(frozen.preset.id);
+    metadata["custom"]["reasoning"] = json!(frozen.reasoning);
     message.metadata_json = serde_json::to_string(&metadata)?;
     let status: Value = serde_json::from_str(
         message

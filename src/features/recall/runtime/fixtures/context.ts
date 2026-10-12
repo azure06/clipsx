@@ -60,5 +60,6 @@ export function fixtureContext(provider: ChatProvider = 'ollama'): AssistantRunC
       },
     ],
     webRoute: 'off',
+    reasoning: null,
   }
 }

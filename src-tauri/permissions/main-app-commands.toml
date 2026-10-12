@@ -3,6 +3,7 @@ identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
   "allow-assistant-run-begin",
+  "allow-assistant-model-options",
 "allow-recall-thread-initialize",
 "allow-recall-thread-list",
 "allow-recall-thread-load",

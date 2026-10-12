@@ -63,7 +63,10 @@ describe('Recall conversation runtime presentation', () => {
           id: 'reply',
           parentId: 'question',
           role: 'assistant',
-          contentJson: JSON.stringify([{ type: 'text', text: 'Ship on Friday [1](#clip-1).' }]),
+          contentJson: JSON.stringify([
+            { type: 'reasoning', text: 'Provider-supplied summary.' },
+            { type: 'text', text: 'Ship on Friday [1](#clip-1).' },
+          ]),
           metadataJson: JSON.stringify({
             custom: { citations: [{ number: 1, clipId: 'clip', revision: 'r1' }] },
           }),
@@ -91,6 +94,9 @@ describe('Recall conversation runtime presentation', () => {
     const options = props()
     render(<RecallChat {...options} />)
     fireEvent.click(await screen.findByRole('button', { name: 'recallPage.citation' }))
+    expect(screen.getByText('Provider-supplied summary.').closest('details')).not.toHaveAttribute(
+      'open'
+    )
     expect(screen.getByText('Friday release plan').closest('details')).toHaveAttribute('open')
     expect(screen.getByText('recallPage.missingSource')).toBeInTheDocument()
     expect(options.onOpenSource).not.toHaveBeenCalled()

@@ -35,6 +35,13 @@ describe('Native Recall agent', () => {
     '%s shares the native tool adapter in one streamed loop',
     async provider => {
       const context = fixtureContext(provider)
+      if (provider === 'openai') context.preset.modelId = 'gpt-5'
+      context.reasoning =
+        provider === 'openrouter'
+          ? { kind: 'budget', tokens: 1024 }
+          : provider === 'ollama'
+            ? { kind: 'thinking', enabled: true }
+            : { kind: 'effort', value: 'high' }
       context.attachments = [
         {
           apiVersion: 1,
@@ -102,10 +109,73 @@ describe('Native Recall agent', () => {
       })
       expect(native.finish).toHaveBeenCalledOnce()
       expect(requests).toHaveLength(2)
+      const requestBody: unknown = JSON.parse(requests[0]?.body ?? '{}')
+      expect(requestBody).toMatchObject(
+        {
+          openai: { reasoning: { effort: 'high', summary: 'auto' } },
+          anthropic: { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } },
+          gemini: {
+            generationConfig: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } },
+          },
+          openrouter: { reasoning: { max_tokens: 1024 } },
+          ollama: { reasoning_effort: 'low' },
+        }[provider]
+      )
       expect(requests[1]?.body).toContain('verified-evidence')
       expect(checkpoint.mock.calls.length).toBeLessThanOrEqual(2)
     }
   )
+  it('streams provider reasoning as a separate persisted part, retaining tool activity and the answer', async () => {
+    const context = fixtureContext('ollama')
+    const bridge: NativeAgentBridge = {
+      begin: request => Promise.resolve({ ...context, runId: request.runId }),
+      finish: vi.fn(async () => {}),
+      verifyTools: vi.fn(async () => {}),
+      tool: vi.fn(() => Promise.resolve({ items: [] })),
+    }
+    const { commands } = fixtureBridge('ollama', (records, phase) =>
+      phase === 'text'
+        ? [
+            {
+              id: 'fixture',
+              model: 'fixture-model',
+              created: 1,
+              choices: [
+                {
+                  index: 0,
+                  delta: { reasoning_content: 'Inspect the matching source.' },
+                  finish_reason: null,
+                },
+              ],
+            },
+            ...records,
+          ]
+        : records
+    )
+    const checkpoint = vi.fn(async () => {})
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge,
+      transport: id => createRustFetch(id, commands),
+      onCheckpoint: checkpoint,
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected streaming adapter')
+    let last: ChatModelRunResult | undefined
+    for await (const result of updates) last = result
+    expect(last?.content).toContainEqual({
+      type: 'reasoning',
+      text: 'Inspect the matching source.',
+    })
+    expect(last?.content?.some(part => part.type === 'tool-call')).toBe(true)
+    expect(last?.content).toContainEqual({ type: 'text', text: 'Recall verified' })
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.any(String), last, true)
+  })
   it('marks structured Rust tool failures as failed in the displayed and persisted message', async () => {
     const context = fixtureContext('ollama')
     const native = {

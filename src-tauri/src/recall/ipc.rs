@@ -504,3 +504,15 @@ pub async fn recall_snapshot_image(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn assistant_model_options(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+) -> Result<AssistantModelOptions, OperationFailure> {
+    service(&webview, &state)?;
+    super::reasoning::options(&state.history, &preset_id)
+        .await
+        .map_err(public_failure)
+}

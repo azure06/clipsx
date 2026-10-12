@@ -1315,6 +1315,38 @@
       "gemini_prefix_v2": "Gemini retrieval prefixes (embedding-2)"
     }
   },
+  "recallOptions": {
+    "source": "Source",
+    "options": "Conversation options",
+    "reasoning": "Reasoning",
+    "presetDefault": "Default",
+    "on": "On",
+    "off": "Off",
+    "tokenBudget": "{{value}} tokens",
+    "searchModels": "Search configured models",
+    "noModels": "No matching models. Configure a model in Intelligence.",
+    "reasoningHelp": "Uses this conversation’s override. Default follows the saved model preset. More reasoning can increase response time and token use.",
+    "reasoningUnknown": "No verified reasoning controls are available for this model. Default follows its saved preset.",
+    "savedUnavailable": "The saved override could not be verified. Choose Default or a supported option before sending.",
+    "tools": "Tools",
+    "webOn": "Web enabled",
+    "clipboardAutomatic": "Clipboard tools are available automatically. The agent chooses when to use them.",
+    "clipboardUnsupported": "This model is configured without clipboard tool support.",
+    "clipboardUnverified": "Clipboard tool support will be checked when used.",
+    "webHelp": "Web research requires a compatible model or a search connection configured in Models. It is off for new chats.",
+    "reasoningOutput": "Reasoning",
+    "reasoningOutputHelp": "Content returned by the provider. Some models return a summary; others expose no reasoning text.",
+    "closeThreads": "Close conversations",
+    "efforts": {
+      "none": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high",
+      "max": "Maximum"
+    }
+  },
   "recallPage": {
     "title": "Recall",
     "subtitle": "Find, understand, and work with your clipboard.",

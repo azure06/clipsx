@@ -10,9 +10,10 @@ type Props = {
   guide: DocumentationGuide
   anchor?: string
   label: string
+  compact?: boolean
 }
 
-export function DocumentationLink({ guide, anchor, label }: Props) {
+export function DocumentationLink({ guide, anchor, label, compact = false }: Props) {
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const [opening, setOpening] = useState(false)
@@ -41,9 +42,10 @@ export function DocumentationLink({ guide, anchor, label }: Props) {
       leftIcon={<BookOpen className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
       isLoading={opening}
       disabled={opening}
+      aria-label={label}
       onClick={() => void openGuide()}
     >
-      {label}
+      <span className={compact ? 'hidden sm:inline' : undefined}>{label}</span>
     </Button>
   )
 }

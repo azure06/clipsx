@@ -1,5 +1,6 @@
 import React from 'react'
 import type { ReactNode } from 'react'
+import { cn } from '../../../utils/cn'
 
 type ButtonVariant = 'primary' | 'secondary' | 'destructive' | 'ghost' | 'outline'
 type ButtonSize = 'sm' | 'md' | 'lg'
@@ -54,7 +55,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const baseClasses =
       'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900'
 
-    const classes = `${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className}`
+    const classes = cn(baseClasses, variantClasses[variant], sizeClasses[size], className)
 
     return (
       <button

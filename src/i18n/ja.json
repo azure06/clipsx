@@ -1315,6 +1315,38 @@
       "gemini_prefix_v2": "Gemini検索プレフィックス（embedding-2）"
     }
   },
+  "recallOptions": {
+    "source": "情報源",
+    "options": "会話のオプション",
+    "reasoning": "推論",
+    "presetDefault": "既定",
+    "on": "オン",
+    "off": "オフ",
+    "tokenBudget": "{{value}} トークン",
+    "searchModels": "設定済みモデルを検索",
+    "noModels": "一致するモデルがありません。Intelligenceでモデルを設定してください。",
+    "reasoningHelp": "この会話の設定を使います。既定では保存済みプリセットに従います。推論量を増やすと応答時間やトークン消費が増える場合があります。",
+    "reasoningUnknown": "このモデルで確認済みの推論設定はありません。既定では保存済みプリセットに従います。",
+    "savedUnavailable": "保存済みの設定を確認できませんでした。送信前に既定または対応する設定を選んでください。",
+    "tools": "ツール",
+    "webOn": "Web有効",
+    "clipboardAutomatic": "クリップボードのツールは必要に応じてエージェントが自動で使います。",
+    "clipboardUnsupported": "このモデルはクリップボードのツールに対応しない設定です。",
+    "clipboardUnverified": "クリップボードのツール対応は使用時に確認します。",
+    "webHelp": "Web検索には対応モデル、またはModelsで設定した検索接続が必要です。新しい会話ではオフです。",
+    "reasoningOutput": "推論",
+    "reasoningOutputHelp": "プロバイダーが返した内容です。モデルにより要約のみ返る場合や、推論テキストが返らない場合があります。",
+    "closeThreads": "会話一覧を閉じる",
+    "efforts": {
+      "none": "オフ",
+      "minimal": "最小",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "非常に高い",
+      "max": "最大"
+    }
+  },
   "recallPage": {
     "title": "Recall",
     "subtitle": "クリップを探し、理解し、作業につなげます。",

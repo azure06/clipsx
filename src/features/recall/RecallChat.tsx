@@ -22,8 +22,21 @@ import {
   BranchPickerPrimitive,
   AuiIf,
 } from '@assistant-ui/react'
-import type { TextMessagePartProps, ToolCallMessagePartProps } from '@assistant-ui/react'
-import { Sparkles, Search, ArrowUp, Square, LoaderCircle, Check, CircleAlert } from 'lucide-react'
+import type {
+  TextMessagePartProps,
+  ToolCallMessagePartProps,
+  ReasoningMessagePartProps,
+} from '@assistant-ui/react'
+import {
+  Sparkles,
+  Search,
+  ArrowUp,
+  Square,
+  LoaderCircle,
+  Check,
+  CircleAlert,
+  Brain,
+} from 'lucide-react'
 import { Button } from '../../shared/components/ui'
 import type {
   AiModelPreset,
@@ -87,6 +100,22 @@ function matchesCitation(source: RecallSourceSnapshot, citation: ClipboardCitati
     return false
   }
 }
+function ReasoningActivity({ text }: ReasoningMessagePartProps) {
+  const { t } = useTranslation()
+  if (!text) return null
+  return (
+    <details className="my-2 rounded-lg border border-slate-200/70 bg-slate-100/30 px-3 py-2 text-xs dark:border-white/10 dark:bg-white/[.02]">
+      <summary className="flex cursor-pointer items-center gap-2 font-medium text-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50">
+        <Brain size={13} aria-hidden="true" />
+        {t('recallOptions.reasoningOutput')}
+      </summary>
+      <p className="mt-2 text-[10px] text-slate-500">{t('recallOptions.reasoningOutputHelp')}</p>
+      <div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words leading-relaxed text-slate-600 dark:text-slate-300">
+        {text}
+      </div>
+    </details>
+  )
+}
 function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
   const { t } = useTranslation()
   const open = useContext(OpenSource)
@@ -112,19 +141,25 @@ function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
   const undoRef = useRef(crypto.randomUUID())
   const [undoState, setUndoState] = useUndoState()
   return (
-    <div className="my-2 rounded-lg border border-slate-200 bg-slate-50/60 p-2 text-xs dark:border-white/10 dark:bg-white/5">
+    <div className="my-2.5 rounded-xl border border-slate-200/80 bg-slate-50/70 p-2.5 text-xs shadow-2xs backdrop-blur-xs dark:border-white/10 dark:bg-white/[0.02]">
       <div className="flex flex-wrap items-center gap-2">
         {status.type === 'running' ? (
-          <LoaderCircle size={13} className="animate-spin text-violet-500" aria-hidden="true" />
+          <span className="flex size-5 items-center justify-center rounded-lg bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300">
+            <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
+          </span>
         ) : failed ? (
-          <CircleAlert size={13} className="text-amber-600" aria-hidden="true" />
+          <span className="flex size-5 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-300">
+            <CircleAlert size={13} aria-hidden="true" />
+          </span>
         ) : (
-          <Check size={13} className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          <span className="flex size-5 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
+            <Check size={13} aria-hidden="true" />
+          </span>
         )}
-        <span className="font-medium">
+        <span className="font-semibold text-slate-800 dark:text-slate-200">
           {t(`recallPage.tools.${toolName}`, { defaultValue: t('recallPage.toolActivity') })}
         </span>
-        <span className="text-slate-500">
+        <span className="text-[11px] text-slate-500">
           {status.type === 'running'
             ? t('recallPage.working')
             : failed
@@ -134,7 +169,13 @@ function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
       </div>
       {toolName === 'search_clips' && <ToolSearchResults result={result} open={open} />}
       {actionClips.map(id => (
-        <Button key={id} size="sm" variant="ghost" onClick={() => open(id)}>
+        <Button
+          key={id}
+          size="sm"
+          variant="ghost"
+          className="mt-1 h-6 rounded-md px-2 text-xs"
+          onClick={() => open(id)}
+        >
           {t('recallPage.openSource')} · {id.slice(0, 8)}
         </Button>
       ))}
@@ -142,7 +183,13 @@ function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
         !saved.sources.some(
           source => source.messageId === messageId && source.clipId === clipId && !source.available
         ) && (
-          <Button size="sm" variant="ghost" onClick={() => open(clipId)}>
+          <Button
+            key={clipId}
+            size="sm"
+            variant="ghost"
+            className="mt-1 h-6 rounded-md px-2 text-xs"
+            onClick={() => open(clipId)}
+          >
             {t('recallPage.openSource')}
           </Button>
         )}
@@ -150,6 +197,7 @@ function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
         <Button
           size="sm"
           variant="ghost"
+          className="mt-1 h-6 rounded-md px-2 text-xs"
           disabled={undoState === 'busy' || undoState === 'done'}
           onClick={() => {
             setUndoState('busy')
@@ -163,7 +211,11 @@ function ToolActivity({ toolName, result, status }: ToolCallMessagePartProps) {
           {undoState === 'done' ? t('recallPage.undone') : t('recallPage.undo')}
         </Button>
       )}
-      {undoState === 'error' && <p role="alert">{t('recallPage.undoFailed')}</p>}
+      {undoState === 'error' && (
+        <p role="alert" className="mt-1 text-xs text-red-500">
+          {t('recallPage.undoFailed')}
+        </p>
+      )}
     </div>
   )
 }
@@ -218,38 +270,53 @@ function TranscriptMessage() {
       }}
     >
       <MessagePrimitive.Root
-        className={`rounded-lg p-2.5 ${role === 'user' ? 'ml-8 border border-slate-200 bg-slate-100/70 dark:border-white/10 dark:bg-white/5' : 'mr-2'}`}
+        className={`rounded-xl p-3 ${
+          role === 'user'
+            ? 'ml-auto max-w-[85%] border border-violet-200/80 bg-violet-50/50 dark:border-violet-500/20 dark:bg-violet-950/30'
+            : 'mr-auto w-full'
+        }`}
       >
         <AuiIf condition={s => !s.message.composer.isEditing}>
-          <p className="mb-1 text-[10px] text-slate-400">
-            {role === 'user' ? t('recallPage.you') : t('recallPage.assistant')}
-          </p>
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold">
+            {role === 'user' ? (
+              <span className="text-violet-600 dark:text-violet-400">{t('recallPage.you')}</span>
+            ) : (
+              <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
+                <Sparkles size={12} className="text-violet-500" aria-hidden="true" />
+                {t('recallPage.assistant')}
+              </span>
+            )}
+          </div>
           <MessagePrimitive.Parts
-            components={{ Text: MarkdownText, tools: { Fallback: ToolActivity } }}
+            components={{
+              Text: MarkdownText,
+              Reasoning: ReasoningActivity,
+              tools: { Fallback: ToolActivity },
+            }}
           />
           <SavedEvidence />
           {typeof custom['model'] === 'string' && (
-            <p className="mt-2 text-[10px] text-slate-500">
+            <p className="mt-2 text-[10px] text-slate-400">
               {String(custom['provider'])} · {custom['model']}
             </p>
           )}
           {custom['toolsUnavailable'] === true && (
-            <p className="text-xs text-amber-600 dark:text-amber-300">
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
               {t('recallPage.toolsUnavailable')}
             </p>
           )}
           {custom['contextOmitted'] === true && (
-            <p className="text-xs text-amber-600 dark:text-amber-300">
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
               {t('recallPage.contextOmitted')}
             </p>
           )}
           {custom['webRoute'] === 'unavailable' && (
-            <p className="text-xs text-amber-600 dark:text-amber-300">
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
               {t('recallPage.webUnavailable')}
             </p>
           )}
           {custom['interrupted'] === true && (
-            <p className="text-xs text-amber-600 dark:text-amber-300">
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
               {t('recallPage.interrupted')}
             </p>
           )}
@@ -258,22 +325,27 @@ function TranscriptMessage() {
               {t('recallPage.incomplete')}
             </p>
           </AuiIf>
-          <ActionBarPrimitive.Root className="mt-2 flex flex-wrap gap-1">
+          <ActionBarPrimitive.Root className="mt-2.5 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5 dark:border-white/5">
             <ActionBarPrimitive.Edit asChild>
-              <Button size="sm" variant="ghost">
+              <Button size="sm" variant="ghost" className="h-6 rounded-md px-2 text-xs">
                 {t('recallPage.edit')}
               </Button>
             </ActionBarPrimitive.Edit>
             {role === 'assistant' && (
               <ActionBarPrimitive.Reload asChild>
-                <Button size="sm" variant="ghost">
+                <Button size="sm" variant="ghost" className="h-6 rounded-md px-2 text-xs">
                   {t('recallPage.regenerate')}
                 </Button>
               </ActionBarPrimitive.Reload>
             )}
             <BranchPickerPrimitive.Root className="flex items-center gap-1">
               <BranchPickerPrimitive.Previous asChild>
-                <Button size="sm" variant="ghost" aria-label={t('recallPage.previousBranch')}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 rounded-md px-1.5 text-xs"
+                  aria-label={t('recallPage.previousBranch')}
+                >
                   ‹
                 </Button>
               </BranchPickerPrimitive.Previous>
@@ -281,7 +353,12 @@ function TranscriptMessage() {
                 <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
               </span>
               <BranchPickerPrimitive.Next asChild>
-                <Button size="sm" variant="ghost" aria-label={t('recallPage.nextBranch')}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 rounded-md px-1.5 text-xs"
+                  aria-label={t('recallPage.nextBranch')}
+                >
                   ›
                 </Button>
               </BranchPickerPrimitive.Next>
@@ -293,10 +370,12 @@ function TranscriptMessage() {
             <ComposerPrimitive.Input className={textClass} aria-label={t('recallPage.edit')} />
             <div className="mt-2 flex gap-2">
               <ComposerPrimitive.Send asChild>
-                <Button size="sm">{t('recallPage.saveEdit')}</Button>
+                <Button size="sm" className="h-7 rounded-lg text-xs">
+                  {t('recallPage.saveEdit')}
+                </Button>
               </ComposerPrimitive.Send>
               <ComposerPrimitive.Cancel asChild>
-                <Button size="sm" variant="ghost">
+                <Button size="sm" variant="ghost" className="h-7 rounded-lg text-xs">
                   {t('common.cancel')}
                 </Button>
               </ComposerPrimitive.Cancel>
@@ -317,7 +396,8 @@ export interface RecallChatProps {
   onRunning(this: void, running: boolean): void
   onComplete(this: void): void
   onOpenSource(this: void, id: string): void
-  composerExtras?: ReactNode
+  composerToolbar?: ReactNode
+  composerAttachments?: ReactNode
   onOpenSearch?: () => void
 }
 export function RecallChat(props: RecallChatProps) {
@@ -393,30 +473,35 @@ export function RecallChat(props: RecallChatProps) {
       <SavedSources.Provider value={{ threadId: props.thread.id, sources }}>
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
-            <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [scrollbar-gutter:stable]">
+            <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-4 py-4 custom-scrollbar [scrollbar-gutter:stable]">
               <AuiIf condition={s => s.thread.isEmpty}>
-                <div className="mx-auto flex max-w-xl flex-col items-center px-3 py-6 text-center">
-                  <div className="mb-4 flex size-9 items-center justify-center rounded-2xl border border-violet-200/60 bg-violet-50 text-violet-600 dark:border-violet-500/20 dark:bg-violet-500/10 dark:text-violet-300">
-                    <Sparkles size={22} aria-hidden="true" />
+                <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-12 text-center">
+                  <div className="mb-4 flex size-11 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 ring-1 ring-violet-500/15 dark:text-violet-300">
+                    <Sparkles size={24} aria-hidden="true" />
                   </div>
                   <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
                     {t('recallPage.chatEmpty')}
                   </h2>
-                  <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-500">
+                  <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                     {t('recallPage.chatHelp')}
                   </p>
-                  <div className="mt-5 grid w-full gap-2 text-left sm:grid-cols-2">
+                  <div className="mt-6 grid w-full gap-2.5 text-left sm:grid-cols-2">
                     {(['findExample', 'workExample'] as const).map(key => (
                       <div
                         key={key}
-                        className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-xs leading-relaxed text-slate-600 dark:border-white/10 dark:bg-white/[0.025] dark:text-slate-300"
+                        className="rounded-xl border border-slate-200/60 bg-slate-100/30 p-3 text-xs leading-relaxed text-slate-600 dark:border-white/10 dark:bg-slate-100/5 dark:text-slate-300"
                       >
                         {t(`recallPage.${key}`)}
                       </div>
                     ))}
                   </div>
                   {props.onOpenSearch && (
-                    <Button size="sm" variant="ghost" className="mt-4" onClick={props.onOpenSearch}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="mt-5 rounded-xl text-xs gap-1.5"
+                      onClick={props.onOpenSearch}
+                    >
                       <Search size={13} aria-hidden="true" />
                       {t('recallPage.browseClips')}
                     </Button>
@@ -434,10 +519,10 @@ export function RecallChat(props: RecallChatProps) {
               <AuiIf condition={s => s.thread.isRunning}>
                 <div
                   role="status"
-                  className="mx-auto mt-3 flex max-w-3xl items-center gap-2 px-3 text-xs text-slate-500"
+                  className="mx-auto mt-3 flex w-fit items-center gap-2 rounded-xl bg-violet-50/80 px-3.5 py-1.5 text-xs font-medium text-violet-700 shadow-2xs dark:bg-violet-950/40 dark:text-violet-300"
                 >
                   <LoaderCircle
-                    size={13}
+                    size={14}
                     className="animate-spin text-violet-500"
                     aria-hidden="true"
                   />
@@ -445,38 +530,47 @@ export function RecallChat(props: RecallChatProps) {
                 </div>
               </AuiIf>
             </ThreadPrimitive.Viewport>
-            <div className="shrink-0 px-4 pb-4 pt-2">
-              <div className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-slate-50/70 p-3 shadow-sm focus-within:border-violet-400/60 dark:border-white/10 dark:bg-white/[0.025] dark:focus-within:border-violet-500/40">
-                {props.composerExtras}
+            <div className="shrink-0 p-3 sm:p-4">
+              <div className="mx-auto w-full max-w-3xl rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 focus-within:ring-2 focus-within:ring-violet-500/50 dark:border-white/10 dark:bg-slate-100/5">
+                {props.composerAttachments}
                 <ComposerPrimitive.Root>
                   <ComposerPrimitive.Input
                     disabled={!props.preset}
-                    className="max-h-48 min-h-[48px] w-full resize-none bg-transparent px-1 py-2 text-sm outline-none placeholder:text-slate-400"
+                    className="max-h-48 min-h-[48px] w-full resize-none bg-transparent px-1 py-1 text-sm outline-none placeholder:text-slate-400 text-slate-800 dark:text-slate-100"
                     placeholder={t('recallPage.composerPlaceholder')}
                     aria-label={t('recallPage.message')}
                     rows={2}
                   />
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-500">
-                      {t('recallPage.composerHelp')}
-                    </span>
-                    <div className="flex gap-2">
-                      <ComposerPrimitive.Cancel asChild>
-                        <Button size="sm" variant="outline">
-                          <Square size={12} aria-hidden="true" />
-                          {t('recallPage.stop')}
-                        </Button>
-                      </ComposerPrimitive.Cancel>
-                      <ComposerPrimitive.Send asChild>
-                        <Button size="sm" disabled={!props.preset}>
-                          <ArrowUp size={14} aria-hidden="true" />
-                          {t('recallPage.send')}
-                        </Button>
-                      </ComposerPrimitive.Send>
+                  <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
+                    <div className="min-w-0 flex-1">{props.composerToolbar}</div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <AuiIf condition={s => s.thread.isRunning}>
+                        <ComposerPrimitive.Cancel asChild>
+                          <Button size="sm" variant="outline" className="h-8 px-2">
+                            <Square size={12} aria-hidden="true" />
+                            {t('recallPage.stop')}
+                          </Button>
+                        </ComposerPrimitive.Cancel>
+                      </AuiIf>
+                      <AuiIf condition={s => !s.thread.isRunning}>
+                        <ComposerPrimitive.Send asChild>
+                          <Button
+                            size="sm"
+                            className="size-8 px-0"
+                            disabled={!props.preset}
+                            aria-label={t('recallPage.send')}
+                          >
+                            <ArrowUp size={15} aria-hidden="true" />
+                          </Button>
+                        </ComposerPrimitive.Send>
+                      </AuiIf>
                     </div>
                   </div>
                 </ComposerPrimitive.Root>
               </div>
+              <p className="mx-auto mt-1.5 max-w-3xl px-1 text-[10px] text-slate-400">
+                {props.preset ? t('recallPage.composerHelp') : t('recallPage.setupHelp')}
+              </p>
             </div>
           </ThreadPrimitive.Root>
         </AssistantRuntimeProvider>
@@ -496,6 +590,7 @@ function createChatController(
       filters: current.filters,
       attachments: current.attachments,
       webEnabled: current.thread.webEnabled,
+      reasoning: current.thread.reasoning ?? null,
     }),
     ...persistence.hooks,
     onCheckpoint: async (id, result, terminal) => {

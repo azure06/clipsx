@@ -18,6 +18,7 @@ pub mod mcp;
 #[cfg(test)]
 mod mcp_tests;
 pub mod mutations;
+pub mod reasoning;
 #[cfg(feature = "recall-runtime-probe")]
 pub mod runtime_probe;
 pub mod service;

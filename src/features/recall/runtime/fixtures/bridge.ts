@@ -3,14 +3,19 @@ import type { BridgeCommands, BridgeRequest } from '../transport'
 import type { ChatProvider } from '../providers'
 import streams from './streams.json'
 
-export function fixtureBridge(provider: ChatProvider) {
+export function fixtureBridge(
+  provider: ChatProvider,
+  transform?: (records: readonly unknown[], phase: 'tool' | 'text') => readonly unknown[]
+) {
   const requests: BridgeRequest[] = []
   const waits = new Map<string, () => void>()
   let cancelled = false
   const commands: BridgeCommands = {
     start: vi.fn<BridgeCommands['start']>((request, receive) => {
       requests.push(request)
-      const records = requests.length === 1 ? streams[provider].tool : streams[provider].text
+      const phase = requests.length === 1 ? 'tool' : 'text'
+      const fixture = streams[provider][phase]
+      const records = transform?.(fixture, phase) ?? fixture
       receive({ type: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } })
       void (async () => {
         let sequence = 0
