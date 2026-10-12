@@ -3,7 +3,7 @@ import type { ChatModelRunOptions, ChatModelRunResult, ThreadMessage } from '@as
 import type { NativeAgentBridge } from './native'
 import { fixtureContext } from './fixtures/context'
 import type { ChatProvider } from './providers'
-import { createRecallAdapter } from './adapter'
+import { createRecallAdapter, transportFailure } from './adapter'
 import { fixtureBridge } from './fixtures/bridge'
 import { createRustFetch } from './transport'
 import { fitContext, fitStepContext } from './context'
@@ -376,5 +376,17 @@ describe('Native Recall agent', () => {
     expect(() =>
       fitStepContext([latest, { role: 'assistant', content: 'x'.repeat(4096) }], latest, context)
     ).toThrow('context_limit')
+  })
+})
+
+describe('curated Recall failures', () => {
+  it('retains nested timeout categories and never copies arbitrary error messages', () => {
+    expect(
+      transportFailure(
+        new Error('wrapper', { cause: new Error('Recall transport: request_timeout') })
+      )
+    ).toBe('request_timeout')
+    expect(transportFailure(new Error('private provider body'))).toBe('run_failed')
+    expect(transportFailure(new Error('Recall transport: private contents'))).toBe('run_failed')
   })
 })

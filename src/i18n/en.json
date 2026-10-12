@@ -1458,7 +1458,12 @@
     "agentWorking": "Working on your request…",
     "searchCandidates": "Matches found · the agent can inspect these next",
     "inspectedSources": "Inspected sources",
-    "citation": "Show source {{number}}"
+    "citation": "Show source {{number}}",
+    "stopped": "Reply stopped. You can regenerate it when ready.",
+    "outputLimitReached": "The model reached its output limit before finishing. Try less reasoning or increase the model’s output limit.",
+    "responseFiltered": "The provider filtered this reply.",
+    "requestTimedOut": "The model request timed out. Try less reasoning or a faster model, then regenerate.",
+    "responseFailed": "The model request failed before finishing. Try regenerating the reply."
   },
   "modelsWorkspace": {
     "connectionTestPassed": "Connected. Discovered {{count}} models. This checks catalog access; model execution is verified separately.",
@@ -1593,6 +1598,8 @@
     "suggestionHelp": "Local matches while you type. Attach a clip to send it with your next message; suggestions are not sent automatically.",
     "typeToFind": "Type a message to find matching clips.",
     "backToContext": "← Back to context",
-    "closePreview": "Close preview"
+    "closePreview": "Close preview",
+    "resize": "Resize context panel",
+    "attachMatches": "Attach top matches (up to 3)"
   }
 }

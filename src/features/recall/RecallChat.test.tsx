@@ -232,3 +232,37 @@ describe('Recall conversation runtime presentation', () => {
     expect(run).not.toHaveBeenCalled()
   })
 })
+
+it.each([
+  ['cancelled', 'stopped'],
+  ['length', 'outputLimitReached'],
+  ['error', 'responseFailed'],
+])('explains an incomplete %s reply', async (reason, key) => {
+  history = {
+    thread: { ...thread, headMessageId: 'answer' },
+    sources: [],
+    messages: [
+      {
+        id: 'question',
+        parentId: null,
+        role: 'user',
+        contentJson: '[{"type":"text","text":"Find a clip"}]',
+        metadataJson: '{"custom":{}}',
+        statusJson: null,
+        createdAt: 1,
+      },
+      {
+        id: 'answer',
+        parentId: 'question',
+        role: 'assistant',
+        contentJson: '[{"type":"reasoning","text":"Working"}]',
+        metadataJson: '{"custom":{}}',
+        statusJson: JSON.stringify({ type: 'incomplete', reason }),
+        createdAt: 2,
+      },
+    ],
+  }
+  vi.mocked(createRecallAdapter).mockReturnValue({ run: vi.fn() })
+  render(<RecallChat {...props()} />)
+  expect(await screen.findByText('recallPage.' + key)).toBeInTheDocument()
+})

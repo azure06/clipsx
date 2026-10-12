@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import * as Dialog from '@radix-ui/react-dialog'
+import { RecallSplitView } from './RecallSplitView'
 import { RecallContext } from './RecallContext'
 import type { ContextSelection } from './RecallContext'
 import { useTranslation } from 'react-i18next'
@@ -213,6 +213,19 @@ function TranscriptMessage() {
   const messageId = useAuiState(s => s.message.id)
   const role = useAuiState(s => s.message.role)
   const custom = useAuiState(s => s.message.metadata.custom)
+  const status = useAuiState(s => s.message.status)
+  const incompleteKey =
+    status?.type === 'incomplete'
+      ? status.reason === 'cancelled'
+        ? 'stopped'
+        : status.reason === 'length'
+          ? 'outputLimitReached'
+          : status.reason === 'content-filter'
+            ? 'responseFiltered'
+            : custom['failure'] === 'request_timeout'
+              ? 'requestTimedOut'
+              : 'responseFailed'
+      : 'incomplete'
   return (
     <MessagePrimitive.Root
       className={`rounded-xl p-3 ${
@@ -277,7 +290,7 @@ function TranscriptMessage() {
         )}
         <AuiIf condition={s => s.message.status?.type === 'incomplete'}>
           <p role="status" className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-            {t('recallPage.incomplete')}
+            {t(`recallPage.${incompleteKey}`)}
           </p>
         </AuiIf>
         <ActionBarPrimitive.Root className="mt-2.5 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5 dark:border-white/5">
@@ -377,14 +390,6 @@ export function RecallChat(props: RecallChatProps) {
     }
     hadPreview.current = Boolean(props.preview)
   }, [props.preview, props.contextOpen])
-  const [wide, setWide] = useState(() => window.innerWidth >= 1280)
-  useEffect(() => {
-    const media = window.matchMedia('(min-width: 1280px)')
-    const update = () => setWide(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
   const selectContext = (messageId: string | null, citation?: number) => {
     setSelection(previous => ({
       messageId,
@@ -478,7 +483,7 @@ export function RecallChat(props: RecallChatProps) {
       <SavedSources.Provider value={{ threadId: props.thread.id, sources }}>
         <AssistantRuntimeProvider runtime={runtime}>
           <SelectContext.Provider value={selectContext}>
-            <div className="flex h-full min-h-0 min-w-0 gap-3">
+            <RecallSplitView open={Boolean(props.contextOpen)}>
               <ThreadPrimitive.Root className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
                 <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-4 py-4 custom-scrollbar [scrollbar-gutter:stable]">
                   <AuiIf condition={s => s.thread.isEmpty}>
@@ -570,9 +575,9 @@ export function RecallChat(props: RecallChatProps) {
                   </p>
                 </div>
               </ThreadPrimitive.Root>
-              {wide && props.contextOpen && (
+              {props.contextOpen && (
                 <aside
-                  className={`flex h-full min-h-0 shrink-0 flex-col border-l border-slate-200/60 dark:border-white/10 ${props.preview ? 'w-[min(45vw,540px)] min-w-[420px]' : 'w-80'}`}
+                  className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
                   aria-label={t('recallContext.title')}
                 >
                   {!props.preview && (
@@ -605,55 +610,7 @@ export function RecallChat(props: RecallChatProps) {
                   </div>
                 </aside>
               )}
-            </div>
-            {!wide && (
-              <Dialog.Root
-                open={Boolean(props.contextOpen)}
-                onOpenChange={open => {
-                  if (!open) props.onContextClose?.()
-                }}
-              >
-                <Dialog.Portal>
-                  <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/30" />
-                  <Dialog.Content
-                    aria-describedby={undefined}
-                    className="fixed inset-y-2 right-2 z-[81] flex w-[calc(100%-1rem)] max-w-xl min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-xl outline-none dark:border-white/10 dark:bg-slate-950"
-                  >
-                    {props.preview ? (
-                      <Dialog.Title className="sr-only">{t('recallPage.preview')}</Dialog.Title>
-                    ) : (
-                      <div className="flex shrink-0 items-center justify-between border-b border-slate-200/60 p-3 dark:border-white/10">
-                        <Dialog.Title className="text-sm font-semibold">
-                          {t('recallContext.title')}
-                        </Dialog.Title>
-                        <Dialog.Close asChild>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="size-8 px-0"
-                            aria-label={t('recallContext.close')}
-                            ref={contextClose}
-                          >
-                            <X size={14} aria-hidden="true" />
-                          </Button>
-                        </Dialog.Close>
-                      </div>
-                    )}
-                    <div className="min-h-0 flex-1">
-                      <RecallContext
-                        threadId={props.thread.id}
-                        sources={sources}
-                        suggestions={props.suggestions}
-                        preview={props.preview}
-                        selection={selection}
-                        onSelect={selectContext}
-                        open={props.onOpenSource}
-                      />
-                    </div>
-                  </Dialog.Content>
-                </Dialog.Portal>
-              </Dialog.Root>
-            )}
+            </RecallSplitView>
           </SelectContext.Provider>
         </AssistantRuntimeProvider>
       </SavedSources.Provider>

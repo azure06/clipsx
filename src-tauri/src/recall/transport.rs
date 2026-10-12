@@ -286,7 +286,10 @@ async fn stream_request(
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(120))
+            // Local reasoning can stream for several minutes. Keep an idle limit
+            // as well as a bounded total duration instead of cutting off active streams.
+            .read_timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(600))
             .build()
             .map_err(|_| "connection_unavailable")?;
         let response = client
@@ -295,7 +298,13 @@ async fn stream_request(
             .body(request.body.clone())
             .send()
             .await
-            .map_err(|_| "connection_unavailable")?;
+            .map_err(|error| {
+                if error.is_timeout() {
+                    "request_timeout"
+                } else {
+                    "connection_unavailable"
+                }
+            })?;
         let status = response.status();
         if !status.is_success() {
             return Err(match status.as_u16() {
@@ -321,7 +330,13 @@ async fn stream_request(
         let mut total = 0usize;
         let mut sequence = 0u32;
         while let Some(chunk) = bytes.next().await {
-            let chunk = chunk.map_err(|_| "invalid_response")?;
+            let chunk = chunk.map_err(|error| {
+                if error.is_timeout() {
+                    "request_timeout"
+                } else {
+                    "invalid_response"
+                }
+            })?;
             total = total.checked_add(chunk.len()).ok_or("response_limit")?;
             if total > MAX_RESPONSE {
                 return Err("response_limit");

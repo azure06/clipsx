@@ -282,7 +282,7 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           type: 'incomplete',
           reason: abortSignal.aborted ? 'cancelled' : 'error',
         }
-        metadata['failure'] = abortSignal.aborted ? 'cancelled' : 'run_failed'
+        metadata['failure'] = abortSignal.aborted ? 'cancelled' : transportFailure(error)
         await checkpoint(true, status)
         yield snapshot(status)
         if (!abortSignal.aborted) throw new Error('recall_run_failed', { cause: error })
@@ -301,4 +301,18 @@ function rejectedProbe(error: unknown): boolean {
     current = current.cause
   }
   return false
+}
+
+/** Retain only curated transport categories, never provider bodies or user content. */
+export function transportFailure(error: unknown): string {
+  let current = error
+  for (let depth = 0; depth < 8 && current instanceof Error; depth++) {
+    const match =
+      /^Recall transport: (request_timeout|connection_unavailable|provider_authentication|provider_rate_limited|provider_server_error|provider_rejected|invalid_response|receiver_timeout|response_limit)$/.exec(
+        current.message
+      )
+    if (match) return match[1]!
+    current = current.cause
+  }
+  return 'run_failed'
 }

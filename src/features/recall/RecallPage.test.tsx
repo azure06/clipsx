@@ -19,6 +19,7 @@ vi.mock('./RecallChat', () => ({
         onCompositionStart={props.onCompositionStart}
         onCompositionEnd={props.onCompositionEnd}
       />
+      <div data-testid="attachments">{JSON.stringify(props.attachments)}</div>
       <div data-testid="chat-submission">{props.ask?.text ?? ''}</div>
       {props.contextOpen && (
         <div data-testid="context">
@@ -157,4 +158,30 @@ describe('Recall workspace context', () => {
     )
     expect(screen.queryByRole('button', { name: 'recallContext.closePreview' })).toBeNull()
   })
+})
+
+it('attaches at most three suggested clips explicitly without starting generation', async () => {
+  const base = vi.mocked(invoke).getMockImplementation()!
+  vi.mocked(invoke).mockImplementation((command, args) =>
+    command === 'assistant_search_clips'
+      ? Promise.resolve({
+          items: ['one', 'two', 'three', 'four'].map(id => ({
+            clip: { id, revision: 'r', capturedAt: 1 },
+            snippet: id,
+          })),
+          nextCursor: null,
+          exhaustive: true,
+        })
+      : base(command, args)
+  )
+  render(<RecallPage initialQuery="notes" />)
+  await screen.findByTestId('chat-submission')
+  fireEvent.click(screen.getByRole('button', { name: 'recallContext.title' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'recallContext.attachMatches' }))
+  expect(screen.getByTestId('attachments')).toHaveTextContent(
+    JSON.stringify(['one', 'two', 'three'].map(clipId => ({ clipId, revision: 'r' })))
+  )
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_run_begin')).toBe(
+    false
+  )
 })

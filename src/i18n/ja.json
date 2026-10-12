@@ -1458,7 +1458,12 @@
     "agentWorking": "リクエストを処理中…",
     "searchCandidates": "見つかった候補 · エージェントが内容を確認できます",
     "inspectedSources": "確認した情報源",
-    "citation": "情報源{{number}}を表示"
+    "citation": "情報源{{number}}を表示",
+    "stopped": "応答を停止しました。必要に応じて再生成できます。",
+    "outputLimitReached": "応答が完了する前に出力上限に達しました。推論を減らすか、モデルの出力上限を増やしてください。",
+    "responseFiltered": "プロバイダーがこの応答をフィルタリングしました。",
+    "requestTimedOut": "モデルへのリクエストがタイムアウトしました。推論を減らすか、より高速なモデルで再生成してください。",
+    "responseFailed": "応答が完了する前にモデルへのリクエストが失敗しました。再生成をお試しください。"
   },
   "modelsWorkspace": {
     "connectionTestPassed": "接続できました。{{count}} 件のモデルを取得しました。モデル一覧へのアクセスを確認しました。モデルの実行は別途確認が必要です。",
@@ -1593,6 +1598,8 @@
     "suggestionHelp": "入力内容からローカル検索した候補です。添付すると次のメッセージと一緒に送信されます。候補が自動送信されることはありません。",
     "typeToFind": "メッセージを入力すると関連するクリップを検索します。",
     "backToContext": "← コンテキストに戻る",
-    "closePreview": "プレビューを閉じる"
+    "closePreview": "プレビューを閉じる",
+    "resize": "コンテキストパネルのサイズを変更",
+    "attachMatches": "上位の候補を添付（最大3件）"
   }
 }

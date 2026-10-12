@@ -268,7 +268,7 @@ export function RecallPage({
   const closeContext = () => {
     closePreview()
     setContextOpen(false)
-    // The narrow drawer must release its focus trap before focusing its trigger.
+    // Restore focus after the context content has been removed.
     requestAnimationFrame(() => contextToggle.current?.focus())
   }
   const scopeLabels = [
@@ -391,12 +391,27 @@ export function RecallPage({
       </div>
     </li>
   )
+  const attachableMatches = [...(search.keyword?.items ?? []), ...search.related]
+    .filter(item => !attachments.some(source => source.clipId === item.clip.id))
+    .slice(0, Math.min(3, 10 - attachments.length))
   const suggestions = (
     <section aria-label={t('recallContext.suggestions')}>
       <div className="space-y-2.5">
         <p className="text-xs leading-relaxed text-slate-500">
           {t('recallContext.suggestionHelp')}
         </p>
+        {query.trim() && attachableMatches.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={running || search.pending || search.composing}
+            onClick={() => attachableMatches.forEach(attach)}
+          >
+            <Paperclip size={12} aria-hidden="true" />
+            {t('recallContext.attachMatches')}
+          </Button>
+        )}
         <details className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-2 text-xs dark:border-white/5 dark:bg-white/[0.02]">
           <summary className="cursor-pointer font-medium text-slate-600 outline-none select-none hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-300 dark:hover:text-slate-100">
             {t('recallPage.filters')}
