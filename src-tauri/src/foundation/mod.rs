@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 23;
+pub const SCHEMA_VERSION: i64 = 24;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,7 +349,7 @@ mod tests {
     use tempfile::TempDir;
     #[tokio::test]
     async fn upgrades_released_and_recall_schemas_without_resetting_data() {
-        for version in 15..=22 {
+        for version in 15..=23 {
             let root = TempDir::new().unwrap();
             let roots = AppRoots {
                 data: root.path().join("data"),

@@ -25,7 +25,24 @@ pub async fn options(repo: &HistoryRepository, preset_id: &str) -> Result<Assist
         .iter()
         .find(|c| c.id == preset.connection_id && c.enabled)
         .context("connection_disabled")?;
-    for_preset(repo, connection, preset).await
+    let information = if matches!(preset.options.limit_policy, Some(AiLimitPolicy::Auto)) {
+        super::model_information::resolve(repo, connection, preset, false)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        super::model_information::cached(
+            repo,
+            connection,
+            &preset.model_id,
+            crate::history::now_ms(),
+        )
+        .await?
+    };
+    let policy = super::execution_policy::resolve(preset, information.as_ref(), None)?;
+    let mut effective = preset.clone();
+    effective.output_limit = policy.output_limit;
+    for_preset(repo, connection, &effective).await
 }
 
 pub async fn validate(

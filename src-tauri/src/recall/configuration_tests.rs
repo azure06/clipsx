@@ -360,7 +360,7 @@ async fn feature_assignments_are_independent_and_old_imports_preserve_new_defaul
     config.selections.default_decision = Some(decision.id.clone());
     import(repo, config.clone()).await.unwrap();
     let saved = export(repo).await.unwrap();
-    assert_eq!(saved.version, 2);
+    assert_eq!(saved.version, 3);
     assert!(saved.selections.default_chat.is_none());
     let missing_credential = crate::providers::generation::resolve(repo)
         .await
@@ -538,4 +538,41 @@ async fn windows_ai_credential_file_is_protected_and_tamper_is_rejected() {
     bytes[middle] ^= 1;
     std::fs::write(&path, bytes).unwrap();
     assert!(credentials::get(&repo, &id).await.is_err());
+}
+
+#[tokio::test]
+async fn configuration_v3_auto_and_legacy_explicit_limits_round_trip() {
+    let (_root, service) = repository().await;
+    let c = connection(AiProviderKind::Ollama, "Local");
+    let mut config = document(vec![c.clone()]);
+    config.presets.push(AiModelPreset {
+        id: new_id(),
+        name: "Saved".into(),
+        connection_id: c.id,
+        model_id: "custom".into(),
+        purpose: AiModelPurpose::Chat,
+        context_limit: 16384,
+        output_limit: 3072,
+        options: default_options(),
+        capabilities: unknown_capabilities(),
+    });
+    for version in [1, 2] {
+        config.version = version;
+        import(&service.history, config.clone()).await.unwrap();
+        let saved = export(&service.history).await.unwrap();
+        assert_eq!(saved.presets[0].context_limit, 16384);
+        assert_eq!(saved.presets[0].output_limit, 3072);
+        assert!(saved.presets[0].options.limit_policy.is_none());
+    }
+    config.presets[0].options.limit_policy = Some(AiLimitPolicy::Auto);
+    assert!(import(&service.history, config.clone()).await.is_err());
+    config.version = 3;
+    import(&service.history, config).await.unwrap();
+    let saved = export(&service.history).await.unwrap();
+    assert_eq!(saved.version, 3);
+    assert!(matches!(
+        saved.presets[0].options.limit_policy,
+        Some(AiLimitPolicy::Auto)
+    ));
+    assert_eq!(saved.presets[0].output_limit, 3072);
 }

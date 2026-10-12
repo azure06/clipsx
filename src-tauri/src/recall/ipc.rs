@@ -516,3 +516,52 @@ pub async fn assistant_model_options(
         .await
         .map_err(public_failure)
 }
+
+#[tauri::command]
+pub async fn recall_context_load(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    covered_message_id: String,
+) -> Result<RecallContextCoverage, OperationFailure> {
+    service(&webview, &state)?;
+    super::context_repository::load(&state.history, &thread_id, &covered_message_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_context_save(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    summary: RecallContextSummary,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::context_repository::save(&state.history, summary)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_model_information(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+    refresh: bool,
+) -> Result<Option<ModelInformation>, OperationFailure> {
+    service(&webview, &state)?;
+    let config = super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)?;
+    let preset = config
+        .presets
+        .iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| FailureCode::InvalidParameters.failure())?;
+    let connection = config
+        .connections
+        .iter()
+        .find(|c| c.id == preset.connection_id && c.enabled)
+        .ok_or_else(|| FailureCode::InvalidParameters.failure())?;
+    super::model_information::resolve(&state.history, connection, preset, refresh)
+        .await
+        .map_err(public_failure)
+}

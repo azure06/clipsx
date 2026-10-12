@@ -307,6 +307,21 @@ async fn stream_request(
             })?;
         let status = response.status();
         if !status.is_success() {
+            if matches!(status.as_u16(), 400 | 413 | 422) {
+                let mut stream = response.bytes_stream();
+                let mut body = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|_| "provider_rejected")?;
+                    if body.len() + chunk.len() > 16 * 1024 {
+                        break;
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+                if context_overflow(&body) {
+                    return Err("context_overflow");
+                }
+                return Err("provider_rejected");
+            }
             return Err(match status.as_u16() {
                 401 | 403 => "provider_authentication",
                 429 => "provider_rate_limited",
@@ -360,6 +375,32 @@ async fn stream_request(
         Ok(())
     };
     tokio::select! { result = operation => result, _ = cancelled.changed() => Err("cancelled") }
+}
+
+fn context_overflow(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let error = value.get("error").unwrap_or(&value);
+    let code = error
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if matches!(
+        code,
+        "context_length_exceeded" | "context_window_exceeded" | "prompt_too_long"
+    ) {
+        return true;
+    }
+    let message = error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    message.contains("maximum context length")
+        || message.contains("prompt is too long")
+        || message.contains("input token count exceeds")
+        || message.contains("exceeds the context window")
 }
 
 fn main_webview(webview: &tauri::Webview) -> Result<(), &'static str> {
@@ -466,5 +507,22 @@ mod tests {
         assert!(validate_base(&connection).is_ok());
         connection.base_url = "http://remote.example/v1".parse().unwrap();
         assert_eq!(validate_base(&connection), Err("insecure_endpoint"));
+    }
+}
+
+#[cfg(test)]
+mod context_error_tests {
+    #[test]
+    fn overflow_is_curated_without_echoing_arbitrary_provider_errors() {
+        assert!(super::context_overflow(
+            br#"{"error":{"code":"context_length_exceeded","message":"private"}}"#
+        ));
+        assert!(super::context_overflow(
+            br#"{"error":{"message":"prompt is too long: private"}}"#
+        ));
+        assert!(!super::context_overflow(
+            br#"{"error":{"message":"invalid temperature"}}"#
+        ));
+        assert!(!super::context_overflow(b"not json"));
     }
 }

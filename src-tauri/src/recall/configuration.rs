@@ -66,6 +66,7 @@ pub fn default_options() -> AiPresetOptions {
         anthropic: None,
         gemini: None,
         embedding: None,
+        limit_policy: None,
     }
 }
 pub fn validate_connection(connection: &AiConnection) -> Result<url::Url> {
@@ -117,7 +118,7 @@ fn bounded(value: &str, max: usize) -> Result<()> {
     Ok(())
 }
 fn validate(document: &AiConfiguration) -> Result<()> {
-    if ![1, 2].contains(&document.version)
+    if ![1, 2, 3].contains(&document.version)
         || document.connections.len() > 64
         || document.presets.len() > 256
     {
@@ -154,6 +155,14 @@ fn validate(document: &AiConfiguration) -> Result<()> {
             bail!("invalid_model_limits");
         }
         let opts = &preset.options;
+        if document.version < 3 && matches!(opts.limit_policy, Some(AiLimitPolicy::Auto)) {
+            bail!("invalid_configuration_version");
+        }
+        if preset.purpose != AiModelPurpose::Chat
+            && matches!(opts.limit_policy, Some(AiLimitPolicy::Auto))
+        {
+            bail!("unsupported_limit_policy");
+        }
         if preset.purpose == AiModelPurpose::Decision
             && (connection.provider != AiProviderKind::Ollama
                 || opts.temperature.is_some()
@@ -314,7 +323,7 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
         }
     }
     Ok(AiConfiguration {
-        version: 2,
+        version: 3,
         connections,
         presets,
         selections,
@@ -571,6 +580,14 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
             merged.connections.push(item);
         }
     }
+    if incoming.version < 3
+        && incoming
+            .presets
+            .iter()
+            .any(|p| matches!(p.options.limit_policy, Some(AiLimitPolicy::Auto)))
+    {
+        bail!("invalid_configuration_version");
+    }
     for item in incoming.presets {
         if let Some(old) = merged.presets.iter_mut().find(|v| v.id == item.id) {
             *old = item;
@@ -578,7 +595,7 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
             merged.presets.push(item);
         }
     }
-    if ![1, 2].contains(&incoming.version) {
+    if ![1, 2, 3].contains(&incoming.version) {
         bail!("unsupported_configuration_version");
     }
     merged.selections = incoming.selections;
@@ -839,6 +856,13 @@ pub async fn discover(repo: &HistoryRepository, id: &str) -> Result<Vec<AiDiscov
         credentials::get(repo, id).await?
     };
     let result = discover_connection(&connection, credential.as_deref()).await;
+    if let Ok(models) = &result {
+        for model in models {
+            if let Some(info) = &model.model_information {
+                super::model_information::save(repo, info).await?;
+            }
+        }
+    }
     let code = if result.is_ok() {
         "ready"
     } else if result
@@ -920,6 +944,7 @@ async fn discover_connection(
                         .collect()
                 }),
                 capabilities: unknown_capabilities(),
+                model_information: None,
             })
             .collect());
     }
@@ -1010,9 +1035,15 @@ async fn discover_connection(
                 capabilities.source = Some("provider_catalog".into());
             }
             Some(AiDiscoveredModel {
-                id,
+                id: id.clone(),
                 purposes,
                 capabilities,
+                model_information: Some(super::model_information::parse(
+                    connection,
+                    &id,
+                    row,
+                    now_ms(),
+                )),
             })
         })
         .collect::<Vec<_>>())

@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 struct Run {
     context: AssistantRunContext,
+    original_preset: AiModelPreset,
     cancel: CancellationToken,
     reads: Semaphore,
     searches: AtomicU32,
@@ -52,7 +53,7 @@ impl AgentRuntime {
             bail!("run_in_progress");
         }
         let configuration = configuration::export(history).await?;
-        let preset = configuration
+        let mut preset = configuration
             .presets
             .iter()
             .find(|p| p.id == request.preset_id && p.purpose == AiModelPurpose::Chat)
@@ -64,9 +65,37 @@ impl AgentRuntime {
             .find(|c| c.id == preset.connection_id && c.enabled)
             .cloned()
             .context("connection_disabled")?;
+        let original_preset = preset.clone();
+        let information = if matches!(preset.options.limit_policy, Some(AiLimitPolicy::Auto)) {
+            super::model_information::resolve(history, &connection, &preset, false)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            super::model_information::cached(
+                history,
+                &connection,
+                &preset.model_id,
+                crate::history::now_ms(),
+            )
+            .await?
+        };
+        let policy = super::execution_policy::resolve(
+            &preset,
+            information.as_ref(),
+            request.reasoning.clone(),
+        )?;
+        if preset.capabilities.tools.is_none() {
+            preset.capabilities.tools = information.as_ref().and_then(|i| i.tools);
+        }
+        if preset.capabilities.vision.is_none() {
+            preset.capabilities.vision = information.as_ref().and_then(|i| i.vision);
+        }
         let base = configuration::validate_connection(&connection)?;
         if let Some(selection) = &request.reasoning {
-            super::reasoning::validate(history, &connection, &preset, selection).await?;
+            let mut effective_preset = preset.clone();
+            effective_preset.output_limit = policy.output_limit;
+            super::reasoning::validate(history, &connection, &effective_preset, selection).await?;
         }
         let provider = match connection.provider {
             AiProviderKind::Ollama => Provider::Ollama,
@@ -155,6 +184,8 @@ impl AgentRuntime {
             tools,
             web_route: web_route.into(),
             reasoning: request.reasoning,
+            execution_policy: Some(policy),
+            model_information: information,
         };
         transport
             .bind_run(
@@ -172,6 +203,7 @@ impl AgentRuntime {
             .map_err(anyhow::Error::msg)?;
         let run = Arc::new(Run {
             context: context.clone(),
+            original_preset,
             cancel: CancellationToken::new(),
             reads: Semaphore::new(4),
             searches: AtomicU32::new(0),
@@ -220,11 +252,21 @@ impl AgentRuntime {
             bail!("tool_verification_required");
         }
         run.tools_verified.store(supported, Ordering::Release);
-        let mut preset = run.context.preset.clone();
+        let mut preset = run.original_preset.clone();
         preset.capabilities.tools = Some(supported);
         preset.capabilities.source = Some("verified_tool_round_trip".into());
         // Do not overwrite a preset edited while this frozen run was active.
-        sqlx::query("UPDATE ai_model_presets SET configuration_json=?,updated_at=? WHERE id=? AND configuration_json=?").bind(serde_json::to_string(&preset)?).bind(now_ms()).bind(&preset.id).bind(serde_json::to_string(&run.context.preset)?).execute(&history.pool).await?;
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT configuration_json FROM ai_model_presets WHERE id=?")
+                .bind(&preset.id)
+                .fetch_optional(&history.pool)
+                .await?;
+        if let Some(current) = current {
+            let decoded: AiModelPreset = serde_json::from_str(&current)?;
+            if serde_json::to_value(decoded)? == serde_json::to_value(&run.original_preset)? {
+                sqlx::query("UPDATE ai_model_presets SET configuration_json=?,updated_at=? WHERE id=? AND configuration_json=?").bind(serde_json::to_string(&preset)?).bind(now_ms()).bind(&preset.id).bind(current).execute(&history.pool).await?;
+            }
+        }
         Ok(())
     }
     pub async fn tool(

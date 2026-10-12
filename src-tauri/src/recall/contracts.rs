@@ -203,7 +203,53 @@ dto!(OpenaiPresetOptions { reasoning_effort: Option<String> });
 dto!(AnthropicPresetOptions { thinking_budget: Option<u32> });
 dto!(GeminiPresetOptions { thinking_budget: Option<u32> });
 dto!(EmbeddingPresetOptions { dimensions: Option<u32>, task_policy: String, hosted_indexing_enabled: bool });
-dto!(AiPresetOptions { temperature: Option<f64>, openai: Option<OpenaiPresetOptions>, anthropic: Option<AnthropicPresetOptions>, gemini: Option<GeminiPresetOptions>, embedding: Option<EmbeddingPresetOptions> });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiPresetOptions {
+    pub temperature: Option<f64>,
+    pub openai: Option<OpenaiPresetOptions>,
+    pub anthropic: Option<AnthropicPresetOptions>,
+    pub gemini: Option<GeminiPresetOptions>,
+    pub embedding: Option<EmbeddingPresetOptions>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub limit_policy: Option<AiLimitPolicy>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AiLimitPolicy {
+    Auto,
+    Explicit,
+}
+dto!(ModelInformation {
+    identity: String, context_limit: Option<u32>, input_limit: Option<u32>, output_limit: Option<u32>,
+    runtime_context_limit: Option<u32>, tools: Option<bool>, vision: Option<bool>, structured_output: Option<bool>,
+    reasoning_output: Option<bool>, source: String, observed_at: f64
+});
+dto!(ResolvedExecutionPolicy {
+    input_limit: u32, output_limit: u32, context_limit: u32, estimated: bool,
+    source: String, reasoning: Option<ReasoningSelection>, max_steps: u32, max_compactions: u32, deadline_ms: u32
+});
+dto!(RecallContextSummary {
+    thread_id: String,
+    covered_message_id: String,
+    input_fingerprint: String,
+    text: String,
+    provider: String,
+    model: String,
+    created_at: f64
+});
+dto!(RecallContextCoverage { input_fingerprint: String, summary: Option<RecallContextSummary> });
+/// Generated for the TypeScript-owned context planner; never instantiated by Rust.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct ContextStatus {
+    pub state: String,
+    pub estimated_input: u32,
+    pub input_limit: u32,
+    pub reason: Option<String>,
+}
 dto!(AiModelPreset {
     id: String,
     name: String,
@@ -233,11 +279,16 @@ dto!(DecisionTestResult {
 dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
 dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
 dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
-dto!(AiDiscoveredModel {
-    id: String,
-    purposes: Option<Vec<AiModelPurpose>>,
-    capabilities: AiCapabilities
-});
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiDiscoveredModel {
+    pub id: String,
+    pub purposes: Option<Vec<AiModelPurpose>>,
+    pub capabilities: AiCapabilities,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model_information: Option<ModelInformation>,
+}
 
 dto!(AssistantToolDefinition {
     name: String,
@@ -264,7 +315,25 @@ pub struct AssistantRunRequest {
     #[ts(optional = nullable)]
     pub reasoning: Option<ReasoningSelection>,
 }
-dto!(AssistantRunContext { run_id: String, connection: AiConnection, preset: AiModelPreset, filters: ClipFilters, attachments: Vec<ClipReadResult>, status: ClipboardStatus, tools: Vec<AssistantToolDefinition>, web_route: String, reasoning: Option<ReasoningSelection> });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssistantRunContext {
+    pub run_id: String,
+    pub connection: AiConnection,
+    pub preset: AiModelPreset,
+    pub filters: ClipFilters,
+    pub attachments: Vec<ClipReadResult>,
+    pub status: ClipboardStatus,
+    pub tools: Vec<AssistantToolDefinition>,
+    pub web_route: String,
+    pub reasoning: Option<ReasoningSelection>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub execution_policy: Option<ResolvedExecutionPolicy>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model_information: Option<ModelInformation>,
+}
 dto!(WebSource {
     url: String,
     title: String,
@@ -359,6 +428,12 @@ mod tests {
             AnthropicPresetOptions::decl(&config),
             GeminiPresetOptions::decl(&config),
             EmbeddingPresetOptions::decl(&config),
+            AiLimitPolicy::decl(&config),
+            ModelInformation::decl(&config),
+            ResolvedExecutionPolicy::decl(&config),
+            RecallContextSummary::decl(&config),
+            ContextStatus::decl(&config),
+            RecallContextCoverage::decl(&config),
             AiPresetOptions::decl(&config),
             AiModelPreset::decl(&config),
             AiSelections::decl(&config),

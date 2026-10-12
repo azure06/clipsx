@@ -4,6 +4,9 @@ description = "Allows the primary ClipsX webview to invoke the registered applic
 permissions = [
   "allow-assistant-run-begin",
   "allow-assistant-model-options",
+  "allow-ai-model-information",
+  "allow-recall-context-load",
+  "allow-recall-context-save",
 "allow-recall-thread-initialize",
 "allow-recall-thread-list",
 "allow-recall-thread-load",
