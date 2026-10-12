@@ -204,6 +204,14 @@ Anthropic and Gemini use their native adapters; OpenRouter uses its maintained
 adapter; Ollama uses OpenAI-compatible chat completions. These modules are not
 loaded by History startup. The Recall workspace uses the selected named chat preset.
 
+The preset context limit bounds the messages ClipsX sends; it does not configure
+Ollama's runtime context allocation. Ollama's OpenAI-compatible endpoint uses the
+model's configured context size. Configure a model with `PARAMETER num_ctx` in a
+Modelfile when a different allocation is needed, and keep the ClipsX budget within
+that model's actual context capacity. Large context allocations increase memory
+requirements; reasoning and CPU inference can also make multi-step turns slow.
+See [Ollama context configuration](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx#setting-the-local-context-size).
+
 Rust binds a request to a host-resolved run and saved provider destination. The
 renderer receives a transport placeholder rather than a credential. Rust checks
 origin, provider API path, method, query parameters, and headers before injecting
@@ -235,6 +243,15 @@ restart. It uses synthetic clips in a fresh marked temporary directory, never th
 ordinary clipboard profile, capture, or telemetry. Reports identify the actual
 model and webview. This runner does not certify the visible desktop UI or hosted
 providers.
+
+Pass `--thinking-off` after the model ID to test the normal validated reasoning
+override on a model that advertises support for disabling thinking. Unsupported
+overrides fail rather than bypassing capability checks. The acceptance runner
+requires a grounded citation and checks organization state before and after Undo.
+
+Both probe scripts accept `CLIPSX_RECALL_PROBE_BINARY` to select an opt-in
+executable outside the default release path. This permits testing a separate
+binary while the ordinary desktop app remains running.
 
 ### Assistant clipboard operations
 
@@ -375,7 +392,7 @@ Configuration and protocol fixtures do not certify a live provider or model. See
 
 The lazy TypeScript runtime uses one AI SDK tool loop, rendered through an assistant-ui custom adapter. OpenAI Responses, Anthropic, Gemini, OpenRouter, and Ollama chat use the authenticated Rust streaming bridge. Rust freezes the selected connection, preset, filters, attachments, and web setting per run; credentials remain in protected storage. One native run is admitted at a time. Provider requests have a ten-minute total bound and a two-minute read-idle timeout; actively streaming local reasoning is not cut off after two minutes. Incomplete replies distinguish cancellation, output limits, provider filtering, timeouts, and other request failures.
 
-Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. Both transports classify malformed tool arguments as `invalid_parameters` without echoing their contents or recording a mutation; the native agent receives schema guidance for correcting them. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. This capability-only step receives a status instruction; the user's task and prior context are restored with the status result for the next step. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
+Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. The native model-facing schemas omit requestId because the adapter generates it; external MCP clients still supply their own stable IDs. Both transports classify malformed tool arguments as `invalid_parameters` without echoing their contents or recording a mutation; the native agent receives schema guidance for correcting them. Rejected reads provide valid text-kind choices and invite correction within the remaining step budget; failed reads never register citations. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. This capability-only step receives a status instruction; the user's task and prior context are restored with the status result for the next step. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
 
 Provider-neutral conversation context preserves the latest question and labels clipboard evidence. Every model step checks a conservative context budget, omitting older history where possible and stopping rather than sending oversized tool evidence. Only verified managed image bytes become labelled inline image context; renderer messages never authorize downloading remote images. Length-limited and filtered responses remain incomplete.
 

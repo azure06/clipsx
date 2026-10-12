@@ -9,13 +9,15 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clipsx-recall-runtime-'))
 const reportPath = path.join(directory, 'result.json')
-const executable = path.join(
-  root,
-  'src-tauri',
-  'target',
-  'release',
-  process.platform === 'win32' ? 'clipsx.exe' : 'clipsx'
-)
+const executable =
+  process.env.CLIPSX_RECALL_PROBE_BINARY ??
+  path.join(
+    root,
+    'src-tauri',
+    'target',
+    'release',
+    process.platform === 'win32' ? 'clipsx.exe' : 'clipsx'
+  )
 
 const exitCode = await new Promise((resolve, reject) => {
   const child = spawn(executable, ['--verify-recall-runtime', reportPath], {

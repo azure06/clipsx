@@ -5,6 +5,12 @@ import type { NativeAgentBridge } from './native'
 import { CitationRegistry } from './citations'
 
 const writes = new Set(['create_clip', 'organize_clips', 'undo_clipboard_action'])
+const argumentGuidance: Record<string, string> = {
+  create_clip:
+    ' Include the complete text and format="plain_text" or "markdown". Each sources entry requires clipId, representationId, and fingerprint from read_clip; do not use id instead of clipId. ClipsX supplies requestId. Correct these rejected arguments and retry within the step budget.',
+  read_clip:
+    ' kind must be "captured", "ocr", or "note"; omit kind for captured text. Use clipId and representationId from search results. Correct the arguments and retry the read within the step budget.',
+}
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value))
 export interface ToolRuntime {
@@ -26,10 +32,20 @@ export function createClipboardTools(
   return Object.fromEntries(
     context.tools.map(definition => {
       const schema: unknown = JSON.parse(definition.inputSchemaJson)
+      if (writes.has(definition.name) && isRecord(schema)) {
+        // The native adapter owns idempotency IDs; external MCP clients still supply theirs.
+        if (isRecord(schema['properties'])) delete schema['properties']['requestId']
+        if (Array.isArray(schema['required']))
+          schema['required'] = schema['required'].filter(name => name !== 'requestId')
+      }
       return [
         definition.name,
         dynamicTool({
-          description: definition.description,
+          description:
+            definition.description +
+            (writes.has(definition.name)
+              ? ' ClipsX supplies the stable requestId; do not invent or ask the user for one.'
+              : ''),
           inputSchema: jsonSchema(schema as Parameters<typeof jsonSchema>[0]),
           execute: async (input, { toolCallId, abortSignal }) => {
             abortSignal?.throwIfAborted()
@@ -106,9 +122,7 @@ export function createClipboardTools(
                   message:
                     code === 'invalid_parameters'
                       ? 'Arguments were rejected before commit. Match the required fields and enum values in the tool schema.' +
-                        (definition.name === 'create_clip'
-                          ? ' Include the complete text and format="plain_text" or "markdown".'
-                          : '')
+                        (argumentGuidance[definition.name] ?? '')
                       : 'Operation failed. Do not claim it succeeded; inspect current state before retrying a mutation with the same request ID.',
                 }
                 state.onResult?.(definition.name, result)

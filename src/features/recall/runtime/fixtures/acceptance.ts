@@ -1,13 +1,20 @@
 // Opt-in native driver: consumes the production adapter; never supplies mock IPC or HTTP.
 import { invoke } from '@tauri-apps/api/core'
 import type { ChatModelRunOptions, ChatModelRunResult, ThreadMessage } from '@assistant-ui/react'
-import type { ClipboardActionResult, ClipReadResult } from '../../contracts.generated'
+import type {
+  ClipboardActionResult,
+  ClipReadResult,
+  ReasoningSelection,
+} from '../../contracts.generated'
+import { readCitations } from '../citations'
+import { isRecord } from '../tools'
 import { conversationStore, createConversationAdapters } from '../../conversations'
 import { createRecallAdapter } from '../adapter'
 import { nativeAgentBridge } from '../native'
 import { createRustFetch } from '../transport'
 
 const requests: { tools: string[]; choice: unknown }[] = []
+const completedTools: { name: string; failed: boolean }[] = []
 
 function check(value: unknown, code: string): asserts value {
   if (!value) throw new Error(code)
@@ -16,13 +23,20 @@ function check(value: unknown, code: string): asserts value {
 async function verify() {
   const { phase, fixture } = await invoke<{
     phase: string
-    fixture: { presetId: string; sourceId: string; imageId: string; imageRepresentationId: string }
+    fixture: {
+      presetId: string
+      sourceId: string
+      imageId: string
+      imageRepresentationId: string
+      reasoning?: ReasoningSelection | null
+    }
   }>('acceptance_probe_info')
   const configuration = () => ({
     presetId: fixture.presetId,
     filters: null,
     attachments: [],
     webEnabled: false,
+    reasoning: fixture.reasoning ?? null,
   })
   const thread = await conversationStore.initialize('native-acceptance-main')
   if (phase === 'restart') {
@@ -95,7 +109,10 @@ async function verify() {
         return transport(url, init)
       }
     },
-    onResult: (name, result) => outcomes.set(name, result),
+    onResult: (name, result) => {
+      outcomes.set(name, result)
+      completedTools.push({ name, failed: isRecord(result) && typeof result['error'] === 'string' })
+    },
   })
   const user: ThreadMessage = {
     id: crypto.randomUUID(),
@@ -143,6 +160,14 @@ async function verify() {
   check(generated.text === 'NATIVE ACCEPTANCE SAVED', 'generated_text_mismatch')
   const read = outcomes.get('read_clip') as ClipReadResult
   check(read.clip.id === fixture.sourceId, 'wrong_source_read')
+  const citation = readCitations(last.metadata?.custom?.['citations']).find(
+    entry => entry.clipId === fixture.sourceId && entry.revision === read.clip.revision
+  )
+  check(citation, 'source_citation_missing')
+  check(
+    answer.includes(`[${citation.number}](#clip-${citation.number})`),
+    'answer_citation_missing'
+  )
   const persisted = await conversationStore.load(thread.id)
   check(
     persisted.messages.length === 2 &&
@@ -167,10 +192,26 @@ async function verify() {
     mutation
   )) as ClipboardActionResult
   check(replay.actionId === organized.actionId, 'mutation_retry_not_idempotent')
+  const organizedClip = await invoke<ClipReadResult>('assistant_read_clip', {
+    request: { clipId: created.clips[0]!.clipId },
+  })
+  check(
+    organizedClip.clip.favorite &&
+      organizedClip.clip.tags.some(tag => tag.name === 'Native acceptance'),
+    'organization_not_applied'
+  )
   await nativeAgentBridge.tool(context.runId, 'undo_clipboard_action', {
     requestId: crypto.randomUUID(),
     actionId: organized.actionId,
   })
+  const restored = await invoke<ClipReadResult>('assistant_read_clip', {
+    request: { clipId: created.clips[0]!.clipId },
+  })
+  check(
+    restored.clip.favorite === generated.clip.favorite &&
+      JSON.stringify(restored.clip.tags) === JSON.stringify(generated.clip.tags),
+    'organization_undo_not_restored'
+  )
   await nativeAgentBridge.finish(context.runId)
 
   // Leave a real persisted run unfinished. The next process must interrupt, never replay, it.
@@ -204,6 +245,8 @@ async function verify() {
       passed: true,
       phase,
       model: last.metadata?.custom?.['model'],
+      reasoning: last.metadata?.custom?.['reasoning'],
+      citations: true,
       searchReadCreate: true,
       generatedClipId: created.clips[0]!.clipId,
       savedConversation: true,
@@ -229,8 +272,16 @@ void verify().catch(async error => {
   await invoke('acceptance_probe_finish', {
     report: {
       passed: false,
-      failure: error instanceof Error ? error.message : 'native_operation_failed',
+      failure:
+        error instanceof Error
+          ? error.message
+          : isRecord(error) &&
+              typeof error['code'] === 'string' &&
+              /^[a-z_]{1,64}$/.test(error['code'])
+            ? `native_${error['code']}`
+            : 'native_operation_failed',
       causes,
+      completedTools,
       requests,
       userAgent: navigator.userAgent,
     },

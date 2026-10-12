@@ -165,7 +165,12 @@ pub fn run(root: PathBuf, phase: String, model: String) -> Result<()> {
             let metadata = ClipboardService::new(history.clone())
                 .metadata(&image_id)
                 .await?;
-            let fixture = json!({"presetId":preset.id,"sourceId":source,"imageId":image_id,"imageRepresentationId":metadata.representations[0].id});
+            let reasoning = match std::env::var("CLIPSX_RECALL_PROBE_THINKING").as_deref() {
+                Ok("off") => Some(ReasoningSelection::Thinking { enabled: false }),
+                Ok("default") | Err(_) => None,
+                _ => anyhow::bail!("invalid_probe_thinking"),
+            };
+            let fixture = json!({"presetId":preset.id,"sourceId":source,"imageId":image_id,"imageRepresentationId":metadata.representations[0].id,"reasoning":reasoning});
             std::fs::write(root.join("fixture.json"), serde_json::to_vec(&fixture)?)?;
             fixture
         } else {

@@ -20,12 +20,19 @@ const executable =
   )
 const model = process.argv[2]
 if (!model) throw new Error('Pass an installed tool-capable Ollama model ID')
+const thinkingOff = process.argv[3] === '--thinking-off'
+if (process.argv.length > (thinkingOff ? 4 : 3))
+  throw new Error('Usage: verify-recall-acceptance.mjs <model> [--thinking-off]')
 for (const phase of ['first', 'restart']) {
   const exitCode = await new Promise((resolve, reject) => {
     const child = spawn(executable, ['--verify-recall-acceptance', directory, phase, model], {
       cwd: root,
       windowsHide: true,
       stdio: 'inherit',
+      env: {
+        ...process.env,
+        CLIPSX_RECALL_PROBE_THINKING: thinkingOff ? 'off' : 'default',
+      },
     })
     const timer = setTimeout(() => {
       child.kill()
