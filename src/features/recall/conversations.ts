@@ -9,6 +9,9 @@ import { createAssistantStream } from 'assistant-stream'
 import { z } from 'zod'
 import type {
   RecallCheckpoint,
+  ClipboardActivity,
+  RecallContextCoverage,
+  RecallContextSummary,
   RecallHistory,
   RecallMessage,
   RecallRunStart,
@@ -163,7 +166,19 @@ export function createConversationAdapters(
     update: item => write(item.message, item.parentId),
   }
   const sequences = new Map<string, number>()
-  const hooks: Pick<RecallAdapterOptions, 'onStart' | 'onCheckpoint'> = {
+  const hooks: Pick<
+    RecallAdapterOptions,
+    'onStart' | 'onCheckpoint' | 'contextPersistence' | 'readActionActivity'
+  > = {
+    readActionActivity: () => invoke<ClipboardActivity[]>('assistant_action_activity'),
+    contextPersistence: {
+      load: coveredMessageId =>
+        invoke<RecallContextCoverage>('recall_context_load', { threadId, coveredMessageId }),
+      save: summary =>
+        invoke('recall_context_save', {
+          summary: { ...summary, threadId } satisfies RecallContextSummary,
+        }),
+    },
     onStart: async (context, input: ChatModelRunOptions) => {
       await queue
       let parentId: string | null = null

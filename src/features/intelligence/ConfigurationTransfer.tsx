@@ -75,7 +75,7 @@ export function ConfigurationTransfer({
     })
     const effective = {
       ...document,
-      version: 2,
+      version: 3,
       selections: assignments ? validated.selections : current.selections,
     }
     setPreview(
@@ -287,7 +287,7 @@ export function ConfigurationTransfer({
                   await writeTextFile(
                     path,
                     JSON.stringify(
-                      { ...document, version: 2, connections, presets, selections },
+                      { ...document, version: 3, connections, presets, selections },
                       null,
                       2
                     )
@@ -312,7 +312,7 @@ export function ConfigurationTransfer({
                       await invoke('ai_configuration_import', {
                         configuration: {
                           ...incoming,
-                          version: 2,
+                          version: 3,
                           selections: includeAssignments ? preview.selections : latest.selections,
                         },
                       })

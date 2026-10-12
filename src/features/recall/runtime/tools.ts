@@ -68,6 +68,26 @@ export function createClipboardTools(
                   message: 'Explain incomplete retrieval; use the evidence already read.',
                 }
               let args = input
+              const reserve = Math.floor(
+                (context.executionPolicy?.inputLimit ??
+                  context.preset.contextLimit - context.preset.outputLimit) / 4
+              )
+              if (definition.name === 'read_clip')
+                args = {
+                  ...input,
+                  pageBytes: Math.max(
+                    128,
+                    Math.min(Number(input['pageBytes'] ?? 8192), Math.floor(reserve / 4))
+                  ),
+                }
+              if (definition.name === 'search_clips')
+                args = {
+                  ...input,
+                  limit: Math.max(
+                    1,
+                    Math.min(Number(input['limit'] ?? 20), Math.floor(reserve / 2048))
+                  ),
+                }
               if (writes.has(definition.name)) {
                 const id = requestIds.get(toolCallId) ?? crypto.randomUUID()
                 requestIds.set(toolCallId, id)

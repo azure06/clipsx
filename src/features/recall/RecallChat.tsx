@@ -222,9 +222,16 @@ function TranscriptMessage() {
           ? 'outputLimitReached'
           : status.reason === 'content-filter'
             ? 'responseFiltered'
-            : custom['failure'] === 'request_timeout'
-              ? 'requestTimedOut'
-              : 'responseFailed'
+            : [
+                  'context_limit',
+                  'question_exceeds_context',
+                  'context_compaction_failed',
+                  'context_overflow',
+                ].includes(String(custom['failure']))
+              ? 'contextBlocked'
+              : custom['failure'] === 'request_timeout'
+                ? 'requestTimedOut'
+                : 'responseFailed'
       : 'incomplete'
   return (
     <MessagePrimitive.Root
@@ -272,6 +279,19 @@ function TranscriptMessage() {
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
             {t('recallPage.toolsUnavailable')}
           </p>
+        )}
+        {isRecord(custom['contextStatus']) &&
+          ['compacting', 'compacted'].includes(String(custom['contextStatus']['state'])) && (
+            <p role="status" className="mt-1 text-xs text-slate-500">
+              {t(
+                custom['contextStatus']['state'] === 'compacting'
+                  ? 'recallReliability.compacting'
+                  : 'recallReliability.compacted'
+              )}
+            </p>
+          )}
+        {custom['limitsEstimated'] === true && (
+          <p className="mt-1 text-xs text-slate-500">{t('recallReliability.unverifiedLimits')}</p>
         )}
         {custom['contextOmitted'] === true && (
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">

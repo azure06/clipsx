@@ -8,6 +8,7 @@ import { fixtureBridge } from './fixtures/bridge'
 import { createRustFetch } from './transport'
 import { fitContext, fitStepContext } from './context'
 import streams from './fixtures/streams.json'
+import { fallbackPolicy } from './planner'
 
 function question(text: string): ThreadMessage {
   return {
@@ -30,6 +31,77 @@ function runOptions(controller = new AbortController()): ChatModelRunOptions {
     },
   }
 }
+
+it('compacts through the selected provider before continuing the same native tool loop', async () => {
+  const context = fixtureContext('ollama')
+  context.executionPolicy = fallbackPolicy(12000, 2000)
+  const native: NativeAgentBridge = {
+    begin: request => Promise.resolve({ ...context, runId: request.runId }),
+    finish: vi.fn(async () => {}),
+    verifyTools: vi.fn(async () => {}),
+    tool: vi.fn(async () => ({ evidence: 'verified-evidence' })),
+  }
+  const { commands, requests } = fixtureBridge('ollama')
+  const summaries: Record<string, unknown>[] = []
+  const adapter = createRecallAdapter({
+    configuration: () => ({
+      presetId: 'preset',
+      filters: null,
+      attachments: [],
+      webEnabled: false,
+    }),
+    bridge: native,
+    transport: id => {
+      const transport = createRustFetch(id, commands)
+      return async (url, init) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if (body['stream'] !== true) {
+          summaries.push(body)
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: { role: 'assistant', content: 'Preserved earlier goal.' },
+                  finish_reason: 'stop',
+                },
+              ],
+              usage: { prompt_tokens: 100, completion_tokens: 10 },
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          )
+        }
+        return transport(url, init)
+      }
+    },
+  })
+  const input = runOptions()
+  input.messages = [
+    question('a'.repeat(4500)),
+    {
+      ...question('b'.repeat(4500)),
+      role: 'assistant',
+      status: { type: 'complete', reason: 'stop' },
+    } as ThreadMessage,
+    ...input.messages,
+  ]
+  const updates = adapter.run(input)
+  if (!('next' in updates)) throw new Error('Expected streaming adapter')
+  const states: string[] = []
+  let last: ChatModelRunResult | undefined
+  for await (const update of updates) {
+    last = update
+    states.push(JSON.stringify(update.metadata?.custom?.['contextStatus']))
+  }
+  expect(summaries).toHaveLength(1)
+  expect(summaries[0]?.['tools']).toBeUndefined()
+  expect(summaries[0]?.['model']).toBe('fixture-model')
+  expect(requests).toHaveLength(2)
+  expect(requests[0]?.body).toContain('Preserved earlier goal')
+  expect(native.tool).toHaveBeenCalledTimes(1)
+  expect(states.some(state => state?.includes('compacting'))).toBe(true)
+  expect(last?.status?.type).toBe('complete')
+  expect(last?.metadata?.custom?.['summaryInputTokens']).toBe(100)
+})
 describe('Native Recall agent', () => {
   it.each<ChatProvider>(['openai', 'anthropic', 'gemini', 'openrouter', 'ollama'])(
     '%s shares the native tool adapter in one streamed loop',
@@ -106,6 +178,7 @@ describe('Native Recall agent', () => {
       expect(checkpoint).toHaveBeenLastCalledWith(expect.any(String), last, true)
       expect(native.tool).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'search_clips', {
         query: 'fixture',
+        limit: 3,
       })
       expect(native.finish).toHaveBeenCalledOnce()
       expect(requests).toHaveLength(2)
@@ -289,6 +362,7 @@ describe('Native Recall agent', () => {
     expect(native.tool).toHaveBeenNthCalledWith(1, expect.any(String), 'get_clipboard_status', {})
     expect(native.tool).toHaveBeenNthCalledWith(2, expect.any(String), 'search_clips', {
       query: 'fixture',
+      limit: 3,
     })
   })
   it('retries a rejected unknown-capability probe as ordinary chat without tools or actions', async () => {

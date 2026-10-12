@@ -90,6 +90,7 @@ export function ModelEditor({
                 name: preset.name === preset.modelId ? '' : preset.name,
                 options: {
                   ...emptyPreset(connection.id).options,
+                  limitPolicy: purpose === 'chat' ? 'auto' : 'explicit',
                   embedding:
                     purpose === 'embedding'
                       ? {
@@ -234,9 +235,35 @@ export function ModelEditor({
               <summary className="cursor-pointer text-xs font-medium text-slate-500">
                 {t('modelsWorkspace.advanced')}
               </summary>
+              {preset.purpose === 'chat' && (
+                <div className="mt-3 space-y-2">
+                  <Switch
+                    label={t('recallReliability.autoLimits')}
+                    checked={preset.options.limitPolicy === 'auto'}
+                    onChange={enabled =>
+                      setPreset({
+                        ...preset,
+                        options: { ...preset.options, limitPolicy: enabled ? 'auto' : 'explicit' },
+                      })
+                    }
+                  />
+                  <p className="text-xs leading-5 text-slate-500">
+                    {t('recallReliability.autoLimitsHelp')}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {t(
+                      selectedModel?.modelInformation?.contextLimit ||
+                        selectedModel?.modelInformation?.inputLimit
+                        ? 'recallReliability.reportedLimits'
+                        : 'recallReliability.unverifiedLimits'
+                    )}
+                  </p>
+                </div>
+              )}
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Input
                   label={t('aiConfig.contextLimit')}
+                  disabled={preset.options.limitPolicy === 'auto'}
                   type="number"
                   min={1024}
                   max={2097152}
@@ -245,6 +272,7 @@ export function ModelEditor({
                 />
                 <Input
                   label={t('aiConfig.outputLimit')}
+                  disabled={preset.options.limitPolicy === 'auto'}
                   type="number"
                   min={1}
                   max={131072}

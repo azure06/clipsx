@@ -1348,6 +1348,7 @@
     }
   },
   "recallPage": {
+    "contextBlocked": "This request could not fit the model context. Your conversation and completed actions are saved. Retry, reduce attachments, or start a new chat.",
     "title": "Recall",
     "subtitle": "Find, understand, and work with your clipboard.",
     "find": "Find",
@@ -1601,5 +1602,13 @@
     "closePreview": "Close preview",
     "resize": "Resize context panel",
     "attachMatches": "Attach top matches (up to 3)"
+  },
+  "recallReliability": {
+    "autoLimits": "Automatic model limits",
+    "autoLimitsHelp": "Use observed model/server limits when available. Exact overrides apply when Auto is off.",
+    "reportedLimits": "Model limits reported by provider; server restrictions may also apply.",
+    "unverifiedLimits": "Model capacity is unverified; conservative configured limits apply.",
+    "compacting": "Compacting conversation…",
+    "compacted": "Older conversation summarized. The full conversation remains saved."
   }
 }

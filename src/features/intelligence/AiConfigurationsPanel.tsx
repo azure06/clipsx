@@ -309,7 +309,7 @@ export function AiConfigurationsPanel() {
                             void perform(() =>
                               apply({
                                 ...current,
-                                version: 2,
+                                version: 3,
                                 selections: {
                                   ...current.selections,
                                   [key]: id === 'none' ? null : id,
@@ -465,7 +465,7 @@ export function AiConfigurationsPanel() {
                   await perform(async () => {
                     await apply({
                       ...current,
-                      version: 2,
+                      version: 3,
                       connections: [...current.connections.filter(c => c.id !== item.id), item],
                     })
                     if (credential)
@@ -526,7 +526,7 @@ export function AiConfigurationsPanel() {
                   await perform(() =>
                     apply({
                       ...current,
-                      version: 2,
+                      version: 3,
                       presets: [...current.presets.filter(p => p.id !== preset.id), preset],
                     })
                   )

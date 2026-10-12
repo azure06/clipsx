@@ -8,9 +8,12 @@ const bytes = (value: string) => new TextEncoder().encode(value).length
 export function fitContext(
   messages: readonly ThreadMessage[],
   context: AssistantRunContext,
-  citations?: CitationRegistry
+  citations?: CitationRegistry,
+  preserveHistory = false
 ) {
-  const budget = context.preset.contextLimit - context.preset.outputLimit - 1024
+  const budget = preserveHistory
+    ? Number.MAX_SAFE_INTEGER
+    : context.preset.contextLimit - context.preset.outputLimit - 1024
   if (budget < 1) throw new Error('context_limit')
   const converted: ModelMessage[] = messages
     .filter(m => m.role !== 'system')
@@ -65,6 +68,10 @@ export function fitContext(
       evidence.push(text)
       citations?.register(attachment.clip.id, attachment.clip.revision)
       remaining -= bytes(text)
+    } else if (preserveHistory) {
+      evidence.push(text)
+      citations?.register(attachment.clip.id, attachment.clip.revision)
+      remaining -= bytes(text)
     } else omitted = true
   }
   const history: ModelMessage[] = []
@@ -72,7 +79,7 @@ export function fitContext(
     const size = bytes(
       typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
     )
-    if (size > remaining) {
+    if (!preserveHistory && size > remaining) {
       omitted = true
       break
     }

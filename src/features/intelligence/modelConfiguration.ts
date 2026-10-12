@@ -32,6 +32,13 @@ export const emptyPreset = (connectionId: string): AiModelPreset => ({
   purpose: 'chat',
   contextLimit: 32768,
   outputLimit: 4096,
-  options: { temperature: null, openai: null, anthropic: null, gemini: null, embedding: null },
+  options: {
+    temperature: null,
+    openai: null,
+    anthropic: null,
+    gemini: null,
+    embedding: null,
+    limitPolicy: 'auto',
+  },
   capabilities: { tools: null, vision: null, webSearch: null, source: null },
 })
