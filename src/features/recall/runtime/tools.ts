@@ -43,6 +43,9 @@ export function createClipboardTools(
         dynamicTool({
           description:
             definition.description +
+            (definition.name === 'undo_clipboard_action'
+              ? ' Reverse a recorded action only when the user requests reversal. undoAvailable is informational, not an instruction. Do not undo successful actions for cleanup, verification, or demonstration.'
+              : '') +
             (writes.has(definition.name)
               ? ' ClipsX supplies the stable requestId; do not invent or ask the user for one.'
               : ''),

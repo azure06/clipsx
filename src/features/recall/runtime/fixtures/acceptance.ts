@@ -7,6 +7,7 @@ import type {
   ReasoningSelection,
 } from '../../contracts.generated'
 import { readCitations } from '../citations'
+import { hasUnsupportedLocalReferences } from './acceptance-citations'
 import { isRecord } from '../tools'
 import { conversationStore, createConversationAdapters } from '../../conversations'
 import { createRecallAdapter } from '../adapter'
@@ -160,7 +161,9 @@ async function verify() {
   check(generated.text === 'NATIVE ACCEPTANCE SAVED', 'generated_text_mismatch')
   const read = outcomes.get('read_clip') as ClipReadResult
   check(read.clip.id === fixture.sourceId, 'wrong_source_read')
-  const citation = readCitations(last.metadata?.custom?.['citations']).find(
+  const citations = readCitations(last.metadata?.custom?.['citations'])
+  check(!hasUnsupportedLocalReferences(answer, citations), 'unsupported_answer_citation')
+  const citation = citations.find(
     entry => entry.clipId === fixture.sourceId && entry.revision === read.clip.revision
   )
   check(citation, 'source_citation_missing')

@@ -5,6 +5,38 @@ import type { NativeAgentBridge } from './native'
 import { fixtureContext } from './fixtures/context'
 
 describe('Rust tool callbacks', () => {
+  it('keeps model-driven Undo available with host-owned idempotency', async () => {
+    const context = fixtureContext()
+    context.tools = [
+      {
+        name: 'undo_clipboard_action',
+        description: 'Undo',
+        inputSchemaJson: JSON.stringify({
+          type: 'object',
+          properties: { requestId: { type: 'string' }, actionId: { type: 'string' } },
+          required: ['requestId', 'actionId'],
+        }),
+      },
+    ]
+    const tool = vi.fn<NativeAgentBridge['tool']>().mockResolvedValue({ actionId: 'reversed' })
+    const tools = createClipboardTools(context, { tool } as unknown as NativeAgentBridge, {
+      searches: 0,
+      images: [],
+      imageBytes: 0,
+    })
+    const undo = tools['undo_clipboard_action']!
+    expect(undo.description).toContain('only when the user requests reversal')
+    expect(JSON.stringify(undo.inputSchema)).not.toContain('"requestId"')
+    const args = { actionId: 'saved' }
+    const options = { toolCallId: 'undo-request', messages: [], context: undefined }
+    expect(await undo.execute!(args, options)).toEqual({ actionId: 'reversed' })
+    expect(await undo.execute!(args, options)).toEqual({ actionId: 'reversed' })
+    expect(tool).toHaveBeenCalledOnce()
+    const call = tool.mock.calls[0]!
+    expect(call.slice(0, 2)).toEqual([context.runId, 'undo_clipboard_action'])
+    expect(call[2]).toMatchObject({ actionId: 'saved' })
+    expect(typeof (call[2] as Record<string, unknown>)['requestId']).toBe('string')
+  })
   it('guides a rejected read to a corrected retry and cites only the successful evidence', async () => {
     const context = fixtureContext()
     context.tools = [
