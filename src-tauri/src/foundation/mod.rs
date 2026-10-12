@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 21;
+pub const SCHEMA_VERSION: i64 = 23;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -347,6 +347,140 @@ fn clear_known_credentials(failures: &mut Vec<String>) {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    #[tokio::test]
+    async fn upgrades_released_and_recall_schemas_without_resetting_data() {
+        for version in 15..=22 {
+            let root = TempDir::new().unwrap();
+            let roots = AppRoots {
+                data: root.path().join("data"),
+                config: root.path().join("config"),
+            };
+            fs::create_dir_all(&roots.data).unwrap();
+            let options = SqliteConnectOptions::new()
+                .filename(roots.database())
+                .create_if_missing(true)
+                .foreign_keys(true);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            let mut prefix = migrations::canonical();
+            prefix.migrations = std::borrow::Cow::Owned(
+                prefix
+                    .iter()
+                    .filter(|entry| entry.version <= version)
+                    .cloned()
+                    .collect(),
+            );
+            prefix.run(&mut connection).await.unwrap();
+            for sql in [
+                "INSERT INTO clip_items(id,note,is_favorite,captured_at,updated_at,lifecycle_state) VALUES('kept-clip','Keep this note',1,1,1,'ready')",
+                "INSERT INTO clip_representations(id,clip_id,format_key,capability_id,format_family,platform,storage_kind,ordinal,lifecycle_state,created_at,updated_at) VALUES('kept-rep','kept-clip','text/plain','core.text','text','windows','text',0,'ready',1,1)",
+                "INSERT INTO clip_text_values VALUES('kept-rep','Saved text',10,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
+                "INSERT INTO catalog_tags VALUES('kept-tag','Keep',NULL,1,1)",
+                "INSERT INTO catalog_clip_tags VALUES('kept-clip','kept-tag',1)",
+                "UPDATE config_profile_values SET value_json='false' WHERE key='artifacts.ocr.enabled'",
+            ] {
+                sqlx::query(sql).execute(&mut connection).await.unwrap();
+            }
+            if version >= 18 {
+                for sql in [
+                    "INSERT INTO ai_connections(id,configuration_json,credential_ref,created_at,updated_at) VALUES('kept-connection','{}','kept-credential',1,1)",
+                    "INSERT INTO ai_model_presets VALUES('kept-preset','kept-connection','{}',1,1)",
+                    "INSERT INTO ai_selections VALUES('default_chat','kept-preset')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
+            if version >= 19 {
+                for sql in [
+                    "INSERT INTO recall_threads(id,local_id,title,created_at,updated_at) VALUES('kept-thread','local-thread','Saved chat',1,1)",
+                    "INSERT INTO recall_messages(thread_id,id,role,content_json,metadata_json,created_at,updated_at) VALUES('kept-thread','kept-message','user','[]','{}',1,1)",
+                    "INSERT INTO recall_source_snapshots(thread_id,message_id,id,clip_id,snapshot_json) VALUES('kept-thread','kept-message','kept-source','kept-clip','{}')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
+            drop(connection);
+            assert_eq!(
+                prepare(&roots).await.unwrap(),
+                SchemaState::Ready,
+                "from {version}"
+            );
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            for (sql, expected) in [
+                ("SELECT note FROM clip_items WHERE id='kept-clip' AND is_favorite=1", "Keep this note"),
+                ("SELECT text_value FROM clip_text_values WHERE representation_id='kept-rep'", "Saved text"),
+                ("SELECT tag_id FROM catalog_clip_tags WHERE clip_id='kept-clip'", "kept-tag"),
+                ("SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.enabled'", "false"),
+            ] {
+                assert_eq!(sqlx::query_scalar::<_, String>(sql).fetch_one(&mut connection).await.unwrap(), expected, "from {version}");
+            }
+            if version >= 18 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT selected_id FROM ai_selections WHERE selection_key='default_chat'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-preset"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT credential_ref FROM ai_connections WHERE id='kept-connection'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-credential"
+                );
+            }
+            if version >= 19 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT title FROM recall_threads WHERE id='kept-thread'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "Saved chat"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT clip_id FROM recall_source_snapshots WHERE id='kept-source'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-clip"
+                );
+            }
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT schema_version FROM system_schema_meta")
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                SCHEMA_VERSION
+            );
+            assert!(sqlx::query("PRAGMA foreign_key_check")
+                .fetch_all(&mut connection)
+                .await
+                .unwrap()
+                .is_empty());
+            let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            drop(connection);
+            assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _sqlx_migrations")
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                applied
+            );
+        }
+    }
     #[tokio::test]
     async fn initializes_fresh_baseline() {
         let root = TempDir::new().unwrap();
