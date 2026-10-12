@@ -66,20 +66,12 @@ impl AgentRuntime {
             .cloned()
             .context("connection_disabled")?;
         let original_preset = preset.clone();
-        let information = if matches!(preset.options.limit_policy, Some(AiLimitPolicy::Auto)) {
-            super::model_information::resolve(history, &connection, &preset, false)
-                .await
-                .ok()
-                .flatten()
-        } else {
-            super::model_information::cached(
-                history,
-                &connection,
-                &preset.model_id,
-                crate::history::now_ms(),
-            )
-            .await?
-        };
+        // Explicit settings are still bounded by observed provider/runtime capacity.
+        // Discovery is cached; failure retains the clearly labelled configuration fallback.
+        let information = super::model_information::resolve(history, &connection, &preset, false)
+            .await
+            .ok()
+            .flatten();
         let policy = super::execution_policy::resolve(
             &preset,
             information.as_ref(),

@@ -35,11 +35,12 @@ function runOptions(controller = new AbortController()): ChatModelRunOptions {
 it('compacts through the selected provider before continuing the same native tool loop', async () => {
   const context = fixtureContext('ollama')
   context.executionPolicy = fallbackPolicy(12000, 2000)
+  const execute = vi.fn(() => Promise.resolve({ evidence: 'verified-evidence' }))
   const native: NativeAgentBridge = {
     begin: request => Promise.resolve({ ...context, runId: request.runId }),
     finish: vi.fn(async () => {}),
     verifyTools: vi.fn(async () => {}),
-    tool: vi.fn(async () => ({ evidence: 'verified-evidence' })),
+    tool: execute,
   }
   const { commands, requests } = fixtureBridge('ollama')
   const summaries: Record<string, unknown>[] = []
@@ -54,7 +55,8 @@ it('compacts through the selected provider before continuing the same native too
     transport: id => {
       const transport = createRustFetch(id, commands)
       return async (url, init) => {
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if (typeof init?.body !== 'string') throw new Error('Expected JSON request')
+        const body = JSON.parse(init.body) as Record<string, unknown>
         if (body['stream'] !== true) {
           summaries.push(body)
           return new Response(
@@ -100,7 +102,7 @@ it('compacts through the selected provider before continuing the same native too
   expect(summaries[0]?.['model']).toBe('fixture-model')
   expect(requests).toHaveLength(2)
   expect(requests[0]?.body).toContain('Preserved earlier goal')
-  expect(native.tool).toHaveBeenCalledTimes(1)
+  expect(execute).toHaveBeenCalledTimes(1)
   expect(states.some(state => state?.includes('compacting'))).toBe(true)
   expect(last?.status?.type).toBe('complete')
   expect(last?.metadata?.custom?.['summaryInputTokens']).toBe(100)
