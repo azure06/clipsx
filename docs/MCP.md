@@ -49,3 +49,16 @@ Each client owns a separate session service. Up to 64 active grants, 16 legacy s
 The protocol suite exercises discovery, reads, images, writes, idempotency, session isolation, rotation/revocation, port failure, and shutdown over real loopback HTTP. A fixture pass does not establish a live model or external-client compatibility pass; those require the corresponding installed and configured client.
 
 The installed Codex client can be checked independently of model inference. Set `CLIPSX_CODEX_BINARY` to its executable and run `npm run test:rust -- recall::mcp_tests::codex_client_workflows -- --ignored --exact --nocapture`. The test starts the actual client app-server in an isolated temporary profile and calls its MCP discovery/tool APIs against synthetic ClipsX data. It checks read-only/write catalogs, search, text/image reads, secret exclusion, creation retries, organization, and undo. It starts no model turn and does not alter the user’s Codex configuration. Claude Code requires a separate client verification.
+
+## Claude Code verification
+
+Claude Code verification is separate from the loopback protocol suite and Codex app-server check. Use an explicitly selected installed Claude Code executable and an isolated temporary working directory/configuration with synthetic ClipsX data. Authentication must already be available; do not copy credentials into fixtures or change permanent client configuration.
+
+1. Configure separate read-only and read/write client grants. Verify both clients connect and discover exactly their permitted tools.
+2. Ask the read-only client to search a unique synthetic phrase, read its text with pagination, and inspect a synthetic PNG. Check the actual tool results and citations; a natural-language success claim is insufficient.
+3. Confirm secret-faceted clip IDs cannot be read and read-only grants cannot create or organize clips.
+4. With the write client, create a synthetic clip using a stable request ID, retry it, and verify one clip/action was created. Organize with current revisions, undo, and inspect the actual restored state.
+5. Rotate/revoke a grant while connected and verify existing sessions lose access. Disable MCP and verify connection failure without interrupting capture.
+6. Record the client version, tested commit, actual calls and results. Mark unavailable clients, authentication, or unexercised workflows pending. Model-assisted tests consume inference and are distinct from protocol-only tests.
+
+ClipsX bounds tool payloads; each external client owns its context management and compaction. Native Recall summaries are never injected into external MCP sessions.

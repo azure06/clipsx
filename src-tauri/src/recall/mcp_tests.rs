@@ -178,6 +178,89 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
         5
     );
     let write_session = initialize(&client, &url, &write.token).await;
+    // Pagination stays bounded over HTTP, including multibyte text.
+    let long_text = "日本語".repeat(5000);
+    let long_clip = capture(&service, &long_text, "editor", 300).await;
+    let mut cursor = Value::Null;
+    let mut recovered = String::new();
+    loop {
+        let page = call(
+            &client,
+            &url,
+            &read.token,
+            &read_session,
+            "read_clip",
+            json!({"clipId":long_clip,"pageBytes":4096,"cursor":cursor}),
+        )
+        .await;
+        let text = page["structuredContent"]["text"].as_str().unwrap();
+        assert!(text.len() <= 4096);
+        recovered.push_str(text);
+        cursor = page["structuredContent"]["nextCursor"].clone();
+        if cursor.is_null() {
+            break;
+        }
+    }
+    assert_eq!(recovered, long_text);
+    let first = call(
+        &client,
+        &url,
+        &read.token,
+        &read_session,
+        "search_clips",
+        json!({"query":"","limit":1}),
+    )
+    .await;
+    assert_eq!(
+        first["structuredContent"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let next = first["structuredContent"]["nextCursor"].clone();
+    assert!(!next.is_null());
+    let second = call(
+        &client,
+        &url,
+        &read.token,
+        &read_session,
+        "search_clips",
+        json!({"query":"","limit":1,"cursor":next}),
+    )
+    .await;
+    assert_ne!(
+        first["structuredContent"]["items"][0]["clip"]["id"],
+        second["structuredContent"]["items"][0]["clip"]["id"]
+    );
+    // A client can lose the response after commit. Retry the same ID, never a fresh mutation.
+    let lost_id = crate::history::new_id();
+    let lost =
+        json!({"requestId":lost_id,"text":"response delivery interrupted","format":"plain_text"});
+    let response=client.post(&url).bearer_auth(&write.token)
+        .header("accept","application/json, text/event-stream").header("mcp-session-id",&write_session)
+        .json(&json!({"jsonrpc":"2.0","id":100,"method":"tools/call","params":{"name":"create_clip","arguments":lost}}))
+        .send().await.unwrap();
+    assert!(response.status().is_success());
+    drop(response);
+    let replay = call(
+        &client,
+        &url,
+        &write.token,
+        &write_session,
+        "create_clip",
+        lost,
+    )
+    .await;
+    assert_ne!(replay["isError"], true);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM assistant_actions WHERE request_id=?")
+            .bind(&lost_id)
+            .fetch_one(&service.history.pool)
+            .await
+            .unwrap(),
+        1
+    );
     for (token, session, expected) in [
         (&read.token, &read_session, 5),
         (&write.token, &write_session, 8),
