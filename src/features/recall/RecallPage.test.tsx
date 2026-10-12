@@ -21,6 +21,7 @@ vi.mock('./RecallChat', () => ({
       />
       <div data-testid="attachments">{JSON.stringify(props.attachments)}</div>
       <div data-testid="chat-submission">{props.ask?.text ?? ''}</div>
+      <div data-testid="chat-thread">{props.thread.id}</div>
       {props.contextOpen && (
         <div data-testid="context">
           {props.preview ?? props.suggestions}
@@ -83,6 +84,49 @@ beforeEach(() => {
   })
 })
 describe('Recall workspace context', () => {
+  it('starts History Recall as a fresh unsaved draft, preserving the query and scope without sending', async () => {
+    const consumed = vi.fn()
+    render(
+      <RecallPage
+        initialAsk
+        initialQuery="find notes"
+        initialFilters={{
+          scope: 'favorites',
+          tagId: null,
+          sourceAppIds: [],
+          representationFamilies: [],
+          facetIds: [],
+          excludedClipIds: [],
+          capturedAfter: null,
+          capturedBefore: null,
+        }}
+        onInitialAskConsumed={consumed}
+      />
+    )
+    expect(await screen.findByTestId('chat-thread')).toHaveTextContent('draft:')
+    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toHaveValue('find notes')
+    expect(screen.getByTestId('chat-submission')).toBeEmptyDOMElement()
+    expect(consumed).toHaveBeenCalledOnce()
+    expect(
+      vi.mocked(invoke).mock.calls.some(([command]) => command === 'recall_thread_initialize')
+    ).toBe(false)
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(
+            ([command, args]) =>
+              command === 'assistant_search_clips' &&
+              (args as { request: { filters: { scope: string } } }).request.filters.scope ===
+                'favorites'
+          )
+      ).toBe(true)
+    )
+  })
+  it('reopens the saved conversation from the sidebar entry', async () => {
+    render(<RecallPage />)
+    expect(await screen.findByTestId('chat-thread')).toHaveTextContent('thread')
+  })
   it('uses the single composer for local suggestions without starting an agent', async () => {
     render(<RecallPage />)
     await screen.findByTestId('chat-submission')

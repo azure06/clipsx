@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ConversationStore } from './conversations'
 import {
   createConversationAdapters,
+  createDraftConversation,
   createConversationThreadAdapter,
   decodeMessage,
   encodeMessage,
@@ -44,6 +45,32 @@ function storeFixture() {
   return { store, history }
 }
 describe('Local conversation adapters', () => {
+  it('keeps drafts unsaved through configuration and initializes once before concurrent message writes', async () => {
+    const { store } = storeFixture()
+    const draft = createDraftConversation(store)
+    draft.update({ presetId: 'chosen', webEnabled: true })
+    const adapters = createConversationAdapters(
+      draft.thread.id,
+      store,
+      async () => (await draft.ensure()).id
+    )
+    expect(await adapters.history.load()).toMatchObject({ messages: [], unstable_resume: false })
+    expect(store.initialize).not.toHaveBeenCalled()
+    expect(store.load).not.toHaveBeenCalled()
+    await Promise.all([
+      adapters.history.append({ message, parentId: null }),
+      adapters.history.append({ message: { ...message, id: 'second' }, parentId: message.id }),
+    ])
+    expect(store.initialize).toHaveBeenCalledOnce()
+    expect(store.update).toHaveBeenCalledWith(
+      expect.objectContaining({ presetId: 'chosen', webEnabled: true })
+    )
+    expect(store.append).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(store.append).mock.calls.every(([id]) => id === thread.id)).toBe(true)
+    expect(vi.mocked(store.update).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(store.append).mock.invocationCallOrder[0]!
+    )
+  })
   it('saves the user before starting a run and checkpoints the same reply without replay', async () => {
     const { store } = storeFixture()
     const { history, hooks } = createConversationAdapters('thread', store)

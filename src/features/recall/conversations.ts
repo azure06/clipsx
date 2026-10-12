@@ -41,6 +41,51 @@ export const conversationStore: ConversationStore = {
   start: request => invoke('recall_run_start', { request }),
   checkpoint: request => invoke('recall_run_checkpoint', { request }),
 }
+
+/** A new conversation stays local until its first submitted message is saved. */
+export function createDraftConversation(store: ConversationStore = conversationStore) {
+  const localId = crypto.randomUUID()
+  let thread: RecallThread = {
+    id: `draft:${localId}`,
+    localId,
+    title: '',
+    archived: false,
+    presetId: null,
+    webEnabled: false,
+    reasoning: null,
+    headMessageId: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+  let pending: Promise<RecallThread> | undefined
+  return {
+    get thread() {
+      return thread
+    },
+    update(change: Partial<Pick<RecallThread, 'presetId' | 'webEnabled' | 'reasoning'>>) {
+      thread = { ...thread, ...change }
+      return thread
+    },
+    ensure() {
+      pending ??= (async () => {
+        const saved = await store.initialize(localId)
+        thread = await store.update({
+          threadId: saved.id,
+          title: saved.title,
+          archived: false,
+          presetId: thread.presetId,
+          webEnabled: thread.webEnabled,
+          reasoning: thread.reasoning,
+        })
+        return thread
+      })().catch(error => {
+        pending = undefined
+        throw error
+      })
+      return pending
+    },
+  }
+}
 export function encodeMessage(message: ThreadMessage, parentId: string | null): RecallMessage {
   return {
     id: message.id,
@@ -137,13 +182,27 @@ export function decodeMessage(message: RecallMessage): ThreadMessage {
 /** One adapter instance stays bound to one thread, including writes after a UI switch. */
 export function createConversationAdapters(
   threadId: string,
-  store: ConversationStore = conversationStore
+  store: ConversationStore = conversationStore,
+  initialize?: () => Promise<string>
 ) {
+  let initialized = !initialize
+  let initialization: Promise<string> | undefined
+  const resolveId = async () => {
+    if (!initialized) {
+      initialization ??= initialize!().catch(error => {
+        initialization = undefined
+        throw error
+      })
+      threadId = await initialization
+      initialized = true
+    }
+    return threadId
+  }
   const saved = new Set<string>()
   let queue = Promise.resolve()
   const write = (message: ThreadMessage, parentId: string | null) => {
     const operation = queue.then(async () => {
-      await store.append(threadId, encodeMessage(message, parentId))
+      await store.append(await resolveId(), encodeMessage(message, parentId))
       saved.add(message.id)
     })
     queue = operation.catch(() => undefined)
@@ -151,6 +210,7 @@ export function createConversationAdapters(
   }
   const history: ThreadHistoryAdapter = {
     load: async () => {
+      if (!initialized) return { headId: null, messages: [], unstable_resume: false }
       const data = await store.load(threadId)
       data.messages.forEach(message => saved.add(message.id))
       return {
@@ -172,11 +232,14 @@ export function createConversationAdapters(
   > = {
     readActionActivity: () => invoke<ClipboardActivity[]>('assistant_action_activity'),
     contextPersistence: {
-      load: coveredMessageId =>
-        invoke<RecallContextCoverage>('recall_context_load', { threadId, coveredMessageId }),
-      save: summary =>
+      load: async coveredMessageId =>
+        invoke<RecallContextCoverage>('recall_context_load', {
+          threadId: await resolveId(),
+          coveredMessageId,
+        }),
+      save: async summary =>
         invoke('recall_context_save', {
-          summary: { ...summary, threadId } satisfies RecallContextSummary,
+          summary: { ...summary, threadId: await resolveId() } satisfies RecallContextSummary,
         }),
     },
     onStart: async (context, input: ChatModelRunOptions) => {
@@ -191,7 +254,7 @@ export function createConversationAdapters(
       if (!latest || latest.role !== 'user' || !parentId || !input.unstable_assistantMessageId)
         throw new Error('missing_run_message')
       await store.start({
-        threadId,
+        threadId: await resolveId(),
         runId: context.runId,
         messageId: input.unstable_assistantMessageId,
         parentId,

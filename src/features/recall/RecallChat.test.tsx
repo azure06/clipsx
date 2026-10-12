@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { RecallChat } from './RecallChat'
@@ -52,6 +53,53 @@ beforeEach(() => {
   )
 })
 describe('Recall conversation runtime presentation', () => {
+  it('keeps the running conversation mounted when its draft acquires a saved ID', async () => {
+    const initialize = vi.fn()
+    const run = vi.fn()
+    vi.mocked(createRecallAdapter).mockImplementation(options => ({
+      run: async function* (input) {
+        run()
+        await options.onStart?.(fixtureContext(), input)
+        expect(input.abortSignal.aborted).toBe(false)
+        const answer = {
+          content: [{ type: 'text' as const, text: 'Your saved answer.' }],
+          status: { type: 'complete' as const, reason: 'stop' as const },
+        }
+        await options.onCheckpoint?.(fixtureContext().runId, answer, true)
+        yield answer
+      },
+    }))
+    function DraftChat() {
+      const [current, setCurrent] = useState({ ...thread, id: 'draft:local' })
+      return (
+        <RecallChat
+          {...props()}
+          thread={current}
+          initializeThread={() => {
+            initialize()
+            setCurrent(thread)
+            return Promise.resolve(thread.id)
+          }}
+        />
+      )
+    }
+    render(<DraftChat />)
+    const input = screen.getByRole('textbox', { name: 'recallPage.message' })
+    await waitFor(() => expect(input).toBeEnabled())
+    expect(initialize).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: 'Save this conversation' } })
+    fireEvent.click(screen.getByRole('button', { name: 'recallPage.send' }))
+    expect(await screen.findByText('Your saved answer.')).toBeInTheDocument()
+    expect(initialize).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
+    expect(createRecallAdapter).toHaveBeenCalledOnce()
+    expect(invoke).toHaveBeenCalledWith(
+      'recall_message_append',
+      expect.objectContaining({ threadId: thread.id })
+    )
+    const started = vi.mocked(invoke).mock.calls.find(([command]) => command === 'recall_run_start')
+    expect(started?.[1]).toMatchObject({ request: { threadId: thread.id } })
+  })
   it('reopens citations against retained source snapshots without running tools again', async () => {
     history = {
       thread: { ...thread, headMessageId: 'reply' },

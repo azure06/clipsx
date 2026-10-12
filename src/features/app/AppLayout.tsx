@@ -615,8 +615,8 @@ export const AppLayout = () => {
               <Suspense fallback={<ScreenLoading />}>
                 <RecallPage
                   key={recallEntry?.id ?? 'recall'}
-                  initialQuery={recallEntry?.query}
-                  initialFilters={recallEntry?.filters}
+                  initialQuery={recallEntry?.ask ? recallEntry.query : undefined}
+                  initialFilters={recallEntry?.ask ? recallEntry.filters : undefined}
                   initialAsk={recallEntry?.ask ?? false}
                   onInitialAskConsumed={() =>
                     setRecallEntry(current => (current ? { ...current, ask: false } : null))

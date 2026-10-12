@@ -3,9 +3,12 @@ export function transportFailure(error: unknown): string {
   let current = error
   for (let depth = 0; depth < 8 && current instanceof Error; depth++) {
     if (
-      ['context_limit', 'question_exceeds_context', 'context_compaction_failed'].includes(
-        current.message
-      )
+      [
+        'context_limit',
+        'question_exceeds_context',
+        'context_compaction_failed',
+        'citation_validation_failed',
+      ].includes(current.message)
     )
       return current.message
     const match =

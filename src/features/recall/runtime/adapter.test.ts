@@ -32,6 +32,169 @@ function runOptions(controller = new AbortController()): ChatModelRunOptions {
   }
 }
 
+it.each([
+  { provider: 'ollama' as const, valid: true },
+  { provider: 'openai' as const, valid: true },
+  { provider: 'anthropic' as const, valid: true },
+  { provider: 'gemini' as const, valid: true },
+  { provider: 'openrouter' as const, valid: true },
+  { provider: 'ollama' as const, valid: false },
+])(
+  'validates citations with one tool-free repair, preserving committed mutations ($provider, repair=$valid)',
+  async ({ provider, valid }) => {
+    const context = fixtureContext(provider)
+    context.tools[0]!.name = 'create_clip'
+    context.attachments = [
+      {
+        apiVersion: 1,
+        clip: {
+          id: 'source',
+          revision: 'r1',
+          capturedAt: 1,
+          sourceAppId: null,
+          sourceAppName: null,
+          favorite: false,
+          pinned: false,
+          tags: [],
+          representations: [],
+          ocrStatus: 'unavailable',
+        },
+        representationId: 'text',
+        kind: 'captured',
+        text: 'Launch code ORCHID-42',
+        textFingerprint: 'hash',
+        totalBytes: 20,
+        nextCursor: null,
+        warnings: [],
+      },
+    ]
+    const tool = vi.fn<NativeAgentBridge['tool']>(() =>
+      Promise.resolve({
+        actionId: 'committed',
+        clips: [{ clipId: 'saved', revision: 'r2' }],
+        undoAvailable: true,
+      })
+    )
+    const bridge: NativeAgentBridge = {
+      begin: request => Promise.resolve({ ...context, runId: request.runId }),
+      tool,
+      finish: vi.fn(async () => {}),
+      verifyTools: vi.fn(async () => {}),
+    }
+    const { commands } = fixtureBridge(
+      provider,
+      (records, phase) =>
+        JSON.parse(
+          JSON.stringify(records)
+            .replace(/search_clips/g, 'create_clip')
+            .replace(/verified/g, phase === 'text' ? 'verified [3](#clip-3)' : 'verified')
+        ) as unknown[]
+    )
+    const repairs: Record<string, unknown>[] = []
+    const checkpoint = vi.fn(async () => {})
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge,
+      onCheckpoint: checkpoint,
+      transport: id => {
+        const transport = createRustFetch(id, commands)
+        return async (url, init) => {
+          if (typeof init?.body !== 'string') throw new Error('Expected JSON request')
+          const body = JSON.parse(init.body) as Record<string, unknown>
+          const endpoint = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+          if (body['stream'] === true || endpoint.includes(':streamGenerateContent'))
+            return transport(url, init)
+          repairs.push(body)
+          const text = valid
+            ? 'Launch code ORCHID-42 [1](#clip-1). Saved clip saved.'
+            : 'Launch code [3](#clip-3).'
+          const response =
+            provider === 'anthropic'
+              ? {
+                  id: 'repair',
+                  type: 'message',
+                  role: 'assistant',
+                  model: 'fixture',
+                  content: [{ type: 'text', text }],
+                  stop_reason: 'end_turn',
+                  stop_sequence: null,
+                  usage: { input_tokens: 100, output_tokens: 15 },
+                }
+              : provider === 'gemini'
+                ? {
+                    candidates: [
+                      { content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP' },
+                    ],
+                    usageMetadata: {
+                      promptTokenCount: 100,
+                      candidatesTokenCount: 15,
+                      totalTokenCount: 115,
+                    },
+                  }
+                : provider === 'openai'
+                  ? {
+                      id: 'repair',
+                      object: 'response',
+                      created_at: 1,
+                      model: 'fixture',
+                      status: 'completed',
+                      output: [
+                        {
+                          type: 'message',
+                          id: 'repair-message',
+                          role: 'assistant',
+                          status: 'completed',
+                          content: [{ type: 'output_text', text, annotations: [] }],
+                        },
+                      ],
+                      usage: { input_tokens: 100, output_tokens: 15, total_tokens: 115 },
+                    }
+                  : {
+                      choices: [
+                        { message: { role: 'assistant', content: text }, finish_reason: 'stop' },
+                      ],
+                      usage: { prompt_tokens: 100, completion_tokens: 15, total_tokens: 115 },
+                    }
+          return new Response(JSON.stringify(response), {
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+      },
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected streaming adapter')
+    let last: ChatModelRunResult | undefined
+    let failure: unknown
+    try {
+      for await (const update of updates) last = update
+    } catch (error) {
+      failure = error
+    }
+    expect(repairs).toHaveLength(1)
+    expect(repairs[0]?.['tools']).toBeUndefined()
+    expect(JSON.stringify(repairs[0])).toContain('committed')
+    expect(tool).toHaveBeenCalledTimes(1)
+    expect(
+      last?.content?.some(
+        part =>
+          part.type === 'tool-call' &&
+          (part.result as { actionId: string }).actionId === 'committed'
+      )
+    ).toBe(true)
+    expect(last?.status?.type).toBe(valid ? 'complete' : 'incomplete')
+    expect(last?.metadata?.custom?.[valid ? 'citationsRepaired' : 'failure']).toBe(
+      valid ? true : 'citation_validation_failed'
+    )
+    expect(Boolean(failure)).toBe(!valid)
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.any(String), last, true)
+  }
+)
+
 it('compacts through the selected provider before continuing the same native tool loop', async () => {
   const context = fixtureContext('ollama')
   context.executionPolicy = fallbackPolicy(12000, 2000)
@@ -153,7 +316,13 @@ describe('Native Recall agent', () => {
         ),
         verifyTools: vi.fn(async () => {}),
       }
-      const { commands, requests } = fixtureBridge(provider)
+      const { commands, requests } = fixtureBridge(provider, (records, phase) =>
+        phase === 'text'
+          ? (JSON.parse(
+              JSON.stringify(records).replace(/verified/g, 'verified [1](#clip-1)')
+            ) as unknown[])
+          : records
+      )
       const checkpoint = vi.fn(async () => {})
       const adapter = createRecallAdapter({
         configuration: () => ({
@@ -175,7 +344,7 @@ describe('Native Recall agent', () => {
           ?.filter(p => p.type === 'text')
           .map(p => p.text)
           .join('')
-      ).toBe('Recall verified')
+      ).toBe('Recall verified [1](#clip-1)')
       expect(last?.status).toEqual({ type: 'complete', reason: 'stop' })
       expect(last?.metadata?.custom?.['citations']).toEqual([
         { number: 1, clipId: 'attached', revision: 'r1' },

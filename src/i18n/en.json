@@ -1348,6 +1348,7 @@
     }
   },
   "recallPage": {
+    "citationValidationFailed": "The answer contained references that could not be verified. Your conversation and completed actions are saved. Inspect the sources or retry the answer.",
     "contextBlocked": "This request could not fit the model context. Your conversation and completed actions are saved. Retry, reduce attachments, or start a new chat.",
     "title": "Recall",
     "subtitle": "Find, understand, and work with your clipboard.",

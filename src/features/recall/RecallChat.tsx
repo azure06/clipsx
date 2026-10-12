@@ -2,7 +2,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useLayoutEffect,
@@ -231,7 +230,9 @@ function TranscriptMessage() {
               ? 'contextBlocked'
               : custom['failure'] === 'request_timeout'
                 ? 'requestTimedOut'
-                : 'responseFailed'
+                : custom['failure'] === 'citation_validation_failed'
+                  ? 'citationValidationFailed'
+                  : 'responseFailed'
       : 'incomplete'
   return (
     <MessagePrimitive.Root
@@ -375,6 +376,7 @@ function TranscriptMessage() {
 }
 export interface RecallChatProps {
   thread: RecallThread
+  initializeThread?: () => Promise<string>
   preset: AiModelPreset | null
   filters: ClipFilters
   attachments: ClipRevision[]
@@ -423,6 +425,7 @@ export function RecallChat(props: RecallChatProps) {
   useEffect(() => {
     let active = true
     const refresh = () =>
+      !props.thread.id.startsWith('draft:') &&
       void conversationStore
         .load(props.thread.id)
         .then(data => {
@@ -440,7 +443,10 @@ export function RecallChat(props: RecallChatProps) {
         .catch(() => undefined)
     }
   }, [props.thread.id, sourceVersion])
-  const persistence = useMemo(() => createConversationAdapters(props.thread.id), [props.thread.id])
+  // Keep the runtime and queued writes mounted when a draft acquires its database ID.
+  const [persistence] = useState(() =>
+    createConversationAdapters(props.thread.id, conversationStore, props.initializeThread)
+  )
   const [controller] = useState(() =>
     createChatController(props, persistence, () => setSourceVersion(version => version + 1))
   )

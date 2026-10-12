@@ -160,6 +160,7 @@ async function verify() {
   })
   check(generated.text === 'NATIVE ACCEPTANCE SAVED', 'generated_text_mismatch')
   const read = outcomes.get('read_clip') as ClipReadResult
+  check(read && isRecord(read.clip), 'source_read_failed_or_missing')
   check(read.clip.id === fixture.sourceId, 'wrong_source_read')
   const citations = readCitations(last.metadata?.custom?.['citations'])
   check(!hasUnsupportedLocalReferences(answer, citations), 'unsupported_answer_citation')

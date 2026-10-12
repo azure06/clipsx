@@ -22,7 +22,11 @@ import { emptyFilters, useProgressiveSearch } from './useProgressiveSearch'
 import { RecallChat } from './RecallChat'
 import { RecallOptions } from './RecallOptions'
 import { ThreadSidebar } from './ThreadSidebar'
-import { conversationStore, createConversationThreadAdapter } from './conversations'
+import {
+  conversationStore,
+  createConversationThreadAdapter,
+  createDraftConversation,
+} from './conversations'
 
 export interface RecallPageProps {
   onInitialAskConsumed?: () => void
@@ -39,20 +43,17 @@ export function RecallPage({
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const [query, setQuery] = useState(initialQuery)
-  const [draftSeed, setDraftSeed] = useState(initialAsk ? '' : initialQuery)
+  const [draftSeed, setDraftSeed] = useState(initialQuery)
   const [filters, storeFilters] = useState(initialFilters)
   const [status, setStatus] = useState<ClipboardStatus | null>(null)
   const [facets, setFacets] = useState<ClipboardFilters | null>(null)
   const [configuration, setConfiguration] = useState<AiConfiguration | null>(null)
   const [threads, setThreads] = useState<RecallThread[]>([])
   const [thread, setThread] = useState<RecallThread | null>(null)
+  const [draft, setDraft] = useState<ReturnType<typeof createDraftConversation> | null>(null)
   const [threadOffset, setThreadOffset] = useState(0)
   const [attachments, setAttachments] = useState<ClipRevision[]>([])
-  const [ask, setAsk] = useState<{ id: string; text: string } | null>(() =>
-    initialAsk && initialQuery.trim()
-      ? { id: crypto.randomUUID(), text: initialQuery.trim() }
-      : null
-  )
+  const [ask, setAsk] = useState<{ id: string; text: string } | null>(null)
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
@@ -122,13 +123,13 @@ export function RecallPage({
       const rows = listed.value
       setThreads(rows)
       setThreadOffset(rows.length)
-      const current =
-        rows.find(row => !row.archived) ?? (await conversationStore.initialize(crypto.randomUUID()))
+      const existing = initialAsk ? undefined : rows.find(row => !row.archived)
+      const fresh = existing ? null : createDraftConversation()
+      const current = existing ?? fresh!.thread
       if (active) {
         setThread(current)
-        setThreads(previous =>
-          previous.some(row => row.id === current.id) ? previous : [current, ...previous]
-        )
+        setDraft(fresh)
+        if (initialAsk) onInitialAskConsumed?.()
       }
     }
     void load().catch(() => {
@@ -165,6 +166,8 @@ export function RecallPage({
       active = false
       void Promise.all(listeners).then(stops => stops.forEach(stop => stop()))
     }
+    // Entry intent is consumed once when this keyed page mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const perform = async (work: () => Promise<void>) => {
     if (busyRef.current) return
@@ -183,6 +186,9 @@ export function RecallPage({
   const changeThread = async (id: string) => {
     const data = await conversationStore.load(id)
     setThread(data.thread)
+    setDraft(null)
+    setDraftSeed('')
+    setQuery('')
     setAttachments([])
     setAttachmentLabels({})
     setAsk(null)
@@ -191,6 +197,10 @@ export function RecallPage({
     change: Partial<Pick<RecallThread, 'presetId' | 'webEnabled' | 'reasoning'>>
   ) => {
     if (!thread) return
+    if (draft && thread.id.startsWith('draft:')) {
+      setThread(draft.update(change))
+      return
+    }
     const next = await conversationStore.update({
       threadId: thread.id,
       title: thread.title,
@@ -624,7 +634,17 @@ export function RecallPage({
       <div className="min-h-0 flex-1">
         {thread ? (
           <RecallChat
-            key={thread.id}
+            key={thread.localId}
+            initializeThread={
+              draft
+                ? async () => {
+                    const saved = await draft.ensure()
+                    setThread(current => (current?.localId === saved.localId ? saved : current))
+                    void reloadThreads().catch(() => undefined)
+                    return saved.id
+                  }
+                : undefined
+            }
             composerToolbar={composerToolbar}
             composerAttachments={composerAttachments}
             contextOpen={contextOpen}
@@ -780,8 +800,11 @@ export function RecallPage({
             }
             onNewThread={() =>
               void perform(async () => {
-                const next = await conversationStore.initialize(crypto.randomUUID())
-                setThread(next)
+                const fresh = createDraftConversation()
+                setDraft(fresh)
+                setThread(fresh.thread)
+                setDraftSeed('')
+                setQuery('')
                 setAttachments([])
                 setAttachmentLabels({})
                 setAsk(null)
@@ -848,10 +871,12 @@ export function RecallPage({
                     if (!deleteTargetId) return
                     await threadAdapter.delete(deleteTargetId)
                     const rows = await conversationStore.list(0)
-                    const next =
-                      rows.find(row => !row.archived) ??
-                      (await conversationStore.initialize(crypto.randomUUID()))
-                    setThread(next)
+                    const existing = rows.find(row => !row.archived)
+                    const fresh = existing ? null : createDraftConversation()
+                    setDraft(fresh)
+                    setThread(existing ?? fresh!.thread)
+                    setDraftSeed('')
+                    setQuery('')
                     setAttachments([])
                     setAttachmentLabels({})
                     setAsk(null)
