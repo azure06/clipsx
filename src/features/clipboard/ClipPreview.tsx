@@ -256,7 +256,7 @@ export const ClipPreview = memo(function ClipPreview({
     >
       {/* Header: row 1 — type badge + actions */}
       <div className="flex shrink-0 flex-col border-b border-slate-100/10 bg-slate-100/40 dark:border-slate-100/5 dark:bg-slate-100/5">
-        <div className="flex items-center gap-2 py-2.5 pl-3 pr-20">
+        <div className="flex items-center gap-2 px-3 py-2.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="flex shrink-0 items-center gap-1.5 rounded-md bg-slate-100/50 px-2 py-1 dark:bg-slate-100/10">
               <span className={`h-1.5 w-1.5 rounded-full ${typeDotColor}`} />
