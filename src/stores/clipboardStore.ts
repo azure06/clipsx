@@ -17,6 +17,7 @@ import type {
   V2Tag,
 } from '../shared/types/v2'
 import { parseSearch } from '../features/search/searchQuery'
+import { KEYWORD_DELAY_MS, SEMANTIC_DELAY_MS } from '../features/search/progressive'
 type V2Representation = {
   canonicalMimeType: string | null
   textValue: string | null
@@ -45,6 +46,8 @@ type ClipboardState = {
   resultsStale: boolean
   // A prepared query is waiting for the input controller's idle timer/IME.
   searchScheduled: boolean
+  semanticPending: boolean
+  relatedClipIds: string[]
   error: string | null
   hasMore: boolean
   currentOffset: number
@@ -78,6 +81,7 @@ type ClipboardActions = {
   copyDerivedText: (text: string) => Promise<void>
   performPrimaryAction: (text: string, clipId: string) => Promise<void>
   performCopy: (text: string, clipId: string) => Promise<void>
+  cancelSearch: () => void
   resetPagination: () => void
   refreshSearch: () => Promise<void>
 }
@@ -89,6 +93,8 @@ const initialState: ClipboardState = {
   loading: false,
   resultsStale: false,
   searchScheduled: false,
+  semanticPending: false,
+  relatedClipIds: [],
   error: null,
   hasMore: true,
   currentOffset: 0,
@@ -101,6 +107,11 @@ const initialState: ClipboardState = {
 let nextCursor: string | null | undefined
 let requestGeneration = 0
 let eventListenerReady = false
+let semanticTimer: ReturnType<typeof setTimeout> | undefined
+const cancelSemantic = () => {
+  clearTimeout(semanticTimer)
+  semanticTimer = undefined
+}
 
 const scope = (state: ClipboardState) => (state.activeTab === 'all' ? 'all' : state.activeTab)
 const matchesVisibleScope = (state: ClipboardState, clip: ClipSummary) => {
@@ -159,6 +170,8 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     if (state.loading || !state.hasMore || state.searchScheduled) return
     const generation = requestGeneration
     const replace = state.resultsStale
+    const firstPage = replace || nextCursor === undefined
+    const started = Date.now()
     ensureEvents()
     set({ loading: true, error: null })
     try {
@@ -177,9 +190,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
             tagId,
             limit,
             cursor: nextCursor ?? null,
-            enabledSourceIds: useUIStore.getState().isSemanticActive
-              ? ['builtin.search.fts', 'builtin.search.semantic_text']
-              : ['builtin.search.fts'],
+            enabledSourceIds: ['builtin.search.fts'],
           },
         })
         if (generation !== requestGeneration) return
@@ -200,14 +211,108 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       const clips = summaries
       if (generation !== requestGeneration) return
       nextCursor = cursor
-      set(current => ({
-        clips: replace ? clips : [...current.clips, ...clips],
-        loading: false,
-        resultsStale: false,
-        searchSourceOutcomes: sourceOutcomes,
-        hasMore: cursor !== null,
-        currentOffset: (replace ? 0 : current.currentOffset) + clips.length,
-      }))
+      set(current => {
+        const relatedIds = new Set(current.relatedClipIds)
+        const keywordIds = new Set(
+          current.clips.filter(clip => !relatedIds.has(clip.id)).map(clip => clip.id)
+        )
+        const incomingIds = new Set(clips.map(clip => clip.id))
+        return {
+          clips: replace
+            ? clips
+            : [
+                ...current.clips.filter(clip => !relatedIds.has(clip.id)),
+                ...clips.filter(clip => !keywordIds.has(clip.id)),
+                ...current.clips.filter(
+                  clip => relatedIds.has(clip.id) && !incomingIds.has(clip.id)
+                ),
+              ],
+          relatedClipIds: replace ? [] : current.relatedClipIds.filter(id => !incomingIds.has(id)),
+          loading: false,
+          resultsStale: false,
+          searchSourceOutcomes: firstPage
+            ? sourceOutcomes
+            : [
+                ...sourceOutcomes,
+                ...current.searchSourceOutcomes.filter(
+                  outcome => outcome.sourceId === 'builtin.search.semantic_text'
+                ),
+              ],
+          hasMore: cursor !== null,
+          currentOffset: (replace ? 0 : current.currentOffset) + clips.length,
+        }
+      })
+      if (state.mode === 'search' && firstPage && useUIStore.getState().isSemanticActive) {
+        set({ semanticPending: true })
+        cancelSemantic()
+        const parsed = parseSearch(state.searchQuery)
+        semanticTimer = setTimeout(
+          () => {
+            semanticTimer = undefined
+            void invoke<V2SearchPage>('search_clips', {
+              request: {
+                query: parsed.query,
+                representationFamilies: parsed.representationFamilies,
+                facetIds: parsed.facetIds,
+                scope: scope(state),
+                tagId: state.tagFilter,
+                limit: 50,
+                cursor: null,
+                enabledSourceIds: ['builtin.search.fts', 'builtin.search.semantic_text'],
+              },
+            })
+              .then(result => {
+                if (generation !== requestGeneration) return
+                set(current => {
+                  const existing = new Set(current.clips.map(clip => clip.id))
+                  const related = result.items
+                    .filter(
+                      item =>
+                        !existing.has(item.clip.id) &&
+                        item.matches.some(
+                          match => match.sourceId === 'builtin.search.semantic_text'
+                        )
+                    )
+                    .map(item => ({
+                      ...item.clip,
+                      similarityScore: item.rank,
+                      searchMatches: item.matches,
+                    }))
+                  return {
+                    clips: [...current.clips, ...related],
+                    relatedClipIds: [...current.relatedClipIds, ...related.map(clip => clip.id)],
+                    semanticPending: false,
+                    searchSourceOutcomes: [
+                      ...current.searchSourceOutcomes.filter(
+                        outcome => outcome.sourceId !== 'builtin.search.semantic_text'
+                      ),
+                      ...result.sourceOutcomes.filter(
+                        outcome => outcome.sourceId === 'builtin.search.semantic_text'
+                      ),
+                    ],
+                  }
+                })
+              })
+              .catch(() => {
+                if (generation !== requestGeneration) return
+                set(current => ({
+                  semanticPending: false,
+                  searchSourceOutcomes: [
+                    ...current.searchSourceOutcomes.filter(
+                      outcome => outcome.sourceId !== 'builtin.search.semantic_text'
+                    ),
+                    {
+                      sourceId: 'builtin.search.semantic_text',
+                      status: 'unavailable',
+                      diagnostic: null,
+                    },
+                  ],
+                }))
+              })
+          },
+          Math.max(0, SEMANTIC_DELAY_MS - KEYWORD_DELAY_MS - (Date.now() - started))
+        )
+      }
     } catch (error) {
       if (generation !== requestGeneration) return
       set({ loading: false, error: String(error) })
@@ -226,13 +331,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
         .filter(item => state.resultsStale || matchesVisibleScope(state, item)),
     })),
+  cancelSearch: () => {
+    requestGeneration += 1
+    cancelSemantic()
+    set({ loading: false, semanticPending: false })
+  },
   resetPagination: () => {
     requestGeneration += 1
+    cancelSemantic()
     nextCursor = undefined
     set({
       currentOffset: 0,
       hasMore: true,
       loading: false,
+      semanticPending: false,
       resultsStale: true,
       searchScheduled: false,
       error: null,
@@ -244,12 +356,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     const mode = query ? 'search' : 'browse'
     if (!force && state.searchQuery === query && state.mode === mode) return
     requestGeneration += 1
+    cancelSemantic()
     nextCursor = undefined
     set({
       mode,
       searchQuery: query,
       resultsStale: true,
       searchScheduled: true,
+      semanticPending: false,
       loading: false,
       error: null,
       currentOffset: 0,
@@ -383,9 +497,12 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   clearAllClips: async () => {
     await invoke('clear_history')
     requestGeneration += 1
+    cancelSemantic()
     nextCursor = undefined
     set({
       clips: [],
+      relatedClipIds: [],
+      semanticPending: false,
       currentOffset: 0,
       hasMore: false,
       loading: false,

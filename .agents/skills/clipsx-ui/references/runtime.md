@@ -202,8 +202,9 @@ Single-item reads use the same resolver. Rows are measured and virtualized with
 bounded overscan. Selection uses clip IDs, and keyboard selection scrolls
 unmounted rows into view. Each `End` keypress loads at most one older 50-item page.
 
-Search input updates immediately; requests wait 300 ms after typing stops and
-until IME composition ends. Its subscription is separate from history/layout
+Search input updates immediately. History publishes keyword results after 75 ms
+of inactivity and adds semantic-only matches at or after 250 ms when enabled;
+IME composition pauses both. Keyword pagination keeps its own cursor. Its subscription is separate from history/layout
 rendering. Unchanged preview models and statistics are reused with the applied
 theme.
 

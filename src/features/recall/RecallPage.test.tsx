@@ -10,8 +10,23 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../shared/contexts/ToastContext', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 vi.mock('../clipboard/ClipPreview', () => ({ ClipPreview: () => null }))
 vi.mock('./RecallChat', () => ({
-  RecallChat: ({ ask }: { ask: { text: string } | null }) => (
-    <div data-testid="chat-submission">{ask?.text ?? ''}</div>
+  RecallChat: (props: import('./RecallChat').RecallChatProps) => (
+    <div>
+      <textarea
+        aria-label="recallPage.message"
+        defaultValue={props.initialDraft}
+        onChange={event => props.onDraft?.(event.target.value)}
+        onCompositionStart={props.onCompositionStart}
+        onCompositionEnd={props.onCompositionEnd}
+      />
+      <div data-testid="chat-submission">{props.ask?.text ?? ''}</div>
+      {props.contextOpen && (
+        <div data-testid="context">
+          {props.preview ?? props.suggestions}
+          <button onClick={props.onContextClose}>recallContext.close</button>
+        </div>
+      )}
+    </div>
   ),
 }))
 const thread = {
@@ -66,13 +81,14 @@ beforeEach(() => {
     }
   })
 })
-describe('Recall workspace submission', () => {
-  it('typing and Enter retrieve without generating; Ask submits explicitly', async () => {
+describe('Recall workspace context', () => {
+  it('uses the single composer for local suggestions without starting an agent', async () => {
     render(<RecallPage />)
     await screen.findByTestId('chat-submission')
-    fireEvent.click(screen.getByRole('button', { name: 'recallPage.browseClips' }))
-    const input = screen.getByRole('textbox', { name: 'recallPage.search' })
-    fireEvent.change(input, { target: { value: 'meeting notes' } })
+    expect(screen.queryByRole('textbox', { name: 'recallPage.search' })).toBeNull()
+    fireEvent.change(screen.getByRole('textbox', { name: 'recallPage.message' }), {
+      target: { value: 'meeting notes' },
+    })
     await waitFor(() =>
       expect(
         vi
@@ -85,29 +101,22 @@ describe('Recall workspace submission', () => {
       ).toBe(true)
     )
     expect(screen.getByTestId('chat-submission')).toHaveTextContent('')
-    fireEvent.submit(input.closest('form')!)
-    expect(screen.getByTestId('chat-submission')).toHaveTextContent('')
-    fireEvent.click(screen.getByRole('button', { name: 'recallPage.ask' }))
-    expect(screen.getByTestId('chat-submission')).toHaveTextContent('meeting notes')
     expect(
       vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_run_begin')
     ).toBe(false)
   })
-  it('starts in chat and keeps the same conversation mounted across manual search views', async () => {
+  it('keeps the same chat mounted while opening and closing context', async () => {
     render(<RecallPage />)
     const chat = await screen.findByTestId('chat-submission')
-    expect(chat.closest('[role="tabpanel"]')).toHaveAttribute('data-state', 'active')
-    const toggle = screen.getByRole('button', { name: 'recallPage.browseClips' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    const toggle = screen.getByRole('button', { name: 'recallContext.title' })
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('chat-submission')).toBe(chat)
-    fireEvent.click(screen.getByRole('button', { name: 'common.close' }))
-    expect(toggle).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'recallContext.close' }))
+    await waitFor(() => expect(toggle).toHaveFocus())
     expect(screen.getByTestId('chat-submission')).toBe(chat)
-    expect(chat.closest('[role="tabpanel"]')).toHaveAttribute('data-state', 'active')
   })
-  it('keeps keyword search available if chat configuration fails', async () => {
+  it('keeps draft suggestions available without chat configuration', async () => {
     configurationFails = true
     render(<RecallPage initialQuery="offline search" />)
     await waitFor(() =>
@@ -115,6 +124,37 @@ describe('Recall workspace submission', () => {
         vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_search_clips')
       ).toBe(true)
     )
-    expect(screen.getByRole('button', { name: 'recallPage.ask' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toHaveValue(
+      'offline search'
+    )
+  })
+  it('opens the shared preview in context with a header close and guards late responses', async () => {
+    const base = vi.mocked(invoke).getMockImplementation()!
+    let finish!: (value: unknown) => void
+    vi.mocked(invoke).mockImplementation((command, args) => {
+      if (command === 'assistant_search_clips')
+        return Promise.resolve({
+          items: [{ clip: { id: 'clip', revision: 'r', capturedAt: 1 }, snippet: 'Preview me' }],
+          nextCursor: null,
+          exhaustive: true,
+        })
+      if (command === 'assistant_read_clip')
+        return new Promise(resolve => {
+          finish = resolve
+        })
+      if (command === 'get_clip_detail') return Promise.resolve({ clip: { id: 'clip' } })
+      return base(command, args)
+    })
+    render(<RecallPage initialQuery="preview" />)
+    await screen.findByTestId('chat-submission')
+    fireEvent.click(screen.getByRole('button', { name: 'recallContext.title' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'recallPage.preview' }))
+    expect(screen.getByRole('button', { name: 'recallContext.closePreview' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'recallContext.closePreview' }))
+    finish({})
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('get_clip_detail', { clipId: 'clip' })
+    )
+    expect(screen.queryByRole('button', { name: 'recallContext.closePreview' })).toBeNull()
   })
 })

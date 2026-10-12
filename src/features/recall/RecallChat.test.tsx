@@ -36,10 +36,16 @@ const props = (): RecallChatProps => ({
   onRunning: vi.fn(),
   onComplete: vi.fn(),
   onOpenSource: vi.fn(),
+  contextOpen: true,
+  onContextOpen: vi.fn(),
 })
 let history: RecallHistory
 beforeEach(() => {
   vi.clearAllMocks()
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
+  window.matchMedia = vi
+    .fn()
+    .mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   history = { thread, messages: [], sources: [] }
   vi.mocked(invoke).mockImplementation(command =>
     Promise.resolve(command === 'recall_thread_load' ? history : undefined)
@@ -146,5 +152,83 @@ describe('Recall conversation runtime presentation', () => {
       await gate
     })
     expect(await screen.findByText('Found your notes.')).toBeInTheDocument()
+  })
+  it('reports draft text and IME composition without running the model, even without a preset', async () => {
+    const run = vi.fn()
+    vi.mocked(createRecallAdapter).mockReturnValue({ run })
+    const onDraft = vi.fn(),
+      onCompositionStart = vi.fn(),
+      onCompositionEnd = vi.fn()
+    render(
+      <RecallChat
+        {...props()}
+        preset={null}
+        onDraft={onDraft}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
+      />
+    )
+    const input = screen.getByRole('textbox', { name: 'recallPage.message' })
+    expect(input).toBeEnabled()
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '検索' } })
+    fireEvent.compositionEnd(input)
+    await waitFor(() => expect(onDraft).toHaveBeenLastCalledWith('検索'))
+    expect(onCompositionStart).toHaveBeenCalledOnce()
+    expect(onCompositionEnd).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'recallPage.send' })).toBeDisabled()
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('selects the evidence for an older answer when its citation is clicked', async () => {
+    const question = (id: string, parentId: string | null) => ({
+      id,
+      parentId,
+      role: 'user',
+      contentJson: JSON.stringify([{ type: 'text', text: id }]),
+      metadataJson: '{"custom":{}}',
+      statusJson: null,
+      createdAt: 1,
+    })
+    const answer = (id: string, parentId: string, clipId: string) => ({
+      id,
+      parentId,
+      role: 'assistant',
+      contentJson: JSON.stringify([{ type: 'text', text: id + ' [1](#clip-1)' }]),
+      metadataJson: JSON.stringify({
+        custom: { citations: [{ number: 1, clipId, revision: 'r' }] },
+      }),
+      statusJson: '{"type":"complete","reason":"stop"}',
+      createdAt: 2,
+    })
+    history = {
+      thread: { ...thread, headMessageId: 'new-answer' },
+      messages: [
+        question('old-question', null),
+        answer('old-answer', 'old-question', 'old-clip'),
+        question('new-question', 'old-answer'),
+        answer('new-answer', 'new-question', 'new-clip'),
+      ],
+      sources: ['old', 'new'].map(id => ({
+        id,
+        messageId: id + '-answer',
+        clipId: id + '-clip',
+        assetHash: null,
+        available: false,
+        snapshotJson: JSON.stringify({
+          clip: { id: id + '-clip', revision: 'r' },
+          kind: 'captured',
+          text: id + ' evidence',
+        }),
+      })),
+    }
+    const run = vi.fn()
+    vi.mocked(createRecallAdapter).mockReturnValue({ run })
+    render(<RecallChat {...props()} />)
+    await screen.findByText('new evidence')
+    expect(screen.queryByText('old evidence')).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: 'recallPage.citation' })[0]!)
+    expect(await screen.findByText('old evidence')).toBeInTheDocument()
+    expect(screen.queryByText('new evidence')).toBeNull()
+    expect(run).not.toHaveBeenCalled()
   })
 })

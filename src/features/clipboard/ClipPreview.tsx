@@ -69,7 +69,13 @@ export const ViewTabIcon = ({
   )
 }
 
-export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSummary }) {
+export const ClipPreview = memo(function ClipPreview({
+  clip,
+  trackHistorySearch = true,
+}: {
+  clip: ClipSummary
+  trackHistorySearch?: boolean
+}) {
   const { t, i18n } = useTranslation()
   const [previewContainer, setPreviewContainer] = useState<HTMLDivElement | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
@@ -529,6 +535,7 @@ export const ClipPreview = memo(function ClipPreview({ clip }: { clip: ClipSumma
       <div className="flex-1 overflow-hidden p-0 relative">
         <div className={`h-full ${selectedResultId ? 'hidden' : ''}`}>
           <V2ViewPanel
+            trackHistorySearch={trackHistorySearch}
             key={clip.id}
             clipId={clip.id}
             visible={!selectedResultId}

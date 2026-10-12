@@ -1472,20 +1472,17 @@
     "manualModelHelp": "Compatibility will be checked when the model is used.",
     "catalogReported": "Compatibility reported by the provider.",
     "catalogInferred": "Purpose identified from a known model family; execution is not yet verified.",
-
     "installedModels": "Installed models",
     "availableModels": "Available models",
     "catalogHelp": "Discover models from this connection, then configure one for a feature.",
     "catalogEmpty": "Discover models to browse this connection. You can also add a model ID manually below.",
     "unknownPurpose": "Capability not reported",
-
     "activeTitle": "Active models",
     "savedTitle": "Saved configurations",
     "savedHelp": "Manage connections and the models available for each feature.",
     "manage": "Manage",
     "allConfigurations": "All configurations",
     "modelCount": "{{count}} models",
-
     "title": "Models, your way",
     "description": "Connect your providers once. Choose the right model for each feature.",
     "sectionDescription": "Providers, models, and feature assignments",
@@ -1580,5 +1577,22 @@
       "invalid_response": "The provider returned an unsupported response.",
       "input_limit": "This configuration exceeds the allowed size."
     }
+  },
+  "recallContext": {
+    "title": "Context",
+    "close": "Close context",
+    "viewContext": "View context",
+    "answerContext": "Context for answer",
+    "latest": "Latest answer",
+    "followLatest": "Follow latest answer",
+    "read": "Read & attached context",
+    "readHelp": "Evidence inspected for this answer. Numbered references link back here.",
+    "nothingRead": "No clipboard evidence has been read for this answer.",
+    "found": "Found by the agent",
+    "suggestions": "Suggestions for your draft",
+    "suggestionHelp": "Local matches while you type. Attach a clip to send it with your next message; suggestions are not sent automatically.",
+    "typeToFind": "Type a message to find matching clips.",
+    "backToContext": "← Back to context",
+    "closePreview": "Close preview"
   }
 }

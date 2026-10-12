@@ -2,17 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import * as Dialog from '@radix-ui/react-dialog'
-import {
-  Sparkles,
-  Search,
-  X,
-  SlidersHorizontal,
-  Paperclip,
-  ArrowLeft,
-  PanelLeft,
-} from 'lucide-react'
+import { Sparkles, PanelRight, X, SlidersHorizontal, Paperclip, PanelLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button, Input, Select, Tabs } from '../../shared/components/ui'
+import { Button, Input, Select } from '../../shared/components/ui'
 import { DocumentationLink } from '../../shared/components/DocumentationLink'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import type { ClipDetail, ClipSummary } from '../../shared/types/v2'
@@ -47,6 +39,7 @@ export function RecallPage({
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const [query, setQuery] = useState(initialQuery)
+  const [draftSeed, setDraftSeed] = useState(initialAsk ? '' : initialQuery)
   const [filters, storeFilters] = useState(initialFilters)
   const [status, setStatus] = useState<ClipboardStatus | null>(null)
   const [facets, setFacets] = useState<ClipboardFilters | null>(null)
@@ -63,14 +56,16 @@ export function RecallPage({
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(Boolean(initialQuery) && !initialAsk)
+  const [contextOpen, setContextOpen] = useState(() => window.innerWidth >= 1280)
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024)
-  const [pane, setPane] = useState(initialQuery && !initialAsk ? 'find' : 'chat')
   const [attachmentLabels, setAttachmentLabels] = useState<Record<string, string>>({})
   const busyRef = useRef(false)
   const [preview, setPreview] = useState<ClipSummary | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const previewRequest = useRef({ generation: 0 })
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
-  const searchToggle = useRef<HTMLButtonElement | null>(null)
+  const contextToggle = useRef<HTMLButtonElement | null>(null)
   const sidebarToggle = useRef<HTMLButtonElement | null>(null)
   const previewFocus = useRef<HTMLElement | null>(null)
   const threadAdapter = useMemo(() => createConversationThreadAdapter(), [])
@@ -79,16 +74,16 @@ export function RecallPage({
     filters,
     status?.semanticReady ?? false,
     undefined,
-    searchOpen
+    Boolean(query.trim()) && !running
   )
   const setFilters = (next: import('react').SetStateAction<ClipFilters>) => {
     search.invalidate()
     storeFilters(next)
   }
-  const changeQuery = (next: string) => {
-    search.invalidate()
+  const changeQuery = useCallback((next: string) => {
+    setDraftSeed('')
     setQuery(next)
-  }
+  }, [])
   const selected = [...(search.keyword?.items ?? []), ...search.related].find(
     item => item.clip.id === search.selectedId
   )
@@ -208,18 +203,44 @@ export function RecallPage({
     setThread(next)
     await reloadThreads()
   }
-  const openSource = useCallback(
-    (id: string) => {
-      previewFocus.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null
-      void (async () => {
-        await invoke('assistant_read_clip', { request: { clipId: id } })
-        const detail = await invoke<ClipDetail>('get_clip_detail', { clipId: id })
-        setPreview(detail.clip)
-      })().catch(fail)
-    },
-    [fail]
-  )
+  const closePreview = useCallback(() => {
+    previewRequest.current.generation++
+    setPreview(null)
+    setPreviewLoading(false)
+    setPreviewFailed(false)
+    if (previewFocus.current?.isConnected) previewFocus.current.focus()
+  }, [])
+  useEffect(() => {
+    // Thread changes and unmount invalidate a pending preview.
+    const pending = previewRequest.current
+    pending.generation++
+    setPreview(null)
+    setPreviewLoading(false)
+    setPreviewFailed(false)
+    return () => {
+      pending.generation++
+    }
+  }, [thread?.id])
+  const openSource = useCallback((id: string) => {
+    previewFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const request = ++previewRequest.current.generation
+    setContextOpen(true)
+    setPreview(null)
+    setPreviewLoading(true)
+    setPreviewFailed(false)
+    void (async () => {
+      await invoke('assistant_read_clip', { request: { clipId: id } })
+      const detail = await invoke<ClipDetail>('get_clip_detail', { clipId: id })
+      if (request === previewRequest.current.generation) setPreview(detail.clip)
+    })()
+      .catch(() => {
+        if (request === previewRequest.current.generation) setPreviewFailed(true)
+      })
+      .finally(() => {
+        if (request === previewRequest.current.generation) setPreviewLoading(false)
+      })
+  }, [])
   const copy = (id: string) =>
     void invoke('execute_clipboard_output', {
       request: { disposition: 'copy', source: { kind: 'original', clipId: id } },
@@ -237,14 +258,18 @@ export function RecallPage({
         : [...current, { clipId: item.clip.id, revision: item.clip.revision }].slice(0, 10)
     )
   }
-  const openSearch = () => {
-    setSearchOpen(true)
-    setPane('find')
+  const openContext = () => {
+    previewRequest.current.generation++
+    setPreview(null)
+    setPreviewLoading(false)
+    setPreviewFailed(false)
+    setContextOpen(true)
   }
-  const closeSearch = () => {
-    setSearchOpen(false)
-    setPane('chat')
-    searchToggle.current?.focus()
+  const closeContext = () => {
+    closePreview()
+    setContextOpen(false)
+    // The narrow drawer must release its focus trap before focusing its trigger.
+    requestAnimationFrame(() => contextToggle.current?.focus())
   }
   const scopeLabels = [
     filters.scope && filters.scope !== 'all'
@@ -273,11 +298,6 @@ export function RecallPage({
       ? t('recallPage.excludedCount', { count: search.filters.excludedClipIds.length })
       : null,
   ].filter(Boolean)
-  const askNow = () => {
-    if (!query.trim() || !preset || running || search.composing) return
-    setAsk({ id: crypto.randomUUID(), text: query.trim() })
-    closeSearch()
-  }
   const resultRow = (item: ClipMatch) => (
     <li
       key={item.clip.id}
@@ -314,7 +334,10 @@ export function RecallPage({
             next.focus()
           }
         }}
-        onClick={() => search.setSelectedId(item.clip.id)}
+        onClick={() => {
+          search.setSelectedId(item.clip.id)
+          openSource(item.clip.id)
+        }}
         aria-pressed={selected?.clip.id === item.clip.id}
       >
         <span className="block line-clamp-3 whitespace-pre-wrap break-words text-xs font-medium text-slate-800 dark:text-slate-100">
@@ -348,7 +371,10 @@ export function RecallPage({
           className="h-6 rounded-md px-2 text-xs"
           onClick={() => attach(item)}
           disabled={
-            running || attachments.length >= 10 || attachments.some(a => a.clipId === item.clip.id)
+            search.pending ||
+            running ||
+            attachments.length >= 10 ||
+            attachments.some(a => a.clipId === item.clip.id)
           }
         >
           {t('recallPage.attach')}
@@ -357,6 +383,7 @@ export function RecallPage({
           size="sm"
           variant="ghost"
           className="h-6 rounded-md px-2 text-xs"
+          disabled={running || search.pending}
           onClick={() => search.dismiss(item.clip.id)}
         >
           {t('recallPage.dismiss')}
@@ -364,71 +391,12 @@ export function RecallPage({
       </div>
     </li>
   )
-  const find = (
-    <section
-      className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/60 bg-slate-100/30 dark:border-white/10 dark:bg-slate-100/5"
-      aria-label={t('recallPage.find')}
-    >
-      <div className="shrink-0 space-y-2.5 border-b border-slate-200/60 p-3.5 dark:border-white/5">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-            <Search size={14} className="text-violet-500" aria-hidden="true" />
-            {t('recallPage.find')}
-          </h2>
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 rounded-lg px-2 text-xs lg:hidden"
-              onClick={closeSearch}
-            >
-              <ArrowLeft size={13} aria-hidden="true" />
-              {t('recallPage.chat')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="size-7 rounded-lg p-0"
-              aria-label={t('common.close')}
-              onClick={closeSearch}
-            >
-              <X size={14} aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
-        <form
-          onSubmit={event => {
-            event.preventDefault()
-            if (!search.composing) search.retrieve()
-          }}
-          className="flex items-end gap-2"
-        >
-          <Input
-            label={t('recallPage.search')}
-            value={query}
-            onChange={changeQuery}
-            className="flex-1 text-xs"
-            placeholder={t('recallPage.searchPlaceholder')}
-            onCompositionStart={search.compositionStart}
-            onCompositionEnd={search.compositionEnd}
-            onKeyDown={event => {
-              if (event.nativeEvent.isComposing || search.composing) {
-                if (event.key === 'Enter') event.preventDefault()
-              }
-            }}
-          />
-          <Button type="submit" size="sm" variant="outline" className="h-8 rounded-xl px-3 text-xs">
-            {t('recallPage.find')}
-          </Button>
-          <Button
-            size="sm"
-            className="h-8 rounded-xl px-3.5 text-xs shadow-xs"
-            disabled={!query.trim() || !preset || running || search.composing}
-            onClick={askNow}
-          >
-            {t('recallPage.ask')}
-          </Button>
-        </form>
+  const suggestions = (
+    <section aria-label={t('recallContext.suggestions')}>
+      <div className="space-y-2.5">
+        <p className="text-xs leading-relaxed text-slate-500">
+          {t('recallContext.suggestionHelp')}
+        </p>
         <details className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-2 text-xs dark:border-white/5 dark:bg-white/[0.02]">
           <summary className="cursor-pointer font-medium text-slate-600 outline-none select-none hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:text-slate-300 dark:hover:text-slate-100">
             {t('recallPage.filters')}
@@ -528,48 +496,55 @@ export function RecallPage({
           </fieldset>
         </details>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3.5 custom-scrollbar">
-        <div className="mb-2.5 flex items-center justify-between text-[11px] font-medium text-slate-500">
-          <span>{t('recallPage.keywordMatches')}</span>
-          <span
-            role="status"
-            className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] dark:bg-white/5"
-          >
-            {search.pending
-              ? t('recallPage.searching')
-              : t('recallPage.resultCount', { count: search.keyword?.items.length ?? 0 })}
-          </span>
-        </div>
-        {search.error && (
-          <p role="alert" className="text-xs text-red-600">
-            {t('recallPage.searchFailed')}
-          </p>
+      <div className="mt-3">
+        {!query.trim() && (
+          <p className="py-4 text-xs text-slate-500">{t('recallContext.typeToFind')}</p>
         )}
-        {!search.pending && !search.error && search.keyword?.items.length === 0 && (
-          <p className="py-5 text-xs text-slate-500">{t('recallPage.noMatches')}</p>
-        )}
-        <ul className="space-y-2">{search.keyword?.items.map(resultRow)}</ul>
-        {search.keyword?.nextCursor && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="mt-2 h-7 rounded-lg text-xs"
-            disabled={search.pending || search.paging}
-            onClick={() => void search.loadMore()}
-          >
-            {t('recallPage.moreResults')}
-          </Button>
-        )}
-        {search.related.length > 0 && (
+        {query.trim() && (
           <>
-            <h3 className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              {t('recallPage.relatedMatches')}
-            </h3>
-            <ul className="space-y-2">{search.related.map(resultRow)}</ul>
+            <div className="mb-2.5 flex items-center justify-between text-[11px] font-medium text-slate-500">
+              <span>{t('recallPage.keywordMatches')}</span>
+              <span
+                role="status"
+                className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] dark:bg-white/5"
+              >
+                {search.pending
+                  ? t('recallPage.searching')
+                  : t('recallPage.resultCount', { count: search.keyword?.items.length ?? 0 })}
+              </span>
+            </div>
+            {search.error && (
+              <p role="alert" className="text-xs text-red-600">
+                {t('recallPage.searchFailed')}
+              </p>
+            )}
+            {!search.pending && !search.error && search.keyword?.items.length === 0 && (
+              <p className="py-5 text-xs text-slate-500">{t('recallPage.noMatches')}</p>
+            )}
+            <ul className="space-y-2">{search.keyword?.items.map(resultRow)}</ul>
+            {search.keyword?.nextCursor && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-2 h-7 rounded-lg text-xs"
+                disabled={search.pending || search.paging}
+                onClick={() => void search.loadMore()}
+              >
+                {t('recallPage.moreResults')}
+              </Button>
+            )}
+            {search.related.length > 0 && (
+              <>
+                <h3 className="mt-4 mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  {t('recallPage.relatedMatches')}
+                </h3>
+                <ul className="space-y-2">{search.related.map(resultRow)}</ul>
+              </>
+            )}
+            {search.keyword && !search.keyword.exhaustive && (
+              <p className="mt-3 text-xs text-amber-600">{t('recallPage.retrievalIncomplete')}</p>
+            )}
           </>
-        )}
-        {search.keyword && !search.keyword.exhaustive && (
-          <p className="mt-3 text-xs text-amber-600">{t('recallPage.retrievalIncomplete')}</p>
         )}
       </div>
     </section>
@@ -618,7 +593,7 @@ export function RecallPage({
       <div className="shrink-0 border-b border-slate-200/50 bg-slate-50/50 px-3.5 py-2 flex items-center justify-between gap-2 dark:border-white/5 dark:bg-white/[0.01]">
         <button
           type="button"
-          onClick={openSearch}
+          onClick={openContext}
           className="group flex max-w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-slate-500 transition-colors hover:bg-violet-50 hover:text-violet-600 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:hover:bg-violet-500/10 dark:hover:text-violet-300"
         >
           <SlidersHorizontal
@@ -631,30 +606,79 @@ export function RecallPage({
           </span>
         </button>
       </div>
-      {thread ? (
-        <RecallChat
-          key={thread.id}
-          composerToolbar={composerToolbar}
-          composerAttachments={composerAttachments}
-          onOpenSearch={openSearch}
-          thread={thread}
-          preset={preset}
-          filters={search.filters}
-          attachments={attachments}
-          ask={ask}
-          onAskConsumed={() => {
-            setAsk(null)
-            if (initialAsk) onInitialAskConsumed?.()
-          }}
-          onRunning={setRunning}
-          onComplete={() => {
-            void reloadThreads().catch(() => undefined)
-          }}
-          onOpenSource={openSource}
-        />
-      ) : (
-        <p className="p-4 text-xs text-slate-500">{t('common.loading')}</p>
-      )}
+      <div className="min-h-0 flex-1">
+        {thread ? (
+          <RecallChat
+            key={thread.id}
+            composerToolbar={composerToolbar}
+            composerAttachments={composerAttachments}
+            contextOpen={contextOpen}
+            onContextOpen={openContext}
+            onContextClose={closeContext}
+            suggestions={suggestions}
+            preview={
+              preview || previewLoading || previewFailed ? (
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200/60 p-2 dark:border-white/10">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-xs"
+                      onClick={closePreview}
+                    >
+                      {t('recallContext.backToContext')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="size-8 px-0"
+                      aria-label={t('recallContext.closePreview')}
+                      onClick={closePreview}
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </Button>
+                  </div>
+                  <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+                    {preview && (
+                      <ClipPreview key={preview.id} clip={preview} trackHistorySearch={false} />
+                    )}
+                    {previewLoading && (
+                      <p role="status" className="p-3 text-xs text-slate-500">
+                        {t('common.loading')}
+                      </p>
+                    )}
+                    {previewFailed && (
+                      <p role="alert" className="p-3 text-xs text-amber-600">
+                        {t('recallPage.missingSource')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : null
+            }
+            initialDraft={draftSeed}
+            onDraft={changeQuery}
+            onCompositionStart={search.compositionStart}
+            onCompositionEnd={search.compositionEnd}
+            thread={thread}
+            preset={preset}
+            filters={search.filters}
+            attachments={attachments}
+            ask={ask}
+            onAskConsumed={() => {
+              setAsk(null)
+              if (initialAsk) onInitialAskConsumed?.()
+            }}
+            onRunning={setRunning}
+            onComplete={() => {
+              void reloadThreads().catch(() => undefined)
+            }}
+            onOpenSource={openSource}
+          />
+        ) : (
+          <p className="p-4 text-xs text-slate-500">{t('common.loading')}</p>
+        )}
+      </div>
     </section>
   )
   return (
@@ -689,19 +713,29 @@ export function RecallPage({
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              variant={searchOpen ? 'outline' : 'ghost'}
-              ref={searchToggle}
-              aria-expanded={searchOpen}
-              aria-label={t('recallPage.browseClips')}
-              onClick={searchOpen ? closeSearch : openSearch}
+              variant={contextOpen ? 'outline' : 'ghost'}
+              ref={contextToggle}
+              aria-expanded={contextOpen}
+              aria-label={t('recallContext.title')}
+              onClick={contextOpen ? closeContext : openContext}
               className={`h-8 rounded-xl text-xs gap-1.5 ${
-                searchOpen
+                Boolean(query.trim()) && !running
                   ? 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/30 dark:text-violet-300'
                   : ''
               }`}
             >
-              <Search size={13} aria-hidden="true" />
-              <span className="hidden sm:inline">{t('recallPage.browseClips')}</span>
+              <PanelRight size={13} aria-hidden="true" />
+              <span className="hidden sm:inline">{t('recallContext.title')}</span>
+              {query.trim() && (
+                <span
+                  className="rounded bg-violet-500/10 px-1.5 text-[10px]"
+                  aria-label={t('recallPage.resultCount', {
+                    count: (search.keyword?.items.length ?? 0) + search.related.length,
+                  })}
+                >
+                  {(search.keyword?.items.length ?? 0) + search.related.length}
+                </span>
+              )}
             </Button>
             <DocumentationLink guide="recall" label={t('documentation.recallGuide')} compact />
           </div>
@@ -716,7 +750,7 @@ export function RecallPage({
         </p>
       )}
       <div className="relative flex min-h-0 flex-1 gap-3 overflow-hidden">
-        <div className={pane === 'find' ? 'hidden shrink-0 xl:flex' : 'flex shrink-0'}>
+        <div className="flex shrink-0">
           <ThreadSidebar
             threads={threads}
             thread={thread}
@@ -737,6 +771,7 @@ export function RecallPage({
                 setAttachmentLabels({})
                 setAsk(null)
                 await reloadThreads()
+                if (window.innerWidth < 1024) setSidebarOpen(false)
               })
             }
             onLoadMore={() =>
@@ -767,21 +802,7 @@ export function RecallPage({
             }}
           />
         </div>
-        <Tabs
-          className="min-h-0 flex-1 flex flex-col"
-          activeTab={pane}
-          onTabChange={setPane}
-          keepMounted
-          listClassName="hidden"
-          panelsClassName={`min-h-0 flex-1 grid grid-cols-1 overflow-hidden ${
-            searchOpen ? 'xl:grid-cols-[minmax(0,1fr)_340px] gap-3' : ''
-          }`}
-          panelClassName={`min-h-0 h-full overflow-hidden ${searchOpen ? 'xl:data-[state=inactive]:block' : ''}`}
-          tabs={[
-            { id: 'chat', label: t('recallPage.chat'), content: chat },
-            { id: 'find', label: t('recallPage.find'), content: find },
-          ]}
-        />
+        <div className="min-h-0 min-w-0 flex-1">{chat}</div>
       </div>
       <Dialog.Root
         open={deleteTargetId !== null}
@@ -827,34 +848,6 @@ export function RecallPage({
                 {t('recallPage.deleteThread')}
               </Button>
             </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      <Dialog.Root
-        open={preview !== null}
-        onOpenChange={open => {
-          if (!open) setPreview(null)
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[90] bg-black/30" />
-          <Dialog.Content
-            onCloseAutoFocus={event => {
-              event.preventDefault()
-              if (previewFocus.current?.isConnected) previewFocus.current.focus()
-            }}
-            className="fixed inset-4 z-[91] flex min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-100 p-3 outline-none dark:border-white/10 dark:bg-slate-950"
-          >
-            <Dialog.Title className="text-sm font-semibold">{t('recallPage.preview')}</Dialog.Title>
-            <Dialog.Description className="sr-only">
-              {t('recallPage.sourcePreview')}
-            </Dialog.Description>
-            <div className="min-h-0 flex-1">{preview && <ClipPreview clip={preview} />}</div>
-            <Dialog.Close asChild>
-              <Button size="sm" variant="outline">
-                {t('common.close')}
-              </Button>
-            </Dialog.Close>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useClipboardStore } from '../../stores/clipboardStore'
 import { ExtensionCustomView, V2ViewPanel } from './V2ViewPanel'
 
 const { invokeMock, listenMock, unlistenMock } = vi.hoisted(() => ({
@@ -356,4 +357,83 @@ describe('V2ViewPanel resolver boundary', () => {
     expect(screen.getByText('The bundled script could not load.')).toBeInTheDocument()
     boundsMock.mockRestore()
   })
+  it.each([true, false])(
+    'uses History staleness only when trackHistorySearch=%s',
+    async trackHistorySearch => {
+      useClipboardStore.setState({ resultsStale: true })
+      let stateListener:
+        | ((event: {
+            payload: { token: string; label: string; state: string; message: null }
+          }) => void)
+        | undefined
+      listenMock.mockImplementation((event: string, listener: typeof stateListener) => {
+        if (event === 'extension-custom-view-state') stateListener = listener
+        return Promise.resolve(unlistenMock)
+      })
+      invokeMock.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === 'open_extension_custom_view'
+            ? { token: 'token', label: 'surface', entryUrl: 'extension:' }
+            : undefined
+        )
+      )
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe() {}
+          disconnect() {}
+        }
+      )
+      const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 0,
+        y: 0,
+        width: 600,
+        height: 400,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 400,
+        toJSON: () => ({}),
+      })
+      const mounted = render(
+        <ExtensionCustomView
+          clipId="clip"
+          trackHistorySearch={trackHistorySearch}
+          view={{
+            id: 'view',
+            rendererId: 'sample.renderer',
+            label: 'Sample',
+            sourceId: 'rep',
+            mimeType: 'text/plain',
+            capabilityId: 'text.plain',
+            facetId: null,
+            iconSvg: null,
+            iconSvgDark: null,
+            iconScale: 1,
+            isOriginal: true,
+            presentationKind: 'extension_ui',
+            purpose: 'source',
+            matchSpecificity: 0,
+            placement: 'primary',
+          }}
+        />
+      )
+      await waitFor(() =>
+        expect(invokeMock).toHaveBeenCalledWith('open_extension_custom_view', expect.anything())
+      )
+      act(() => {
+        stateListener?.({
+          payload: { token: 'token', label: 'surface', state: 'ready', message: null },
+        })
+        window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: false } }))
+      })
+      expect(invokeMock).toHaveBeenCalledWith(
+        'sync_extension_custom_view',
+        expect.objectContaining({ label: 'surface', visible: !trackHistorySearch })
+      )
+      mounted.unmount()
+      bounds.mockRestore()
+      useClipboardStore.setState({ resultsStale: false })
+    }
+  )
 })

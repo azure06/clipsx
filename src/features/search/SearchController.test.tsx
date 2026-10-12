@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 describe('search input scheduling', () => {
-  it('shows every character immediately but submits only after 300 ms idle', async () => {
+  it('shows every character immediately but submits only after 75 ms idle', async () => {
     render(<SearchController />)
     const input = screen.getByRole('combobox')
     fireEvent.change(input, { target: { value: 'd' } })
@@ -30,10 +30,10 @@ describe('search input scheduling', () => {
     expect(useClipboardStore.getState().resultsStale).toBe(true)
     expect(input.parentElement).toHaveAttribute('aria-busy', 'true')
     expect(input.parentElement?.querySelector('.search-loading-beam')).toBeInTheDocument()
-    await act(() => vi.advanceTimersByTimeAsync(250))
+    await act(() => vi.advanceTimersByTimeAsync(50))
     fireEvent.change(input, { target: { value: 'doc' } })
     expect(input).toHaveValue('doc')
-    await act(() => vi.advanceTimersByTimeAsync(299))
+    await act(() => vi.advanceTimersByTimeAsync(74))
     expect(invokeMock).not.toHaveBeenCalled()
     await act(() => vi.advanceTimersByTimeAsync(1))
     expect(invokeMock).toHaveBeenCalledTimes(1)
@@ -54,7 +54,7 @@ describe('search input scheduling', () => {
     await act(() => vi.advanceTimersByTimeAsync(1000))
     expect(invokeMock).not.toHaveBeenCalled()
     fireEvent.compositionEnd(input)
-    await act(() => vi.advanceTimersByTimeAsync(300))
+    await act(() => vi.advanceTimersByTimeAsync(75))
     expect(invokeMock).toHaveBeenCalledWith('search_clips', {
       request: expect.objectContaining({ query: '検索' }) as unknown,
     })
@@ -65,12 +65,12 @@ describe('search input scheduling', () => {
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'old' } })
     act(() => useUIStore.getState().resetSearch())
     expect(screen.getByRole('combobox')).toHaveValue('')
-    await act(() => vi.advanceTimersByTimeAsync(300))
+    await act(() => vi.advanceTimersByTimeAsync(75))
     expect(invokeMock).toHaveBeenCalledWith('list_clips', expect.anything())
     invokeMock.mockClear()
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'never submitted' } })
     unmount()
-    await act(() => vi.advanceTimersByTimeAsync(300))
+    await act(() => vi.advanceTimersByTimeAsync(75))
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
@@ -78,7 +78,7 @@ describe('search input scheduling', () => {
     render(<SearchController />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'latest' } })
     act(() => useUIStore.getState().setSemanticActive(false))
-    await act(() => vi.advanceTimersByTimeAsync(300))
+    await act(() => vi.advanceTimersByTimeAsync(75))
     expect(invokeMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith('search_clips', {
       request: expect.objectContaining({

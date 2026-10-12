@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { KEYWORD_DELAY_MS, SEMANTIC_DELAY_MS } from '../search/progressive'
 import type {
   ClipFilters,
   ClipMatch,
@@ -92,9 +93,14 @@ export function useProgressiveSearch(
       }
       setPending(true)
       if (immediate) void run('keyword', token, requestFilters)
-      else timers.current.push(setTimeout(() => void run('keyword', token, requestFilters), 75))
+      else
+        timers.current.push(
+          setTimeout(() => void run('keyword', token, requestFilters), KEYWORD_DELAY_MS)
+        )
       if (semanticReady && query.trim())
-        timers.current.push(setTimeout(() => void run('hybrid', token, requestFilters), 250))
+        timers.current.push(
+          setTimeout(() => void run('hybrid', token, requestFilters), SEMANTIC_DELAY_MS)
+        )
     },
     [query, frozenFilters, frozenExcluded, semanticReady, composing, run, invalidate]
   )
