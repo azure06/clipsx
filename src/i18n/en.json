@@ -1476,7 +1476,7 @@
     "savedModelUnavailable": "Saved model: {{model}}. Its compatibility is not confirmed in this list.",
     "showUnknownModels": "Include models with unknown capabilities",
     "enterManualModel": "Enter a model ID manually",
-    "manualModelHelp": "Compatibility will be checked when the model is used.",
+    "manualModelHelp": "The provider has not confirmed this model's purpose. Verify compatibility before using it.",
     "catalogReported": "Compatibility reported by the provider.",
     "catalogInferred": "Purpose identified from a known model family; execution is not yet verified.",
     "installedModels": "Installed models",
@@ -1513,7 +1513,9 @@
     "extensionGeneration": "Extension text generation",
     "extensionHelp": "The host generates text for extensions using this model. Hosted providers receive the extension’s text input.",
     "decision": "Decisions",
-    "decisionHelp": "Reserve a decision model for future automation. Configuration and testing are available now; automation is not enabled.",
+    "decisionHelp": "Reserve a decision model for future automation. Ollama models can be tested now; OpenRouter models can be saved but are not executed yet.",
+    "rerank": "Rerank",
+    "rerankHelp": "Reserve an OpenRouter rerank model for future search ranking. Saving it does not send clipboard content or enable reranking.",
     "decisionInstallCommand": "ollama pull laya",
     "webHelp": "Optional Tavily connection. Web access stays off for new conversations.",
     "decisionSetup": "Use an Ollama System One decision model, such as Laya. Install it in Ollama first:",
@@ -1606,9 +1608,9 @@
   },
   "recallReliability": {
     "autoLimits": "Automatic model limits",
-    "autoLimitsHelp": "Use observed model/server limits when available. Exact overrides apply when Auto is off.",
+    "autoLimitsHelp": "Use observed model/server limits when available. When the provider reports none, or Auto is off, the limits below apply.",
     "reportedLimits": "Model limits reported by provider; server restrictions may also apply.",
-    "unverifiedLimits": "Model capacity is unverified; conservative configured limits apply.",
+    "unverifiedLimits": "Model capacity is unverified; the configured limits apply. Adjust them in Advanced.",
     "compacting": "Compacting conversation…",
     "compacted": "Older conversation summarized. The full conversation remains saved."
   }

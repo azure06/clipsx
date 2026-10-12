@@ -34,6 +34,7 @@ beforeEach(() => {
         webSearch: null,
         extensionGeneration: null,
         defaultDecision: null,
+        activeRerank: null,
       },
     },
     connectionStates: [],

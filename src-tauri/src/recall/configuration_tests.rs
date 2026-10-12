@@ -412,6 +412,48 @@ async fn feature_assignments_are_independent_and_old_imports_preserve_new_defaul
 }
 
 #[tokio::test]
+async fn openrouter_decision_and_rerank_presets_round_trip_without_enabling_execution() {
+    let (_root, service) = repository().await;
+    let repo = &service.history;
+    let router = connection(AiProviderKind::Openrouter, "Router");
+    let local = connection(AiProviderKind::Ollama, "Local");
+    let make_preset = |purpose| AiModelPreset {
+        id: new_id(),
+        name: "Specialist".into(),
+        connection_id: router.id.clone(),
+        model_id: "provider/specialist".into(),
+        purpose,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: default_options(),
+        capabilities: unknown_capabilities(),
+    };
+    let decision = make_preset(AiModelPurpose::Decision);
+    let rerank = make_preset(AiModelPurpose::Rerank);
+    let mut config = document(vec![router, local.clone()]);
+    config.version = 3;
+    config.presets = vec![decision.clone(), rerank.clone()];
+    config.selections.default_decision = Some(decision.id.clone());
+    config.selections.active_rerank = Some(rerank.id.clone());
+    import(repo, config.clone()).await.unwrap();
+    let saved = export(repo).await.unwrap();
+    assert_eq!(saved.selections.default_decision, Some(decision.id));
+    assert_eq!(saved.selections.active_rerank, Some(rerank.id.clone()));
+
+    let mut legacy = saved.clone();
+    legacy.version = 2;
+    legacy.selections.active_rerank = None;
+    import(repo, legacy).await.unwrap();
+    assert_eq!(
+        export(repo).await.unwrap().selections.active_rerank,
+        Some(rerank.id)
+    );
+
+    config.presets[1].connection_id = local.id;
+    assert!(import(repo, config).await.is_err());
+}
+
+#[tokio::test]
 async fn existing_registry_backfills_generation_once_and_keeps_disabled_assignments_disabled() {
     let (_root, service) = repository().await;
     let repo = &service.history;

@@ -1476,7 +1476,7 @@
     "savedModelUnavailable": "保存済みモデル: {{model}}。この一覧では対応状況を確認できません。",
     "showUnknownModels": "機能が不明なモデルも表示",
     "enterManualModel": "モデルIDを手動で入力",
-    "manualModelHelp": "モデルの使用時に対応状況が確認されます。",
+    "manualModelHelp": "このモデルの用途はプロバイダーによって確認されていません。使用前に対応状況を確認してください。",
     "catalogReported": "プロバイダーが報告した対応機能です。",
     "catalogInferred": "既知のモデル系列から用途を判定しています。動作は未検証です。",
     "installedModels": "インストール済みのモデル",
@@ -1513,7 +1513,9 @@
     "extensionGeneration": "拡張機能のテキスト生成",
     "extensionHelp": "ホストがこのモデルで拡張機能のテキストを生成します。ホスト型プロバイダーには拡張機能の入力テキストが送信されます。",
     "decision": "判断モデル",
-    "decisionHelp": "将来の自動化用に判断モデルを選択します。現在は設定とテストに対応しており、自動化は有効になりません。",
+    "decisionHelp": "将来の自動化用に判断モデルを予約します。Ollamaモデルは現在テストできます。OpenRouterモデルは保存できますが、まだ実行されません。",
+    "rerank": "再ランキング",
+    "rerankHelp": "将来の検索用にOpenRouterの再ランキングモデルを予約します。保存してもクリップボードの内容は送信されず、再ランキングも有効になりません。",
     "decisionInstallCommand": "ollama pull laya",
     "webHelp": "任意のTavily接続です。新しい会話のWebアクセスはオフのままです。",
     "decisionSetup": "Layaなど、OllamaのSystem One判断モデルを使います。先にOllamaでインストールしてください：",
@@ -1606,9 +1608,9 @@
   },
   "recallReliability": {
     "autoLimits": "モデルの上限を自動設定",
-    "autoLimitsHelp": "確認できたモデル・サーバーの上限を使用します。自動設定をオフにすると手動の上限が適用されます。",
+    "autoLimitsHelp": "確認できたモデル・サーバーの上限を使用します。プロバイダーが上限を報告しない場合や自動設定がオフの場合は、下の上限が適用されます。",
     "reportedLimits": "プロバイダーが報告した上限です。サーバー側の制限も適用される場合があります。",
-    "unverifiedLimits": "モデルの容量は未確認です。保守的な設定上限を適用します。",
+    "unverifiedLimits": "モデルの容量は未確認です。設定された上限を適用します。詳細設定で変更できます。",
     "compacting": "会話を要約しています…",
     "compacted": "以前の会話を要約しました。会話の全文は保存されています。"
   }

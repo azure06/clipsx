@@ -188,6 +188,7 @@ pub enum AiModelPurpose {
     Chat,
     Embedding,
     Decision,
+    Rerank,
 }
 dto!(AiConnectionOptions { organization: Option<String>, project: Option<String> });
 dto!(AiConnection {
@@ -271,6 +272,8 @@ pub struct AiSelections {
     pub extension_generation: Option<String>,
     #[serde(default)]
     pub default_decision: Option<String>,
+    #[serde(default)]
+    pub active_rerank: Option<String>,
 }
 dto!(DecisionTestResult {
     choice: String,

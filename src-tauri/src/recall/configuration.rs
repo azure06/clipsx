@@ -164,13 +164,24 @@ fn validate(document: &AiConfiguration) -> Result<()> {
             bail!("unsupported_limit_policy");
         }
         if preset.purpose == AiModelPurpose::Decision
-            && (connection.provider != AiProviderKind::Ollama
-                || opts.temperature.is_some()
+            && (!matches!(
+                connection.provider,
+                AiProviderKind::Ollama | AiProviderKind::Openrouter
+            ) || opts.temperature.is_some()
                 || opts.openai.is_some()
                 || opts.anthropic.is_some()
                 || opts.gemini.is_some())
         {
             bail!("unsupported_decision_provider");
+        }
+        if preset.purpose == AiModelPurpose::Rerank
+            && (connection.provider != AiProviderKind::Openrouter
+                || opts.temperature.is_some()
+                || opts.openai.is_some()
+                || opts.anthropic.is_some()
+                || opts.gemini.is_some())
+        {
+            bail!("unsupported_rerank_provider");
         }
         if opts
             .temperature
@@ -257,6 +268,7 @@ fn validate(document: &AiConfiguration) -> Result<()> {
             &document.selections.active_embedding,
             AiModelPurpose::Embedding,
         ),
+        (&document.selections.active_rerank, AiModelPurpose::Rerank),
     ] {
         if let Some(id) = id {
             let preset = document
@@ -319,6 +331,7 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
             "web_search" => selections.web_search = id,
             "extension_generation" => selections.extension_generation = id,
             "default_decision" => selections.default_decision = id,
+            "active_rerank" => selections.active_rerank = id,
             _ => (),
         }
     }
@@ -347,6 +360,7 @@ async fn persist(tx: &mut SqliteConnection, document: &AiConfiguration) -> Resul
             &document.selections.extension_generation,
         ),
         ("default_decision", &document.selections.default_decision),
+        ("active_rerank", &document.selections.active_rerank),
     ] {
         sqlx::query("INSERT INTO ai_selections(selection_key,selected_id) VALUES(?,?) ON CONFLICT(selection_key) DO UPDATE SET selected_id=excluded.selected_id").bind(key).bind(id).execute(&mut *tx).await?;
     }
@@ -599,6 +613,9 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
         bail!("unsupported_configuration_version");
     }
     merged.selections = incoming.selections;
+    if incoming.version < 3 {
+        merged.selections.active_rerank = current.selections.active_rerank.clone();
+    }
     if incoming.version == 1 {
         merged.selections.extension_generation = current.selections.extension_generation.clone();
         merged.selections.default_decision = current.selections.default_decision.clone();
@@ -816,6 +833,12 @@ fn catalog_purposes(
             if contains(modalities, "embeddings") {
                 purposes.push(AiModelPurpose::Embedding);
             }
+            if contains(modalities, "decisions") {
+                purposes.push(AiModelPurpose::Decision);
+            }
+            if contains(modalities, "rerank") {
+                purposes.push(AiModelPurpose::Rerank);
+            }
             Some(purposes)
         }
         AiProviderKind::Openai => {
@@ -957,44 +980,24 @@ async fn discover_connection(
         providers::hosted_embedding::request_json(connection, &base.join("key")?, credential, None)
             .await?;
     }
-    let value = providers::hosted_embedding::request_json(
-        connection,
-        &base.join("models")?,
-        credential,
-        None,
-    )
-    .await?;
-    let mut rows = value[if connection.provider == AiProviderKind::Gemini {
+    let mut catalog_url = base.join("models")?;
+    if connection.provider == AiProviderKind::Openrouter {
+        catalog_url
+            .query_pairs_mut()
+            .append_pair("output_modalities", "all");
+    }
+    let value =
+        providers::hosted_embedding::request_json(connection, &catalog_url, credential, None)
+            .await?;
+    let rows = value[if connection.provider == AiProviderKind::Gemini {
         "models"
     } else {
         "data"
     }]
     .as_array()
-    .context("invalid_model_catalog")?
-    .clone();
-    rows.truncate(500);
-    if connection.provider == AiProviderKind::Openrouter {
-        let embeddings = providers::hosted_embedding::request_json(
-            connection,
-            &base.join("embeddings/models")?,
-            credential,
-            None,
-        )
-        .await?;
-        for row in embeddings["data"]
-            .as_array()
-            .context("invalid_model_catalog")?
-            .iter()
-            .take(500)
-        {
-            let mut row = row.clone();
-            row["architecture"]["output_modalities"] = serde_json::json!(["embeddings"]);
-            rows.push(row);
-        }
-    }
+    .context("invalid_model_catalog")?;
     Ok(rows
         .iter()
-        .take(1000)
         .filter_map(|row| {
             let id = row[if connection.provider == AiProviderKind::Gemini {
                 "name"
@@ -1078,6 +1081,14 @@ mod discovery_tests {
                 "embed"
             ),
             Some(vec![AiModelPurpose::Embedding])
+        );
+        assert_eq!(
+            catalog_purposes(
+                AiProviderKind::Openrouter,
+                &json!({"architecture":{"output_modalities":["decisions", "rerank"]}}),
+                "specialist"
+            ),
+            Some(vec![AiModelPurpose::Decision, AiModelPurpose::Rerank])
         );
         assert_eq!(
             catalog_purposes(AiProviderKind::Anthropic, &json!({}), "claude"),

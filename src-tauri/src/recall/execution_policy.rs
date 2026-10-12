@@ -18,12 +18,18 @@ pub fn resolve(
     let separate_input = information.and_then(|m| m.input_limit);
     let known_output = information.and_then(|m| m.output_limit);
     let capacity = shared.or(separate_input);
-    let context = if auto {
+    // A server that reports no runtime window keeps the small fallback. Otherwise an
+    // unreported capacity uses the preset's numbers, which the user can edit.
+    let server_unknown = information.is_some_and(|m| m.source == "runtime_context_unknown");
+    let unreported = auto && capacity.is_none() && !server_unknown;
+    let context = if auto && !unreported {
         capacity.unwrap_or(8192).min(32768)
     } else {
         preset.context_limit.min(capacity.unwrap_or(u32::MAX))
     };
-    let output = if auto {
+    let output = if unreported {
+        preset.output_limit.min(known_output.unwrap_or(u32::MAX))
+    } else if auto {
         (context / 4)
             .min(8192)
             .min(known_output.unwrap_or(u32::MAX))
@@ -117,7 +123,23 @@ mod tests {
         let mut p = preset();
         p.options.limit_policy = Some(AiLimitPolicy::Auto);
         let fallback = resolve(&p, None, None).unwrap();
-        assert_eq!((fallback.input_limit, fallback.output_limit), (6144, 2048));
+        assert_eq!(
+            (fallback.context_limit, fallback.output_limit),
+            (32768, 4096)
+        );
+        assert!(fallback.estimated);
+        p.context_limit = 131072;
+        p.output_limit = 8192;
+        let edited = resolve(&p, None, None).unwrap();
+        assert_eq!((edited.input_limit, edited.output_limit), (122880, 8192));
+        let mut unknown_server = info();
+        unknown_server.source = "runtime_context_unknown".into();
+        unknown_server.runtime_context_limit = None;
+        unknown_server.output_limit = None;
+        let small = resolve(&p, Some(&unknown_server), None).unwrap();
+        assert_eq!((small.input_limit, small.output_limit), (6144, 2048));
+        p.context_limit = 32768;
+        p.output_limit = 4096;
         let mut i = info();
         i.runtime_context_limit = None;
         i.context_limit = None;
@@ -131,6 +153,7 @@ mod tests {
     fn selected_budget_uses_the_effective_output_allowance() {
         let mut p = preset();
         p.options.limit_policy = Some(AiLimitPolicy::Auto);
+        p.output_limit = 2048;
         assert!(resolve(&p, None, Some(ReasoningSelection::Budget { tokens: 2048 })).is_err());
         assert!(resolve(&p, None, Some(ReasoningSelection::Budget { tokens: 1024 })).is_ok());
     }

@@ -142,12 +142,10 @@ describe('context coordinator', () => {
   })
   it('reuses branch-validated summaries without generating again', async () => {
     const config = options()
-    const load = vi
-      .fn()
-      .mockResolvedValue({
-        inputFingerprint: 'f',
-        summary: { text: 'Existing goal', coveredMessageId: 'old-answer' },
-      })
+    const load = vi.fn().mockResolvedValue({
+      inputFingerprint: 'f',
+      summary: { text: 'Existing goal', coveredMessageId: 'old-answer' },
+    })
     const save = vi.fn()
     const coordinator = new ContextCoordinator({ ...config, persistence: { load, save } })
     const result = await coordinator.prepare(request([...older, question]), question)

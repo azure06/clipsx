@@ -35,6 +35,12 @@ export function ModelEditor({
     model => model.purposes?.includes(preset.purpose) || (showUnknown && model.purposes == null)
   )
   const selectedModel = models.find(model => model.id === preset.modelId)
+  const reportedLimits = Boolean(
+    selectedModel?.modelInformation?.contextLimit || selectedModel?.modelInformation?.inputLimit
+  )
+  // Auto uses reported limits; unreported hosted models use the editable numbers below.
+  const limitsLocked =
+    preset.options.limitPolicy === 'auto' && (reportedLimits || connection.provider === 'ollama')
   const compatible =
     selectedModel?.purposes?.includes(preset.purpose) ||
     (showUnknown && selectedModel && selectedModel.purposes == null)
@@ -52,7 +58,12 @@ export function ModelEditor({
     {
       value: 'decision' as const,
       label: t('modelsWorkspace.decision'),
-      disabled: connection.provider !== 'ollama',
+      disabled: !['ollama', 'openrouter'].includes(connection.provider),
+    },
+    {
+      value: 'rerank' as const,
+      label: t('modelsWorkspace.rerank'),
+      disabled: connection.provider !== 'openrouter',
     },
   ]
   return (
@@ -210,12 +221,14 @@ export function ModelEditor({
             {t(
               preset.purpose === 'decision'
                 ? 'modelsWorkspace.decisionHelp'
-                : preset.purpose === 'embedding'
-                  ? 'aiConfig.embeddingHelp'
-                  : 'aiConfig.capabilityHelp'
+                : preset.purpose === 'rerank'
+                  ? 'modelsWorkspace.rerankHelp'
+                  : preset.purpose === 'embedding'
+                    ? 'aiConfig.embeddingHelp'
+                    : 'aiConfig.capabilityHelp'
             )}
           </p>
-          {preset.purpose === 'decision' && (
+          {preset.purpose === 'decision' && connection.provider === 'ollama' && (
             <div className="rounded-xl bg-amber-500/8 p-3 text-xs leading-5 text-amber-800 dark:text-amber-200">
               {t('modelsWorkspace.decisionSetup')}{' '}
               <code className="rounded bg-amber-500/10 px-1.5 py-0.5">
@@ -230,7 +243,7 @@ export function ModelEditor({
               onChange={hostedIndexingEnabled => setEmbedding({ hostedIndexingEnabled })}
             />
           )}
-          {preset.purpose !== 'decision' && (
+          {!['decision', 'rerank'].includes(preset.purpose) && (
             <details className="rounded-xl border border-slate-200/70 p-3 dark:border-white/10">
               <summary className="cursor-pointer text-xs font-medium text-slate-500">
                 {t('modelsWorkspace.advanced')}
@@ -252,8 +265,7 @@ export function ModelEditor({
                   </p>
                   <p className="text-xs text-slate-500">
                     {t(
-                      selectedModel?.modelInformation?.contextLimit ||
-                        selectedModel?.modelInformation?.inputLimit
+                      reportedLimits
                         ? 'recallReliability.reportedLimits'
                         : 'recallReliability.unverifiedLimits'
                     )}
@@ -263,7 +275,7 @@ export function ModelEditor({
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Input
                   label={t('aiConfig.contextLimit')}
-                  disabled={preset.options.limitPolicy === 'auto'}
+                  disabled={limitsLocked}
                   type="number"
                   min={1024}
                   max={2097152}
@@ -272,7 +284,7 @@ export function ModelEditor({
                 />
                 <Input
                   label={t('aiConfig.outputLimit')}
-                  disabled={preset.options.limitPolicy === 'auto'}
+                  disabled={limitsLocked}
                   type="number"
                   min={1}
                   max={131072}

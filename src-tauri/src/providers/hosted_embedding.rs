@@ -201,11 +201,7 @@ pub(crate) async fn request_json(
 ) -> ProviderResult<Value> {
     let base = validate_connection(connection)
         .map_err(|_| ProviderError::InvalidConfiguration("invalid endpoint".into()))?;
-    if url.origin() != base.origin()
-        || !url.path().starts_with(base.path())
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
+    if !allowed_destination(connection, &base, url) {
         return Err(ProviderError::InvalidConfiguration(
             "invalid destination".into(),
         ));
@@ -263,6 +259,15 @@ pub(crate) async fn request_json(
     }
     serde_json::from_slice(&bytes)
         .map_err(|_| ProviderError::InvalidOutput("invalid provider response".into()))
+}
+fn allowed_destination(connection: &AiConnection, base: &url::Url, url: &url::Url) -> bool {
+    let openrouter_all_models = connection.provider == AiProviderKind::Openrouter
+        && url.path() == format!("{}models", base.path())
+        && url.query() == Some("output_modalities=all");
+    url.origin() == base.origin()
+        && url.path().starts_with(base.path())
+        && (url.query().is_none() || openrouter_all_models)
+        && url.fragment().is_none()
 }
 fn parse_vectors(
     value: &Value,
@@ -323,6 +328,41 @@ fn parse_vectors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_the_openrouter_catalog_accepts_the_all_modalities_query() {
+        let router = provider(AiProviderKind::Openrouter, "symmetric");
+        let catalog = router.base.join("models?output_modalities=all").unwrap();
+        assert!(allowed_destination(
+            &router.connection,
+            &router.base,
+            &catalog
+        ));
+        for destination in [
+            router
+                .base
+                .join("models?output_modalities=decisions")
+                .unwrap(),
+            router
+                .base
+                .join("embeddings?output_modalities=all")
+                .unwrap(),
+            "https://other.example/v1/models?output_modalities=all"
+                .parse()
+                .unwrap(),
+        ] {
+            assert!(!allowed_destination(
+                &router.connection,
+                &router.base,
+                &destination
+            ));
+        }
+        let openai = provider(AiProviderKind::Openai, "symmetric");
+        assert!(!allowed_destination(
+            &openai.connection,
+            &openai.base,
+            &openai.base.join("models?output_modalities=all").unwrap()
+        ));
+    }
     fn provider(kind: AiProviderKind, policy: &str) -> HostedEmbeddingProvider {
         HostedEmbeddingProvider::new(
             AiConnection {

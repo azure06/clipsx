@@ -8,6 +8,7 @@ import {
   Download,
   Globe2,
   Layers3,
+  ListFilter,
   MessageSquare,
   Pencil,
   Plus,
@@ -147,6 +148,13 @@ export function AiConfigurationsPanel() {
       title: t('modelsWorkspace.decision'),
       help: t('modelsWorkspace.decisionHelp'),
       purpose: 'decision',
+    },
+    {
+      key: 'activeRerank',
+      icon: ListFilter,
+      title: t('modelsWorkspace.rerank'),
+      help: t('modelsWorkspace.rerankHelp'),
+      purpose: 'rerank',
     },
     {
       key: 'webSearch',
@@ -334,17 +342,22 @@ export function AiConfigurationsPanel() {
                           onClick={() => {
                             const candidate = current.connections.find(c =>
                               purpose === 'decision'
-                                ? c.provider === 'ollama'
-                                : purpose === 'embedding'
-                                  ? !['tavily', 'anthropic'].includes(c.provider)
-                                  : purpose === 'chat'
-                                    ? c.provider !== 'tavily'
-                                    : c.provider === 'tavily'
+                                ? ['ollama', 'openrouter'].includes(c.provider)
+                                : purpose === 'rerank'
+                                  ? c.provider === 'openrouter'
+                                  : purpose === 'embedding'
+                                    ? !['tavily', 'anthropic'].includes(c.provider)
+                                    : purpose === 'chat'
+                                      ? c.provider !== 'tavily'
+                                      : c.provider === 'tavily'
                             )
                             if (candidate) navigate(candidate.id)
                             else {
                               const next = emptyConnection()
-                              if (!purpose) {
+                              if (purpose === 'rerank') {
+                                next.provider = 'openrouter'
+                                next.baseUrl = endpoints.openrouter
+                              } else if (!purpose) {
                                 next.provider = 'tavily'
                                 next.baseUrl = endpoints.tavily
                               }
@@ -643,7 +656,9 @@ export function AiConfigurationsPanel() {
                               {t(
                                 p.purpose === 'decision'
                                   ? 'modelsWorkspace.decision'
-                                  : `aiConfig.${p.purpose}`
+                                  : p.purpose === 'rerank'
+                                    ? 'modelsWorkspace.rerank'
+                                    : `aiConfig.${p.purpose}`
                               )}
                             </span>
                             {p.capabilities.tools && (
@@ -668,7 +683,7 @@ export function AiConfigurationsPanel() {
                               ))}
                           </div>
                         </div>
-                        {p.purpose === 'decision' && (
+                        {p.purpose === 'decision' && connection.provider === 'ollama' && (
                           <Button
                             variant="outline"
                             size="sm"

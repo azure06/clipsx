@@ -61,13 +61,11 @@ describe('model request overflow recovery', () => {
     expect(doStream).toHaveBeenCalledTimes(2)
   })
   it('never retries an uncertain stream failure after admission', async () => {
-    const doStream = vi
-      .fn()
-      .mockResolvedValue({
-        stream: new ReadableStream({
-          start: c => c.error(new Error('Recall transport: context_overflow')),
-        }),
-      })
+    const doStream = vi.fn().mockResolvedValue({
+      stream: new ReadableStream({
+        start: c => c.error(new Error('Recall transport: context_overflow')),
+      }),
+    })
     const summarize = vi.fn()
     const model = withContextRecovery(new MockLanguageModelV4({ doStream }), {
       questionText: 'Find invoice',

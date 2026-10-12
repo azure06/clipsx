@@ -316,13 +316,23 @@ describe('Native Recall agent', () => {
         ),
         verifyTools: vi.fn(async () => {}),
       }
-      const { commands, requests } = fixtureBridge(provider, (records, phase) =>
-        phase === 'text'
-          ? (JSON.parse(
-              JSON.stringify(records).replace(/verified/g, 'verified [1](#clip-1)')
-            ) as unknown[])
-          : records
-      )
+      const { commands, requests } = fixtureBridge(provider, (records, phase) => {
+        const content =
+          phase === 'text'
+            ? (JSON.parse(
+                JSON.stringify(records).replace(/verified/g, 'verified [1](#clip-1)')
+              ) as unknown[])
+            : records
+        return provider === 'ollama'
+          ? [
+              ...content,
+              {
+                choices: [],
+                usage: { prompt_tokens: 100, completion_tokens: 15, total_tokens: 115 },
+              },
+            ]
+          : content
+      })
       const checkpoint = vi.fn(async () => {})
       const adapter = createRecallAdapter({
         configuration: () => ({
@@ -365,9 +375,13 @@ describe('Native Recall agent', () => {
             generationConfig: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } },
           },
           openrouter: { reasoning: { max_tokens: 1024 } },
-          ollama: { reasoning_effort: 'low' },
+          ollama: { reasoning_effort: 'low', stream_options: { include_usage: true } },
         }[provider]
       )
+      if (provider === 'ollama') {
+        expect(last?.metadata?.custom?.['lastInputTokens']).toBe(100)
+        expect(last?.metadata?.custom?.['generatedTokens']).toBe(30)
+      }
       expect(requests[1]?.body).toContain('verified-evidence')
       expect(checkpoint.mock.calls.length).toBeLessThanOrEqual(2)
     }

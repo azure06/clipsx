@@ -18,6 +18,7 @@ const selectionKeys: Array<keyof AiSelections> = [
   'activeEmbedding',
   'extensionGeneration',
   'defaultDecision',
+  'activeRerank',
   'webSearch',
 ]
 const labelKeys: Record<keyof AiSelections, string> = {
@@ -25,6 +26,7 @@ const labelKeys: Record<keyof AiSelections, string> = {
   activeEmbedding: 'aiConfig.activeEmbedding',
   extensionGeneration: 'modelsWorkspace.extensionGeneration',
   defaultDecision: 'modelsWorkspace.decision',
+  activeRerank: 'modelsWorkspace.rerank',
   webSearch: 'aiConfig.webConnection',
 }
 

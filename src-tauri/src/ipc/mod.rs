@@ -336,6 +336,15 @@ fn factory_reset(
             .as_ref()
             .ok_or("Storage location is unavailable")?,
         &confirmation,
+        |roots| {
+            #[cfg(not(target_os = "windows"))]
+            return crate::recall::credentials::reset_owned(&roots.data.join("ai-credentials"));
+            #[cfg(target_os = "windows")]
+            {
+                let _ = roots;
+                Ok(())
+            }
+        },
     )
     .map_err(|error| error.to_string())
 }

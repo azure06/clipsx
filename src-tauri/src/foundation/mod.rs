@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 24;
+pub const SCHEMA_VERSION: i64 = 25;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +163,7 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
     fs::create_dir_all(&roots.config)?;
     let database = roots.database();
     if database.exists() {
+        recover_interrupted_write(&database).await?;
         let state = inspect_database(&database).await?;
         if state != SchemaState::Ready {
             return Ok(state);
@@ -187,6 +188,17 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// A write interrupted by a crash or restart leaves a hot journal that only a writable
+/// connection can roll back; the read-only inspection below would fail on it.
+async fn recover_interrupted_write(path: &Path) -> Result<()> {
+    let options = SqliteConnectOptions::new().filename(path);
+    let mut connection = SqliteConnection::connect_with(&options).await?;
+    sqlx::query("SELECT count(*) FROM sqlite_master")
+        .execute(&mut connection)
+        .await?;
+    Ok(())
 }
 
 async fn inspect_database(path: &Path) -> Result<SchemaState> {
@@ -249,15 +261,19 @@ pub fn startup_status(state: SchemaState) -> StartupStatus {
     }
 }
 
-pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryResetResult> {
+/// `reset_credentials` runs after confirmation and before owned files are removed,
+/// so host-only credential stores can use the on-disk references they own.
+pub fn factory_reset(
+    roots: &AppRoots,
+    confirmation: &str,
+    reset_credentials: impl FnOnce(&AppRoots) -> Result<()>,
+) -> Result<FactoryResetResult> {
     if confirmation != "RESET CLIPSX" {
         bail!("Factory reset confirmation did not match");
     }
     let mut deleted = Vec::new();
     let mut failures = Vec::new();
-    #[cfg(not(target_os = "windows"))]
-    if let Err(error) = crate::recall::credentials::reset_owned(&roots.data.join("ai-credentials"))
-    {
+    if let Err(error) = reset_credentials(roots) {
         failures.push(error.to_string());
     }
     for path in [
@@ -499,6 +515,54 @@ mod tests {
         assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
     }
     #[tokio::test]
+    async fn prepare_rolls_back_an_interrupted_write_before_inspecting() {
+        let root = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: root.path().join("data"),
+            config: root.path().join("config"),
+        };
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        let mut writer =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(roots.database()))
+                .await
+                .unwrap();
+        sqlx::query("PRAGMA cache_size=1")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN").execute(&mut writer).await.unwrap();
+        sqlx::query("CREATE TABLE interrupted(value BLOB)")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        for _ in 0..64 {
+            sqlx::query("INSERT INTO interrupted VALUES(zeroblob(8192))")
+                .execute(&mut writer)
+                .await
+                .unwrap();
+        }
+        // Copy the files while the transaction is open, as a killed process would leave them.
+        let crashed = TempDir::new().unwrap();
+        let crashed_roots = AppRoots {
+            data: crashed.path().join("data"),
+            config: crashed.path().join("config"),
+        };
+        fs::create_dir_all(&crashed_roots.data).unwrap();
+        let journal = roots.database().with_extension("db-journal");
+        assert!(
+            journal.exists(),
+            "the open transaction must leave a journal"
+        );
+        fs::copy(roots.database(), crashed_roots.database()).unwrap();
+        fs::copy(
+            &journal,
+            crashed_roots.database().with_extension("db-journal"),
+        )
+        .unwrap();
+        drop(writer);
+        assert_eq!(prepare(&crashed_roots).await.unwrap(), SchemaState::Ready);
+    }
+    #[tokio::test]
     async fn rejects_legacy_database() {
         let root = TempDir::new().unwrap();
         let path = root.path().join("legacy.db");
@@ -712,7 +776,7 @@ mod tests {
             data: root.path().join("data"),
             config: root.path().join("config"),
         };
-        assert!(factory_reset(&roots, "no").is_err());
+        assert!(factory_reset(&roots, "no", |_| Ok(())).is_err());
     }
     #[test]
     fn reset_removes_the_owned_search_index_root() {
@@ -727,7 +791,7 @@ mod tests {
             b"derived",
         )
         .unwrap();
-        let result = factory_reset(&roots, "RESET CLIPSX").unwrap();
+        let result = factory_reset(&roots, "RESET CLIPSX", |_| Ok(())).unwrap();
         assert!(!roots.search_index().exists());
         assert!(result
             .deleted

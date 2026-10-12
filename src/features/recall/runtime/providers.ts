@@ -33,7 +33,9 @@ export function createChatModel(
     case 'openrouter':
       return createOpenRouter(options).chat(modelId)
     case 'ollama':
-      return createOpenAICompatible({ ...options, name: 'ollama' }).chatModel(modelId)
+      return createOpenAICompatible({ ...options, name: 'ollama', includeUsage: true }).chatModel(
+        modelId
+      )
   }
 }
 

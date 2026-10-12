@@ -32,6 +32,7 @@ const configuration: AiConfiguration = {
     webSearch: null,
     extensionGeneration: null,
     defaultDecision: null,
+    activeRerank: null,
   },
 }
 const props = () => ({
