@@ -74,16 +74,19 @@ it('compacts through the selected provider before continuing the same native too
       }
     },
   })
-  const input = runOptions()
-  input.messages = [
-    question('a'.repeat(4500)),
-    {
-      ...question('b'.repeat(4500)),
-      role: 'assistant',
-      status: { type: 'complete', reason: 'stop' },
-    } as ThreadMessage,
-    ...input.messages,
-  ]
+  const originalInput = runOptions()
+  const input = {
+    ...originalInput,
+    messages: [
+      question('a'.repeat(4500)),
+      {
+        ...question('b'.repeat(4500)),
+        role: 'assistant',
+        status: { type: 'complete', reason: 'stop' },
+      } as ThreadMessage,
+      ...originalInput.messages,
+    ],
+  }
   const updates = adapter.run(input)
   if (!('next' in updates)) throw new Error('Expected streaming adapter')
   const states: string[] = []

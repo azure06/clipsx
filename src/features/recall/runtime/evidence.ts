@@ -6,6 +6,8 @@ const retrieval = new Set(['search_clips', 'read_clip', 'read_clip_image'])
 export function reduceDuplicateEvidence(messages: readonly ModelMessage[]): ModelMessage[] {
   const retained = new Map<string, string>()
   return messages.map(message => {
+    // A reference must not cross an exchange boundary that a planner may summarize.
+    if (message.role === 'user') retained.clear()
     if (message.role !== 'tool') return message
     return {
       ...message,
