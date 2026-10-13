@@ -46,6 +46,7 @@ export function ModelEditor({
     (showUnknown && selectedModel && selectedModel.purposes == null)
   const canSave = Boolean(preset.name.trim() && preset.modelId.trim() && (manual || compatible))
   const embedding = preset.options.embedding
+  const embeddingInformation = selectedModel?.embeddingInformation
   const setEmbedding = (patch: Partial<NonNullable<typeof embedding>>) =>
     setPreset({ ...preset, options: { ...preset.options, embedding: { ...embedding!, ...patch } } })
   const purposeOptions = [
@@ -155,6 +156,20 @@ export function ModelEditor({
                           ? (model?.id ?? '')
                           : preset.name,
                       capabilities: model?.capabilities ?? emptyPreset(connection.id).capabilities,
+                      options:
+                        embedding && model?.embeddingInformation
+                          ? {
+                              ...preset.options,
+                              embedding: {
+                                ...embedding,
+                                taskPolicy: model.embeddingInformation.defaultTaskPolicy,
+                                dimensions:
+                                  model.embeddingInformation.configurableDimensions === false
+                                    ? null
+                                    : embedding.dimensions,
+                              },
+                            }
+                          : preset.options,
                     })
                   }}
                 />
@@ -243,6 +258,16 @@ export function ModelEditor({
               onChange={hostedIndexingEnabled => setEmbedding({ hostedIndexingEnabled })}
             />
           )}
+          {embedding && (
+            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+              {embeddingInformation
+                ? t('aiConfig.embeddingExecutionBounds', {
+                    bytes: embeddingInformation.maxInputBytes,
+                    batch: embeddingInformation.maxBatchInputs,
+                  })
+                : t('aiConfig.embeddingUnverifiedOptions')}
+            </p>
+          )}
           {!['decision', 'rerank'].includes(preset.purpose) && (
             <details className="rounded-xl border border-slate-200/70 p-3 dark:border-white/10">
               <summary className="cursor-pointer text-xs font-medium text-slate-500">
@@ -273,24 +298,28 @@ export function ModelEditor({
                 </div>
               )}
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Input
-                  label={t('aiConfig.contextLimit')}
-                  disabled={limitsLocked}
-                  type="number"
-                  min={1024}
-                  max={2097152}
-                  value={String(preset.contextLimit)}
-                  onChange={value => setPreset({ ...preset, contextLimit: Number(value) })}
-                />
-                <Input
-                  label={t('aiConfig.outputLimit')}
-                  disabled={limitsLocked}
-                  type="number"
-                  min={1}
-                  max={131072}
-                  value={String(preset.outputLimit)}
-                  onChange={value => setPreset({ ...preset, outputLimit: Number(value) })}
-                />
+                {!embedding && (
+                  <>
+                    <Input
+                      label={t('aiConfig.contextLimit')}
+                      disabled={limitsLocked}
+                      type="number"
+                      min={1024}
+                      max={2097152}
+                      value={String(preset.contextLimit)}
+                      onChange={value => setPreset({ ...preset, contextLimit: Number(value) })}
+                    />
+                    <Input
+                      label={t('aiConfig.outputLimit')}
+                      disabled={limitsLocked}
+                      type="number"
+                      min={1}
+                      max={131072}
+                      value={String(preset.outputLimit)}
+                      onChange={value => setPreset({ ...preset, outputLimit: Number(value) })}
+                    />
+                  </>
+                )}
                 {embedding ? (
                   <>
                     <Input
@@ -299,18 +328,23 @@ export function ModelEditor({
                       min={1}
                       max={65536}
                       value={embedding.dimensions === null ? '' : String(embedding.dimensions)}
-                      disabled={connection.provider === 'ollama'}
+                      disabled={
+                        connection.provider === 'ollama' ||
+                        embeddingInformation?.configurableDimensions === false
+                      }
                       helperText={t('aiConfig.dimensionsHelp')}
                       onChange={value => setEmbedding({ dimensions: value ? Number(value) : null })}
                     />
                     <Select
                       label={t('aiConfig.taskPolicy')}
                       value={embedding.taskPolicy}
-                      options={(connection.provider === 'gemini'
-                        ? ['gemini_retrieval_v1', 'gemini_prefix_v2']
-                        : connection.provider === 'openrouter'
-                          ? ['symmetric', 'retrieval']
-                          : ['symmetric']
+                      options={(
+                        embeddingInformation?.taskPolicies ??
+                        (connection.provider === 'gemini'
+                          ? ['gemini_retrieval_v1', 'gemini_prefix_v2']
+                          : connection.provider === 'openrouter'
+                            ? ['symmetric', 'retrieval']
+                            : ['symmetric'])
                       ).map(value => ({
                         value,
                         label: t(`aiConfig.policies.${value}`, { defaultValue: value }),

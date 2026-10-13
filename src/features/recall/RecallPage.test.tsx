@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { RecallPage } from './RecallPage'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }))
@@ -85,6 +86,38 @@ beforeEach(() => {
   })
 })
 describe('Recall workspace context', () => {
+  it.each(['embedding-space-changed', 'search-source-status-changed', 'ai-configuration-changed'])(
+    'refreshes readiness on %s and enriches the current query',
+    async eventName => {
+      render(<RecallPage />)
+      await screen.findByTestId('chat-thread')
+      fireEvent.change(screen.getByRole('textbox', { name: 'recallPage.message' }), {
+        target: { value: 'meeting notes' },
+      })
+      await waitFor(() =>
+        expect(
+          vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_search_clips')
+        ).toBe(true)
+      )
+      vi.mocked(invoke).mockResolvedValueOnce({ semanticReady: true })
+      const listener = vi.mocked(listen).mock.calls.find(([name]) => name === eventName)?.[1]
+      expect(listener).toBeDefined()
+      act(() => {
+        listener!({ event: eventName, id: 1, payload: null })
+      })
+      await waitFor(() =>
+        expect(
+          vi
+            .mocked(invoke)
+            .mock.calls.some(
+              ([command, args]) =>
+                command === 'assistant_search_clips' &&
+                (args as { request: { mode: string } }).request.mode === 'hybrid'
+            )
+        ).toBe(true)
+      )
+    }
+  )
   it('submits History Recall once with its query and scope', async () => {
     const consumed = vi.fn()
     render(

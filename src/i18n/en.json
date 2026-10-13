@@ -1293,6 +1293,8 @@
     "outputLimit": "Output limit (tokens)",
     "dimensions": "Embedding dimensions",
     "dimensionsHelp": "Leave blank to use the model default. Ollama dimensions are discovered.",
+    "embeddingExecutionBounds": "ClipsX sends at most {{bytes}} UTF-8 bytes per chunk and {{batch}} chunks per request. These are application bounds, not the model's token capacity. A smaller provider limit triggers adaptive splitting.",
+    "embeddingUnverifiedOptions": "Custom model options must be verified by the provider. Chat context and output limits do not apply to embeddings.",
     "taskPolicy": "Embedding task policy",
     "hostedIndexing": "Allow background indexing to send clipboard text to this hosted provider",
     "capabilityHelp": "Unknown capabilities stay unknown. Tool support is verified by the Recall runtime before automatic actions are enabled.",

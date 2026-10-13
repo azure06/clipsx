@@ -168,12 +168,15 @@ export function RecallPage({
         .catch(() => undefined)
     const listeners = [
       'embedding-provider-status-changed',
+      'embedding-space-changed',
+      'search-source-status-changed',
       'clip-captured',
       'clip-deleted',
       'clip-updated',
     ].map(event => listen(event, reload))
     listeners.push(
       listen('ai-configuration-changed', () => {
+        reload()
         void invoke<AiConfiguration>('ai_configuration_export')
           .then(config => {
             if (active) setConfiguration(config)
