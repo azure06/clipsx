@@ -18,6 +18,7 @@ pub enum FailureCode {
     ContextOverflow,
     ProviderNotConfigured,
     ProviderDisabled,
+    HostedIndexingDisabled,
     ProviderConfiguration,
     ModelUnavailable,
     ConnectionUnavailable,
@@ -59,6 +60,7 @@ impl FailureCode {
             Self::ContextOverflow => "context_overflow",
             Self::ProviderNotConfigured => "provider_not_configured",
             Self::ProviderDisabled => "provider_disabled",
+            Self::HostedIndexingDisabled => "hosted_indexing_disabled",
             Self::ProviderConfiguration => "provider_configuration",
             Self::ModelUnavailable => "model_unavailable",
             Self::ConnectionUnavailable => "connection_unavailable",
@@ -89,6 +91,7 @@ impl FailureCode {
             Self::ContextOverflow => "The model reported insufficient context. Shorten the input or choose a model with a larger context.",
             Self::ProviderNotConfigured => "Text generation is not configured. Choose a model in Intelligence → Models.",
             Self::ProviderDisabled => "The selected model connection is disabled.",
+            Self::HostedIndexingDisabled => "Enable hosted indexing in the embedding preset before activating it. This sends clipboard text to the selected provider, including when the model is free.",
             Self::ProviderConfiguration => "The model configuration is invalid. Review Intelligence → Models.",
             Self::ModelUnavailable => "The selected model is unavailable. Review its ID and provider in Intelligence → Models.",
             Self::ConnectionUnavailable => "ClipsX cannot reach the model provider. Check its endpoint and connection.",
@@ -117,6 +120,7 @@ impl FailureCode {
         let recovery = match self {
             Self::ProviderNotConfigured
             | Self::ProviderDisabled
+            | Self::HostedIndexingDisabled
             | Self::ProviderConfiguration
             | Self::ModelUnavailable => Recovery::Wait,
             Self::ConnectionUnavailable

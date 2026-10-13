@@ -533,11 +533,12 @@ async fn hosted_indexing_requires_enablement_and_import_is_validated_before_writ
         serde_json::to_value(export(&repo).await.unwrap()).unwrap(),
         serde_json::to_value(&before).unwrap()
     );
-    assert!(import(&repo, settings)
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("hosted_indexing_disabled"));
+    let failure = super::service::public_failure(import(&repo, settings).await.unwrap_err());
+    assert_eq!(
+        failure.code,
+        crate::failure::FailureCode::HostedIndexingDisabled
+    );
+    assert_eq!(failure.recovery, crate::failure::Recovery::Wait);
     assert!(export(&repo)
         .await
         .unwrap()
@@ -556,6 +557,122 @@ async fn hosted_indexing_requires_enablement_and_import_is_validated_before_writ
         .unwrap()
         .task_policy = "unspecified".into();
     assert!(import(&repo, invalid).await.is_err());
+}
+
+#[tokio::test]
+async fn openrouter_embedding_activation_reports_opt_in_and_credential_failures() {
+    let (_root, service) = repository().await;
+    let repo = &service.history;
+    let connection = connection(AiProviderKind::Openrouter, "OpenRouter");
+    let mut options = default_options();
+    options.embedding = Some(EmbeddingPresetOptions {
+        dimensions: None,
+        task_policy: "symmetric".into(),
+        hosted_indexing_enabled: false,
+    });
+    let mut settings = document(vec![connection.clone()]);
+    settings.presets.push(AiModelPreset {
+        id: new_id(),
+        name: "Free embedding".into(),
+        connection_id: connection.id,
+        model_id: "nvidia/nemotron-3-embed-1b:free".into(),
+        purpose: AiModelPurpose::Embedding,
+        context_limit: 32768,
+        output_limit: 4096,
+        options,
+        capabilities: unknown_capabilities(),
+    });
+    // Saving an inactive preset needs neither consent nor a credential.
+    import(repo, settings.clone()).await.unwrap();
+    settings.selections.active_embedding = Some(settings.presets[0].id.clone());
+    let failure = super::service::public_failure(import(repo, settings.clone()).await.unwrap_err());
+    assert_eq!(
+        failure.code,
+        crate::failure::FailureCode::HostedIndexingDisabled
+    );
+    settings.presets[0]
+        .options
+        .embedding
+        .as_mut()
+        .unwrap()
+        .hosted_indexing_enabled = true;
+    let failure = super::service::public_failure(import(repo, settings).await.unwrap_err());
+    assert_eq!(
+        failure.code,
+        crate::failure::FailureCode::ProviderNotConfigured
+    );
+    let saved = export(repo).await.unwrap();
+    assert!(saved.selections.active_embedding.is_none());
+    assert!(
+        !saved.presets[0]
+            .options
+            .embedding
+            .as_ref()
+            .unwrap()
+            .hosted_indexing_enabled
+    );
+}
+
+#[tokio::test]
+async fn saving_hosted_embedding_consent_preserves_the_active_local_model_without_probing() {
+    let (_root, service) = repository().await;
+    let repo = &service.history;
+    let (settings, server) = embedding_fixture().await;
+    import(repo, settings).await.unwrap();
+    server.abort();
+    let _ = server.await;
+    let mut settings = export(repo).await.unwrap();
+    let active = settings.selections.active_embedding.clone();
+    let connection = connection(AiProviderKind::Openrouter, "OpenRouter");
+    let mut options = default_options();
+    options.limit_policy = Some(AiLimitPolicy::Explicit);
+    options.embedding = Some(EmbeddingPresetOptions {
+        dimensions: None,
+        task_policy: "symmetric".into(),
+        hosted_indexing_enabled: true,
+    });
+    settings.presets.push(AiModelPreset {
+        id: new_id(),
+        name: "nvidia/llama-nemotron-embed-vl-1b-v2:free".into(),
+        connection_id: connection.id.clone(),
+        model_id: "nvidia/llama-nemotron-embed-vl-1b-v2:free".into(),
+        purpose: AiModelPurpose::Embedding,
+        context_limit: 131072,
+        output_limit: 8192,
+        options,
+        capabilities: unknown_capabilities(),
+    });
+    settings.connections.push(connection);
+    let saved = import(repo, settings.clone()).await.unwrap().configuration;
+    assert_eq!(saved.selections.active_embedding, active);
+    let hosted = saved.presets.last().unwrap();
+    assert!(
+        hosted
+            .options
+            .embedding
+            .as_ref()
+            .unwrap()
+            .hosted_indexing_enabled
+    );
+    // The invalid value emitted by the form must still be rejected atomically.
+    settings
+        .presets
+        .last_mut()
+        .unwrap()
+        .options
+        .embedding
+        .as_mut()
+        .unwrap()
+        .task_policy
+        .clear();
+    assert_eq!(
+        import(repo, settings).await.unwrap_err().to_string(),
+        "invalid_task_policy"
+    );
+    assert_eq!(
+        serde_json::to_value(export(repo).await.unwrap()).unwrap(),
+        serde_json::to_value(saved).unwrap()
+    );
 }
 #[cfg(target_os = "windows")]
 #[tokio::test]

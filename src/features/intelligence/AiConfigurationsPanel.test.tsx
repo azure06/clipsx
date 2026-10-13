@@ -167,6 +167,48 @@ it('assigns a hosted chat preset to extension generation independently of Recall
   expect(state.configuration.selections.activeEmbedding).toBeNull()
 })
 
+it('explains hosted indexing consent when activation fails and preserves the selection', async () => {
+  const user = userEvent.setup()
+  const connection = {
+    ...emptyConnection(),
+    name: 'OpenRouter',
+    provider: 'openrouter' as const,
+    baseUrl: 'https://openrouter.ai/api/v1',
+  }
+  const embedding = {
+    ...emptyPreset(connection.id),
+    name: 'Free embedding',
+    modelId: 'nvidia/nemotron-3-embed-1b:free',
+    purpose: 'embedding' as const,
+    options: {
+      ...emptyPreset(connection.id).options,
+      limitPolicy: 'explicit' as const,
+      embedding: { dimensions: null, taskPolicy: 'symmetric', hostedIndexingEnabled: false },
+    },
+  }
+  state.configuration.connections = [connection]
+  state.configuration.presets = [embedding]
+  const invoke = mocks.invoke.getMockImplementation()!
+  mocks.invoke.mockImplementation((command, args) =>
+    command === 'ai_configuration_import'
+      ? Promise.reject(
+          Object.assign(new Error('Hosted indexing disabled'), {
+            code: 'hosted_indexing_disabled',
+            recovery: 'wait',
+          })
+        )
+      : (invoke(command, args) as unknown)
+  )
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+  await user.click(screen.getByRole('combobox', { name: 'Semantic search' }))
+  await user.click(screen.getByRole('option', { name: 'OpenRouter / Free embedding' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Enable hosted indexing in this embedding preset before making it active.'
+  )
+  expect(state.configuration.selections.activeEmbedding).toBeNull()
+})
+
 it('previews file imports before applying and preserves feature assignments by default', async () => {
   const user = userEvent.setup()
   const connection = { ...emptyConnection(), name: 'Imported Ollama' }
@@ -279,4 +321,58 @@ it('browses installed models by reported purpose and configures a selected embed
   expect(screen.queryByLabelText('Model ID')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Save preset' }))
   await waitFor(() => expect(state.configuration.presets[0]?.purpose).toBe('embedding'))
+})
+
+it('saves a discovered OpenRouter embedding with hosted indexing enabled', async () => {
+  const user = userEvent.setup()
+  const connection = {
+    ...emptyConnection(),
+    name: 'OpenRouter',
+    provider: 'openrouter' as const,
+    baseUrl: 'https://openrouter.ai/api/v1',
+  }
+  state.configuration.connections = [connection]
+  const invoke = mocks.invoke.getMockImplementation()!
+  mocks.invoke.mockImplementation((command, args) =>
+    command === 'ai_discover_models'
+      ? Promise.resolve([
+          {
+            id: 'nvidia/llama-nemotron-embed-vl-1b-v2:free',
+            purposes: ['embedding'],
+            capabilities: {
+              tools: false,
+              vision: false,
+              webSearch: null,
+              source: 'provider_catalog',
+            },
+          },
+        ])
+      : (invoke(command, args) as unknown)
+  )
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: /Manage/ }))
+  await user.click(screen.getAllByRole('button', { name: 'Add model' })[0]!)
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Purpose' })).not.toBeDisabled())
+  await user.click(screen.getByRole('combobox', { name: 'Purpose' }))
+  await user.click(screen.getByRole('option', { name: 'Text embeddings' }))
+  await user.click(screen.getByRole('combobox', { name: 'Model' }))
+  await user.click(
+    screen.getByRole('option', { name: 'nvidia/llama-nemotron-embed-vl-1b-v2:free' })
+  )
+  const consent = screen.getByRole('switch', {
+    name: 'Allow background indexing to send clipboard text to this hosted provider',
+  })
+  expect(consent).not.toBeChecked()
+  await user.click(consent)
+  expect(consent).toBeChecked()
+  await user.click(screen.getByRole('button', { name: 'Save preset' }))
+  await waitFor(() => expect(state.configuration.presets).toHaveLength(1))
+  expect(state.configuration.presets[0]).toMatchObject({
+    modelId: 'nvidia/llama-nemotron-embed-vl-1b-v2:free',
+    purpose: 'embedding',
+    options: {
+      limitPolicy: 'explicit',
+      embedding: { dimensions: null, taskPolicy: 'symmetric', hostedIndexingEnabled: true },
+    },
+  })
 })

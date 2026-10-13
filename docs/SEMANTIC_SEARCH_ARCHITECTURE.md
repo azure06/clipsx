@@ -382,6 +382,8 @@ Use an isolated profile and a coherent database backup, with reporting and autos
 
 ## Native embedding configuration
 
+An inactive hosted embedding preset can be saved without credentials or indexing consent. Activating it requires both a protected credential and explicit hosted-indexing consent in the preset, including for free models. Missing consent or credentials produces an actionable configuration error and leaves the previous selection intact.
+
 Background embedding jobs resolve the saved preset and protected credential in Rust, without mounting Recall or invoking the webview. Ollama retains its existing model-digest identity and preprocessing compatibility. OpenAI and OpenRouter use the text embeddings endpoint; Gemini uses bounded batchEmbedContents requests. Anthropic has no embedding adapter. Inputs and response vectors are bounded; vectors must have the expected count, order, finite values, nonzero norm, and verified dimensions. Hosted vectors are normalized locally.
 
 A space identifies provider/model, endpoint, dimensions, preprocessing, normalization, and query/document task policy. Gemini taskType retrieval and embedding-2 retrieval prefixes are distinct policies. Hosted credentials and display names are excluded from identity. Replacement presets are probed for both query and document dimensions before configuration changes. The existing generation activation remains atomic; query/index operations refuse mismatched hosted space identities. Keyword results remain available while semantic retrieval is unavailable.

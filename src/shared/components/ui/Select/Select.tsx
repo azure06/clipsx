@@ -79,7 +79,15 @@ export const Select = <T extends string = string>({
           {label}
         </label>
       )}
-      <SelectPrimitive.Root value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectPrimitive.Root
+        value={value}
+        onValueChange={next => {
+          // The hidden form select can emit an empty value while new choices register.
+          // Radix items cannot be empty; clearing is controlled by the caller's value prop.
+          if (next !== '') onChange(next as T)
+        }}
+        disabled={disabled}
+      >
         <SelectPrimitive.Trigger
           id={triggerId}
           aria-label={ariaLabel}

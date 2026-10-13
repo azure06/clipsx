@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Select } from './Select'
 
 const options = [
@@ -16,6 +16,34 @@ const SelectHarness = () => {
 }
 
 describe('Select', () => {
+  it('does not clear a controlled value when form choices and value change together', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <form>
+        <Select value="one" onChange={onChange} options={options} />
+      </form>
+    )
+    expect(onChange).not.toHaveBeenCalled()
+    rerender(
+      <form>
+        <Select
+          value="symmetric"
+          onChange={onChange}
+          options={[{ value: 'symmetric', label: 'Symmetric' }]}
+        />
+      </form>
+    )
+    expect(onChange.mock.calls.every(([value]) => value !== '')).toBe(true)
+    expect(screen.getByRole('combobox')).toHaveTextContent('Symmetric')
+    rerender(
+      <form>
+        <Select value="" onChange={onChange} options={options} placeholder="Choose a policy" />
+      </form>
+    )
+    expect(screen.getByRole('combobox')).toHaveTextContent('Choose a policy')
+    expect(onChange.mock.calls.every(([value]) => value !== '')).toBe(true)
+  })
+
   it('groups choices and associates its label, help, and error with the trigger', async () => {
     const user = userEvent.setup()
     render(

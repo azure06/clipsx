@@ -756,11 +756,11 @@ pub async fn embedding_provider_for(
         .as_ref()
         .context("missing_embedding_options")?;
     if !options.hosted_indexing_enabled {
-        bail!("hosted_indexing_disabled");
+        bail!(crate::failure::FailureCode::HostedIndexingDisabled.failure());
     }
     let credential = credentials::get(repo, &connection.id)
         .await?
-        .context("credential_required")?;
+        .ok_or(ProviderError::NotConfigured)?;
     Ok(Box::new(
         providers::hosted_embedding::HostedEmbeddingProvider::new(
             connection.clone(),

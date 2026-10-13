@@ -1577,6 +1577,7 @@
     "mergeHelp": "Records merge by stable ID. Unrelated connections and models are retained. Active embedding changes are verified before activation.",
     "imported": "Model configuration imported.",
     "failures": {
+      "hosted_indexing_disabled": "Enable hosted indexing in this embedding preset before making it active. This sends clipboard text to the provider, even when the model is free.",
       "provider_configuration": "Check the provider endpoint, model options, and feature assignments.",
       "provider_not_configured": "Configure a credential and model before using this connection.",
       "model_unavailable": "The model is unavailable. Check its ID and install it in Ollama if needed.",
