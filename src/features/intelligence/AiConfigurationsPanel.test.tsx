@@ -21,6 +21,99 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   writeTextFile: mocks.write,
 }))
 let state: AiConfigurationState
+
+it('previews affected defaults inline, cancels with Escape, and removes a model explicitly', async () => {
+  const user = userEvent.setup()
+  const connection = { ...emptyConnection(), name: 'Local fixture' }
+  const preset = { ...emptyPreset(connection.id), name: 'Chat fixture', modelId: 'fixture' }
+  state.configuration.connections = [connection]
+  state.configuration.presets = [preset]
+  state.configuration.selections.defaultChat = preset.id
+  state.configuration.selections.extensionGeneration = preset.id
+  const original = mocks.invoke.getMockImplementation() as (
+    command: string,
+    args?: Record<string, unknown>
+  ) => Promise<unknown>
+  mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    if (command !== 'ai_configuration_remove') return original(command, args)
+    state.configuration.presets = []
+    state.configuration.selections.defaultChat = null
+    state.configuration.selections.extensionGeneration = null
+    return Promise.resolve(structuredClone(state))
+  })
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: /Manage/ }))
+  const trigger = screen.getByRole('button', { name: 'Remove model Chat fixture' })
+  await user.click(trigger)
+  const confirmation = screen.getByRole('region', { name: 'Remove Chat fixture?' })
+  expect(
+    within(confirmation).getByText(/No replacement is selected automatically/)
+  ).toBeInTheDocument()
+  expect(
+    within(confirmation).getByText(/Saved conversations and clipboard items are kept/)
+  ).toBeInTheDocument()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(within(confirmation).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+  await user.keyboard('{Escape}')
+  expect(trigger).toHaveFocus()
+  expect(mocks.invoke.mock.calls.some(([command]) => command === 'ai_configuration_remove')).toBe(
+    false
+  )
+  await user.click(trigger)
+  await user.click(screen.getByRole('button', { name: 'Remove configuration' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: 'Remove model Chat fixture' })
+    ).not.toBeInTheDocument()
+  )
+  expect(mocks.invoke).toHaveBeenCalledWith('ai_configuration_remove', {
+    connectionId: null,
+    presetId: preset.id,
+  })
+  expect(screen.getAllByRole('button', { name: 'Add model' })[0]).toHaveFocus()
+  expect(mocks.invoke.mock.calls.some(([command]) => command === 'ai_configuration_import')).toBe(
+    false
+  )
+})
+
+it('removes a provider and shows retryable credential cleanup without losing the overview', async () => {
+  const user = userEvent.setup()
+  const connection = { ...emptyConnection(), name: 'Local fixture' }
+  state.configuration.connections = [connection]
+  state.configuration.presets = [emptyPreset(connection.id)]
+  const original = mocks.invoke.getMockImplementation() as (
+    command: string,
+    args?: Record<string, unknown>
+  ) => Promise<unknown>
+  mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    if (command === 'ai_configuration_remove') {
+      state.configuration.connections = []
+      state.configuration.presets = []
+      state.pendingCredentialRemovals = 1
+      return Promise.resolve(structuredClone(state))
+    }
+    if (command === 'ai_configuration_retry_cleanup') {
+      state.pendingCredentialRemovals = 0
+      return Promise.resolve(structuredClone(state))
+    }
+    return original(command, args)
+  })
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: /Manage/ }))
+  await user.click(screen.getByRole('button', { name: 'Remove provider Local fixture' }))
+  expect(screen.getByRole('region', { name: 'Remove Local fixture?' })).toHaveTextContent(
+    '1 saved model configurations'
+  )
+  await user.click(screen.getByRole('button', { name: 'Remove configuration' }))
+  const add = await screen.findByRole('button', { name: 'Add provider' })
+  await waitFor(() => expect(add).toHaveFocus())
+  expect(await screen.findByText(/Secure credential cleanup is pending/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() =>
+    expect(screen.queryByText(/Secure credential cleanup is pending/)).not.toBeInTheDocument()
+  )
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   state = {

@@ -222,6 +222,13 @@ actual active bytes and estimates replacement space from the existing index.
 
 ## Recall
 
+Models supports explicit removal of saved presets and provider connections with
+an inline impact confirmation. Assigned features become None; removing active
+embeddings disables new indexing without removing clipboard content or FTS.
+Saved chats retain their transcript and clear removed model selections. Provider
+removal includes its model configurations and retryable protected credential
+cleanup. JSON import remains a stable-ID merge and never deletes omitted records.
+
 Intelligence → Models is the common configuration workspace. Its active-model summary assigns independent named presets to Recall, semantic search, and extension generation, plus reserved decision and rerank presets and an optional Tavily connection. The overview places the active-model summary in an inset card above a saved-configuration list. Provider and model configuration replace the overview with a dedicated view and a Back action. The overview links to the setup guide. Provider editors can test unsaved Ollama, OpenAI, Claude, Gemini, and OpenRouter settings without persisting them. Tests check catalog access rather than model execution; editing the draft clears its result. Saved credentials are reused only for the same provider and normalized endpoint; a changed endpoint requires an explicitly entered key. Add model discovers the connection catalog and filters a searchable picker by use; typing inside the picker filters the discovered list locally. Ollama reports embedding, completion, and decision capability; Gemini reports supported methods; Claude models use chat; OpenRouter requests all output modalities so text, embeddings, decisions, and rerank models appear with their reported purposes. OpenAI known model-family classifications are labelled inferred. Unknown capabilities require an explicit picker option, and manual IDs remain an explicit fallback. Import/export use an inline view and advanced options remain collapsed. JSON file import/export and read-only validation previews follow the [configuration contract](MODELS.md#named-ai-configurations).
 
 Ollama decision presets use the [System One API](https://github.com/ollama/ollama/blob/main/docs/capabilities/decision.mdx). An explicit test sends a fixed synthetic classification input, validates the returned choice and probabilities, and never reads clipboard data. Confidence measures preference among labels rather than correctness. OpenRouter decision and rerank presets can be saved and assigned, but ClipsX does not execute them yet. Reserving either assignment sends no clipboard content to the provider.

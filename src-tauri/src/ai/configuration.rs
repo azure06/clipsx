@@ -14,6 +14,10 @@ use std::collections::HashSet;
 // Serialize imports and recovery so an older activation cannot overtake a newer save.
 static EMBEDDING_ACTIVATION_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[cfg(test)]
+#[path = "removal_tests.rs"]
+mod removal_tests;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 enum EmbeddingActivation {
     Enable {
@@ -30,6 +34,7 @@ pub async fn reconcile_embedding_activation(repo: &HistoryRepository) -> Result<
 }
 
 async fn reconcile_embedding_activation_locked(repo: &HistoryRepository) -> Result<bool> {
+    cleanup_credentials_locked(repo).await?;
     let intent: Option<String> =
         sqlx::query_scalar("SELECT intent_json FROM ai_embedding_activation WHERE singleton=1")
             .fetch_optional(&repo.pool)
@@ -547,6 +552,11 @@ pub async fn state(repo: &HistoryRepository) -> Result<AiConfigurationState> {
     Ok(AiConfigurationState {
         configuration,
         connection_states,
+        pending_credential_removals: Some(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM ai_credential_cleanup")
+                .fetch_one(&repo.pool)
+                .await? as u32,
+        ),
     })
 }
 pub async fn import(
@@ -554,6 +564,18 @@ pub async fn import(
     incoming: AiConfiguration,
 ) -> Result<AiConfigurationState> {
     let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    cleanup_credentials_locked(repo).await?;
+    for connection in &incoming.connections {
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM ai_credential_cleanup WHERE connection_id=?)",
+        )
+        .bind(&connection.id)
+        .fetch_one(&repo.pool)
+        .await?;
+        if pending {
+            bail!(crate::failure::FailureCode::CredentialStorageUnavailable.failure());
+        }
+    }
     let current = export(repo).await?;
     let merged = merge(&current, incoming)?;
     import_merged(repo, current, merged).await
@@ -668,6 +690,33 @@ async fn import_merged(
         bail!("configuration_changed");
     }
     persist(&mut tx, &merged).await?;
+    for preset in current
+        .presets
+        .iter()
+        .filter(|p| !merged.presets.iter().any(|v| v.id == p.id))
+    {
+        sqlx::query(
+            "UPDATE recall_threads SET preset_id=NULL,reasoning_json=NULL WHERE preset_id=?",
+        )
+        .bind(&preset.id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM ai_model_presets WHERE id=?")
+            .bind(&preset.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    for connection in current
+        .connections
+        .iter()
+        .filter(|c| !merged.connections.iter().any(|v| v.id == c.id))
+    {
+        sqlx::query("INSERT INTO ai_credential_cleanup(connection_id,requested_at) VALUES(?,?) ON CONFLICT DO NOTHING").bind(&connection.id).bind(now_ms()).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM ai_connections WHERE id=?")
+            .bind(&connection.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     if changed {
         let intent = match validated {
             Some((config, space)) => EmbeddingActivation::Enable {
@@ -700,6 +749,7 @@ pub async fn set_credential(
     id: &str,
     value: Option<String>,
 ) -> Result<()> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
     connection(repo, id).await?;
     credentials::set(repo, id, value).await?;
     sqlx::query("UPDATE ai_connections SET last_test_at=NULL,last_test_code=NULL WHERE id=?")
@@ -707,6 +757,82 @@ pub async fn set_credential(
         .execute(&repo.pool)
         .await?;
     Ok(())
+}
+
+/// Explicit removal is separate from JSON's non-destructive stable-ID merge.
+pub async fn remove(
+    repo: &HistoryRepository,
+    connection_id: Option<String>,
+    preset_id: Option<String>,
+) -> Result<AiConfigurationState> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    let current = export(repo).await?;
+    let mut next = current.clone();
+    match (&connection_id, &preset_id) {
+        (Some(id), None) => {
+            uuid::Uuid::parse_str(id)?;
+            if !current.connections.iter().any(|c| &c.id == id) {
+                bail!("missing_connection");
+            }
+            next.connections.retain(|c| &c.id != id);
+            next.presets.retain(|p| &p.connection_id != id);
+        }
+        (None, Some(id)) => {
+            uuid::Uuid::parse_str(id)?;
+            if !current.presets.iter().any(|p| &p.id == id) {
+                bail!("missing_preset");
+            }
+            next.presets.retain(|p| &p.id != id);
+        }
+        _ => bail!("invalid_removal_target"),
+    }
+    for selection in [
+        &mut next.selections.default_chat,
+        &mut next.selections.active_embedding,
+        &mut next.selections.extension_generation,
+        &mut next.selections.default_decision,
+        &mut next.selections.active_rerank,
+    ] {
+        if selection
+            .as_ref()
+            .is_some_and(|id| !next.presets.iter().any(|p| &p.id == id))
+        {
+            *selection = None;
+        }
+    }
+    if next
+        .selections
+        .web_search
+        .as_ref()
+        .is_some_and(|id| !next.connections.iter().any(|c| &c.id == id))
+    {
+        next.selections.web_search = None;
+    }
+    validate(&next)?;
+    import_merged(repo, current, next).await
+}
+
+async fn cleanup_credentials_locked(repo: &HistoryRepository) -> Result<()> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT connection_id FROM ai_credential_cleanup ORDER BY requested_at LIMIT 64",
+    )
+    .fetch_all(&repo.pool)
+    .await?;
+    for id in ids {
+        if credentials::set(repo, &id, None).await.is_ok() {
+            sqlx::query("DELETE FROM ai_credential_cleanup WHERE connection_id=?")
+                .bind(&id)
+                .execute(&repo.pool)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn retry_credential_cleanup(repo: &HistoryRepository) -> Result<AiConfigurationState> {
+    let _guard = EMBEDDING_ACTIVATION_GATE.lock().await;
+    cleanup_credentials_locked(repo).await?;
+    state(repo).await
 }
 // None means unknown, while an empty list means the catalog reports no supported ClipsX use.
 fn catalog_purposes(

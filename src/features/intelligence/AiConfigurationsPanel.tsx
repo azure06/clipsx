@@ -17,6 +17,7 @@ import {
   Upload,
   Sparkles,
   Zap,
+  Trash2,
   type LucideIcon,
 } from 'lucide-react'
 import { Button, Select } from '../../shared/components/ui'
@@ -37,6 +38,7 @@ import { ModelEditor } from './ModelEditor'
 import { ConfigurationTransfer } from './ConfigurationTransfer'
 import { ProviderIcon } from './ProviderIcon'
 import { connectionFailureMessage } from './connectionFailure'
+import { ConfigurationRemoval, type RemovalTarget } from './ConfigurationRemoval'
 
 const surface =
   'rounded-2xl border border-slate-200/70 bg-white/55 shadow-[0_6px_24px_-16px_rgba(15,23,42,.12)] dark:border-white/10 dark:bg-white/[.025]'
@@ -55,6 +57,18 @@ export function AiConfigurationsPanel() {
   const busyRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [removal, setRemoval] = useState<RemovalTarget | null>(null)
+  const removalTrigger = useRef<HTMLButtonElement | null>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const focusAfterRemoval = useRef<'provider' | 'model' | null>(null)
+  useEffect(() => {
+    if (!removal && focusAfterRemoval.current) {
+      panel.current
+        ?.querySelector<HTMLButtonElement>(`[data-add-${focusAfterRemoval.current}]`)
+        ?.focus()
+      focusAfterRemoval.current = null
+    }
+  }, [removal])
   const refresh = useCallback(async () => {
     const next = await invoke<AiConfigurationState>('ai_configuration_state')
     setState(next)
@@ -163,6 +177,7 @@ export function AiConfigurationsPanel() {
     },
   ]
   const navigate = (id: string) => {
+    setRemoval(null)
     setSelected(id)
     setConnectionEditor(null)
     setModelEditor(null)
@@ -172,12 +187,14 @@ export function AiConfigurationsPanel() {
     setModels([])
   }
   const openConnection = (item: AiConnection) => {
+    setRemoval(null)
     setError(null)
     setModelEditor(null)
     setTransfer(null)
     setConnectionEditor(item)
   }
   const openModel = (item: AiModelPreset) => {
+    setRemoval(null)
     setError(null)
     setConnectionEditor(null)
     setTransfer(null)
@@ -201,8 +218,20 @@ export function AiConfigurationsPanel() {
         : observation?.diagnostic
           ? t('modelsWorkspace.needsAttention')
           : t('modelsWorkspace.notTested')
+  const removedIds = new Set(
+    removal?.kind === 'connection'
+      ? [removal.id, ...current.presets.filter(p => p.connectionId === removal.id).map(p => p.id)]
+      : removal
+        ? [removal.id]
+        : []
+  )
   return (
-    <div role="tabpanel" aria-label={t('desktopUi.models')} className="space-y-4 text-sm">
+    <div
+      ref={panel}
+      role="tabpanel"
+      aria-label={t('desktopUi.models')}
+      className="space-y-4 text-sm"
+    >
       {home && (
         <header className="relative overflow-hidden rounded-2xl border border-violet-300/40 bg-linear-to-br from-violet-500/12 via-fuchsia-500/5 to-white/35 p-5 dark:border-violet-400/15 dark:to-white/[.02]">
           <div
@@ -381,6 +410,51 @@ export function AiConfigurationsPanel() {
           ← {t('modelsWorkspace.allConfigurations')}
         </Button>
       )}{' '}
+      {removal && (
+        <ConfigurationRemoval
+          target={removal}
+          busy={busy}
+          affectedFeatures={assignments
+            .filter(a => removedIds.has(current.selections[a.key] ?? ''))
+            .map(a => a.title)}
+          modelCount={current.presets.filter(p => p.connectionId === removal.id).length}
+          onCancel={() => {
+            setRemoval(null)
+            removalTrigger.current?.focus()
+          }}
+          onConfirm={async () => {
+            if (
+              await perform(() =>
+                invoke('ai_configuration_remove', {
+                  connectionId: removal.kind === 'connection' ? removal.id : null,
+                  presetId: removal.kind === 'preset' ? removal.id : null,
+                })
+              )
+            ) {
+              focusAfterRemoval.current = removal.kind === 'connection' ? 'provider' : 'model'
+              if (removal.kind === 'connection') navigate('usage')
+              else setRemoval(null)
+              setFeedback(t('modelsWorkspace.removed'))
+            }
+          }}
+        />
+      )}
+      {Boolean(state.pendingCredentialRemovals) && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-500/8 p-3 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <p>{t('modelsWorkspace.credentialRemovalPending')}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void perform(() => invoke('ai_configuration_retry_cleanup'))}
+          >
+            {t('desktopUi.retry')}
+          </Button>
+        </div>
+      )}
       {!connectionEditor && !modelEditor && !transfer && error && (
         <p
           role="alert"
@@ -415,6 +489,7 @@ export function AiConfigurationsPanel() {
                   disabled={busy}
                   leftIcon={<Plus className="h-3.5 w-3.5" />}
                   onClick={() => openConnection(emptyConnection())}
+                  data-add-provider
                 >
                   {t('modelsWorkspace.addProvider')}
                 </Button>
@@ -552,7 +627,7 @@ export function AiConfigurationsPanel() {
           {connection && !connectionEditor && !modelEditor && !transfer && (
             <>
               <section className={`${surface} p-5`}>
-                <div className="flex items-start gap-3">
+                <div className="flex flex-wrap items-start gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500 dark:text-violet-300">
                     <ProviderIcon provider={connection.provider} className="h-6 w-6" />
                   </span>
@@ -578,6 +653,19 @@ export function AiConfigurationsPanel() {
                     onClick={() => openConnection(connection)}
                   >
                     {t('modelsWorkspace.edit')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    aria-label={t('modelsWorkspace.removeProvider', { name: connection.name })}
+                    leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                    onClick={event => {
+                      removalTrigger.current = event.currentTarget
+                      setRemoval({ kind: 'connection', id: connection.id, name: connection.name })
+                    }}
+                  >
+                    {t('modelsWorkspace.remove')}
                   </Button>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/60 pt-3 dark:border-white/8">
@@ -631,6 +719,7 @@ export function AiConfigurationsPanel() {
                       disabled={busy}
                       leftIcon={<Plus className="h-3.5 w-3.5" />}
                       onClick={() => openModel(emptyPreset(connection.id))}
+                      data-add-model
                     >
                       {t('modelsWorkspace.addModel')}
                     </Button>
@@ -715,6 +804,19 @@ export function AiConfigurationsPanel() {
                           onClick={() => openModel(p)}
                         >
                           {t('modelsWorkspace.edit')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          aria-label={t('modelsWorkspace.removeModel', { name: p.name })}
+                          leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                          onClick={event => {
+                            removalTrigger.current = event.currentTarget
+                            setRemoval({ kind: 'preset', id: p.id, name: p.name })
+                          }}
+                        >
+                          {t('modelsWorkspace.remove')}
                         </Button>
                       </div>
                     ))}

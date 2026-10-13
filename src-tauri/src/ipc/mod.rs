@@ -3376,6 +3376,8 @@ pub(crate) fn run() {
             crate::recall::ipc::ai_configuration_state,
             crate::recall::ipc::ai_configuration_export,
             crate::recall::ipc::ai_configuration_import,
+            crate::recall::ipc::ai_configuration_remove,
+            crate::recall::ipc::ai_configuration_retry_cleanup,
             crate::recall::ipc::ai_configuration_preview,
             crate::recall::ipc::ai_test_decision,
             crate::recall::ipc::ai_set_credential,

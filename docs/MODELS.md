@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 26. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 27. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -479,6 +479,25 @@ bytes remain unchanged on failure, cancellation, or disablement.
 `assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
 
 ## Named AI configurations
+
+Explicit configuration removal is separate from import's non-destructive merge.
+Removing a preset clears every feature assignment to it. Removing a connection
+also removes its presets and optional web-search assignment. No replacement is
+chosen automatically. Affected saved chats clear their model and reasoning
+override, then follow the existing global chat default if available. Transcripts,
+source snapshots, historical model attribution, and clips remain unchanged.
+Active embedding removal queues a durable disable intent; keyword search remains
+usable and retained index data remains disposable. Already admitted requests keep
+their frozen configuration and can finish.
+
+`ai_credential_cleanup` stores removed connection IDs and request times outside
+configuration exports and sync. Removal commits configuration, assignments, chat
+links, embedding intent and credential cleanup intent atomically. Protected-store
+deletion follows commit and is retried by the background configuration reconciler
+and the Models retry action. Failed cleanup stays visible. Import cannot reuse a
+pending connection ID, and credential updates serialize with removal, preventing
+delayed cleanup from deleting a newly configured credential. Schema 27 adds this
+operational table with a forward migration.
 
 The shared Rust `ai` layer owns provider configuration, credentials, observations,
 restricted HTTP, and saved embedding resolution. Search, Recall, and extension

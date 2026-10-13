@@ -22,6 +22,8 @@ permissions = [
   "allow-ai-configuration-state",
   "allow-ai-configuration-export",
   "allow-ai-configuration-import",
+  "allow-ai-configuration-remove",
+  "allow-ai-configuration-retry-cleanup",
   "allow-ai-configuration-preview",
   "allow-ai-test-decision",
   "allow-ai-set-credential",

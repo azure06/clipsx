@@ -24,6 +24,8 @@ vi.mock('./RecallChat', () => ({
       <div data-testid="chat-submission">{props.ask?.text ?? ''}</div>
       {props.ask && <button onClick={props.onAskConsumed}>consume ask</button>}
       <div data-testid="chat-thread">{props.thread.id}</div>
+      <div data-testid="chat-preset">{props.preset?.id ?? 'none'}</div>
+      <div data-testid="thread-preset">{props.thread.presetId ?? 'none'}</div>
       {props.contextOpen && (
         <div data-testid="context">
           {props.preview ?? props.suggestions}
@@ -86,6 +88,31 @@ beforeEach(() => {
   })
 })
 describe('Recall workspace context', () => {
+  it('clears a removed conversation model while keeping the chat mounted', async () => {
+    const original = vi.mocked(invoke).getMockImplementation()!
+    vi.mocked(invoke).mockImplementation((command, args) =>
+      command === 'recall_thread_list'
+        ? Promise.resolve([{ ...thread, presetId: 'chat' }])
+        : original(command, args)
+    )
+    render(<RecallPage />)
+    await waitFor(() => expect(screen.getByTestId('thread-preset')).toHaveTextContent('chat'))
+    const mounted = screen.getByTestId('chat-thread')
+    vi.mocked(invoke).mockImplementation((command, args) =>
+      command === 'ai_configuration_export'
+        ? Promise.resolve({ connections: [], presets: [], selections: { defaultChat: null } })
+        : original(command, args)
+    )
+    const listener = vi
+      .mocked(listen)
+      .mock.calls.find(([name]) => name === 'ai-configuration-changed')![1]
+    act(() => {
+      listener({ event: 'ai-configuration-changed', id: 1, payload: null })
+    })
+    await waitFor(() => expect(screen.getByTestId('thread-preset')).toHaveTextContent('none'))
+    expect(screen.getByTestId('chat-preset')).toHaveTextContent('none')
+    expect(screen.getByTestId('chat-thread')).toBe(mounted)
+  })
   it.each(['embedding-space-changed', 'search-source-status-changed', 'ai-configuration-changed'])(
     'refreshes readiness on %s and enriches the current query',
     async eventName => {

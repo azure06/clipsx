@@ -179,7 +179,14 @@ export function RecallPage({
         reload()
         void invoke<AiConfiguration>('ai_configuration_export')
           .then(config => {
-            if (active) setConfiguration(config)
+            if (active) {
+              setConfiguration(config)
+              setThread(current =>
+                current?.presetId && !config.presets.some(p => p.id === current.presetId)
+                  ? { ...current, presetId: null, reasoning: null }
+                  : current
+              )
+            }
           })
           .catch(() => undefined)
       })

@@ -29,6 +29,8 @@ fn main() {
             "ai_configuration_state",
             "ai_configuration_export",
             "ai_configuration_import",
+            "ai_configuration_remove",
+            "ai_configuration_retry_cleanup",
             "ai_configuration_preview",
             "ai_test_decision",
             "ai_set_credential",

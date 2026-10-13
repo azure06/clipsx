@@ -144,6 +144,40 @@ pub async fn ai_set_credential(
         .wake_extensions(app, state.history.clone(), state.extensions.clone());
     Ok(())
 }
+
+#[tauri::command]
+pub async fn ai_configuration_remove(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    connection_id: Option<String>,
+    preset_id: Option<String>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::configuration::remove(&state.history, connection_id, preset_id)
+        .await
+        .map_err(public_failure);
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    let _ = app.emit("ai-configuration-changed", ());
+    let _ = app.emit("generation-provider-status-changed", ());
+    state.workers.extensions.wake_extensions(
+        app.clone(),
+        state.history.clone(),
+        state.extensions.clone(),
+    );
+    result
+}
+
+#[tauri::command]
+pub async fn ai_configuration_retry_cleanup(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::retry_credential_cleanup(&state.history)
+        .await
+        .map_err(public_failure)
+}
 #[tauri::command]
 pub async fn ai_test_connection(
     webview: tauri::Webview,

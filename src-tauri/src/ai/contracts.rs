@@ -89,7 +89,15 @@ pub struct AiSelections {
 }
 dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
 dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
-dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiConfigurationState {
+    pub configuration: AiConfiguration,
+    pub connection_states: Vec<AiConnectionState>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub pending_credential_removals: Option<u32>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiDiscoveredModel {
