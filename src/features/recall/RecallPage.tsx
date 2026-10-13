@@ -43,7 +43,7 @@ export function RecallPage({
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
   const [query, setQuery] = useState(initialQuery)
-  const [draftSeed, setDraftSeed] = useState(initialQuery)
+  const [draftSeed, setDraftSeed] = useState(initialAsk ? '' : initialQuery)
   const [filters, storeFilters] = useState(initialFilters)
   const [status, setStatus] = useState<ClipboardStatus | null>(null)
   const [facets, setFacets] = useState<ClipboardFilters | null>(null)
@@ -129,7 +129,26 @@ export function RecallPage({
       if (active) {
         setThread(current)
         setDraft(fresh)
-        if (initialAsk) onInitialAskConsumed?.()
+        if (initialAsk) {
+          const available = config.status === 'fulfilled' ? config.value : null
+          const selectedId = available?.selections.defaultChat
+          const canAsk =
+            selectedId &&
+            available.presets.some(
+              preset =>
+                preset.id === selectedId &&
+                preset.purpose === 'chat' &&
+                available.connections.some(
+                  connection => connection.id === preset.connectionId && connection.enabled
+                )
+            )
+          if (canAsk && initialQuery.trim()) {
+            setAsk({ id: crypto.randomUUID(), text: initialQuery.trim() })
+          } else {
+            setDraftSeed(initialQuery)
+            onInitialAskConsumed?.()
+          }
+        }
       }
     }
     void load().catch(() => {

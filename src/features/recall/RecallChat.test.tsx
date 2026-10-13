@@ -53,6 +53,27 @@ beforeEach(() => {
   )
 })
 describe('Recall conversation runtime presentation', () => {
+  it('starts a handed-off Recall question once', async () => {
+    const run = vi.fn()
+    const onAskConsumed = vi.fn()
+    vi.mocked(createRecallAdapter).mockImplementation(() => ({
+      run: async function* () {
+        await Promise.resolve()
+        run()
+        yield {
+          content: [{ type: 'text' as const, text: 'Found the notes.' }],
+          status: { type: 'complete' as const, reason: 'stop' as const },
+        }
+      },
+    }))
+    const handoff = { ...props(), ask: { id: 'handoff-1', text: 'find notes' }, onAskConsumed }
+    const view = render(<RecallChat {...handoff} />)
+    expect(await screen.findByText('Found the notes.')).toBeInTheDocument()
+    expect(onAskConsumed).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledOnce()
+    view.rerender(<RecallChat {...handoff} />)
+    expect(run).toHaveBeenCalledOnce()
+  })
   it('keeps the running conversation mounted when its draft acquires a saved ID', async () => {
     const initialize = vi.fn()
     const run = vi.fn()

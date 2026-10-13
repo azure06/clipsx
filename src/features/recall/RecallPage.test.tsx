@@ -21,6 +21,7 @@ vi.mock('./RecallChat', () => ({
       />
       <div data-testid="attachments">{JSON.stringify(props.attachments)}</div>
       <div data-testid="chat-submission">{props.ask?.text ?? ''}</div>
+      {props.ask && <button onClick={props.onAskConsumed}>consume ask</button>}
       <div data-testid="chat-thread">{props.thread.id}</div>
       {props.contextOpen && (
         <div data-testid="context">
@@ -84,7 +85,7 @@ beforeEach(() => {
   })
 })
 describe('Recall workspace context', () => {
-  it('starts History Recall as a fresh unsaved draft, preserving the query and scope without sending', async () => {
+  it('submits History Recall once with its query and scope', async () => {
     const consumed = vi.fn()
     render(
       <RecallPage
@@ -104,8 +105,9 @@ describe('Recall workspace context', () => {
       />
     )
     expect(await screen.findByTestId('chat-thread')).toHaveTextContent('draft:')
-    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toHaveValue('find notes')
-    expect(screen.getByTestId('chat-submission')).toBeEmptyDOMElement()
+    expect(screen.getByTestId('chat-submission')).toHaveTextContent('find notes')
+    expect(consumed).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'consume ask' }))
     expect(consumed).toHaveBeenCalledOnce()
     expect(
       vi.mocked(invoke).mock.calls.some(([command]) => command === 'recall_thread_initialize')
@@ -126,6 +128,15 @@ describe('Recall workspace context', () => {
   it('reopens the saved conversation from the sidebar entry', async () => {
     render(<RecallPage />)
     expect(await screen.findByTestId('chat-thread')).toHaveTextContent('thread')
+  })
+  it('keeps a handed-off question editable when no chat model is configured', async () => {
+    configurationFails = true
+    const consumed = vi.fn()
+    render(<RecallPage initialAsk initialQuery="find notes" onInitialAskConsumed={consumed} />)
+    expect(await screen.findByTestId('chat-thread')).toHaveTextContent('draft:')
+    expect(screen.getByRole('textbox', { name: 'recallPage.message' })).toHaveValue('find notes')
+    expect(screen.getByTestId('chat-submission')).toBeEmptyDOMElement()
+    expect(consumed).toHaveBeenCalledOnce()
   })
   it('uses the single composer for local suggestions without starting an agent', async () => {
     render(<RecallPage />)
