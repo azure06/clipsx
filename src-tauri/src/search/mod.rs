@@ -596,7 +596,11 @@ pub async fn search(
         .iter()
         .any(|source| source.id() == SEMANTIC_TEXT_SOURCE_ID)
     {
-        Some(eligible_clip_ids(repo, request).await?)
+        let mut semantic_request = request.clone();
+        semantic_request.eligibility.assistant = true;
+        let mut eligible = eligible_clip_ids(repo, &semantic_request).await?;
+        semantic::eligibility::exclude_pending_cleanup(repo, &mut eligible).await?;
+        Some(eligible)
     } else {
         None
     };
@@ -804,7 +808,8 @@ fn eligibility_filter(request: &SearchRequest) -> Result<(String, Vec<String>)> 
         }
     }
     if eligibility.assistant {
-        sql.push_str(" AND NOT EXISTS(SELECT 1 FROM content_clip_facets secret WHERE secret.clip_id=c.id AND secret.facet_id='core.security.secret')");
+        sql.push_str(" AND ");
+        sql.push_str(semantic::eligibility::NOT_SECRET);
     }
     if let Some(after) = eligibility.captured_after {
         sql.push_str(" AND c.captured_at>=?");

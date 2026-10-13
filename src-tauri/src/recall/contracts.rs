@@ -1,4 +1,5 @@
 //! Rust owns the assistant contract. Generated TypeScript and MCP schemas derive here.
+pub use crate::ai::contracts::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -172,61 +173,6 @@ dto!(McpGrantSecret {
 });
 dto!(McpIntegrationStatus { configuration: McpConfiguration, endpoint: String, state: String, diagnostic: Option<String> });
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum AiProviderKind {
-    Ollama,
-    Openai,
-    Anthropic,
-    Gemini,
-    Openrouter,
-    Tavily,
-}
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AiModelPurpose {
-    Chat,
-    Embedding,
-    Decision,
-    Rerank,
-}
-dto!(AiConnectionOptions { organization: Option<String>, project: Option<String> });
-dto!(AiConnection {
-    id: String,
-    name: String,
-    provider: AiProviderKind,
-    base_url: String,
-    enabled: bool,
-    options: AiConnectionOptions
-});
-dto!(AiCapabilities { tools: Option<bool>, vision: Option<bool>, web_search: Option<bool>, source: Option<String> });
-dto!(OpenaiPresetOptions { reasoning_effort: Option<String> });
-dto!(AnthropicPresetOptions { thinking_budget: Option<u32> });
-dto!(GeminiPresetOptions { thinking_budget: Option<u32> });
-dto!(EmbeddingPresetOptions { dimensions: Option<u32>, task_policy: String, hosted_indexing_enabled: bool });
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AiPresetOptions {
-    pub temperature: Option<f64>,
-    pub openai: Option<OpenaiPresetOptions>,
-    pub anthropic: Option<AnthropicPresetOptions>,
-    pub gemini: Option<GeminiPresetOptions>,
-    pub embedding: Option<EmbeddingPresetOptions>,
-    #[serde(default)]
-    #[ts(optional = nullable)]
-    pub limit_policy: Option<AiLimitPolicy>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AiLimitPolicy {
-    Auto,
-    Explicit,
-}
-dto!(ModelInformation {
-    identity: String, context_limit: Option<u32>, input_limit: Option<u32>, output_limit: Option<u32>,
-    runtime_context_limit: Option<u32>, tools: Option<bool>, vision: Option<bool>, structured_output: Option<bool>,
-    reasoning_output: Option<bool>, source: String, observed_at: f64
-});
 dto!(ResolvedExecutionPolicy {
     input_limit: u32, output_limit: u32, context_limit: u32, estimated: bool,
     source: String, reasoning: Option<ReasoningSelection>, max_steps: u32, max_compactions: u32, deadline_ms: u32
@@ -251,48 +197,10 @@ pub struct ContextStatus {
     pub input_limit: u32,
     pub reason: Option<String>,
 }
-dto!(AiModelPreset {
-    id: String,
-    name: String,
-    connection_id: String,
-    model_id: String,
-    purpose: AiModelPurpose,
-    context_limit: u32,
-    output_limit: u32,
-    options: AiPresetOptions,
-    capabilities: AiCapabilities
-});
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AiSelections {
-    pub default_chat: Option<String>,
-    pub active_embedding: Option<String>,
-    pub web_search: Option<String>,
-    #[serde(default)]
-    pub extension_generation: Option<String>,
-    #[serde(default)]
-    pub default_decision: Option<String>,
-    #[serde(default)]
-    pub active_rerank: Option<String>,
-}
 dto!(DecisionTestResult {
     choice: String,
     confidence: f64
 });
-dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });
-dto!(AiConnectionState { connection_id: String, credential_configured: bool, last_test_at: Option<f64>, diagnostic: Option<String> });
-dto!(AiConfigurationState { configuration: AiConfiguration, connection_states: Vec<AiConnectionState> });
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AiDiscoveredModel {
-    pub id: String,
-    pub purposes: Option<Vec<AiModelPurpose>>,
-    pub capabilities: AiCapabilities,
-    #[serde(default)]
-    #[ts(optional = nullable)]
-    pub model_information: Option<ModelInformation>,
-}
-
 dto!(AssistantToolDefinition {
     name: String,
     description: String,
@@ -431,6 +339,7 @@ mod tests {
             AnthropicPresetOptions::decl(&config),
             GeminiPresetOptions::decl(&config),
             EmbeddingPresetOptions::decl(&config),
+            EmbeddingModelInformation::decl(&config),
             AiLimitPolicy::decl(&config),
             ModelInformation::decl(&config),
             ResolvedExecutionPolicy::decl(&config),

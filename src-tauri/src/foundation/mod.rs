@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 25;
+pub const SCHEMA_VERSION: i64 = 26;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +365,7 @@ mod tests {
     use tempfile::TempDir;
     #[tokio::test]
     async fn upgrades_released_and_recall_schemas_without_resetting_data() {
-        for version in 15..=23 {
+        for version in 15..=25 {
             let root = TempDir::new().unwrap();
             let roots = AppRoots {
                 data: root.path().join("data"),
@@ -392,6 +392,8 @@ mod tests {
                 "INSERT INTO clip_text_values VALUES('kept-rep','Saved text',10,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
                 "INSERT INTO catalog_tags VALUES('kept-tag','Keep',NULL,1,1)",
                 "INSERT INTO catalog_clip_tags VALUES('kept-clip','kept-tag',1)",
+                "INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES('core.security.secret','builtin.core','1','Secret')",
+                "INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version) VALUES('kept-clip','core.security.secret','kept-rep','fixture','1')",
                 "UPDATE config_profile_values SET value_json='false' WHERE key='artifacts.ocr.enabled'",
             ] {
                 sqlx::query(sql).execute(&mut connection).await.unwrap();
@@ -414,6 +416,16 @@ mod tests {
                     sqlx::query(sql).execute(&mut connection).await.unwrap();
                 }
             }
+            if version == 25 {
+                for sql in [
+                    "INSERT INTO clip_items(id,note,captured_at,updated_at,lifecycle_state) VALUES('review-clip','unclassified note',1,1,'ready')",
+                    "INSERT INTO search_embedding_spaces(id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('review-space','fixture','1','model','revision','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','text',2,'l2','cosine',1)",
+                    "INSERT INTO search_index_generations(id,source_id,space_id,generation,pipeline_version,backend_id,vector_encoding,candidate_limit,sidecar_relative_path,status,created_at,updated_at) VALUES('review-generation','builtin.search.semantic_text','review-space',1,'4','builtin.binary-flat.v1','binary_sign_scan_float32_rerank',100,'generation-review.sqlite','active',1,1)",
+                    "INSERT INTO search_index_jobs(id,generation_id,clip_id,status,requested_at,completed_at,projection_sha256) VALUES('review-job','review-generation','review-clip','completed',1,1,'old-projection')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
             drop(connection);
             assert_eq!(
                 prepare(&roots).await.unwrap(),
@@ -421,6 +433,35 @@ mod tests {
                 "from {version}"
             );
             let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            if version == 25 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT status FROM search_index_jobs WHERE id='review-job'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "pending"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM search_semantic_cleanup WHERE clip_id='review-clip'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    1
+                );
+            }
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM search_semantic_cleanup WHERE clip_id='kept-clip'"
+                )
+                .fetch_one(&mut connection)
+                .await
+                .unwrap(),
+                1
+            );
             for (sql, expected) in [
                 ("SELECT note FROM clip_items WHERE id='kept-clip' AND is_favorite=1", "Keep this note"),
                 ("SELECT text_value FROM clip_text_values WHERE representation_id='kept-rep'", "Saved text"),

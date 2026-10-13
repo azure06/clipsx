@@ -1,4 +1,4 @@
-//! Bounded observations, independent from execution-policy decisions.
+//! Shared bounded observations, independent from execution-policy decisions.
 use super::{configuration, contracts::*, credentials};
 use crate::history::{now_ms, sha256, HistoryRepository};
 use anyhow::Result;
@@ -186,9 +186,7 @@ pub async fn resolve(
                 .map_err(|_| anyhow::anyhow!("invalid_endpoint"))?
                 .push(&preset.model_id);
         }
-        let value =
-            crate::providers::hosted_embedding::request_json(connection, &destination, &key, None)
-                .await?;
+        let value = super::http::request_json(connection, &destination, &key, None).await?;
         if connection.provider == AiProviderKind::Openrouter {
             value["data"]
                 .as_array()

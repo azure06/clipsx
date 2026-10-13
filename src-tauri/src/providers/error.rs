@@ -8,6 +8,7 @@ pub enum ProviderError {
     InputLimit,
     Timeout,
     ModelUnavailable,
+    EmbeddingSpaceChanged,
     InvalidConfiguration(String),
     Unavailable(String),
     Rejected {
@@ -30,6 +31,7 @@ impl ProviderError {
             Self::InputLimit => FailureCode::InputLimit,
             Self::Timeout => FailureCode::ProviderTimeout,
             Self::ModelUnavailable => FailureCode::ModelUnavailable,
+            Self::EmbeddingSpaceChanged => FailureCode::EmbeddingSpaceChanged,
             Self::InvalidConfiguration(_) => FailureCode::ProviderConfiguration,
             Self::Unavailable(_) => FailureCode::ConnectionUnavailable,
             Self::Rejected {
@@ -63,6 +65,7 @@ impl ProviderError {
             Self::InputLimit => "input_limit",
             Self::Timeout => "provider_timeout",
             Self::ModelUnavailable => "model_unavailable",
+            Self::EmbeddingSpaceChanged => "embedding_space_changed",
             Self::InvalidConfiguration(_) => "invalid_configuration",
             Self::Unavailable(_) => "unavailable",
             Self::Rejected {

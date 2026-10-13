@@ -43,7 +43,7 @@ impl OllamaGenerationProvider {
         })
     }
 
-    pub fn with_preset(mut self, preset: &crate::recall::contracts::AiModelPreset) -> Self {
+    pub fn with_preset(mut self, preset: &crate::ai::contracts::AiModelPreset) -> Self {
         self.context_limit = preset.context_limit;
         self.output_limit = preset.output_limit;
         self.temperature = preset.options.temperature;

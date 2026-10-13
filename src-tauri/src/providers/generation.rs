@@ -61,13 +61,13 @@ pub async fn configure(
     };
     put_config(repo, &config).await?;
     record_success(repo).await?;
-    let mut document = crate::recall::configuration::export(repo).await?;
+    let mut document = crate::ai::configuration::export(repo).await?;
     let endpoint = model_catalog::endpoint(repo).await?;
     let connection = document
         .connections
         .iter()
         .find(|c| {
-            c.provider == crate::recall::contracts::AiProviderKind::Ollama
+            c.provider == crate::ai::contracts::AiProviderKind::Ollama
                 && c.base_url.trim_end_matches('/') == endpoint.trim_end_matches('/')
         })
         .context("missing_connection")?
@@ -78,32 +78,32 @@ pub async fn configure(
         .find(|p| {
             p.connection_id == connection.id
                 && p.model_id == config.model
-                && p.purpose == crate::recall::contracts::AiModelPurpose::Chat
+                && p.purpose == crate::ai::contracts::AiModelPurpose::Chat
         })
         .cloned()
-        .unwrap_or_else(|| crate::recall::contracts::AiModelPreset {
+        .unwrap_or_else(|| crate::ai::contracts::AiModelPreset {
             id: crate::history::new_id(),
             name: config.model.clone(),
             connection_id: connection.id,
             model_id: config.model,
-            purpose: crate::recall::contracts::AiModelPurpose::Chat,
+            purpose: crate::ai::contracts::AiModelPurpose::Chat,
             context_limit: 32768,
             output_limit: 4096,
-            options: crate::recall::configuration::default_options(),
-            capabilities: crate::recall::configuration::unknown_capabilities(),
+            options: crate::ai::configuration::default_options(),
+            capabilities: crate::ai::configuration::unknown_capabilities(),
         });
     document.selections.extension_generation = Some(preset.id.clone());
     if !document.presets.iter().any(|p| p.id == preset.id) {
         document.presets.push(preset);
     }
-    crate::recall::configuration::import(repo, document).await?;
+    crate::ai::configuration::import(repo, document).await?;
     status(repo).await
 }
 
 pub async fn disable(repo: &HistoryRepository) -> Result<()> {
-    let mut document = crate::recall::configuration::export(repo).await?;
+    let mut document = crate::ai::configuration::export(repo).await?;
     document.selections.extension_generation = None;
-    crate::recall::configuration::import(repo, document).await?;
+    crate::ai::configuration::import(repo, document).await?;
     Ok(())
 }
 
@@ -124,7 +124,7 @@ pub async fn status(repo: &HistoryRepository) -> Result<GenerationProviderStatus
                 super::contracts::generation::GenerationExecutionLocation::Local
             ) =>
         {
-            let document = crate::recall::configuration::export(repo).await?;
+            let document = crate::ai::configuration::export(repo).await?;
             let preset = document
                 .presets
                 .iter()
@@ -190,7 +190,7 @@ pub async fn generate(repo: &HistoryRepository, prompt: &str) -> Result<String> 
 pub async fn resolve(
     repo: &HistoryRepository,
 ) -> Result<(GenerationProviderConfig, Box<dyn GenerationProvider>)> {
-    let document = crate::recall::configuration::export(repo).await?;
+    let document = crate::ai::configuration::export(repo).await?;
     let preset = document
         .presets
         .iter()
@@ -212,13 +212,13 @@ pub async fn resolve(
         return Err(ProviderError::Disabled.into());
     }
     let provider: Box<dyn GenerationProvider> =
-        if connection.provider == crate::recall::contracts::AiProviderKind::Ollama {
+        if connection.provider == crate::ai::contracts::AiProviderKind::Ollama {
             Box::new(
                 OllamaGenerationProvider::new(&connection.base_url, preset.model_id.clone())?
                     .with_preset(&preset),
             )
         } else {
-            let credential = crate::recall::credentials::get(repo, &connection.id)
+            let credential = crate::ai::credentials::get(repo, &connection.id)
                 .await?
                 .ok_or(ProviderError::NotConfigured)?;
             Box::new(super::named_generation::NamedGenerationProvider {
@@ -265,7 +265,7 @@ pub async fn generate_stream(
 }
 
 async fn get_config(repo: &HistoryRepository) -> Result<Option<GenerationProviderConfig>> {
-    let document = crate::recall::configuration::export(repo).await?;
+    let document = crate::ai::configuration::export(repo).await?;
     let Some(preset) = document
         .presets
         .iter()

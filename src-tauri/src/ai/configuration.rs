@@ -1,12 +1,11 @@
-//! Device-local named connections, presets, and validated credential-free imports.
+//! Shared device-local named connections, presets, and validated imports.
+#[cfg(test)]
+pub use super::embedding::embedding_provider_for;
+use super::embedding::verify_embedding;
 use super::{contracts::*, credentials};
 use crate::{
     history::{new_id, now_ms, HistoryRepository},
-    providers::{
-        self,
-        contracts::text_embedding::{TextEmbeddingProvider, TextEmbeddingSpace},
-        error::ProviderError,
-    },
+    providers::{self, contracts::text_embedding::TextEmbeddingSpace},
 };
 use anyhow::{bail, Context, Result};
 use sqlx::{Row, SqliteConnection};
@@ -709,95 +708,6 @@ pub async fn set_credential(
         .await?;
     Ok(())
 }
-pub async fn verify_embedding(
-    repo: &HistoryRepository,
-    document: &AiConfiguration,
-    id: &str,
-) -> Result<(providers::TextEmbeddingProviderConfig, TextEmbeddingSpace)> {
-    let preset = document
-        .presets
-        .iter()
-        .find(|v| v.id == id && v.purpose == AiModelPurpose::Embedding)
-        .context("missing_embedding_preset")?;
-    let connection = document
-        .connections
-        .iter()
-        .find(|v| v.id == preset.connection_id)
-        .context("missing_connection")?;
-    let provider = embedding_provider_for(repo, connection, preset, None).await?;
-    let descriptor = provider.describe().await?;
-    let config = providers::TextEmbeddingProviderConfig {
-        provider_id: format!("ai-preset:{}", preset.id),
-        model: preset.model_id.clone(),
-        enabled: true,
-        minimum_similarity_percent: None,
-    };
-    Ok((config, descriptor))
-}
-pub async fn embedding_provider_for(
-    repo: &HistoryRepository,
-    connection: &AiConnection,
-    preset: &AiModelPreset,
-    model: Option<&str>,
-) -> Result<Box<dyn TextEmbeddingProvider>> {
-    if !connection.enabled {
-        bail!("connection_disabled");
-    }
-    let base = validate_connection(connection)?;
-    let model = model.unwrap_or(&preset.model_id);
-    if connection.provider == AiProviderKind::Ollama {
-        return Ok(Box::new(
-            providers::ollama::OllamaTextEmbeddingProvider::new(base.as_str(), model.into())?,
-        ));
-    }
-    let options = preset
-        .options
-        .embedding
-        .as_ref()
-        .context("missing_embedding_options")?;
-    if !options.hosted_indexing_enabled {
-        bail!(crate::failure::FailureCode::HostedIndexingDisabled.failure());
-    }
-    let credential = credentials::get(repo, &connection.id)
-        .await?
-        .ok_or(ProviderError::NotConfigured)?;
-    Ok(Box::new(
-        providers::hosted_embedding::HostedEmbeddingProvider::new(
-            connection.clone(),
-            model.into(),
-            credential,
-            options.clone(),
-        )?,
-    ))
-}
-pub async fn resolve_embedding(
-    repo: &HistoryRepository,
-    config: &providers::TextEmbeddingProviderConfig,
-    model: Option<&str>,
-) -> Result<Box<dyn TextEmbeddingProvider>> {
-    if !config.enabled {
-        return Err(ProviderError::Disabled.into());
-    }
-    if let Some(id) = config.provider_id.strip_prefix("ai-preset:") {
-        let document = export(repo).await?;
-        let preset = document
-            .presets
-            .iter()
-            .find(|v| v.id == id)
-            .context("missing_embedding_preset")?;
-        let connection = document
-            .connections
-            .iter()
-            .find(|v| v.id == preset.connection_id)
-            .context("missing_connection")?;
-        return embedding_provider_for(repo, connection, preset, model).await;
-    }
-    let endpoint = providers::model_catalog::endpoint(repo).await?;
-    Ok(providers::text_embedding_provider(
-        config, &endpoint, model,
-    )?)
-}
-
 // None means unknown, while an empty list means the catalog reports no supported ClipsX use.
 fn catalog_purposes(
     provider: AiProviderKind,
@@ -949,7 +859,7 @@ async fn discover_connection(
             .into_iter()
             .take(500)
             .map(|v| AiDiscoveredModel {
-                id: v.id,
+                id: v.id.clone(),
                 purposes: (!v.capabilities.is_empty()).then(|| {
                     v.capabilities
                         .iter()
@@ -968,6 +878,10 @@ async fn discover_connection(
                 }),
                 capabilities: unknown_capabilities(),
                 model_information: None,
+                embedding_information: v
+                    .capabilities
+                    .contains(&providers::model_catalog::ModelCapability::TextEmbedding)
+                    .then(|| super::embedding::information(connection.provider, &v.id)),
             })
             .collect());
     }
@@ -977,8 +891,7 @@ async fn discover_connection(
     let credential = credential.context("credential_required")?;
     if connection.provider == AiProviderKind::Openrouter {
         // Catalog visibility alone does not prove that the supplied key is valid.
-        providers::hosted_embedding::request_json(connection, &base.join("key")?, credential, None)
-            .await?;
+        super::http::request_json(connection, &base.join("key")?, credential, None).await?;
     }
     let mut catalog_url = base.join("models")?;
     if connection.provider == AiProviderKind::Openrouter {
@@ -986,9 +899,7 @@ async fn discover_connection(
             .query_pairs_mut()
             .append_pair("output_modalities", "all");
     }
-    let value =
-        providers::hosted_embedding::request_json(connection, &catalog_url, credential, None)
-            .await?;
+    let value = super::http::request_json(connection, &catalog_url, credential, None).await?;
     let rows = value[if connection.provider == AiProviderKind::Gemini {
         "models"
     } else {
@@ -1039,6 +950,10 @@ async fn discover_connection(
             }
             Some(AiDiscoveredModel {
                 id: id.clone(),
+                embedding_information: purposes
+                    .as_ref()
+                    .is_some_and(|values| values.contains(&AiModelPurpose::Embedding))
+                    .then(|| super::embedding::information(connection.provider, &id)),
                 purposes,
                 capabilities,
                 model_information: Some(super::model_information::parse(

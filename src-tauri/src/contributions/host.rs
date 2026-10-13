@@ -839,6 +839,11 @@ impl DetectorContribution for SecretDetector {
     }
 }
 
+/// Reuse deterministic secret detection at the semantic egress boundary, including notes and OCR.
+pub(crate) fn contains_secret(value: &str) -> bool {
+    classify_secret_document(value).is_some()
+}
+
 fn classify_secret_document(value: &str) -> Option<(&'static str, &'static str)> {
     if let Some(classification) = classify_secret(value) {
         return Some(classification);

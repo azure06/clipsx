@@ -28,7 +28,7 @@ const MIN_FALLBACK_BYTES: usize = 128;
 const MAX_FALLBACK_DEPTH: u8 = 4;
 const MAX_EMBED_REQUESTS_PER_CLIP: usize = 128;
 const QUERY_EMBEDDING_TIMEOUT: Duration = Duration::from_secs(4);
-const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
+const HAS_SEMANTIC_CONTENT: &str = "c.lifecycle_state='ready' AND (
   trim(COALESCE(c.note,'')) <> ''
   OR EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id)
   OR EXISTS(
@@ -43,6 +43,13 @@ const ELIGIBLE_CLIP_PREDICATE: &str = "c.lifecycle_state='ready' AND (
     AND ar.lifecycle_state='ready'
   )
 )";
+
+fn eligible_clip_predicate() -> String {
+    format!(
+        "{HAS_SEMANTIC_CONTENT} AND {}",
+        super::eligibility::NOT_SECRET
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,7 +299,10 @@ fn threshold_for_configured_space(
 /// OCR, for example, are valid clipboard history but cannot yet be embedded by
 /// the text provider, so they must not make text-index coverage look incomplete.
 async fn eligible_clip_count(repo: &HistoryRepository) -> Result<i64> {
-    let sql = format!("SELECT count(*) FROM clip_items c WHERE {ELIGIBLE_CLIP_PREDICATE}");
+    let sql = format!(
+        "SELECT count(*) FROM clip_items c WHERE {}",
+        eligible_clip_predicate()
+    );
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .fetch_one(&repo.pool)
         .await?)
@@ -356,10 +366,11 @@ async fn generation_counts(
 }
 
 async fn completed_eligible_job_count(repo: &HistoryRepository, generation: &str) -> Result<i64> {
+    let eligible = eligible_clip_predicate();
     let sql = format!(
         "SELECT count(*) FROM search_index_jobs j
          JOIN clip_items c ON c.id=j.clip_id
-         WHERE j.generation_id=? AND j.status='completed' AND {ELIGIBLE_CLIP_PREDICATE}"
+         WHERE j.generation_id=? AND j.status='completed' AND {eligible}"
     );
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(generation)
@@ -397,8 +408,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
             .bind(&generation.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let provider =
-        crate::recall::configuration::resolve_embedding(repo, &config, Some(&model)).await?;
+    let provider = crate::ai::embedding::resolve_embedding(repo, &config, Some(&model)).await?;
     ensure_space_compatible(repo, &generation.space_id, provider.as_ref()).await?;
     let store = SemanticIndexStore::new(&repo.semantic_index_root)?;
     if generation.status == "active" {
@@ -475,7 +485,7 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
                 // backoff, rather than consuming all three attempts in a tight
                 // loop during a temporary Ollama outage.
                 if first_error.is_none() {
-                    first_error = Some(error_message);
+                    first_error = Some(error);
                 }
             }
         }
@@ -483,12 +493,12 @@ pub async fn index_pending(repo: &HistoryRepository) -> Result<u64> {
     writer.close().await?;
     settle_generation(repo, &generation).await?;
     if let Some(error) = first_error {
-        bail!(error);
+        return Err(error);
     }
     Ok(count)
 }
 
-/// Applies durable clip-deletion work to every retained sidecar. This does not
+/// Applies durable deletion/eligibility cleanup to every retained sidecar. This does not
 /// require an enabled or reachable embedding provider.
 pub async fn process_cleanup(repo: &HistoryRepository) -> Result<u64> {
     let clips: Vec<String> = sqlx::query_scalar(
@@ -675,6 +685,10 @@ async fn index_clip(
     provider: &dyn TextEmbeddingProvider,
     clip_id: &str,
 ) -> Result<String> {
+    if !super::eligibility::clip_is_eligible(repo, clip_id).await? {
+        writer.replace_clip(clip_id, &[]).await?;
+        return Ok(sha256(b"semantic-ineligible-v1"));
+    }
     let mut chunks = Vec::<(SemanticInput, SemanticChunk)>::new();
     for input in deduplicate_inputs(load_semantic_inputs(repo, clip_id).await?) {
         for chunk in chunking::chunk_input(&input)? {
@@ -712,7 +726,11 @@ async fn index_clip(
             chunker_version: chunk.strategy_version,
         });
     }
-    writer.replace_clip(clip_id, &sidecar_chunks).await?;
+    if super::eligibility::clip_is_eligible(repo, clip_id).await? {
+        writer.replace_clip(clip_id, &sidecar_chunks).await?;
+    } else {
+        writer.replace_clip(clip_id, &[]).await?;
+    }
     Ok(projection)
 }
 
@@ -829,6 +847,12 @@ async fn load_semantic_inputs(
             source_ordinal: 1_000_000 + ordinal as i64,
         });
     }
+    if inputs
+        .iter()
+        .any(|input| !super::eligibility::text_is_eligible(&input.text))
+    {
+        return Ok(Vec::new());
+    }
     Ok(inputs)
 }
 
@@ -893,6 +917,9 @@ async fn enqueue_all(repo: &HistoryRepository, generation_id: &str) -> Result<()
 }
 
 async fn enqueue_job(repo: &HistoryRepository, generation_id: &str, clip_id: &str) -> Result<()> {
+    if !super::eligibility::clip_is_eligible(repo, clip_id).await? {
+        return Ok(());
+    }
     sqlx::query(
         "INSERT INTO search_index_jobs(id,generation_id,clip_id,status,requested_at)
          VALUES(?,?,?,'pending',?)
@@ -1056,8 +1083,9 @@ pub async fn index_missing(repo: &HistoryRepository) -> Result<()> {
     let active = generation_by_status(repo, "active")
         .await?
         .context("no active embedding generation")?;
+    let eligible = eligible_clip_predicate();
     let sql = format!(
-        "SELECT c.id FROM clip_items c WHERE {ELIGIBLE_CLIP_PREDICATE} AND NOT EXISTS(
+        "SELECT c.id FROM clip_items c WHERE {eligible} AND NOT EXISTS(
            SELECT 1 FROM search_index_jobs j WHERE j.clip_id=c.id
            AND j.generation_id=? AND j.status='completed')"
     );
@@ -1091,7 +1119,7 @@ pub async fn clear_space(repo: &HistoryRepository, _space: &str) -> Result<()> {
 
 async fn reset_configured_text_index(repo: &HistoryRepository) -> Result<Generation> {
     let config = enabled_config(repo).await?;
-    let provider = crate::recall::configuration::resolve_embedding(repo, &config, None).await?;
+    let provider = crate::ai::embedding::resolve_embedding(repo, &config, None).await?;
     let descriptor = match provider.describe().await {
         Ok(descriptor) => descriptor,
         Err(error) => {
@@ -1282,7 +1310,10 @@ pub async fn retry_failed(repo: &HistoryRepository) -> Result<()> {
 
 pub async fn validate_configured_provider(repo: &HistoryRepository) -> Result<()> {
     let config = enabled_config(repo).await?;
-    let provider = crate::recall::configuration::resolve_embedding(repo, &config, None).await?;
+    let provider = crate::ai::embedding::resolve_embedding(repo, &config, None).await?;
+    if let Some(generation) = target_generation_for_work(repo).await? {
+        ensure_space_compatible(repo, &generation.space_id, provider.as_ref()).await?;
+    }
     match provider.describe().await {
         Ok(_) => {
             record_provider_success(repo, &config.provider_id).await?;
@@ -1310,8 +1341,7 @@ pub async fn semantic_matches(
             .bind(&active.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let provider =
-        crate::recall::configuration::resolve_embedding(repo, &config, Some(&model)).await?;
+    let provider = crate::ai::embedding::resolve_embedding(repo, &config, Some(&model)).await?;
     ensure_space_compatible(repo, &active.space_id, provider.as_ref()).await?;
     semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
         .await
@@ -1322,20 +1352,31 @@ async fn ensure_space_compatible(
     space_id: &str,
     provider: &dyn TextEmbeddingProvider,
 ) -> Result<()> {
-    let (expected, dimensions): (String, i64) = sqlx::query_as(
-        "SELECT compatibility_sha256,dimensions FROM search_embedding_spaces WHERE id=?",
+    let row = sqlx::query(
+        "SELECT provider_id,provider_version,model_id,model_revision,dimensions,normalization,distance_metric FROM search_embedding_spaces WHERE id=?",
     )
     .bind(space_id)
     .fetch_one(&repo.pool)
     .await?;
-    let Some(descriptor) = provider.descriptor_for_dimensions(dimensions as usize) else {
-        return Ok(());
+    let expected = TextEmbeddingSpace {
+        provider: crate::providers::contracts::ProviderDescriptor {
+            provider_id: row.get(0),
+            provider_version: row.get(1),
+            model_id: row.get(2),
+            model_revision: row.get(3),
+        },
+        dimensions: usize::try_from(row.get::<i64, _>(4))?,
+        normalization: row.get(5),
+        distance_metric: row.get(6),
     };
-    let actual = compatibility_sha256(&descriptor)?;
-    if expected != actual {
-        bail!("embedding space changed; validate the selected preset before using this index");
+    match provider.verify_space(&expected).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let config = enabled_config(repo).await?;
+            record_provider_failure(repo, &config.provider_id, &error).await?;
+            Err(error.into())
+        }
     }
-    Ok(())
 }
 
 pub(crate) async fn minimum_similarity_percent(repo: &HistoryRepository) -> Result<Option<u8>> {
@@ -1728,6 +1769,162 @@ mod tests {
         assert_eq!(embedded.len(), 2);
         assert_eq!(provider.embedded_inputs.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(embedded[0].2, embedded[1].2);
+    }
+
+    struct LimitedProvider {
+        overflow: bool,
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl TextEmbeddingProvider for LimitedProvider {
+        async fn describe(&self) -> ProviderResult<TextEmbeddingSpace> {
+            Ok(test_space())
+        }
+        async fn embed_queries(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
+            self.embed_documents(inputs).await
+        }
+        async fn embed_documents(&self, inputs: &[String]) -> ProviderResult<Vec<Vec<f32>>> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            if !self.overflow || inputs.iter().any(|input| input.len() > 300) {
+                return Err(ProviderError::Rejected {
+                    operation: "fixture".into(),
+                    status: if self.overflow { 400 } else { 401 },
+                    detail: None,
+                    context_overflow: self.overflow,
+                });
+            }
+            Ok(inputs.iter().map(|_| vec![1., 0.]).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn only_definite_context_rejections_subdivide_without_losing_text() {
+        let mut item = duplicate_embedding_chunk("source");
+        item.1.display_text = (0..60)
+            .map(|index| format!("記録{index:03} 日本語メモ "))
+            .collect();
+        item.1.embedding_text = item.1.display_text.clone();
+        let provider = LimitedProvider {
+            overflow: true,
+            calls: AtomicUsize::new(0),
+        };
+        let rows = embed_chunks_adaptively(&provider, vec![item.clone()])
+            .await
+            .unwrap();
+        assert!(rows.len() > 1);
+        assert!(item.1.display_text.split_whitespace().all(|word| rows
+            .iter()
+            .any(|(_, chunk, _)| chunk.display_text.contains(word))));
+        assert!(rows
+            .iter()
+            .all(|(_, chunk, _)| chunk.embedding_text.len() <= 300));
+        let unauthorized = LimitedProvider {
+            overflow: false,
+            calls: AtomicUsize::new(0),
+        };
+        assert!(embed_chunks_adaptively(&unauthorized, vec![item])
+            .await
+            .is_err());
+        assert_eq!(unauthorized.calls.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn known_secrets_are_cleaned_and_never_reembedded_but_fts_is_preserved() {
+        let (_temp, repo) = repository().await;
+        let clip = insert_text_clip(&repo, "remember this saved source").await;
+        crate::search::upsert_projection(&repo, &clip)
+            .await
+            .unwrap();
+        let (generation, mut writer) = insert_generation(&repo).await;
+        index_clip(&repo, &mut writer, &FakeProvider, &clip)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES('core.security.secret','builtin.core','1','Secret') ON CONFLICT DO NOTHING").execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version) SELECT clip_id,'core.security.secret',id,'fixture','1' FROM clip_representations WHERE clip_id=?").bind(&clip).execute(&repo.pool).await.unwrap();
+        assert_eq!(process_cleanup(&repo).await.unwrap(), 1);
+        let store = SemanticIndexStore::new(&repo.semantic_index_root).unwrap();
+        let mut writer = store
+            .open_active(&generation.sidecar_relative_path, &generation.id, 2)
+            .await
+            .unwrap();
+        let provider = CountingProvider {
+            embedded_inputs: AtomicUsize::new(0),
+        };
+        index_clip(&repo, &mut writer, &provider, &clip)
+            .await
+            .unwrap();
+        writer.close().await.unwrap();
+        assert_eq!(provider.embedded_inputs.load(AtomicOrdering::SeqCst), 0);
+        enqueue_job(&repo, &generation.id, &clip).await.unwrap();
+        assert_eq!(
+            job_count(&repo, &generation.id, "status='pending'")
+                .await
+                .unwrap(),
+            0
+        );
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(
+                repo.semantic_index_root
+                    .join(&generation.sidecar_relative_path),
+            )
+            .read_only(true);
+        let mut sidecar = SqliteConnection::connect_with(&options).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM semantic_chunks")
+                .fetch_one(&mut sidecar)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM search_documents_fts WHERE search_documents_fts MATCH 'remember'").fetch_one(&repo.pool).await.unwrap(),1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM clip_items WHERE id=?")
+                .bind(&clip)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn unclassified_secret_text_and_notes_are_blocked_before_provider_access() {
+        let (_temp, repo) = repository().await;
+        let raw = insert_text_clip(
+            &repo,
+            "export API_KEY=sk-proj-1234567890abcdefghijklmnopqrstuvwxyz",
+        )
+        .await;
+        let annotated = insert_text_clip(&repo, "ordinary captured content").await;
+        sqlx::query("UPDATE clip_items SET note='export API_KEY=sk-proj-1234567890abcdefghijklmnopqrstuvwxyz' WHERE id=?").bind(&annotated).execute(&repo.pool).await.unwrap();
+        let (_, mut writer) = insert_generation(&repo).await;
+        let provider = CountingProvider {
+            embedded_inputs: AtomicUsize::new(0),
+        };
+        for clip in [&raw, &annotated] {
+            index_clip(&repo, &mut writer, &provider, clip)
+                .await
+                .unwrap();
+        }
+        assert_eq!(provider.embedded_inputs.load(AtomicOrdering::SeqCst), 0);
+        assert!(load_semantic_inputs(&repo, &raw).await.unwrap().is_empty());
+        assert!(load_semantic_inputs(&repo, &annotated)
+            .await
+            .unwrap()
+            .is_empty());
+        writer.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fallback_descriptor_verification_rejects_changed_same_dimension_revision() {
+        let mut expected = test_space();
+        expected.provider.model_revision = "replaced-weights".into();
+        assert!(matches!(
+            FakeProvider.verify_space(&expected).await,
+            Err(ProviderError::EmbeddingSpaceChanged)
+        ));
+        FakeProvider.verify_space(&test_space()).await.unwrap();
     }
 
     async fn repository() -> (tempfile::TempDir, HistoryRepository) {

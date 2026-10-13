@@ -1,4 +1,4 @@
-//! Host-only AI credentials. There is deliberately no renderer read command.
+//! Shared host-only AI credentials. There is deliberately no renderer read command.
 use crate::history::HistoryRepository;
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};

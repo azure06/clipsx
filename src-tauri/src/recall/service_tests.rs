@@ -9,7 +9,7 @@ use crate::{
 };
 use std::io::Cursor;
 
-pub(super) async fn repository() -> (tempfile::TempDir, ClipboardService) {
+pub(crate) async fn repository() -> (tempfile::TempDir, ClipboardService) {
     let temp = tempfile::tempdir().unwrap();
     let roots = AppRoots {
         data: temp.path().join("data"),

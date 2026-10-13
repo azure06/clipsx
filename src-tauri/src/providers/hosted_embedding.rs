@@ -6,14 +6,15 @@ use super::{
     },
     error::{ProviderError, ProviderResult},
 };
-use crate::recall::{
+#[cfg(test)]
+use crate::ai::http::allowed_destination;
+use crate::ai::http::request_json;
+use crate::ai::{
     configuration::validate_connection,
     contracts::{AiConnection, AiProviderKind, EmbeddingPresetOptions},
 };
 use async_trait::async_trait;
-use futures::StreamExt;
 use serde_json::{json, Value};
-use std::time::Duration;
 
 pub struct HostedEmbeddingProvider {
     connection: AiConnection,
@@ -57,8 +58,11 @@ impl HostedEmbeddingProvider {
     }
     async fn embed(&self, inputs: &[String], query: bool) -> ProviderResult<Vec<Vec<f32>>> {
         let mut vectors = Vec::with_capacity(inputs.len());
-        for batch in inputs.chunks(16) {
-            if batch.iter().any(|v| v.is_empty() || v.len() > 2048) {
+        for batch in inputs.chunks(crate::providers::contracts::text_embedding::MAX_BATCH_INPUTS) {
+            if batch.iter().any(|v| {
+                v.is_empty()
+                    || v.len() > crate::providers::contracts::text_embedding::MAX_INPUT_BYTES
+            }) {
                 return Err(ProviderError::InvalidConfiguration(
                     "embedding input exceeds its limit".into(),
                 ));
@@ -193,82 +197,6 @@ impl TextEmbeddingProvider for HostedEmbeddingProvider {
         self.embed(inputs, true).await
     }
 }
-pub(crate) async fn request_json(
-    connection: &AiConnection,
-    url: &url::Url,
-    credential: &str,
-    body: Option<&Value>,
-) -> ProviderResult<Value> {
-    let base = validate_connection(connection)
-        .map_err(|_| ProviderError::InvalidConfiguration("invalid endpoint".into()))?;
-    if !allowed_destination(connection, &base, url) {
-        return Err(ProviderError::InvalidConfiguration(
-            "invalid destination".into(),
-        ));
-    }
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|_| ProviderError::Unavailable("network unavailable".into()))?;
-    let mut request = if let Some(body) = body {
-        client.post(url.clone()).json(body)
-    } else {
-        client.get(url.clone())
-    };
-    request = match connection.provider {
-        AiProviderKind::Anthropic => request
-            .header("x-api-key", credential)
-            .header("anthropic-version", "2023-06-01"),
-        AiProviderKind::Gemini => request.header("x-goog-api-key", credential),
-        _ => request.bearer_auth(credential),
-    };
-    if let Some(organization) = &connection.options.organization {
-        request = request.header("OpenAI-Organization", organization);
-    }
-    if let Some(project) = &connection.options.project {
-        request = request.header("OpenAI-Project", project);
-    }
-    let response = request.send().await.map_err(|e| {
-        if e.is_timeout() {
-            ProviderError::Timeout
-        } else {
-            ProviderError::Unavailable("provider connection failed".into())
-        }
-    })?;
-    if !response.status().is_success() {
-        return Err(ProviderError::Rejected {
-            operation: "provider request".into(),
-            status: response.status().as_u16(),
-            detail: None,
-            context_overflow: false,
-        });
-    }
-    let mut stream = response.bytes_stream();
-    let mut bytes = vec![];
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk
-            .map_err(|_| ProviderError::Unavailable("provider response interrupted".into()))?;
-        if bytes.len() + chunk.len() > 16 * 1024 * 1024 {
-            return Err(ProviderError::InvalidOutput(
-                "provider response exceeds its limit".into(),
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    serde_json::from_slice(&bytes)
-        .map_err(|_| ProviderError::InvalidOutput("invalid provider response".into()))
-}
-fn allowed_destination(connection: &AiConnection, base: &url::Url, url: &url::Url) -> bool {
-    let openrouter_all_models = connection.provider == AiProviderKind::Openrouter
-        && url.path() == format!("{}models", base.path())
-        && url.query() == Some("output_modalities=all");
-    url.origin() == base.origin()
-        && url.path().starts_with(base.path())
-        && (url.query().is_none() || openrouter_all_models)
-        && url.fragment().is_none()
-}
 fn parse_vectors(
     value: &Value,
     expected: usize,
@@ -371,7 +299,7 @@ mod tests {
                 provider: kind,
                 base_url: "https://provider.example/v1".into(),
                 enabled: true,
-                options: crate::recall::contracts::AiConnectionOptions {
+                options: crate::ai::contracts::AiConnectionOptions {
                     organization: None,
                     project: None,
                 },

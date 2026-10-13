@@ -84,6 +84,17 @@ async fn list_models(client: &OllamaClient) -> ProviderResult<Vec<ListedModel>> 
     Ok(listed)
 }
 
+/// Resolve a mutable tag's current immutable revision without an embedding probe.
+pub async fn model_revision(endpoint: &str, model: &str) -> ProviderResult<String> {
+    let client = OllamaClient::new(endpoint)?;
+    list_models(&client)
+        .await?
+        .into_iter()
+        .find(|entry| entry.id == model)
+        .and_then(|entry| entry.digest)
+        .ok_or(ProviderError::ModelUnavailable)
+}
+
 async fn inspect_listed_model(client: &OllamaClient, listed: ListedModel) -> ModelDescriptor {
     let result = client
         .post_bounded(

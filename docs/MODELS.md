@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 24. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 26. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -202,9 +202,19 @@ flowchart TB
 | `search_embedding_spaces` | Infrastructure | Identifies an immutable provider/model vector space, including revision, dimensions, normalization, and distance metric. | Provider discovery/probing and semantic-index setup | Long-lived compatibility boundary. Prevents embeddings from incompatible vector spaces being mixed. |
 | `search_index_generations` | Operational | Tracks lifecycle plus backend ID, encoding, candidate count, safe sidecar path, byte size, and checkpoint checksum. | Semantic indexing coordinator | Generation-scoped lifecycle supports validated activation and retention of the previous active sidecar. The checksum is cleared before an active-generation clip update and can be refreshed at a later durable checkpoint. |
 | `search_index_jobs` | Operational | Tracks per-generation, per-clip indexing progress, attempts, and failures. | Semantic indexing coordinator/workers | Retryable recovery state owned by its generation/clip scope; cascades with either side. |
+| `search_semantic_cleanup` | Operational | Queues removal of deleted, secret-faceted, or pre-policy clip vectors from retained sidecars. | Canonical deletion/facet triggers and forward migrations; drained by search worker | Independent of clip lifetime and provider availability. Pending IDs are excluded from semantic candidates until cleanup succeeds. |
 | Generation sidecar | Derived file | Stores bounded chunks, provenance, stable ordinals, paged binary clip-routing signatures, normalized float32 chunk vectors, and mappings for exactly one generation. | `SemanticIndexStore` only | Rebuildable and generation-owned. Pages hold at most 256 clips, avoiding per-row scan overhead while keeping updates local. It contains no canonical clip data and is addressed only by an owned relative path from `search_index_generations`. |
 
 Promotion is atomic: a building generation becomes active only after every job succeeds; otherwise the previous active generation remains searchable. Reindexing replaces a clip’s chunks transactionally.
+
+Schema 26 queues existing indexed clips for cleanup and revalidation through the
+deterministic secret policy, including notes and OCR. It preserves canonical
+clips, FTS, configuration, conversations and files. Known secret facets exclude
+clips from semantic indexing and assistant access; newly detected facets retain
+cleanup intent transactionally. Ollama digest changes stop embedding work until
+an explicit validated rebuild. Hosted identities cannot detect revisions the
+provider does not report. See [search architecture](SEMANTIC_SEARCH_ARCHITECTURE.md)
+for eligibility, bounds and recovery behavior.
 
 Release search builds a compact eligible-clip ordinal bitset, scans one binary routing signature per clip in parallel, retains 100 clips, then reranks every chunk of those clips with exact float32 cosine similarity. This remains linear in clip count, but it is deterministic, dependency-free, immediately mutable, and has no trained graph. The full-generation float32 scan exists only as a test oracle.
 
@@ -469,6 +479,14 @@ bytes remain unchanged on failure, cancellation, or disablement.
 `assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
 
 ## Named AI configurations
+
+The shared Rust `ai` layer owns provider configuration, credentials, observations,
+restricted HTTP, and saved embedding resolution. Search, Recall, and extension
+generation consume this layer; provider adapters do not depend on Recall.
+Embedding presets use dimensions, task policy, and hosted-indexing consent.
+Legacy context/output values remain stored for compatibility but do not control
+embedding requests. Discovery returns host execution bounds and known protocol
+options separately from model context capacities; unknown support stays unknown.
 
 `ai_connections` stores stable IDs, names, provider kinds, API base URLs, enablement, whitelisted nonsecret options, protected credential references, and curated connection-test state. `ai_model_presets` stores model IDs, purpose (`chat`, `embedding`, `decision`, or `rerank`), context/output limits, namespaced provider options, and capabilities with their observation source. Optional limitPolicy selects Auto or explicit limits; older presets remain explicit. Auto is the default for new chat presets only. Unknown capabilities remain unknown. `ai_selections` independently selects default chat, active embeddings, extension text generation, reserved decision and rerank models, and optional Tavily web search. Migration markers make the original Ollama assignments idempotent; already-migrated registries backfill extension generation once, preserving disabled legacy assignments. Multiple connections for one provider coexist. Selecting decision or rerank presets does not activate automation or remote reranking.
 

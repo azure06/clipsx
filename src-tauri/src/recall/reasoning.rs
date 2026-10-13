@@ -90,13 +90,9 @@ async fn for_preset(
             let credential = credentials::get(repo, &connection.id)
                 .await?
                 .context("credential_required")?;
-            let value = providers::hosted_embedding::request_json(
-                connection,
-                &base.join("models")?,
-                &credential,
-                None,
-            )
-            .await?;
+            let value =
+                crate::ai::http::request_json(connection, &base.join("models")?, &credential, None)
+                    .await?;
             let row = value["data"]
                 .as_array()
                 .context("invalid_model_catalog")?

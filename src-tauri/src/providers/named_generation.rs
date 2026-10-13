@@ -3,7 +3,7 @@ use super::{
     contracts::{generation::*, ProviderDescriptor},
     error::{ProviderError, ProviderResult},
 };
-use crate::recall::{configuration::validate_connection, contracts::*};
+use crate::ai::{configuration::validate_connection, contracts::*};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -159,7 +159,7 @@ impl GenerationProvider for NamedGenerationProvider {
         let (url, body) = self.request(request)?;
         let value = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
-            result = super::hosted_embedding::request_json(&self.connection, &url, &self.credential, Some(&body)) => result?,
+            result = crate::ai::http::request_json(&self.connection, &url, &self.credential, Some(&body)) => result?,
         };
         let output = parse_response(self.connection.provider, &value)?;
         if cancellation.is_cancelled() {
@@ -281,8 +281,8 @@ mod tests {
                 purpose: AiModelPurpose::Chat,
                 context_limit: 32768,
                 output_limit: 1024,
-                options: crate::recall::configuration::default_options(),
-                capabilities: crate::recall::configuration::unknown_capabilities(),
+                options: crate::ai::configuration::default_options(),
+                capabilities: crate::ai::configuration::unknown_capabilities(),
             },
             credential: "fixture-secret".into(),
         }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::io::Cursor;
 
-pub const SECRET_PREDICATE: &str = "NOT EXISTS(SELECT 1 FROM content_clip_facets secret WHERE secret.clip_id=c.id AND secret.facet_id='core.security.secret')";
+pub const SECRET_PREDICATE: &str = crate::search::semantic::eligibility::NOT_SECRET;
 const MAX_TEXT_PAGE: usize = 32 * 1024;
 const DEFAULT_TEXT_PAGE: usize = 8 * 1024;
 const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;

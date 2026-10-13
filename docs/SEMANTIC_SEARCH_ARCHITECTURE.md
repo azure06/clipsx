@@ -25,8 +25,9 @@ reduced-motion preferences replace its movement with a static border.
 ```mermaid
 flowchart LR
     Clips[(Saved clips)] --> FTS[(FTS5)]
-    Clips --> Chunk[Bounded text chunks]
-    Chunk --> Embed[Local embedding model]
+    Clips --> Eligibility[Exclude secrets; inspect complete text inputs]
+    Eligibility --> Chunk[Bounded text chunks]
+    Chunk --> Embed[Selected local or hosted embedding preset]
     Embed --> Index[(Index sidecar)]
     Query[Query] --> FTS
     Query --> QE[Query embedding]
@@ -36,7 +37,7 @@ flowchart LR
     FTS --> Merge[Merge rankings]
     Rerank --> Merge
     Merge --> Results[Clips and matching passages]
-    Results -. explicit question .-> Recall[Local answer with citations]
+    Results -. explicit question .-> Recall[Agent answer with citations]
 ```
 
 | Storage                               | Owns                                                         | Why                                             |
@@ -46,12 +47,26 @@ flowchart LR
 
 A model space fixes provider/model revision, dimensions, normalization, distance
 metric, and chunking compatibility. Vectors from different spaces never mix.
+Shared Rust AI infrastructure resolves named connections and credentials for
+search, Recall, and extensions. Feature code chooses its assigned preset;
+provider adapters own protocol details and curated failures.
 
 ## Index construction
 
 Inputs: notes, tags, every ready text representation, and completed OCR.
 Equivalent visible text is embedded once, preferring the richest safely parsed
 source; distinct representations remain searchable.
+
+Semantic indexing excludes secret-faceted clips for every provider, including
+local Ollama. Before chunking or provider access, the host also scans complete
+text inputs (including notes and existing OCR) with its deterministic secret
+classifier; a match excludes the whole clip. This is a heuristic, not a guarantee
+that every secret is recognized. History and local FTS retain their normal access.
+The same Rust eligibility predicate restricts semantic retrieval and assistant
+access. New secret facets queue durable vector cleanup. Schema 26 also queues
+existing indexed clips for cleanup and eligibility review; pending cleanup IDs
+cannot supply semantic matches. This rebuilds derived data without resetting the
+database or deleting originals.
 
 | Format           | Chunk boundaries / extra context used only for embedding                            |
 | ---------------- | ----------------------------------------------------------------------------------- |
@@ -67,6 +82,7 @@ source; distinct representations remain searchable.
 | ------------------------- | --------------------------------------------------------------------- |
 | Packing target            | 1,536 UTF-8 bytes                                                     |
 | Final embedding input     | 2,048 bytes                                                           |
+| Provider batch            | At most 16 inputs                                                     |
 | Structural context        | 384 bytes                                                             |
 | Oversized-atom overlap    | At most 256 bytes                                                     |
 | Chunks per clip           | 64                                                                    |
@@ -77,6 +93,13 @@ source; distinct representations remain searchable.
 Hash complete enriched inputs and embed duplicates once per generation.
 Display snippets remain clean; structural embedding context does not become
 canonical content.
+
+Embedding configuration exposes dimensions, query/document task policy, and
+explicit hosted-indexing consent. Chat context/output settings do not apply.
+Discovery supplies application bounds and known protocol options; custom model
+support remains unverified until the provider accepts the probe. Typed, definite
+context rejections permit bounded subdivision; authentication and quota failures
+are never treated as a reason to split or truncate input.
 
 ## Retrieval and ranking
 
@@ -128,6 +151,7 @@ precede job completion; per-clip replacement is safe to repeat.
 | Reindex All                                    | Check disk and provider, then discard text spaces/indexes/jobs and build fresh; old semantic index does not remain available |
 | Clear-space command                            | Same provider-validated full reset; enqueues fresh work                                                                      |
 | Provider validation fails before reset         | Preserve existing index                                                                                                      |
+| Ollama digest changes behind the same model ID | Stop indexing and semantic queries with a rebuild diagnostic; preserve FTS and captured clips                                 |
 | Interrupted running job                        | Requeue; existing valid sidecar write may be repeated                                                                        |
 | Finished sidecar, activation interrupted       | Validate and activate without rebuilding                                                                                     |
 | Missing/corrupt building sidecar               | Reset durable jobs to pending before replacing file                                                                          |
@@ -157,6 +181,14 @@ Embedding-space rows own vector dimensions. Generation rows explicitly record
 the sidecar backend, vector encoding, and candidate policy used to create them;
 these values have no schema defaults, so runtime creation cannot silently inherit
 an obsolete storage format.
+
+Ollama's saved digest is verified against the installed tag before and after
+each embedding request. Results are discarded if the tag changed during the
+request. Reindex explicitly probes and accepts the replacement revision. Hosted
+identity binds endpoint, model ID, dimensions, task policy and preprocessing;
+unreported provider weight changes cannot be detected. Rotating credentials alone
+does not change the space. Recall refreshes search readiness on provider, space,
+search-source, and AI-configuration events.
 
 ## Storage and trade-offs
 

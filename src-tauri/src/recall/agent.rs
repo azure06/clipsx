@@ -438,7 +438,7 @@ async fn web_tool(run: &Run, name: &str, value: Value) -> Result<Value> {
         }
         json!({"urls":request.urls,"query":request.query,"chunks_per_source":3,"extract_depth":"basic","include_images":false,"format":"text","timeout":10})
     };
-    let value = crate::providers::hosted_embedding::request_json(
+    let value = crate::ai::http::request_json(
         connection,
         &base.join(if name == "web_search" {
             "search"

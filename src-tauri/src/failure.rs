@@ -22,6 +22,7 @@ pub enum FailureCode {
     CredentialStorageUnavailable,
     ProviderConfiguration,
     ModelUnavailable,
+    EmbeddingSpaceChanged,
     ConnectionUnavailable,
     ProviderTimeout,
     ProviderRateLimited,
@@ -65,6 +66,7 @@ impl FailureCode {
             Self::CredentialStorageUnavailable => "credential_storage_unavailable",
             Self::ProviderConfiguration => "provider_configuration",
             Self::ModelUnavailable => "model_unavailable",
+            Self::EmbeddingSpaceChanged => "embedding_space_changed",
             Self::ConnectionUnavailable => "connection_unavailable",
             Self::ProviderTimeout => "provider_timeout",
             Self::ProviderRateLimited => "provider_rate_limited",
@@ -97,6 +99,7 @@ impl FailureCode {
             Self::CredentialStorageUnavailable => "ClipsX cannot access secure credential storage. Unlock your desktop credential store and retry. On Linux, enable a Secret Service in your desktop session, then restart ClipsX.",
             Self::ProviderConfiguration => "The model configuration is invalid. Review Intelligence → Models.",
             Self::ModelUnavailable => "The selected model is unavailable. Review its ID and provider in Intelligence → Models.",
+            Self::EmbeddingSpaceChanged => "The embedding model changed. Validate and rebuild its index in Intelligence → Indexing. Keyword search remains available.",
             Self::ConnectionUnavailable => "ClipsX cannot reach the model provider. Check its endpoint and connection.",
             Self::ProviderTimeout => "The model provider did not finish within the allowed time.",
             Self::ProviderRateLimited => "The model provider is temporarily limiting requests.",
@@ -127,6 +130,7 @@ impl FailureCode {
             | Self::CredentialStorageUnavailable
             | Self::ProviderConfiguration
             | Self::ModelUnavailable => Recovery::Wait,
+            Self::EmbeddingSpaceChanged => Recovery::Wait,
             Self::ConnectionUnavailable
             | Self::ProviderTimeout
             | Self::ProviderRateLimited
