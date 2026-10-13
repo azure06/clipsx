@@ -138,6 +138,48 @@ it('offers the guide on the overview and tests drafts without saving them', asyn
   expect(screen.getByLabelText('API credential')).toHaveValue('')
 })
 
+it('explains secure storage failure after a successful connection test and retries without duplicating the provider', async () => {
+  const user = userEvent.setup()
+  const invoke = mocks.invoke.getMockImplementation() as (
+    command: string,
+    args?: Record<string, unknown>
+  ) => Promise<unknown>
+  let failCredentialSave = true
+  mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    if (command === 'ai_test_connection') return Promise.resolve(3)
+    if (command === 'ai_set_credential' && failCredentialSave)
+      return Promise.reject(
+        Object.assign(new Error('Secure storage unavailable'), {
+          code: 'credential_storage_unavailable',
+          recovery: 'wait',
+        })
+      )
+    return invoke(command, args)
+  })
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: 'Add provider' }))
+  await user.type(screen.getByLabelText('Connection name'), 'OpenRouter Linux')
+  await user.click(screen.getByRole('combobox', { name: 'Provider' }))
+  await user.click(screen.getByRole('option', { name: 'OpenRouter' }))
+  await user.type(screen.getByLabelText('API credential'), 'fixture-secret')
+  await user.click(screen.getByRole('button', { name: 'Test connection' }))
+  await screen.findByText(/Connected. Discovered 3 models/)
+  await user.click(screen.getByRole('button', { name: 'Save connection' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'ClipsX cannot access secure credential storage.'
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent('Secret Service')
+  expect(screen.getByRole('alert')).not.toHaveTextContent('fixture-secret')
+  expect(state.configuration.connections).toHaveLength(1)
+  expect(screen.getByLabelText('API credential')).toHaveValue('fixture-secret')
+  const id = state.configuration.connections[0]!.id
+  failCredentialSave = false
+  await user.click(screen.getByRole('button', { name: 'Save connection' }))
+  await screen.findByText('Configuration saved.')
+  expect(state.configuration.connections).toHaveLength(1)
+  expect(state.configuration.connections[0]!.id).toBe(id)
+})
+
 it('assigns a hosted chat preset to extension generation independently of Recall and embeddings', async () => {
   const user = userEvent.setup()
   const connection = {
