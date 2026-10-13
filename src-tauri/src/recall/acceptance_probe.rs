@@ -75,7 +75,7 @@ async fn capture(
                     format_key: mime.into(),
                     canonical_mime_type: Some(mime.into()),
                     native_type: None,
-                    platform: std::env::consts::OS.into(),
+                    platform: super::representation_platform().into(),
                     capture_priority: 0,
                     payload,
                 }],

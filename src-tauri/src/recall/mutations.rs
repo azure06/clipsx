@@ -101,13 +101,7 @@ impl ClipboardService {
         // Canonical creation is independent of capture deduplication and extension jobs.
         let capture_hash = sha256(&serde_json::to_vec(&(mime, &request.text))?);
         sqlx::query("INSERT INTO clip_items(id,source_app_name,source_app_id,captured_at,updated_at,lifecycle_state,capture_sha256,total_payload_bytes) VALUES(?,'ClipsX','clipsx.assistant',?,?,'pending',?,?)").bind(&clip_id).bind(now).bind(now).bind(capture_hash).bind(request.text.len() as i64).execute(&mut *tx).await?;
-        let platform = if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "macos"
-        } else {
-            "linux_x11"
-        };
+        let platform = super::representation_platform();
         sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,canonical_mime_type,capability_id,format_family,platform,storage_kind,ordinal,capture_priority,lifecycle_state,created_at,updated_at) VALUES(?,?,?,?,?,'text',?,'text',0,0,'pending',?,?)").bind(&rep_id).bind(&clip_id).bind(mime).bind(mime).bind(if mime=="text/markdown" {"core.text.markdown"} else {"core.text.plain"}).bind(platform).bind(now).bind(now).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO clip_text_values VALUES(?,?,?,?)")
             .bind(&rep_id)

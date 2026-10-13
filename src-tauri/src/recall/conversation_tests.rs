@@ -236,7 +236,7 @@ async fn managed_image_snapshots_are_shared_retained_and_removed_with_the_last_c
                     format_key: "image/png".into(),
                     canonical_mime_type: Some("image/png".into()),
                     native_type: None,
-                    platform: std::env::consts::OS.into(),
+                    platform: super::representation_platform().into(),
                     capture_priority: 1,
                     payload: CapturedPayload::Binary(png.into_inner()),
                 }],

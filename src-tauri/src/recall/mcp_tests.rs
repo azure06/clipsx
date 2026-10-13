@@ -508,7 +508,7 @@ async fn codex_client_workflows() {
                     format_key: "image/png".into(),
                     canonical_mime_type: Some("image/png".into()),
                     native_type: None,
-                    platform: std::env::consts::OS.into(),
+                    platform: super::representation_platform().into(),
                     capture_priority: 0,
                     payload: crate::history::CapturedPayload::Binary(image.into_inner()),
                 }],

@@ -28,3 +28,13 @@ pub mod service;
 #[cfg(test)]
 mod service_tests;
 pub mod transport;
+
+fn representation_platform() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux_x11"
+    }
+}
