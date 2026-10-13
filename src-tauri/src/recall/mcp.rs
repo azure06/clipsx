@@ -401,9 +401,17 @@ impl McpRuntime {
     ) -> Result<()> {
         let configuration = configuration(&history).await?;
         let mut running = self.running.lock().await;
+        if configuration.enabled
+            && running.as_ref().is_some_and(|current| {
+                current.state.port == configuration.port && !current.task.is_finished()
+            })
+        {
+            return Ok(());
+        }
         if let Some(old) = running.take() {
             old.cancel.cancel();
             old.task.abort();
+            let _ = old.task.await;
         }
         *self.diagnostic.lock().await = None;
         if !configuration.enabled {

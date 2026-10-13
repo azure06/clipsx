@@ -613,3 +613,51 @@ async fn port_failure_is_isolated_and_defaults_are_disabled() {
         .await
         .is_empty());
 }
+
+#[tokio::test]
+async fn reconfiguring_enabled_server_keeps_same_port_available() {
+    let (_temp, service) = repository().await;
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    configure(
+        &service.history,
+        McpConfiguration {
+            enabled: true,
+            port,
+        },
+    )
+    .await
+    .unwrap();
+    let runtime = McpRuntime::default();
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    let url = runtime.status(&service.history).await.unwrap().endpoint;
+    let grant = issue(&service.history, "reconfigure fixture", false, None)
+        .await
+        .unwrap();
+    let client = Client::new();
+    let session = initialize(&client, &url, &grant.token).await;
+    runtime
+        .reconcile(service.history.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime.status(&service.history).await.unwrap().state,
+        "running"
+    );
+    let result = call(
+        &client,
+        &url,
+        &grant.token,
+        &session,
+        "get_clipboard_status",
+        json!({}),
+    )
+    .await;
+    assert_ne!(result["isError"], true);
+}

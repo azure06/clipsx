@@ -4,6 +4,8 @@ The Integrations overview shows server status, the copyable endpoint, and named 
 
 ClipsX exposes its shared Rust clipboard service through the official Rust MCP SDK's Streamable HTTP transport. Enable it in **Intelligence → Integrations**. It is disabled by default, binds only to `127.0.0.1`, and normally uses `http://127.0.0.1:39389/mcp`. The port is configurable. ClipsX must already be running; hiding its window keeps the server running. A port conflict changes integration status without stopping clipboard capture.
 
+Applying an unchanged enabled configuration keeps existing client sessions connected. Changing the port or disabling the server closes its current sessions.
+
 Create a named grant for each client. Grants default to read only; read/write also permits ordinary creation and organization. The creation or rotation response shows the token once. SQLite stores its SHA-256 verifier, never the raw token. Rotation and revocation cancel that client's sessions immediately. Disabling MCP cancels all sessions. Requests require `Authorization: Bearer <token>`; Host and supplied Origin headers must identify the configured loopback endpoint. Grants, endpoint settings and activity are device-local and excluded from sync and AI configuration exports.
 
 ## Client setup
