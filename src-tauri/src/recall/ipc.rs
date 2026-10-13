@@ -6,8 +6,44 @@ use super::{
 use crate::{
     app::state::AppState,
     failure::{FailureCode, OperationFailure},
+    providers::error::ProviderError,
 };
+use serde::Serialize;
 use tauri::{Emitter, State};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionTestFailure {
+    #[serde(flatten)]
+    failure: OperationFailure,
+    status: Option<u16>,
+    reason: Option<String>,
+}
+
+fn connection_test_failure(error: anyhow::Error) -> ConnectionTestFailure {
+    let provider = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProviderError>());
+    let (status, reason) = match provider {
+        Some(ProviderError::Rejected { status, detail, .. }) => (Some(*status), detail.clone()),
+        _ => (None, None),
+    };
+    ConnectionTestFailure {
+        failure: public_failure(error),
+        status,
+        reason,
+    }
+}
+
+impl From<OperationFailure> for ConnectionTestFailure {
+    fn from(failure: OperationFailure) -> Self {
+        Self {
+            failure,
+            status: None,
+            reason: None,
+        }
+    }
+}
 
 fn service(
     webview: &tauri::Webview,
@@ -114,11 +150,11 @@ pub async fn ai_test_connection(
     state: State<'_, AppState>,
     connection: AiConnection,
     credential: Option<String>,
-) -> Result<usize, OperationFailure> {
-    service(&webview, &state)?;
+) -> Result<usize, ConnectionTestFailure> {
+    service(&webview, &state).map_err(ConnectionTestFailure::from)?;
     super::configuration::test_connection(&state.history, &connection, credential)
         .await
-        .map_err(public_failure)
+        .map_err(connection_test_failure)
 }
 
 #[tauri::command]
@@ -126,11 +162,11 @@ pub async fn ai_discover_models(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     connection_id: String,
-) -> Result<Vec<AiDiscoveredModel>, OperationFailure> {
-    service(&webview, &state)?;
+) -> Result<Vec<AiDiscoveredModel>, ConnectionTestFailure> {
+    service(&webview, &state).map_err(ConnectionTestFailure::from)?;
     super::configuration::discover(&state.history, &connection_id)
         .await
-        .map_err(public_failure)
+        .map_err(connection_test_failure)
 }
 
 #[tauri::command]

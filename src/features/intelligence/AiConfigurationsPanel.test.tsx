@@ -138,6 +138,39 @@ it('offers the guide on the overview and tests drafts without saving them', asyn
   expect(screen.getByLabelText('API credential')).toHaveValue('')
 })
 
+it('shows Gemini status and a safe quota reason when a draft test fails', async () => {
+  const user = userEvent.setup()
+  const original = mocks.invoke.getMockImplementation() as (
+    command: string,
+    args?: Record<string, unknown>
+  ) => Promise<unknown>
+  mocks.invoke.mockImplementation((command: string, args?: Record<string, unknown>) =>
+    command === 'ai_test_connection'
+      ? Promise.reject(
+          Object.assign(new Error('sensitive provider body'), {
+            code: 'provider_rate_limited',
+            recovery: 'retry',
+            status: 429,
+            reason: 'quota_exceeded',
+            message: 'sensitive provider body',
+          })
+        )
+      : original(command, args)
+  )
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: 'Add provider' }))
+  await user.type(screen.getByLabelText('Connection name'), 'Gemini free')
+  await user.click(screen.getByRole('combobox', { name: 'Provider' }))
+  await user.click(screen.getByRole('option', { name: 'Gemini' }))
+  await user.type(screen.getByLabelText('API credential'), 'fixture-secret')
+  await user.click(screen.getByRole('button', { name: 'Test connection' }))
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('HTTP 429')
+  expect(alert).toHaveTextContent('exceeded its quota')
+  expect(alert).not.toHaveTextContent('sensitive provider body')
+  expect(alert).not.toHaveTextContent('fixture-secret')
+})
+
 it('explains secure storage failure after a successful connection test and retries without duplicating the provider', async () => {
   const user = userEvent.setup()
   const invoke = mocks.invoke.getMockImplementation() as (

@@ -36,6 +36,7 @@ import { ConnectionEditor } from './ConnectionEditor'
 import { ModelEditor } from './ModelEditor'
 import { ConfigurationTransfer } from './ConfigurationTransfer'
 import { ProviderIcon } from './ProviderIcon'
+import { connectionFailureMessage } from './connectionFailure'
 
 const surface =
   'rounded-2xl border border-slate-200/70 bg-white/55 shadow-[0_6px_24px_-16px_rgba(15,23,42,.12)] dark:border-white/10 dark:bg-white/[.025]'
@@ -85,9 +86,7 @@ export function AiConfigurationsPanel() {
     } catch (failure) {
       // A saved connection may precede a failed protected-credential update.
       await refresh().catch(() => undefined)
-      const code =
-        typeof failure === 'object' && failure && 'code' in failure ? String(failure.code) : ''
-      setError(t(`modelsWorkspace.failures.${code}`, { defaultValue: t('aiConfig.error') }))
+      setError(connectionFailureMessage(failure, t))
       return false
     } finally {
       busyRef.current = false

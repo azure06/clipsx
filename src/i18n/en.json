@@ -1578,6 +1578,18 @@
     "assignmentsUnchanged": "Feature assignments stay as they are",
     "mergeHelp": "Records merge by stable ID. Unrelated connections and models are retained. Active embedding changes are verified before activation.",
     "imported": "Model configuration imported.",
+    "providerReasons": {
+      "api_key_invalid": "The Gemini API key is invalid. Create or copy a valid key and try again.",
+      "service_disabled": "The Gemini API is disabled for this Google project. Enable it in Google Cloud and try again.",
+      "api_key_service_blocked": "This API key is blocked from using the Gemini API. Check its API restrictions.",
+      "quota_exceeded": "The Gemini project has exceeded its quota. Check its usage and quota in Google AI Studio.",
+      "resource_exhausted": "Gemini reports that its quota or rate limit is exhausted. Check usage and try again later.",
+      "permission_denied": "Google denied access. Check the key, project, and API restrictions.",
+      "failed_precondition": "Google says a project requirement is unmet. Check the project setup and regional availability.",
+      "unauthenticated": "Google could not authenticate the API key. Check the key and try again.",
+      "invalid_argument": "Google rejected the request parameters. Check the endpoint and model settings.",
+      "not_found": "Google could not find this API endpoint or model. Check the endpoint and model ID."
+    },
     "failures": {
       "credential_storage_unavailable": "ClipsX cannot access secure credential storage. Unlock your desktop credential store and retry. On Linux, enable a Secret Service in your desktop session, then restart ClipsX.",
       "hosted_indexing_disabled": "Enable hosted indexing in this embedding preset before making it active. This sends clipboard text to the provider, even when the model is free.",
@@ -1586,6 +1598,8 @@
       "model_unavailable": "The model is unavailable. Check its ID and install it in Ollama if needed.",
       "connection_unavailable": "Could not reach the provider. Check that it is running and the endpoint is correct.",
       "provider_rejected": "The provider rejected this request. Check credentials, model support, and the Ollama version for decision models.",
+      "provider_rate_limited": "The provider reports a quota or rate limit. Check its usage and try again later.",
+      "provider_server_error": "The provider reported a server error. Try again later.",
       "provider_timeout": "The provider timed out. Try again when it is ready.",
       "invalid_response": "The provider returned an unsupported response.",
       "input_limit": "This configuration exceeds the allowed size."

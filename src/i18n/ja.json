@@ -1578,6 +1578,18 @@
     "assignmentsUnchanged": "機能への割り当ては変更されません",
     "mergeHelp": "固定IDでマージします。無関係な接続とモデルは保持します。アクティブな埋め込みモデルの変更は有効化前に検証されます。",
     "imported": "モデル設定をインポートしました。",
+    "providerReasons": {
+      "api_key_invalid": "Gemini APIキーが無効です。有効なキーを作成またはコピーして再試行してください。",
+      "service_disabled": "このGoogleプロジェクトではGemini APIが無効です。Google Cloudで有効にして再試行してください。",
+      "api_key_service_blocked": "このAPIキーはGemini APIへのアクセスが制限されています。APIの制限設定を確認してください。",
+      "quota_exceeded": "Geminiプロジェクトの割り当て量を超えました。Google AI Studioで使用量と割り当て量を確認してください。",
+      "resource_exhausted": "Geminiの割り当て量またはレート制限に達しました。使用量を確認し、後で再試行してください。",
+      "permission_denied": "Googleがアクセスを拒否しました。キー、プロジェクト、APIの制限を確認してください。",
+      "failed_precondition": "Googleプロジェクトの要件が満たされていません。設定と地域での利用可否を確認してください。",
+      "unauthenticated": "GoogleがAPIキーを認証できませんでした。キーを確認して再試行してください。",
+      "invalid_argument": "Googleがリクエストの設定を拒否しました。エンドポイントとモデルの設定を確認してください。",
+      "not_found": "GoogleがAPIエンドポイントまたはモデルを見つけられませんでした。設定を確認してください。"
+    },
     "failures": {
       "credential_storage_unavailable": "安全な認証情報ストアにアクセスできません。デスクトップの認証情報ストアをロック解除して再試行してください。LinuxではデスクトップセッションでSecret Serviceを有効にしてからClipsXを再起動してください。",
       "hosted_indexing_disabled": "有効化する前に、この埋め込みモデルの設定でホスト型インデックス作成を許可してください。無料モデルでも、クリップボードのテキストがプロバイダーに送信されます。",
@@ -1586,6 +1598,8 @@
       "model_unavailable": "モデルを利用できません。IDを確認し、必要に応じてOllamaでインストールしてください。",
       "connection_unavailable": "プロバイダーに接続できません。起動状態とエンドポイントを確認してください。",
       "provider_rejected": "プロバイダーがリクエストを拒否しました。認証情報、モデルの対応機能、判断モデルの場合はOllamaのバージョンを確認してください。",
+      "provider_rate_limited": "プロバイダーの割り当て量またはレート制限に達しました。使用量を確認し、後で再試行してください。",
+      "provider_server_error": "プロバイダーでサーバーエラーが発生しました。後で再試行してください。",
       "provider_timeout": "プロバイダーがタイムアウトしました。準備ができたら再試行してください。",
       "invalid_response": "プロバイダーが未対応の応答を返しました。",
       "input_limit": "設定が許容サイズを超えています。"

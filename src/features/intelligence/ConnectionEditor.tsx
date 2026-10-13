@@ -6,6 +6,7 @@ import type { AiConnection } from '../recall/contracts.generated'
 import { endpoints, providerNames } from './modelConfiguration'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { ProviderIcon } from './ProviderIcon'
+import { connectionFailureMessage } from './connectionFailure'
 
 export function ConnectionEditor({
   initial,
@@ -62,9 +63,7 @@ export function ConnectionEditor({
       })
       setTestResult(t('modelsWorkspace.connectionTestPassed', { count }))
     } catch (failure) {
-      const code =
-        typeof failure === 'object' && failure && 'code' in failure ? String(failure.code) : ''
-      setTestError(t(`modelsWorkspace.failures.${code}`, { defaultValue: t('aiConfig.error') }))
+      setTestError(connectionFailureMessage(failure, t))
     } finally {
       testingRef.current = false
       setTesting(false)
