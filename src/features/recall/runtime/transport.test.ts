@@ -51,7 +51,7 @@ describe('Recall runtime gate', () => {
   })
 
   it.each<ChatProvider>(['openai', 'anthropic', 'gemini', 'openrouter', 'ollama'])(
-    '%s streams an image request and a tool round trip through the Rust-fetch contract',
+    '%s supports streamed tools/images and a non-streaming context request through the Rust-fetch contract',
     async provider => {
       const { commands, requests } = fixtureBridge(provider)
       const search = vi.fn(() => Promise.resolve({ evidence: 'verified-evidence' }))
@@ -77,9 +77,12 @@ describe('Recall runtime gate', () => {
       }
       expect(texts).toEqual(['Recall ', 'Recall verified'])
       expect(search).toHaveBeenCalledTimes(1)
-      expect(requests).toHaveLength(2)
+      expect(requests).toHaveLength(3)
       expect(requests[0]?.body).toContain(FIXTURE_IMAGE)
       expect(requests[1]?.body).toContain('verified-evidence')
+      const contextRequest = JSON.parse(requests[2]!.body) as Record<string, unknown>
+      expect(contextRequest['tools']).toBeUndefined()
+      if (provider === 'gemini') expect(requests[2]?.url).toMatch(/:generateContent$/)
       expect(requests.every(request => !request.body.includes('host-private-key'))).toBe(true)
     }
   )

@@ -145,6 +145,15 @@ flowchart LR
 Exactly one validated generation is active per semantic source. Sidecar writes
 precede job completion; per-clip replacement is safe to repeat.
 
+Each space retains a nonsecret provider binding: its connection, model and
+embedding options. Queries use the active space's binding while a replacement
+builds. Credentials remain live protected references; removing/disabling the
+saved configuration or changing its endpoint/organization makes that binding
+unavailable, rather than sending a current key to a retired destination. A
+retained-source query failure is reported with that search and never marks the
+replacement provider unhealthy. Older unbound spaces accept the current route
+only after full descriptor verification; otherwise keyword search remains usable.
+
 | Operation / failure                            | Behaviour                                                                                                                    |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Replacement generation built beside active one | Existing generation can serve searches until validated replacement activates                                                 |
@@ -269,6 +278,7 @@ It is a verification tool, not a live-provider capability test. Build with
 `CLIPSX_RECALL_RUNTIME_PROBE=1` and
 `npx tauri build --no-bundle --features recall-runtime-probe`, then run
 `npm run test:recall-runtime`. The report records provider tool/image round trips,
+tool-free non-streaming context requests through the same authenticated bridge,
 native authentication receipts, cancellation, and the actual webview user agent.
 Normal builds omit the fixture HTML entry and reject probe command-line flags
 before application initialization. Live provider/model support must be
@@ -457,7 +467,7 @@ Selection is keyed by clip ID and enrichment does not move keyboard focus. Copy 
 
 The main-webview-only `assistant_model_options` command resolves controls for a saved chat preset. Ollama uses bounded `/api/show` thinking metadata; missing metadata does not imply selectable levels. OpenRouter uses model reasoning metadata intersected with the installed adapter's supported vocabulary, excluding disable choices for mandatory reasoning. OpenAI, Anthropic, and Gemini use conservative documented model families. Unknown models retain preset defaults. Discovery results are bounded and cached for five minutes, keyed by saved connection and preset configuration.
 
-Rust validates explicit overrides before saving a thread and admitting a run. Defaults require no capability lookup on the generation path. The frozen run context retains the selected override independently of its preset. TypeScript translates that control into the selected provider's request options; SDK adapters own provider protocol details. Thinking budgets offered in Recall stay below the resolved output allowance to leave answer room. The internal adapter streams returned reasoning into typed conversation parts, without introducing another tool loop or replaying reasoning text as instructions in provider-neutral history.
+Rust validates explicit overrides before saving a thread and admitting a run. Defaults require no capability lookup on the generation path. The frozen run context retains the selected override independently of its preset. TypeScript translates that control into the selected provider's request options; SDK adapters own provider protocol details. OpenRouter Default uses the saved preset effort; a conversation effort or token budget overrides it. Thinking budgets offered in Recall stay below the resolved output allowance to leave answer room. The internal adapter streams returned reasoning into typed conversation parts, without introducing another tool loop or replaying reasoning text as instructions in provider-neutral history.
 
 Capability metadata and documented families establish available controls, not a live inference test. Relevant contracts: [Ollama thinking](https://docs.ollama.com/capabilities/thinking), [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens), and AI SDK provider documentation for [OpenAI](https://ai-sdk.dev/providers/ai-sdk-providers/openai), [Anthropic](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic), and [Google](https://ai-sdk.dev/providers/ai-sdk-providers/google).
 

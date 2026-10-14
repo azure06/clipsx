@@ -135,6 +135,12 @@ pub async fn configure_descriptor(
         .and_then(|existing| existing.minimum_similarity_percent);
     let active_space = generation_by_status(repo, "active").await?;
     let building_space = generation_by_status(repo, "building").await?;
+    // Upgrade a retained legacy space before replacing its selected configuration.
+    if let (Some(active), Some(previous)) = (&active_space, get_device_config(&repo.pool).await?) {
+        if active.space_id != space_id {
+            let _ = remember_provider_binding(repo, &active.space_id, &previous, false).await;
+        }
+    }
     config.minimum_similarity_percent = threshold_for_configured_space(
         existing_threshold,
         active_space
@@ -160,6 +166,7 @@ pub async fn configure_descriptor(
     .bind(now_ms())
     .execute(&repo.pool)
     .await?;
+    remember_provider_binding(repo, &space_id, &config, true).await?;
     put_device_config(&repo.pool, &config).await?;
     record_provider_success(repo, &config.provider_id).await?;
     if active_space.as_ref().map(|value| value.space_id.as_str()) != Some(space_id.as_str())
@@ -1133,6 +1140,7 @@ async fn reset_configured_text_index(repo: &HistoryRepository) -> Result<Generat
     // Validate the provider first so a temporary outage does not destroy a
     // usable index.
     let generation = reset_text_index(repo, &descriptor).await?;
+    remember_provider_binding(repo, &generation.space_id, &config, true).await?;
     record_provider_success(repo, &config.provider_id).await?;
     Ok(generation)
 }
@@ -1341,13 +1349,51 @@ pub async fn semantic_matches(
             .bind(&active.space_id)
             .fetch_one(&repo.pool)
             .await?;
-    let provider = crate::ai::embedding::resolve_embedding(repo, &config, Some(&model)).await?;
-    ensure_space_compatible(repo, &active.space_id, provider.as_ref()).await?;
+    let saved: Option<String> =
+        sqlx::query_scalar("SELECT provider_binding_json FROM search_embedding_spaces WHERE id=?")
+            .bind(&active.space_id)
+            .fetch_one(&repo.pool)
+            .await?;
+    let needs_binding = saved.is_none();
+    let binding = match saved {
+        Some(value) => serde_json::from_str::<crate::ai::embedding::EmbeddingBinding>(&value)?,
+        None => {
+            // Old spaces have no trustworthy binding. Accept the current route only after
+            // verifying the full descriptor; never guess a different provider or credential.
+            let mut previous = config.clone();
+            previous.model = model;
+            crate::ai::embedding::capture_binding(repo, &previous).await?
+        }
+    };
+    let provider = crate::ai::embedding::resolve_binding(repo, &binding).await?;
+    verify_space_compatible(repo, &active.space_id, provider.as_ref()).await?;
+    if needs_binding {
+        sqlx::query("UPDATE search_embedding_spaces SET provider_binding_json=? WHERE id=? AND provider_binding_json IS NULL")
+            .bind(serde_json::to_string(&binding)?).bind(&active.space_id).execute(&repo.pool).await?;
+    }
     semantic_matches_with_provider(repo, &active, provider.as_ref(), query, eligible_ids, limit)
         .await
 }
 
 async fn ensure_space_compatible(
+    repo: &HistoryRepository,
+    space_id: &str,
+    provider: &dyn TextEmbeddingProvider,
+) -> Result<()> {
+    match verify_space_compatible(repo, space_id, provider).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let config = enabled_config(repo).await?;
+            if let Some(provider_error) = error.downcast_ref::<ProviderError>() {
+                record_provider_failure(repo, &config.provider_id, provider_error).await?;
+            }
+            Err(error)
+        }
+    }
+}
+
+// Query failures describe the retained source; they must not poison replacement health.
+async fn verify_space_compatible(
     repo: &HistoryRepository,
     space_id: &str,
     provider: &dyn TextEmbeddingProvider,
@@ -1369,14 +1415,31 @@ async fn ensure_space_compatible(
         normalization: row.get(5),
         distance_metric: row.get(6),
     };
-    match provider.verify_space(&expected).await {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let config = enabled_config(repo).await?;
-            record_provider_failure(repo, &config.provider_id, &error).await?;
-            Err(error.into())
-        }
+    Ok(provider.verify_space(&expected).await?)
+}
+
+async fn remember_provider_binding(
+    repo: &HistoryRepository,
+    space_id: &str,
+    config: &TextEmbeddingProviderConfig,
+    replace: bool,
+) -> Result<()> {
+    let saved: Option<String> =
+        sqlx::query_scalar("SELECT provider_binding_json FROM search_embedding_spaces WHERE id=?")
+            .bind(space_id)
+            .fetch_one(&repo.pool)
+            .await?;
+    if !replace && saved.is_some() {
+        return Ok(());
     }
+    let binding = crate::ai::embedding::capture_binding(repo, config).await?;
+    if !replace {
+        let provider = crate::ai::embedding::resolve_binding(repo, &binding).await?;
+        verify_space_compatible(repo, space_id, provider.as_ref()).await?;
+    }
+    sqlx::query("UPDATE search_embedding_spaces SET provider_binding_json=? WHERE id=? AND (? OR provider_binding_json IS NULL)")
+        .bind(serde_json::to_string(&binding)?).bind(space_id).bind(replace).execute(&repo.pool).await?;
+    Ok(())
 }
 
 pub(crate) async fn minimum_similarity_percent(repo: &HistoryRepository) -> Result<Option<u8>> {
@@ -1668,6 +1731,10 @@ fn validate_vector(vector: &[f32], dimensions: Option<usize>) -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "provider_binding_tests.rs"]
+mod provider_binding_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -1927,7 +1994,7 @@ mod tests {
         FakeProvider.verify_space(&test_space()).await.unwrap();
     }
 
-    async fn repository() -> (tempfile::TempDir, HistoryRepository) {
+    pub(super) async fn repository() -> (tempfile::TempDir, HistoryRepository) {
         let temp = tempfile::TempDir::new().unwrap();
         let roots = AppRoots {
             data: temp.path().join("data"),
@@ -1940,7 +2007,7 @@ mod tests {
         (temp, repo)
     }
 
-    async fn insert_text_clip(repo: &HistoryRepository, text: &str) -> String {
+    pub(super) async fn insert_text_clip(repo: &HistoryRepository, text: &str) -> String {
         repo.capture(
             CapturedSnapshot {
                 token: 1,

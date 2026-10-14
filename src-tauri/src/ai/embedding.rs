@@ -10,6 +10,9 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 
+mod binding;
+pub(crate) use binding::{capture_binding, resolve_binding, EmbeddingBinding};
+
 /// Protocol options and host bounds. Unknown models do not inherit claimed capacities.
 pub fn information(provider: AiProviderKind, model: &str) -> EmbeddingModelInformation {
     use providers::contracts::text_embedding::{MAX_BATCH_INPUTS, MAX_INPUT_BYTES};

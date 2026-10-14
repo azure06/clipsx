@@ -195,7 +195,7 @@ fn validate_request(
         Provider::Ollama | Provider::Openrouter => path == "chat/completions",
         Provider::Gemini => {
             path.starts_with("models/")
-                && path.ends_with(":streamGenerateContent")
+                && (path.ends_with(":streamGenerateContent") || path.ends_with(":generateContent"))
                 && !path[7..].contains('/')
         }
     };
@@ -475,6 +475,30 @@ mod tests {
             validate_request(&connection(Provider::Openai), &request),
             Err("renderer_authentication_forbidden")
         ));
+    }
+    #[test]
+    fn gemini_streams_and_context_operations_share_the_restricted_transport() {
+        let connection = connection(Provider::Gemini);
+        for path in [
+            "models/gemini-fixture:streamGenerateContent?alt=sse",
+            "models/gemini-fixture:generateContent",
+        ] {
+            let mut input = request();
+            input.url = format!("https://provider.example/v1/{path}");
+            input.headers = HashMap::from([("x-goog-api-key".into(), PLACEHOLDER.into())]);
+            let (_, headers) = validate_request(&connection, &input).unwrap();
+            assert_eq!(headers["x-goog-api-key"], "host-private-key");
+        }
+        for url in [
+            "https://other.example/v1/models/gemini-fixture:generateContent",
+            "https://provider.example/v1/models/gemini-fixture:generateContent?key=renderer-key",
+            "https://provider.example/v1/models/nested/model:generateContent",
+            "https://provider.example/v1/models/gemini-fixture:embedContent",
+        ] {
+            let mut input = request();
+            input.url = url.into();
+            assert!(validate_request(&connection, &input).is_err());
+        }
     }
     #[test]
     fn remote_http_is_rejected_and_ollama_loopback_is_allowed() {

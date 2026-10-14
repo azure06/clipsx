@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 27. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 28. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -503,6 +503,13 @@ The shared Rust `ai` layer owns provider configuration, credentials, observation
 restricted HTTP, and saved embedding resolution. Search, Recall, and extension
 generation consume this layer; provider adapters do not depend on Recall.
 Embedding presets use dimensions, task policy, and hosted-indexing consent.
+Schema 28 adds nullable `search_embedding_spaces.provider_binding_json` through
+a forward migration. The binding snapshots nonsecret execution configuration,
+keeps credentials as protected-store references, and stays outside AI exports
+and sync. Existing spaces and clipboard data remain intact; unbound spaces are
+bound lazily only after descriptor verification. Replacing the selected preset
+does not replace the binding of a different retained space. See the
+[search lifecycle](SEMANTIC_SEARCH_ARCHITECTURE.md#index-lifecycle-and-recovery).
 Legacy context/output values remain stored for compatibility but do not control
 embedding requests. Discovery returns host execution bounds and known protocol
 options separately from model context capacities; unknown support stays unknown.

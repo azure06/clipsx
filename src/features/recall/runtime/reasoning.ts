@@ -42,11 +42,10 @@ export function reasoningProviderOptions(
     }
     case 'tavily':
       return {}
-    case 'openrouter':
-      return effort
-        ? { openrouter: { reasoning: { effort } } }
-        : budget
-          ? { openrouter: { reasoning: { max_tokens: budget } } }
-          : {}
+    case 'openrouter': {
+      if (budget) return { openrouter: { reasoning: { max_tokens: budget } } }
+      const value = effort ?? preset.options.openai?.reasoningEffort
+      return value ? { openrouter: { reasoning: { effort: value } } } : {}
+    }
   }
 }

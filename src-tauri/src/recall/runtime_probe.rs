@@ -27,6 +27,7 @@ struct Receipt {
     native_tools: usize,
     tool_results: usize,
     authenticated: usize,
+    context_operations: usize,
 }
 #[derive(Default)]
 struct Evidence {
@@ -117,11 +118,12 @@ async fn runtime_gate_finish(
         .iter()
         .all(|name| {
             evidence.receipts.get(*name).is_some_and(|r| {
-                r.requests == 2
+                r.requests == 3
                     && r.images == 2
-                    && r.authenticated == 2
+                    && r.authenticated == 3
                     && r.native_tools == 1
                     && r.tool_results == 1
+                    && r.context_operations == 1
             })
         });
     let passed = receipts_passed
@@ -191,6 +193,13 @@ async fn fixture_request(mut stream: TcpStream, evidence: Arc<Mutex<Evidence>>) 
     let fixtures: Value = serde_json::from_str(include_str!(
         "../../../src/features/recall/runtime/fixtures/streams.json"
     ))?;
+    let request_json: Value = serde_json::from_str(&body)?;
+    let context_operation = request_json["stream"] != true
+        && !headers
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .contains(":streamGenerateContent");
     let stage = {
         let mut evidence = evidence.lock().unwrap();
         let receipt = evidence.receipts.entry(name.into()).or_default();
@@ -198,6 +207,7 @@ async fn fixture_request(mut stream: TcpStream, evidence: Arc<Mutex<Evidence>>) 
         receipt.images += usize::from(body.contains(IMAGE));
         receipt.authenticated += usize::from(headers.contains(PRIVATE_SENTINEL));
         receipt.tool_results += usize::from(body.contains("verified-evidence"));
+        receipt.context_operations += usize::from(context_operation);
         let stage = if receipt.requests == 1 {
             "tool"
         } else {
@@ -205,12 +215,26 @@ async fn fixture_request(mut stream: TcpStream, evidence: Arc<Mutex<Evidence>>) 
         };
         if body.contains(PRIVATE_SENTINEL)
             || !headers.contains(PRIVATE_SENTINEL)
-            || !body.contains(IMAGE)
+            || (!context_operation && !body.contains(IMAGE))
+            || (context_operation && request_json.get("tools").is_some())
         {
             evidence.invalid_request = true;
         }
         stage
     };
+    if context_operation {
+        let responses: Value = serde_json::from_str(include_str!(
+            "../../../src/features/recall/runtime/fixtures/context-responses.json"
+        ))?;
+        let response = responses
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown context fixture"))?
+            .to_string();
+        let headers = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len());
+        stream.write_all(headers.as_bytes()).await?;
+        stream.write_all(response.as_bytes()).await?;
+        return Ok(());
+    }
     let records = fixtures
         .get(name)
         .and_then(|v| v.get(stage))

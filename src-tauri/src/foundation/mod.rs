@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 27;
+pub const SCHEMA_VERSION: i64 = 28;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +365,7 @@ mod tests {
     use tempfile::TempDir;
     #[tokio::test]
     async fn upgrades_released_and_recall_schemas_without_resetting_data() {
-        for version in 15..=26 {
+        for version in 15..=27 {
             let root = TempDir::new().unwrap();
             let roots = AppRoots {
                 data: root.path().join("data"),
@@ -416,7 +416,7 @@ mod tests {
                     sqlx::query(sql).execute(&mut connection).await.unwrap();
                 }
             }
-            if version == 25 {
+            if version == 25 || version == 27 {
                 for sql in [
                     "INSERT INTO clip_items(id,note,captured_at,updated_at,lifecycle_state) VALUES('review-clip','unclassified note',1,1,'ready')",
                     "INSERT INTO search_embedding_spaces(id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('review-space','fixture','1','model','revision','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','text',2,'l2','cosine',1)",
@@ -433,6 +433,20 @@ mod tests {
                 "from {version}"
             );
             let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            if version == 27 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT status FROM search_index_jobs WHERE id='review-job'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "completed"
+                );
+                let binding: Option<String> = sqlx::query_scalar("SELECT provider_binding_json FROM search_embedding_spaces WHERE id='review-space'")
+                    .fetch_one(&mut connection).await.unwrap();
+                assert!(binding.is_none());
+            }
             if version == 25 {
                 assert_eq!(
                     sqlx::query_scalar::<_, String>(

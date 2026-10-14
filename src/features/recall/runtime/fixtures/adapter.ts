@@ -1,4 +1,4 @@
-import { ToolLoopAgent, isStepCount, tool } from 'ai'
+import { ToolLoopAgent, generateText, isStepCount, tool } from 'ai'
 import type { ChatModelAdapter } from '@assistant-ui/react'
 import { z } from 'zod'
 import { createChatModel } from '../providers'
@@ -57,6 +57,18 @@ export function createFixtureAdapter(
       const steps = await result.steps
       if (steps.length !== 2 || text !== 'Recall verified')
         throw new Error('Provider fixture round trip failed')
+      // Compaction and citation repair use this non-streaming route through the same bridge.
+      const summary = await generateText({
+        model: createChatModel(connection, 'fixture-model', transport),
+        prompt: 'Summarize the verified fixture context.',
+        abortSignal,
+        maxRetries: 0,
+        maxOutputTokens: 1024,
+        providerOptions:
+          connection.provider === 'openai' ? { openai: { store: false } } : undefined,
+      })
+      if (summary.text !== 'Context verified' || summary.finishReason !== 'stop')
+        throw new Error('Provider fixture context operation failed')
     },
   }
 }
