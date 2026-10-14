@@ -1,0 +1,637 @@
+//! Thin, main-webview-only adapters around the shared clipboard service.
+use super::{
+    contracts::*,
+    service::{public_failure, ClipboardService},
+};
+use crate::{
+    app::state::AppState,
+    failure::{FailureCode, OperationFailure},
+    providers::error::ProviderError,
+};
+use serde::Serialize;
+use tauri::{Emitter, State};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionTestFailure {
+    #[serde(flatten)]
+    failure: OperationFailure,
+    status: Option<u16>,
+    reason: Option<String>,
+}
+
+fn connection_test_failure(error: anyhow::Error) -> ConnectionTestFailure {
+    let provider = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProviderError>());
+    let (status, reason) = match provider {
+        Some(ProviderError::Rejected { status, detail, .. }) => (Some(*status), detail.clone()),
+        _ => (None, None),
+    };
+    ConnectionTestFailure {
+        failure: public_failure(error),
+        status,
+        reason,
+    }
+}
+
+impl From<OperationFailure> for ConnectionTestFailure {
+    fn from(failure: OperationFailure) -> Self {
+        Self {
+            failure,
+            status: None,
+            reason: None,
+        }
+    }
+}
+
+fn service(
+    webview: &tauri::Webview,
+    state: &AppState,
+) -> Result<ClipboardService, OperationFailure> {
+    if webview.label() != "main" {
+        return Err(FailureCode::PermissionRequired.failure());
+    }
+    Ok(ClipboardService::new(state.history.clone()))
+}
+
+#[tauri::command]
+pub async fn ai_configuration_state(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::state(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_configuration_export(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfiguration, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_configuration_preview(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    configuration: AiConfiguration,
+) -> Result<AiConfiguration, OperationFailure> {
+    service(&webview, &state)?;
+    let current = super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)?;
+    super::configuration::merge(&current, configuration).map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn ai_test_decision(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+) -> Result<DecisionTestResult, OperationFailure> {
+    service(&webview, &state)?;
+    super::decision::test(&state.history, &preset_id)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn ai_configuration_import(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    configuration: AiConfiguration,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::configuration::import(&state.history, configuration)
+        .await
+        .map_err(public_failure);
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    if result.is_ok() {
+        let _ = app.emit("generation-provider-status-changed", ());
+        let _ = app.emit("ai-configuration-changed", ());
+        state.workers.extensions.wake_extensions(
+            app.clone(),
+            state.history.clone(),
+            state.extensions.clone(),
+        );
+    }
+    result
+}
+#[tauri::command]
+pub async fn ai_set_credential(
+    webview: tauri::Webview,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+    value: Option<String>,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::set_credential(&state.history, &connection_id, value)
+        .await
+        .map_err(public_failure)?;
+    let _ = app.emit("generation-provider-status-changed", ());
+    let _ = app.emit("ai-configuration-changed", ());
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    state
+        .workers
+        .extensions
+        .wake_extensions(app, state.history.clone(), state.extensions.clone());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_configuration_remove(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    connection_id: Option<String>,
+    preset_id: Option<String>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::configuration::remove(&state.history, connection_id, preset_id)
+        .await
+        .map_err(public_failure);
+    crate::app::workers::wake_text_index(&app, state.history.clone());
+    let _ = app.emit("ai-configuration-changed", ());
+    let _ = app.emit("generation-provider-status-changed", ());
+    state.workers.extensions.wake_extensions(
+        app.clone(),
+        state.history.clone(),
+        state.extensions.clone(),
+    );
+    result
+}
+
+#[tauri::command]
+pub async fn ai_configuration_retry_cleanup(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<AiConfigurationState, OperationFailure> {
+    service(&webview, &state)?;
+    super::configuration::retry_credential_cleanup(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_test_connection(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    connection: AiConnection,
+    credential: Option<String>,
+) -> Result<usize, ConnectionTestFailure> {
+    service(&webview, &state).map_err(ConnectionTestFailure::from)?;
+    super::configuration::test_connection(&state.history, &connection, credential)
+        .await
+        .map_err(connection_test_failure)
+}
+
+#[tauri::command]
+pub async fn ai_discover_models(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<AiDiscoveredModel>, ConnectionTestFailure> {
+    service(&webview, &state).map_err(ConnectionTestFailure::from)?;
+    super::configuration::discover(&state.history, &connection_id)
+        .await
+        .map_err(connection_test_failure)
+}
+
+#[tauri::command]
+pub async fn assistant_clipboard_status(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<ClipboardStatus, OperationFailure> {
+    service(&webview, &state)?
+        .status()
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn assistant_run_begin(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    transport: State<'_, super::transport::Transport>,
+    request: AssistantRunRequest,
+) -> Result<AssistantRunContext, OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .begin(&state.history, &transport, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_run_finish(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    transport: State<'_, super::transport::Transport>,
+    run_id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime.finish(&transport, &run_id).await;
+    Ok(())
+}
+#[tauri::command]
+pub async fn assistant_run_tool(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    app: tauri::AppHandle,
+    run_id: String,
+    name: String,
+    arguments: String,
+) -> Result<serde_json::Value, OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .tool(&state.history, Some(&app), &run_id, &name, &arguments)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_verify_tools(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    run_id: String,
+    supported: bool,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .verify_tools(&state.history, &run_id, supported)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_clipboard_filters(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<ClipboardFilters, OperationFailure> {
+    service(&webview, &state)?
+        .filters()
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_search_clips(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: ClipSearchRequest,
+) -> Result<ClipSearchResult, OperationFailure> {
+    service(&webview, &state)?
+        .search(request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_read_clip(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: ClipReadRequest,
+) -> Result<ClipReadResult, OperationFailure> {
+    service(&webview, &state)?
+        .read(request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn assistant_read_clip_image(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: ClipImageRequest,
+) -> Result<ClipImageResult, OperationFailure> {
+    service(&webview, &state)?
+        .image(request)
+        .await
+        .map_err(public_failure)
+}
+
+pub fn action_committed(
+    app: &tauri::AppHandle,
+    history: &crate::history::HistoryRepository,
+    result: &ClipboardActionResult,
+) {
+    crate::app::workers::wake_text_index(app, history.clone());
+    crate::app::workers::wake_managed_files(app, history.clone());
+    for clip in &result.clips {
+        let _ = app.emit(
+            if result.operation == "create" {
+                "clip-captured"
+            } else {
+                "clip-updated"
+            },
+            &clip.clip_id,
+        );
+    }
+    for id in &result.removed_clip_ids {
+        let _ = app.emit("clip-deleted", id);
+    }
+    let _ = app.emit("assistant-action", result);
+}
+#[tauri::command]
+pub async fn assistant_create_clip(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    request: CreateClipRequest,
+) -> Result<ClipboardActionResult, OperationFailure> {
+    let service = service(&webview, &state)?;
+    let result = service
+        .create(&super::mutations::Actor::native(), request)
+        .await
+        .map_err(public_failure)?;
+    action_committed(&app, &state.history, &result);
+    Ok(result)
+}
+#[tauri::command]
+pub async fn assistant_organize_clips(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    request: OrganizeClipsRequest,
+) -> Result<ClipboardActionResult, OperationFailure> {
+    let result = service(&webview, &state)?
+        .organize(&super::mutations::Actor::native(), request)
+        .await
+        .map_err(public_failure)?;
+    action_committed(&app, &state.history, &result);
+    Ok(result)
+}
+#[tauri::command]
+pub async fn assistant_undo_action(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    request: UndoClipboardRequest,
+) -> Result<ClipboardActionResult, OperationFailure> {
+    let result = service(&webview, &state)?
+        .undo(&super::mutations::Actor::native(), request)
+        .await
+        .map_err(public_failure)?;
+    action_committed(&app, &state.history, &result);
+    Ok(result)
+}
+#[tauri::command]
+pub async fn assistant_action_activity(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<Vec<ClipboardActivity>, OperationFailure> {
+    service(&webview, &state)?
+        .activity()
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn mcp_integration_status(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+) -> Result<McpIntegrationStatus, OperationFailure> {
+    service(&webview, &state)?;
+    runtime.status(&state.history).await.map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_configure(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    app: tauri::AppHandle,
+    configuration: McpConfiguration,
+) -> Result<McpIntegrationStatus, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::configure(&state.history, configuration)
+        .await
+        .map_err(public_failure)?;
+    runtime
+        .reconcile(state.history.clone(), Some(app))
+        .await
+        .map_err(public_failure)?;
+    runtime.status(&state.history).await.map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_list_grants(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<Vec<McpGrant>, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::grants(&state.history)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn mcp_issue_grant(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    name: String,
+    can_write: bool,
+    rotate_id: Option<String>,
+) -> Result<McpGrantSecret, OperationFailure> {
+    service(&webview, &state)?;
+    let result = super::mcp::issue(&state.history, &name, can_write, rotate_id.as_deref())
+        .await
+        .map_err(public_failure)?;
+    runtime.invalidate(&result.grant.id).await;
+    Ok(result)
+}
+#[tauri::command]
+pub async fn mcp_revoke_grant(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::revoke(&state.history, &id)
+        .await
+        .map_err(public_failure)?;
+    runtime.invalidate(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_test_access(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    token: String,
+) -> Result<u32, OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::test_access(&runtime, &state.history, &token)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn recall_thread_initialize(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    local_id: String,
+) -> Result<RecallThread, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::initialize(&state.history, &local_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_list(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    offset: u32,
+) -> Result<Vec<RecallThread>, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::list(&state.history, offset)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_load(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<RecallHistory, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::load(&state.history, &thread_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_update(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: RecallThreadUpdate,
+) -> Result<RecallThread, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::update(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_thread_delete(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::delete(&state.history, &thread_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_message_append(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    message: RecallMessage,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::append(&state.history, &thread_id, message)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_run_start(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::agent::AgentRuntime>,
+    request: RecallRunStart,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    runtime
+        .persist_run(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_run_checkpoint(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    request: RecallCheckpoint,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::checkpoint(&state.history, request)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_snapshot_image(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    snapshot_id: String,
+) -> Result<String, OperationFailure> {
+    service(&webview, &state)?;
+    super::conversations::read_snapshot_image(&state.history, &thread_id, &snapshot_id)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn assistant_model_options(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+) -> Result<AssistantModelOptions, OperationFailure> {
+    service(&webview, &state)?;
+    super::reasoning::options(&state.history, &preset_id)
+        .await
+        .map_err(public_failure)
+}
+
+#[tauri::command]
+pub async fn recall_context_load(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    thread_id: String,
+    covered_message_id: String,
+) -> Result<RecallContextCoverage, OperationFailure> {
+    service(&webview, &state)?;
+    super::context_repository::load(&state.history, &thread_id, &covered_message_id)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn recall_context_save(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    summary: RecallContextSummary,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::context_repository::save(&state.history, summary)
+        .await
+        .map_err(public_failure)
+}
+#[tauri::command]
+pub async fn ai_model_information(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    preset_id: String,
+    refresh: bool,
+) -> Result<Option<ModelInformation>, OperationFailure> {
+    service(&webview, &state)?;
+    let config = super::configuration::export(&state.history)
+        .await
+        .map_err(public_failure)?;
+    let preset = config
+        .presets
+        .iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| FailureCode::InvalidParameters.failure())?;
+    let connection = config
+        .connections
+        .iter()
+        .find(|c| c.id == preset.connection_id && c.enabled)
+        .ok_or_else(|| FailureCode::InvalidParameters.failure())?;
+    super::model_information::resolve(&state.history, connection, preset, refresh)
+        .await
+        .map_err(public_failure)
+}

@@ -12,6 +12,7 @@ const OLLAMA_CONNECTION_KEY: &str = "providers.ollama.connection";
 pub enum ModelCapability {
     TextEmbedding,
     TextGeneration,
+    Decision,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -142,6 +143,7 @@ fn capability_label(capability: ModelCapability) -> &'static str {
     match capability {
         ModelCapability::TextEmbedding => "text embeddings",
         ModelCapability::TextGeneration => "text generation",
+        ModelCapability::Decision => "decisions",
     }
 }
 

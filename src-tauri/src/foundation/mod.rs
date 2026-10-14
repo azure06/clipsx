@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 28;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +163,7 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
     fs::create_dir_all(&roots.config)?;
     let database = roots.database();
     if database.exists() {
+        recover_interrupted_write(&database).await?;
         let state = inspect_database(&database).await?;
         if state != SchemaState::Ready {
             return Ok(state);
@@ -187,6 +188,17 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// A write interrupted by a crash or restart leaves a hot journal that only a writable
+/// connection can roll back; the read-only inspection below would fail on it.
+async fn recover_interrupted_write(path: &Path) -> Result<()> {
+    let options = SqliteConnectOptions::new().filename(path);
+    let mut connection = SqliteConnection::connect_with(&options).await?;
+    sqlx::query("SELECT count(*) FROM sqlite_master")
+        .execute(&mut connection)
+        .await?;
+    Ok(())
 }
 
 async fn inspect_database(path: &Path) -> Result<SchemaState> {
@@ -249,12 +261,21 @@ pub fn startup_status(state: SchemaState) -> StartupStatus {
     }
 }
 
-pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryResetResult> {
+/// `reset_credentials` runs after confirmation and before owned files are removed,
+/// so host-only credential stores can use the on-disk references they own.
+pub fn factory_reset(
+    roots: &AppRoots,
+    confirmation: &str,
+    reset_credentials: impl FnOnce(&AppRoots) -> Result<()>,
+) -> Result<FactoryResetResult> {
     if confirmation != "RESET CLIPSX" {
         bail!("Factory reset confirmation did not match");
     }
     let mut deleted = Vec::new();
     let mut failures = Vec::new();
+    if let Err(error) = reset_credentials(roots) {
+        failures.push(error.to_string());
+    }
     for path in [
         roots.database(),
         roots.database().with_extension("db-wal"),
@@ -262,6 +283,8 @@ pub fn factory_reset(roots: &AppRoots, confirmation: &str) -> Result<FactoryRese
         roots.clipboard_data(),
         roots.extensions(),
         roots.search_index(),
+        roots.data.join("ai-credentials"),
+        roots.data.join("recall-attachments"),
     ] {
         match remove_owned(&path, &roots.data) {
             Ok(true) => deleted.push(path.display().to_string()),
@@ -341,6 +364,195 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     #[tokio::test]
+    async fn upgrades_released_and_recall_schemas_without_resetting_data() {
+        for version in 15..=27 {
+            let root = TempDir::new().unwrap();
+            let roots = AppRoots {
+                data: root.path().join("data"),
+                config: root.path().join("config"),
+            };
+            fs::create_dir_all(&roots.data).unwrap();
+            let options = SqliteConnectOptions::new()
+                .filename(roots.database())
+                .create_if_missing(true)
+                .foreign_keys(true);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            let mut prefix = migrations::canonical();
+            prefix.migrations = std::borrow::Cow::Owned(
+                prefix
+                    .iter()
+                    .filter(|entry| entry.version <= version)
+                    .cloned()
+                    .collect(),
+            );
+            prefix.run(&mut connection).await.unwrap();
+            for sql in [
+                "INSERT INTO clip_items(id,note,is_favorite,captured_at,updated_at,lifecycle_state) VALUES('kept-clip','Keep this note',1,1,1,'ready')",
+                "INSERT INTO clip_representations(id,clip_id,format_key,capability_id,format_family,platform,storage_kind,ordinal,lifecycle_state,created_at,updated_at) VALUES('kept-rep','kept-clip','text/plain','core.text','text','windows','text',0,'ready',1,1)",
+                "INSERT INTO clip_text_values VALUES('kept-rep','Saved text',10,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
+                "INSERT INTO catalog_tags VALUES('kept-tag','Keep',NULL,1,1)",
+                "INSERT INTO catalog_clip_tags VALUES('kept-clip','kept-tag',1)",
+                "INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES('core.security.secret','builtin.core','1','Secret')",
+                "INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version) VALUES('kept-clip','core.security.secret','kept-rep','fixture','1')",
+                "UPDATE config_profile_values SET value_json='false' WHERE key='artifacts.ocr.enabled'",
+            ] {
+                sqlx::query(sql).execute(&mut connection).await.unwrap();
+            }
+            if version >= 18 {
+                for sql in [
+                    "INSERT INTO ai_connections(id,configuration_json,credential_ref,created_at,updated_at) VALUES('kept-connection','{}','kept-credential',1,1)",
+                    "INSERT INTO ai_model_presets VALUES('kept-preset','kept-connection','{}',1,1)",
+                    "INSERT INTO ai_selections VALUES('default_chat','kept-preset')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
+            if version >= 19 {
+                for sql in [
+                    "INSERT INTO recall_threads(id,local_id,title,created_at,updated_at) VALUES('kept-thread','local-thread','Saved chat',1,1)",
+                    "INSERT INTO recall_messages(thread_id,id,role,content_json,metadata_json,created_at,updated_at) VALUES('kept-thread','kept-message','user','[]','{}',1,1)",
+                    "INSERT INTO recall_source_snapshots(thread_id,message_id,id,clip_id,snapshot_json) VALUES('kept-thread','kept-message','kept-source','kept-clip','{}')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
+            if version == 25 || version == 27 {
+                for sql in [
+                    "INSERT INTO clip_items(id,note,captured_at,updated_at,lifecycle_state) VALUES('review-clip','unclassified note',1,1,'ready')",
+                    "INSERT INTO search_embedding_spaces(id,provider_id,provider_version,model_id,model_revision,compatibility_sha256,modality,dimensions,normalization,distance_metric,created_at) VALUES('review-space','fixture','1','model','revision','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','text',2,'l2','cosine',1)",
+                    "INSERT INTO search_index_generations(id,source_id,space_id,generation,pipeline_version,backend_id,vector_encoding,candidate_limit,sidecar_relative_path,status,created_at,updated_at) VALUES('review-generation','builtin.search.semantic_text','review-space',1,'4','builtin.binary-flat.v1','binary_sign_scan_float32_rerank',100,'generation-review.sqlite','active',1,1)",
+                    "INSERT INTO search_index_jobs(id,generation_id,clip_id,status,requested_at,completed_at,projection_sha256) VALUES('review-job','review-generation','review-clip','completed',1,1,'old-projection')",
+                ] {
+                    sqlx::query(sql).execute(&mut connection).await.unwrap();
+                }
+            }
+            drop(connection);
+            assert_eq!(
+                prepare(&roots).await.unwrap(),
+                SchemaState::Ready,
+                "from {version}"
+            );
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            if version == 27 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT status FROM search_index_jobs WHERE id='review-job'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "completed"
+                );
+                let binding: Option<String> = sqlx::query_scalar("SELECT provider_binding_json FROM search_embedding_spaces WHERE id='review-space'")
+                    .fetch_one(&mut connection).await.unwrap();
+                assert!(binding.is_none());
+            }
+            if version == 25 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT status FROM search_index_jobs WHERE id='review-job'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "pending"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM search_semantic_cleanup WHERE clip_id='review-clip'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    1
+                );
+            }
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM search_semantic_cleanup WHERE clip_id='kept-clip'"
+                )
+                .fetch_one(&mut connection)
+                .await
+                .unwrap(),
+                1
+            );
+            for (sql, expected) in [
+                ("SELECT note FROM clip_items WHERE id='kept-clip' AND is_favorite=1", "Keep this note"),
+                ("SELECT text_value FROM clip_text_values WHERE representation_id='kept-rep'", "Saved text"),
+                ("SELECT tag_id FROM catalog_clip_tags WHERE clip_id='kept-clip'", "kept-tag"),
+                ("SELECT value_json FROM config_profile_values WHERE key='artifacts.ocr.enabled'", "false"),
+            ] {
+                assert_eq!(sqlx::query_scalar::<_, String>(sql).fetch_one(&mut connection).await.unwrap(), expected, "from {version}");
+            }
+            if version >= 18 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT selected_id FROM ai_selections WHERE selection_key='default_chat'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-preset"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT credential_ref FROM ai_connections WHERE id='kept-connection'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-credential"
+                );
+            }
+            if version >= 19 {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT title FROM recall_threads WHERE id='kept-thread'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "Saved chat"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT clip_id FROM recall_source_snapshots WHERE id='kept-source'"
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                    "kept-clip"
+                );
+            }
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT schema_version FROM system_schema_meta")
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                SCHEMA_VERSION
+            );
+            assert!(sqlx::query("PRAGMA foreign_key_check")
+                .fetch_all(&mut connection)
+                .await
+                .unwrap()
+                .is_empty());
+            let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            drop(connection);
+            assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _sqlx_migrations")
+                    .fetch_one(&mut connection)
+                    .await
+                    .unwrap(),
+                applied
+            );
+        }
+    }
+    #[tokio::test]
     async fn initializes_fresh_baseline() {
         let root = TempDir::new().unwrap();
         let roots = AppRoots {
@@ -356,6 +568,54 @@ mod tests {
         // A successful first creation alone can conceal a reset loop.
         assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
         assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+    }
+    #[tokio::test]
+    async fn prepare_rolls_back_an_interrupted_write_before_inspecting() {
+        let root = TempDir::new().unwrap();
+        let roots = AppRoots {
+            data: root.path().join("data"),
+            config: root.path().join("config"),
+        };
+        assert_eq!(prepare(&roots).await.unwrap(), SchemaState::Ready);
+        let mut writer =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(roots.database()))
+                .await
+                .unwrap();
+        sqlx::query("PRAGMA cache_size=1")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN").execute(&mut writer).await.unwrap();
+        sqlx::query("CREATE TABLE interrupted(value BLOB)")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        for _ in 0..64 {
+            sqlx::query("INSERT INTO interrupted VALUES(zeroblob(8192))")
+                .execute(&mut writer)
+                .await
+                .unwrap();
+        }
+        // Copy the files while the transaction is open, as a killed process would leave them.
+        let crashed = TempDir::new().unwrap();
+        let crashed_roots = AppRoots {
+            data: crashed.path().join("data"),
+            config: crashed.path().join("config"),
+        };
+        fs::create_dir_all(&crashed_roots.data).unwrap();
+        let journal = roots.database().with_extension("db-journal");
+        assert!(
+            journal.exists(),
+            "the open transaction must leave a journal"
+        );
+        fs::copy(roots.database(), crashed_roots.database()).unwrap();
+        fs::copy(
+            &journal,
+            crashed_roots.database().with_extension("db-journal"),
+        )
+        .unwrap();
+        drop(writer);
+        assert_eq!(prepare(&crashed_roots).await.unwrap(), SchemaState::Ready);
     }
     #[tokio::test]
     async fn rejects_legacy_database() {
@@ -440,7 +700,7 @@ mod tests {
             .await
             .unwrap();
         let migrator = migrations::canonical();
-        for migration in migrator.iter() {
+        for migration in migrator.iter().filter(|migration| migration.version <= 15) {
             let crlf = migration.sql.as_str().replace("\n", "\r\n");
             let hash = sha2::Sha384::digest(crlf.as_bytes()).to_vec();
             sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=?")
@@ -561,7 +821,7 @@ mod tests {
             prepare(&roots).await.unwrap(),
             SchemaState::MissingMigration(999)
         );
-        assert!(!startup_status(SchemaState::NewerSchema(16)).reset_available);
+        assert!(!startup_status(SchemaState::NewerSchema(SCHEMA_VERSION + 1)).reset_available);
     }
 
     #[test]
@@ -571,7 +831,7 @@ mod tests {
             data: root.path().join("data"),
             config: root.path().join("config"),
         };
-        assert!(factory_reset(&roots, "no").is_err());
+        assert!(factory_reset(&roots, "no", |_| Ok(())).is_err());
     }
     #[test]
     fn reset_removes_the_owned_search_index_root() {
@@ -586,7 +846,7 @@ mod tests {
             b"derived",
         )
         .unwrap();
-        let result = factory_reset(&roots, "RESET CLIPSX").unwrap();
+        let result = factory_reset(&roots, "RESET CLIPSX", |_| Ok(())).unwrap();
         assert!(!roots.search_index().exists());
         assert!(result
             .deleted

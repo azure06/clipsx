@@ -22,6 +22,9 @@ const MAX_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 pub struct OllamaGenerationProvider {
     client: OllamaClient,
     model: String,
+    context_limit: u32,
+    output_limit: u32,
+    temperature: Option<f64>,
 }
 
 impl OllamaGenerationProvider {
@@ -34,7 +37,17 @@ impl OllamaGenerationProvider {
         Ok(Self {
             client: OllamaClient::new(endpoint)?,
             model,
+            context_limit: 4096,
+            output_limit: 4096,
+            temperature: None,
         })
+    }
+
+    pub fn with_preset(mut self, preset: &crate::ai::contracts::AiModelPreset) -> Self {
+        self.context_limit = preset.context_limit;
+        self.output_limit = preset.output_limit;
+        self.temperature = preset.options.temperature;
+        self
     }
 }
 
@@ -55,7 +68,7 @@ impl GenerationProvider for OllamaGenerationProvider {
             execution_location: GenerationExecutionLocation::Local,
             // Ollama's effective context is runtime configuration. Keep prompt
             // planning conservative when the connection cannot report it.
-            context_window_tokens: Some(4_096),
+            context_window_tokens: Some(self.context_limit),
         }
     }
 
@@ -86,19 +99,23 @@ impl GenerationProvider for OllamaGenerationProvider {
         if prompt.len() > MAX_PROMPT_BYTES {
             return Err(ProviderError::InputLimit);
         }
-        let response = self
-            .client
-            .post_stream(
+        let mut options = serde_json::json!({ "num_predict": request.max_output_tokens.min(self.output_limit), "num_ctx":self.context_limit });
+        if let Some(temperature) = self.temperature {
+            options["temperature"] = serde_json::json!(temperature);
+        }
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
+            result = self.client.post_stream(
                 "api/generate",
                 serde_json::json!({
                     "model": self.model,
                     "prompt": prompt,
                     "stream": true,
-                    "options": { "num_predict": request.max_output_tokens }
+                    "options": options
                 }),
                 Duration::from_secs(120),
-            )
-            .await?;
+            ) => result?,
+        };
         let mut stream = response.bytes_stream();
         let mut decoder = GenerationDecoder::default();
         loop {

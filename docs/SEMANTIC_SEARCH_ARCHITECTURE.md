@@ -3,8 +3,8 @@
 | Tool           | What it does                                                        | Needs a model?         |
 | -------------- | ------------------------------------------------------------------- | ---------------------- |
 | Keyword search | Finds words, prefixes, identifiers, paths, and code using FTS5      | No                     |
-| Meaning Search | Finds related wording using text embeddings                         | Local embedding model  |
-| Recall         | Answers an explicit question using retrieved passages and citations | Local generation model |
+| Meaning Search | Finds related wording using text embeddings                         | Named embedding preset |
+| Recall         | Answers an explicit question using retrieved passages and citations | Named chat preset |
 
 An **embedding** is a list of numbers representing text meaning. Similar vectors
 suggest related text. A **generation model** writes an answer. An **index
@@ -25,8 +25,9 @@ reduced-motion preferences replace its movement with a static border.
 ```mermaid
 flowchart LR
     Clips[(Saved clips)] --> FTS[(FTS5)]
-    Clips --> Chunk[Bounded text chunks]
-    Chunk --> Embed[Local embedding model]
+    Clips --> Eligibility[Exclude secrets; inspect complete text inputs]
+    Eligibility --> Chunk[Bounded text chunks]
+    Chunk --> Embed[Selected local or hosted embedding preset]
     Embed --> Index[(Index sidecar)]
     Query[Query] --> FTS
     Query --> QE[Query embedding]
@@ -36,7 +37,7 @@ flowchart LR
     FTS --> Merge[Merge rankings]
     Rerank --> Merge
     Merge --> Results[Clips and matching passages]
-    Results -. explicit question .-> Recall[Local answer with citations]
+    Results -. explicit question .-> Recall[Agent answer with citations]
 ```
 
 | Storage                               | Owns                                                         | Why                                             |
@@ -46,12 +47,26 @@ flowchart LR
 
 A model space fixes provider/model revision, dimensions, normalization, distance
 metric, and chunking compatibility. Vectors from different spaces never mix.
+Shared Rust AI infrastructure resolves named connections and credentials for
+search, Recall, and extensions. Feature code chooses its assigned preset;
+provider adapters own protocol details and curated failures.
 
 ## Index construction
 
 Inputs: notes, tags, every ready text representation, and completed OCR.
 Equivalent visible text is embedded once, preferring the richest safely parsed
 source; distinct representations remain searchable.
+
+Semantic indexing excludes secret-faceted clips for every provider, including
+local Ollama. Before chunking or provider access, the host also scans complete
+text inputs (including notes and existing OCR) with its deterministic secret
+classifier; a match excludes the whole clip. This is a heuristic, not a guarantee
+that every secret is recognized. History and local FTS retain their normal access.
+The same Rust eligibility predicate restricts semantic retrieval and assistant
+access. New secret facets queue durable vector cleanup. Schema 26 also queues
+existing indexed clips for cleanup and eligibility review; pending cleanup IDs
+cannot supply semantic matches. This rebuilds derived data without resetting the
+database or deleting originals.
 
 | Format           | Chunk boundaries / extra context used only for embedding                            |
 | ---------------- | ----------------------------------------------------------------------------------- |
@@ -67,6 +82,7 @@ source; distinct representations remain searchable.
 | ------------------------- | --------------------------------------------------------------------- |
 | Packing target            | 1,536 UTF-8 bytes                                                     |
 | Final embedding input     | 2,048 bytes                                                           |
+| Provider batch            | At most 16 inputs                                                     |
 | Structural context        | 384 bytes                                                             |
 | Oversized-atom overlap    | At most 256 bytes                                                     |
 | Chunks per clip           | 64                                                                    |
@@ -77,6 +93,13 @@ source; distinct representations remain searchable.
 Hash complete enriched inputs and embed duplicates once per generation.
 Display snippets remain clean; structural embedding context does not become
 canonical content.
+
+Embedding configuration exposes dimensions, query/document task policy, and
+explicit hosted-indexing consent. Chat context/output settings do not apply.
+Discovery supplies application bounds and known protocol options; custom model
+support remains unverified until the provider accepts the probe. Typed, definite
+context rejections permit bounded subdivision; authentication and quota failures
+are never treated as a reason to split or truncate input.
 
 ## Retrieval and ranking
 
@@ -122,12 +145,22 @@ flowchart LR
 Exactly one validated generation is active per semantic source. Sidecar writes
 precede job completion; per-clip replacement is safe to repeat.
 
+Each space retains a nonsecret provider binding: its connection, model and
+embedding options. Queries use the active space's binding while a replacement
+builds. Credentials remain live protected references; removing/disabling the
+saved configuration or changing its endpoint/organization makes that binding
+unavailable, rather than sending a current key to a retired destination. A
+retained-source query failure is reported with that search and never marks the
+replacement provider unhealthy. Older unbound spaces accept the current route
+only after full descriptor verification; otherwise keyword search remains usable.
+
 | Operation / failure                            | Behaviour                                                                                                                    |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Replacement generation built beside active one | Existing generation can serve searches until validated replacement activates                                                 |
 | Reindex All                                    | Check disk and provider, then discard text spaces/indexes/jobs and build fresh; old semantic index does not remain available |
 | Clear-space command                            | Same provider-validated full reset; enqueues fresh work                                                                      |
 | Provider validation fails before reset         | Preserve existing index                                                                                                      |
+| Ollama digest changes behind the same model ID | Stop indexing and semantic queries with a rebuild diagnostic; preserve FTS and captured clips                                 |
 | Interrupted running job                        | Requeue; existing valid sidecar write may be repeated                                                                        |
 | Finished sidecar, activation interrupted       | Validate and activate without rebuilding                                                                                     |
 | Missing/corrupt building sidecar               | Reset durable jobs to pending before replacing file                                                                          |
@@ -157,6 +190,14 @@ Embedding-space rows own vector dimensions. Generation rows explicitly record
 the sidecar backend, vector encoding, and candidate policy used to create them;
 these values have no schema defaults, so runtime creation cannot silently inherit
 an obsolete storage format.
+
+Ollama's saved digest is verified against the installed tag before and after
+each embedding request. Results are discarded if the tag changed during the
+request. Reindex explicitly probes and accepts the replacement revision. Hosted
+identity binds endpoint, model ID, dimensions, task policy and preprocessing;
+unreported provider weight changes cannot be detected. Rotating credentials alone
+does not change the space. Recall refreshes search readiness on provider, space,
+search-source, and AI-configuration events.
 
 ## Storage and trade-offs
 
@@ -190,39 +231,117 @@ actual active bytes and estimates replacement space from the existing index.
 
 ## Recall
 
-Recall starts only when the user submits a question. It searches eligible
-history independently of visible rows or pagination.
-While a Recall request runs, the search bar shows elapsed seconds from that
-request's start; the timer stops on its terminal event and resets for a new turn.
+Models supports explicit removal of saved presets and provider connections with
+an inline impact confirmation. Assigned features become None; removing active
+embeddings disables new indexing without removing clipboard content or FTS.
+Saved chats retain their transcript and clear removed model selections. Provider
+removal includes its model configurations and retryable protected credential
+cleanup. JSON import remains a stable-ID merge and never deletes omitted records.
 
-```text
-Question + fixed search scope
-  -> up to 100 candidates
-  -> deduplicate and exclude core.security.secret clips
-  -> select matching passages; keyword-centred fallback without embeddings
-  -> snapshot citations/fingerprints and recheck eligibility
-  -> fit provider context budget with room for answer
-  -> stream stages, evidence, text, and one terminal event
-```
+Intelligence → Models is the common configuration workspace. Its active-model summary assigns independent named presets to Recall, semantic search, and extension generation, plus reserved decision and rerank presets and an optional Tavily connection. The overview places the active-model summary in an inset card above a saved-configuration list. Provider and model configuration replace the overview with a dedicated view and a Back action. The overview links to the setup guide. Provider editors can test unsaved Ollama, OpenAI, Claude, Gemini, and OpenRouter settings without persisting them. Tests check catalog access rather than model execution; editing the draft clears its result. Saved credentials are reused only for the same provider and normalized endpoint; a changed endpoint requires an explicitly entered key. Add model discovers the connection catalog and filters a searchable picker by use; typing inside the picker filters the discovered list locally. Ollama reports embedding, completion, and decision capability; Gemini reports supported methods; Claude models use chat; OpenRouter requests all output modalities so text, embeddings, decisions, and rerank models appear with their reported purposes. OpenAI known model-family classifications are labelled inferred. Unknown capabilities require an explicit picker option, and manual IDs remain an explicit fallback. Import/export use an inline view and advanced options remain collapsed. JSON file import/export and read-only validation previews follow the [configuration contract](MODELS.md#named-ai-configurations).
 
-| Bound                    | Maximum                                          |
-| ------------------------ | ------------------------------------------------ |
-| Question                 | 2 KiB                                            |
-| Evidence                 | 10 passages; 2 KiB each; 20 KiB total            |
-| Answer                   | 32 KiB; provider request also caps output tokens |
-| Temporary session        | 10 completed turns / 1 MiB retention budget      |
-| Inactivity expiry        | 30 minutes                                       |
-| Active answer generation | One across the app's Recall runtime              |
+Ollama decision presets use the [System One API](https://github.com/ollama/ollama/blob/main/docs/capabilities/decision.mdx). An explicit test sends a fixed synthetic classification input, validates the returned choice and probabilities, and never reads clipboard data. Confidence measures preference among labels rather than correctness. OpenRouter decision and rerank presets can be saved and assigned, but ClipsX does not execute them yet. Reserving either assignment sends no clipboard content to the provider.
 
-Secret-faceted clips cannot be included by override. Clipboard text is delimited
-as untrusted prompt data; answers are labelled generated and fallible.
-Host state owns citations, turns, cancellation, and ordered events. Adapters
-receive prepared bounded messages and declare streaming, cancellation, execution
-location, and context-budget capabilities.
+Recall is a separate, lazily loaded workspace. History remains the startup page. History's Ask action and shortcut open Recall with the current query and filters and explicitly submit one turn; reopening the workspace does not replay that submission. Search input alone never starts generation. Saved conversations, source snapshots, and interrupted-run recovery follow the [data model](MODELS.md).
 
-Ollama is the only shipped generation adapter. Prompts and answers are not logged,
-persistently cached, or stored as canonical metadata. Hosted adapters require an
-explicit authorization and data-handling policy.
+### Native SDK transport
+
+The separate Recall runtime modules use pinned AI SDK provider adapters and an
+assistant-ui custom model adapter in the existing webview. OpenAI uses Responses;
+Anthropic and Gemini use their native adapters; OpenRouter uses its maintained
+adapter; Ollama uses OpenAI-compatible chat completions. These modules are not
+loaded by History startup. The Recall workspace uses the selected named chat preset.
+
+The preset context limit bounds the messages ClipsX sends; it does not configure
+Ollama's runtime context allocation. Ollama's OpenAI-compatible endpoint uses the
+model's configured context size. Configure a model with `PARAMETER num_ctx` in a
+Modelfile when a different allocation is needed, and keep the ClipsX budget within
+that model's actual context capacity. Large context allocations increase memory
+requirements; reasoning and CPU inference can also make multi-step turns slow.
+See [Ollama context configuration](https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx#setting-the-local-context-size).
+
+Rust binds a request to a host-resolved run and saved provider destination. The
+renderer receives a transport placeholder rather than a credential. Rust checks
+origin, provider API path, method, query parameters, and headers before injecting
+authentication. Remote endpoints require HTTPS; only loopback Ollama permits
+HTTP. Redirects are rejected, and provider failure bodies are not forwarded.
+
+Requests are bounded to 8 MiB, responses to 32 MiB, and concurrent requests to two.
+Ordered Tauri events carry response headers, chunks of at most 64 KiB, and one
+terminal outcome. The host waits for each chunk's consumption acknowledgement;
+Stop cancels a pending request, including a cancellation during startup. No Node
+or Bun process is part of the application runtime.
+
+The opt-in `recall-runtime-probe` build feature runs synthetic provider responses
+in a hidden production webview without opening application storage or telemetry.
+It is a verification tool, not a live-provider capability test. Build with
+`CLIPSX_RECALL_RUNTIME_PROBE=1` and
+`npx tauri build --no-bundle --features recall-runtime-probe`, then run
+`npm run test:recall-runtime`. The report records provider tool/image round trips,
+tool-free non-streaming context requests through the same authenticated bridge,
+native authentication receipts, cancellation, and the actual webview user agent.
+Normal builds omit the fixture HTML entry and reject probe command-line flags
+before application initialization. Live provider/model support must be
+verified separately with configured credentials.
+
+The same opt-in build includes an isolated native acceptance runner. Run
+`node scripts/verify-recall-acceptance.mjs <installed-tool-capable-Ollama-model>`
+to exercise the production TypeScript adapter, authenticated Rust transport,
+clipboard tools, conversation persistence, image snapshots, and a second-process
+restart. It uses synthetic clips in a fresh marked temporary directory, never the
+ordinary clipboard profile, capture, or telemetry. Reports identify the actual
+model and webview. This runner does not certify the visible desktop UI or hosted
+providers.
+
+Pass `--thinking-off` after the model ID to test the normal validated reasoning
+override on a model that advertises support for disabling thinking. Unsupported
+overrides fail rather than bypassing capability checks. The acceptance runner
+requires a grounded citation, rejects unsupported numeric local references, and checks organization state before and after Undo.
+
+Both probe scripts accept `CLIPSX_RECALL_PROBE_BINARY` to select an opt-in
+executable outside the default release path. This permits testing a separate
+binary while the ordinary desktop app remains running.
+
+### Assistant clipboard operations
+
+The Rust `ClipboardService` owns version 1 assistant read contracts. Its Tauri
+adapters expose status, filters, keyword/hybrid search, text pages, and verified
+image previews. Both the Recall workspace and external MCP clients use these
+contracts. Assistant access excludes `core.security.secret` clips; ordinary
+History keeps its existing access policy. Eligibility is checked again when a
+clip or image is read, including direct access by ID.
+
+Assistant tool input schemas inline nested types, including source references,
+filters, revision tokens, and format enums. Both transports publish the same
+generated contracts without relying on provider support for JSON Schema `$ref`.
+Rust remains authoritative for argument validation and mutation admission.
+
+Capture-time ranges, source application IDs, and excluded clip IDs participate
+in the shared SQL predicate before keyword and semantic candidate selection.
+Search defaults to keyword retrieval, 20 results, and a maximum of 50. An empty
+assistant query browses recent eligible clips. Hybrid failures retain keyword
+results; source outcomes and typed warnings describe unavailable or incomplete
+retrieval. Semantic shortlist results are approximate. Ranking scores are not
+confidence estimates. Cursors bind to filters and assistant eligibility.
+
+Text pages default to 8 KiB and cannot exceed 32 KiB. Captured text, notes, and
+existing OCR are separate inputs; pending OCR is reported without starting or
+waiting for work. Continuation cursors bind to the clip revision, selected
+representation, content kind, and text fingerprint, and preserve UTF-8 boundaries.
+Revisions include captured identity and organization state; copying/access counts
+do not invalidate them.
+
+Image reads accept clip and representation IDs only. PNG/JPEG previews verify
+managed-file ownership and hash before decoding with a 64 MiB allocation limit.
+The longest returned edge is at most 2,048 pixels; base64 payloads are at most
+4 MiB. Results include source fingerprints, original/returned dimensions, and
+resizing status. Search includes representation descriptors rather than image
+bytes. File-list descriptors grant no access to referenced files.
+
+Rust DTOs derive TypeScript with `ts-rs` and JSON schemas with `schemars`.
+`generated_contracts_match` verifies checked-in declarations during native tests.
+Set `CLIPSX_GENERATE_CONTRACTS=1` and run that test to regenerate them. Formatting
+excludes the generated file so CI can compare its declarations deterministically.
 
 ## Qualification
 
@@ -256,10 +375,10 @@ recovery on each advertised platform.
 | Capability                        | Current implementation                                                   |
 | --------------------------------- | ------------------------------------------------------------------------ |
 | Keyword search                    | Always-available FTS5; exact words/prefixes                              |
-| Meaning Search                    | Optional local Ollama embeddings                                         |
-| Recall                            | Explicit question answered by a configured local Ollama generation model |
+| Meaning Search                    | Optional Ollama or explicitly enabled hosted text embeddings                                         |
+| Recall                            | Explicit chat with a named provider preset and shared clipboard tools |
 | OCR                               | Native platform providers above                                          |
-| Hosted models / visual embeddings | No shipped runtime                                                       |
+| Hosted text embeddings            | Native OpenAI, OpenRouter, and Gemini adapters; credentials and opt-in required                                                       |
 | Ollama network                    | Loopback endpoints only                                                  |
 
 One derived FTS document per clip combines notes, tags, ready text, and completed
@@ -280,9 +399,13 @@ excluding Meaning Search from a query does not itself stop indexing.
 Query/filter change -> invalidate old responses immediately
   -> retain old rows + preview with "updating" state
   -> pause result actions/pagination; hide native extension detail surface
-  -> current success: atomically replace rows, outcomes, cursor
-     failure: keep stale rows and offer retry
+  -> keyword success: atomically replace rows and keyword cursor
+  -> semantic enrichment: append deduplicated semantic-only matches
+     keyword failure: keep stale rows and offer retry
+     semantic failure: retain usable keyword rows and report its source outcome
 ```
+
+History schedules keyword retrieval after 75 ms of inactivity. When Meaning Search is enabled, a separate hybrid request enriches the first keyword page at or after 250 ms, without delaying usable keyword results. Keyword pagination retains its own cursor and inserts additional keyword rows before Related matches; semantic enrichment is bounded to its first 50 candidates. Both paths share the native search engine and filters. Superseded requests and unmounted input controllers cannot publish enrichment. IME composition pauses retrieval.
 
 Only pages from the current request may append. Selection survives by ID where
 possible and clears on empty results. Input remains editable; operations already
@@ -290,16 +413,14 @@ started, including note saves, may finish. Status events are coalesced to one
 start per 500 ms, one active refresh, and one trailing refresh; unmounted
 consumers ignore late responses.
 
-The Models screen owns the shared Ollama connection and independent embedding
-and generation assignments. Bounded model inspection derives `embedding` /
+Models is the default Intelligence section; its shared configuration workspace is described under Recall above. Bounded Ollama model inspection derives `embedding` /
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,
 disk use, and reset. Extensions receive provider availability and output, never
 endpoint/model configuration or credentials.
 
 Contextual help uses the current app language and the existing external-browser
 command. Models links to the shared Local AI guide and its embedding/generation
-sections; Recall links to its task guide. An unavailable Recall action still
-opens Intelligence, with the visible label "Set up Recall". Browser failures
+sections; Recall links to its task guide. Recall remains available for retrieval without a chat preset and offers configuration guidance for chat. Browser failures
 offer a localized manual URL and do not alter provider configuration or clips.
 
 ## Startup measurement
@@ -307,3 +428,51 @@ offer a localized manual URL and do not alter provider configuration or clips.
 Use an isolated profile and a coherent database backup, with reporting and autostart disabled. Record source revision, OS/hardware, fixture size, cache state and warm-up separately. Compare repeated production launches without building during measurement.
 
 `clipsx.first-history-paint` is a Performance API mark after two animation frames with nonempty history mounted; it is a paint proxy, not pixel detection. Distinguish process-launch from webview-navigation latency. Windows native process CPU samples exclude WebView2 child processes. Retain raw results with the measurement; one machine’s timings are not product guarantees.
+
+## Native embedding configuration
+
+An inactive hosted embedding preset can be saved without credentials or indexing consent. Activating it requires both a protected credential and explicit hosted-indexing consent in the preset, including for free models. Missing consent or credentials produces an actionable configuration error and leaves the previous selection intact.
+
+Background embedding jobs resolve the saved preset and protected credential in Rust, without mounting Recall or invoking the webview. Ollama retains its existing model-digest identity and preprocessing compatibility. OpenAI and OpenRouter use the text embeddings endpoint; Gemini uses bounded batchEmbedContents requests. Anthropic has no embedding adapter. Inputs and response vectors are bounded; vectors must have the expected count, order, finite values, nonzero norm, and verified dimensions. Hosted vectors are normalized locally.
+
+A space identifies provider/model, endpoint, dimensions, preprocessing, normalization, and query/document task policy. Gemini taskType retrieval and embedding-2 retrieval prefixes are distinct policies. Hosted credentials and display names are excluded from identity. Replacement presets are probed for both query and document dimensions before configuration changes. The existing generation activation remains atomic; query/index operations refuse mismatched hosted space identities. Keyword results remain available while semantic retrieval is unavailable.
+
+Configuration and protocol fixtures do not certify a live provider or model. See the [data model](MODELS.md#named-ai-configurations) for persistence, migration, import validation, and protected storage. Protocol references: [OpenAI embeddings](https://developers.openai.com/api/reference/resources/embeddings/methods/create), [OpenRouter embeddings](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings), [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings).
+
+## Internal agent runtime
+
+The lazy TypeScript runtime uses one AI SDK tool loop, rendered through an assistant-ui custom adapter. OpenAI Responses, Anthropic, Gemini, OpenRouter, and Ollama chat use the authenticated Rust streaming bridge. Rust freezes the selected connection, preset, filters, attachments, and web setting per run; credentials remain in protected storage. One native run is admitted at a time. Provider requests have a ten-minute total bound and a two-minute read-idle timeout; actively streaming local reasoning is not cut off after two minutes. Incomplete replies distinguish cancellation, output limits, provider filtering, timeouts, and other request failures.
+
+Each turn permits eight model steps and three clipboard search rounds. Refinement can narrow the frozen filters, never widen them. Reads have four concurrent slots; mutations are serialized and receive stable request IDs. The native model-facing schemas omit requestId because the adapter generates it; external MCP clients still supply their own stable IDs. Both transports classify malformed tool arguments as `invalid_parameters` without echoing their contents or recording a mutation; the native agent receives schema guidance for correcting them. Rejected reads provide valid text-kind choices and invite correction within the remaining step budget; failed reads never register citations. Unknown tool support is verified with a read-only status call before ordinary clipboard writes are enabled. This capability-only step receives a status instruction; the user's task and prior context are restored with the status result for the next step. Models configured without tool support provide ordinary chat. If an unknown-capability status probe is rejected before any output or tool call, the same model may retry once with all tools disabled. This turn is labelled ordinary chat; no capability claim is persisted. Undo remains available to the native agent when the user requests reversal; availability metadata is not a reversal instruction. The agent must not undo successful actions for cleanup or verification, and its final answer must reflect any later reversal. Stop cancels model requests and pending reads; admitted transactions finish and their committed actions remain undoable.
+
+Provider-neutral conversation context preserves the latest question and labels clipboard evidence. A pure planner accounts for instructions, active tool schemas, messages and images using a conservative estimate. All model steps, including capability verification and ordinary-chat fallback, check the frozen input policy. Native text pages and candidate counts adapt to the next-step reserve. Older completed conversation is compacted with the current model and no tools or web; recorded action outcomes remain separate from summary prose. At most two compaction calls are permitted per turn. Failure stops clearly when the request cannot fit; transcripts remain saved. A definitive pre-stream context rejection permits one reduced request retry without restarting the agent or replaying tools. A ten-minute cumulative deadline includes compaction. Only verified managed image bytes become labelled inline image context; renderer messages never authorize downloading remote images. Length-limited and filtered responses remain incomplete.
+
+Web access defaults off. Explicitly enabled turns use verified native provider search capabilities or the selected Tavily connection. Missing web configuration returns setup guidance without changing the chat provider. Tavily search and extraction have bounded calls and content; web citations remain separate from clipboard sources. Retrieved content is evidence, not instructions.
+
+Runtime fixtures verify provider protocol translation, streaming, tool execution, and cancellation; they do not establish live model capability or platform availability.
+
+## Recall workspace interaction
+
+The sidebar Recall entry reopens the latest saved conversation. History Ask opens a fresh local draft with the current query and search scope prefilled; it never appends to an unrelated conversation or sends automatically. New chat also creates a local draft. The first submitted message initializes persistence once, including its selected model, reasoning and web settings; abandoned drafts do not create database rows. The agent chooses whether to search, read, refine, or act; ordinary chat and follow-ups do not require a retrieval step. Keyword search is its default clipboard search mode, with hybrid retrieval available when helpful. Search tool results appear as usable candidate cards before the final answer. Activity reports actual tool execution. Provider-returned reasoning or summaries appear separately in a collapsed section; absent reasoning is never fabricated.
+
+The composer is Recall's only query input. Draft text schedules local keyword suggestions after 75 ms and hybrid enrichment after 250 ms when ready, pausing during IME composition and ignoring superseded responses. Empty drafts and active runs do not schedule suggestions. Draft suggestions never start generation or become model context automatically; users can attach selected clips explicitly, or attach up to three current top matches in one action. Attachments are visible before Send and use the same bounded, revision-validated text context even for models without tool support; this does not grant those models autonomous retrieval or actions. Send starts the existing agent loop, which remains free to search, refine, read, or answer directly. Recall's assistant eligibility policy continues to exclude secret-faceted clips.
+
+A collapsible Context panel shows clipboard evidence for the selected answer, agent search candidates grouped by their actual queries, and separate suggestions for the current draft. Context remains inline: beside the conversation when space permits, or below it on narrow layouts. A pointer- and keyboard-operated divider resizes it without unmounting chat. Search candidates remain distinct from read evidence. Reading a clip, attaching evidence that fits the context budget, and supported image reads allocate references; unavailable OCR and unsupported or omitted image input do not. Older answer selection and citations select that answer's evidence, with numbering scoped to its clip revisions. Completed answers validate local reference numbers against the run's inspected evidence. Missing or invalid references permit one answer-only repair with the same model, tools and web disabled, within the eight-model-step and cumulative deadline limits. Repair preserves tool receipts and committed operations; it never remaps an invented number to a source. A failed repair leaves the answer explicitly incomplete with source-validation guidance. Activity reports actual execution and committed writes, with guarded Undo.
+
+Sources open the shared History clipboard preview renderer inside the Context panel, with header Back/Close controls. Recall preview visibility is independent of History search staleness, including native extension surfaces. Late preview loads are ignored after close, replacement, or conversation changes. Retained source snapshots remain readable when originals disappear; live reads appear before terminal persistence and saved image snapshots load on an explicit preview request. A missing original never removes a saved conversation.
+
+Selection is keyed by clip ID and enrichment does not move keyboard focus. Copy and local suggestions remain available without a chat preset. Dismissal excludes a suggested clip only for its current query/filter context. Search scope filters constrain suggestions and subsequent agent tools. A compact composer toolbar contains a searchable model picker grouped by connection, reasoning controls, and optional web research. Configuration, conversation switching, and attachment changes are disabled during runs. Conversation reasoning overrides are saved locally and reset on model changes; Default leaves the shared preset unchanged. Chat deletion explicitly explains its independent retention.
+
+### Reasoning controls
+
+The main-webview-only `assistant_model_options` command resolves controls for a saved chat preset. Ollama uses bounded `/api/show` thinking metadata; missing metadata does not imply selectable levels. OpenRouter uses model reasoning metadata intersected with the installed adapter's supported vocabulary, excluding disable choices for mandatory reasoning. OpenAI, Anthropic, and Gemini use conservative documented model families. Unknown models retain preset defaults. Discovery results are bounded and cached for five minutes, keyed by saved connection and preset configuration.
+
+Rust validates explicit overrides before saving a thread and admitting a run. Defaults require no capability lookup on the generation path. The frozen run context retains the selected override independently of its preset. TypeScript translates that control into the selected provider's request options; SDK adapters own provider protocol details. OpenRouter Default uses the saved preset effort; a conversation effort or token budget overrides it. Thinking budgets offered in Recall stay below the resolved output allowance to leave answer room. The internal adapter streams returned reasoning into typed conversation parts, without introducing another tool loop or replaying reasoning text as instructions in provider-neutral history.
+
+Capability metadata and documented families establish available controls, not a live inference test. Relevant contracts: [Ollama thinking](https://docs.ollama.com/capabilities/thinking), [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens), and AI SDK provider documentation for [OpenAI](https://ai-sdk.dev/providers/ai-sdk-providers/openai), [Anthropic](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic), and [Google](https://ai-sdk.dev/providers/ai-sdk-providers/google).
+
+### Resolved model limits
+
+New chat presets use Auto, capped at 32,768 working-context tokens and known model/server limits. Unreported capacity uses the preset's editable limits (new presets default to 131,072 context and 8,192 output) and is marked unverified; servers that report no runtime window keep a conservative 8,192-token fallback. Auto output is capped at 8,192 tokens, one quarter of capacity, and known provider output limits. Separate input/output windows are distinguished from shared windows. Existing presets keep explicit numbers; incompatible observed output limits are rejected rather than silently rewritten. Byte-based accounting and fixed image allowances are conservative estimates, not exact tokenizer guarantees. Provider usage from generation and compaction is retained for comparison; the Ollama compatibility adapter explicitly requests streaming usage reports. Missing provider usage remains unknown. Recorded action receipts are reconciled against recent durable activity outside generated summaries; historical receipts do not establish current clip presence. Intelligence Models keeps exact overrides in Advanced and reasoning controls remain model-specific. Provider observations and summaries are omitted from configuration JSON version 3; versions 1 and 2 remain importable.
+
+Official OpenAI GPT-4.1 and supported GPT-4o snapshot limits use reviewed rules v1 (2026-10-12) when API metadata is incomplete, based on the [GPT-4.1](https://developers.openai.com/api/docs/models/gpt-4.1) and [GPT-4o](https://developers.openai.com/api/docs/models/gpt-4o) specifications. These rules never apply to custom endpoints. Unrecognized model IDs retain unverified fallback limits. Anthropic reported image, structured-output, and thinking capabilities remain separate from client-tool support.

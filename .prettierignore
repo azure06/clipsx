@@ -1,0 +1,2 @@
+# Rust contract generation is checked byte-for-byte by the native contract test.
+src/features/recall/contracts.generated.ts

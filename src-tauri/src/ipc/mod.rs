@@ -26,7 +26,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::time::{Duration, Instant};
-use tauri::{ipc::Channel, AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use tauri_plugin_shell::ShellExt;
@@ -336,6 +336,15 @@ fn factory_reset(
             .as_ref()
             .ok_or("Storage location is unavailable")?,
         &confirmation,
+        |roots| {
+            #[cfg(not(target_os = "windows"))]
+            return crate::recall::credentials::reset_owned(&roots.data.join("ai-credentials"));
+            #[cfg(target_os = "windows")]
+            {
+                let _ = roots;
+                Ok(())
+            }
+        },
     )
     .map_err(|error| error.to_string())
 }
@@ -2768,47 +2777,6 @@ async fn get_text_generation_status(
         .map_err(|error| error.to_string())
 }
 #[tauri::command]
-async fn start_recall_turn(
-    request: search::recall::RecallTurnRequest,
-    on_event: Channel<search::recall::RecallEvent>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let request_id = request.request_id.clone();
-    if let Err(error) =
-        search::recall::start_turn(&state.recall, &state.history, request, on_event.clone()).await
-    {
-        let event = if error.downcast_ref::<crate::providers::error::ProviderError>()
-            == Some(&crate::providers::error::ProviderError::Cancelled)
-        {
-            search::recall::RecallEvent::Cancelled { request_id }
-        } else {
-            search::recall::RecallEvent::Error {
-                request_id,
-                code: error
-                    .downcast_ref::<crate::providers::error::ProviderError>()
-                    .map(|value| value.code())
-                    .unwrap_or("recall_failed")
-                    .into(),
-                message: error.to_string(),
-            }
-        };
-        on_event
-            .send(event)
-            .map_err(|send_error| send_error.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn cancel_recall_turn(request_id: String, state: State<'_, AppState>) -> bool {
-    state.recall.cancel(&request_id)
-}
-
-#[tauri::command]
-fn clear_recall_session(session_id: String, state: State<'_, AppState>) {
-    state.recall.clear_session(&session_id);
-}
-#[tauri::command]
 async fn reindex_text_embeddings(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -2931,6 +2899,9 @@ fn recover_startup(
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
+        .manage(crate::recall::transport::Transport::default())
+        .manage(crate::recall::mcp::McpRuntime::default())
+        .manage(crate::recall::agent::AgentRuntime::default())
         .plugin(crate::app::diagnostics::log_plugin())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = host::show_main_window(app);
@@ -3178,13 +3149,19 @@ pub(crate) fn run() {
                     Ok(services) => services,
                     Err(error) => { recover_startup(app.handle(), Some(roots), "services_initialize", &error); return Ok(()); }
                 };
+                if let Err(error)=tauri::async_runtime::block_on(crate::recall::configuration::migrate_legacy(&history)) { recover_startup(app.handle(),Some(roots),"ai_configuration_migrate",&error); return Ok(()); }
+                if let Err(error)=tauri::async_runtime::block_on(crate::recall::conversations::recover(&history)) { recover_startup(app.handle(),Some(roots),"recall_conversations_recover",&error); return Ok(()); }
                 crate::diagnostic!("startup.services.ready");
                 app.manage(AppState {
                     roots: roots.clone(),
                     history: history.clone(),
                     extensions: extensions.clone(),
                     workers: crate::app::workers::BackgroundWorkers::default(),
-                    recall: Default::default(),
+                });
+                let mcp_history=history.clone();let mcp_app=app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let runtime=mcp_app.state::<crate::recall::mcp::McpRuntime>();
+                    let _=runtime.reconcile(mcp_history,Some(mcp_app.clone())).await;
                 });
                 // Materialize the host-owned artifact registry during startup.
                 let _ = artifacts::registered_producers();
@@ -3378,6 +3355,51 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(route_webview_invokes(tauri::generate_handler![
+            crate::recall::transport::ai_http_start,
+            crate::recall::transport::ai_http_acknowledge,
+            crate::recall::transport::ai_http_cancel,
+            crate::recall::ipc::assistant_clipboard_status,
+            crate::recall::ipc::assistant_clipboard_filters,
+            crate::recall::ipc::assistant_search_clips,
+            crate::recall::ipc::assistant_read_clip,
+            crate::recall::ipc::assistant_read_clip_image,
+            crate::recall::ipc::assistant_create_clip,
+            crate::recall::ipc::assistant_organize_clips,
+            crate::recall::ipc::assistant_undo_action,
+            crate::recall::ipc::assistant_action_activity,
+            crate::recall::ipc::mcp_integration_status,
+            crate::recall::ipc::mcp_configure,
+            crate::recall::ipc::mcp_list_grants,
+            crate::recall::ipc::mcp_issue_grant,
+            crate::recall::ipc::mcp_revoke_grant,
+            crate::recall::ipc::mcp_test_access,
+            crate::recall::ipc::ai_configuration_state,
+            crate::recall::ipc::ai_configuration_export,
+            crate::recall::ipc::ai_configuration_import,
+            crate::recall::ipc::ai_configuration_remove,
+            crate::recall::ipc::ai_configuration_retry_cleanup,
+            crate::recall::ipc::ai_configuration_preview,
+            crate::recall::ipc::ai_test_decision,
+            crate::recall::ipc::ai_set_credential,
+            crate::recall::ipc::ai_discover_models,
+            crate::recall::ipc::ai_test_connection,
+            crate::recall::ipc::assistant_run_begin,
+            crate::recall::ipc::assistant_model_options,
+            crate::recall::ipc::ai_model_information,
+            crate::recall::ipc::recall_context_load,
+            crate::recall::ipc::recall_context_save,
+crate::recall::ipc::recall_thread_initialize,
+crate::recall::ipc::recall_thread_list,
+crate::recall::ipc::recall_thread_load,
+crate::recall::ipc::recall_thread_update,
+crate::recall::ipc::recall_thread_delete,
+crate::recall::ipc::recall_message_append,
+crate::recall::ipc::recall_run_start,
+crate::recall::ipc::recall_run_checkpoint,
+crate::recall::ipc::recall_snapshot_image,
+            crate::recall::ipc::assistant_run_finish,
+            crate::recall::ipc::assistant_run_tool,
+            crate::recall::ipc::assistant_verify_tools,
             show_main_window_command,
             set_tray_labels,
             get_release_info,
@@ -3517,9 +3539,6 @@ pub(crate) fn run() {
             configure_text_generation_provider,
             disable_text_generation_provider,
             get_text_generation_status,
-            start_recall_turn,
-            cancel_recall_turn,
-            clear_recall_session,
             retry_text_embedding_provider,
             reindex_text_embeddings,
             index_missing_text_embeddings,
@@ -3574,6 +3593,12 @@ mod tests {
                 collect_frontend_sources(&path, output);
                 continue;
             }
+            // This feature-only HTML entry has its own isolated Tauri builder.
+            if path.ends_with(Path::new("recall/runtime/fixtures/gate.tsx"))
+                || path.ends_with(Path::new("recall/runtime/fixtures/acceptance.ts"))
+            {
+                continue;
+            }
             let name = path.file_name().unwrap().to_string_lossy();
             if name.contains(".test.") || name.contains(".spec.") {
                 continue;
@@ -3613,6 +3638,57 @@ mod tests {
             remainder = arguments;
         }
         commands
+    }
+
+    #[test]
+    fn acceptance_probe_commands_stay_out_of_the_production_handler() {
+        let source = include_str!("../../../src/features/recall/runtime/fixtures/acceptance.ts");
+        let isolated = include_str!("../recall/acceptance_probe.rs")
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let production = include_str!("mod.rs")
+            .split_once(".invoke_handler(route_webview_invokes(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        for command in literal_invocations(source) {
+            assert!(isolated.contains(&command));
+            if command.starts_with("acceptance_probe_") {
+                assert!(!production.contains(&command));
+            } else {
+                assert!(production.contains(&command));
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_probe_invocations_stay_in_the_isolated_handler() {
+        let source = include_str!("../../../src/features/recall/runtime/fixtures/gate.tsx");
+        let host = include_str!("../recall/runtime_probe.rs");
+        let handler = host
+            .split_once(".invoke_handler(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let production = include_str!("mod.rs")
+            .split_once(".invoke_handler(route_webview_invokes(tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        for command in literal_invocations(source) {
+            assert!(handler.contains(&command));
+            assert!(!production.contains(&command));
+        }
     }
 
     #[test]
@@ -3722,9 +3798,6 @@ mod tests {
         let main_permissions = include_str!("../../permissions/main-app-commands.toml");
         assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
         assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
-        assert!(main_permissions.contains("\"allow-start-recall-turn\""));
-        assert!(main_permissions.contains("\"allow-cancel-recall-turn\""));
-        assert!(main_permissions.contains("\"allow-clear-recall-session\""));
         assert!(main_permissions.contains("\"allow-update-text-embedding-threshold\""));
     }
 

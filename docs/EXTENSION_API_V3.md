@@ -249,10 +249,7 @@ Result tabs restore explanations from SQLite and link to generation settings or
 permissions where appropriate. Action and scheduling IPC reject with structured
 `{ code, recovery }` host failures, never raw provider or guest error messages.
 
-Ollama generation enforces the existing 256 KiB prompt bound and requires a
-completed stream. Explicit stream errors and invalid/incomplete responses cannot
-produce successful partial results. Reported context errors remain distinct from
-host size limits; ClipsX does not infer them from clip length. Output-token-limit
+The host resolves the independent extension-generation preset from Intelligence → Models. Ollama, OpenAI, Anthropic, Gemini, and OpenRouter are supported without mounting Recall. Hosted connections require a locally protected credential and receive the extension's generation input. Endpoints, credentials, and model configuration remain inaccessible to the extension. Generation enforces a 256 KiB prompt bound and clamps output tokens to the preset limit. Ollama streams; hosted extension adapters currently deliver completed, buffered text through the same host contract. Both paths support cancellation. Invalid, blocked, and unterminated responses cannot produce successful partial results. Reported Ollama context errors remain distinct from host size limits; ClipsX does not infer them from clip length. Output-token-limit
 completion still reaches the extension as `completionReason: "length"`; it may
 accept or reject that output. A rejection can explain that the preceding model
 response reached its output limit. None of these errors authorize replay of a

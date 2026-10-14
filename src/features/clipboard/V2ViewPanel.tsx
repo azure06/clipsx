@@ -31,10 +31,12 @@ export const ExtensionCustomView = ({
   clipId,
   view,
   visible = true,
+  trackHistorySearch = true,
 }: {
   clipId: string
   view: ClipViewDescriptor
   visible?: boolean
+  trackHistorySearch?: boolean
 }) => {
   const container = React.useRef<HTMLDivElement>(null)
   const { appliedTheme } = useTheme()
@@ -65,7 +67,10 @@ export const ExtensionCustomView = ({
         void invoke('sync_extension_custom_view', {
           label: session.label,
           ...next,
-          visible: !overlayOpen && !useClipboardStore.getState().resultsStale && ready,
+          visible:
+            !overlayOpen &&
+            (!trackHistorySearch || !useClipboardStore.getState().resultsStale) &&
+            ready,
         })
     }
     const handleOverlayVisibility = (event: Event) => {
@@ -73,7 +78,7 @@ export const ExtensionCustomView = ({
       syncVisibility()
     }
     const unsubscribeResults = useClipboardStore.subscribe((next, previous) => {
-      if (next.resultsStale !== previous.resultsStale) syncVisibility()
+      if (trackHistorySearch && next.resultsStale !== previous.resultsStale) syncVisibility()
     })
     window.addEventListener('clipsx-host-overlay', handleOverlayVisibility)
 
@@ -94,7 +99,10 @@ export const ExtensionCustomView = ({
       } else {
         ready = true
         setReadyScope(scope)
-        if ((overlayOpen || useClipboardStore.getState().resultsStale) && session) {
+        if (
+          (overlayOpen || (trackHistorySearch && useClipboardStore.getState().resultsStale)) &&
+          session
+        ) {
           const next = bounds()
           if (next)
             void invoke('sync_extension_custom_view', {
@@ -151,7 +159,10 @@ export const ExtensionCustomView = ({
               void invoke('sync_extension_custom_view', {
                 label: session.label,
                 ...next,
-                visible: !overlayOpen && !useClipboardStore.getState().resultsStale && ready,
+                visible:
+                  !overlayOpen &&
+                  (!trackHistorySearch || !useClipboardStore.getState().resultsStale) &&
+                  ready,
               })
             })
             if (container.current) observer.observe(container.current)
@@ -199,6 +210,7 @@ export const ExtensionCustomView = ({
     }
   }, [
     appliedTheme,
+    trackHistorySearch,
     i18n,
     clipId,
     locale,
@@ -452,12 +464,14 @@ const RawInspector = ({ detail, onClose }: { detail: ClipDetail; onClose: () => 
 export const V2ViewPanel = ({
   clipId,
   visible = true,
+  trackHistorySearch = true,
   onPresentation,
   onTabControls,
   onTransformControls,
 }: {
   clipId: string
   visible?: boolean
+  trackHistorySearch?: boolean
   onPresentation?: (presentation: ClipPresentation | null) => void
   onTabControls?: (info: ViewTabControls | null) => void
   onTransformControls?: (controls: TransformControls | null) => void
@@ -729,7 +743,12 @@ export const V2ViewPanel = ({
             onRetry={() => void retryOcr()}
           />
         ) : view?.presentationKind === 'extension_ui' ? (
-          <ExtensionCustomView clipId={clipId} view={view} visible={visible} />
+          <ExtensionCustomView
+            clipId={clipId}
+            view={view}
+            visible={visible}
+            trackHistorySearch={trackHistorySearch}
+          />
         ) : (
           <RenderModelView appliedTheme={appliedTheme} presentation={presentation} />
         )}

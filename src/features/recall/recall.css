@@ -1,23 +1,26 @@
 .recall-workspace {
-  --recall-ink: #253047;
-  --recall-muted: #69748a;
-  --recall-line: rgb(100 116 139 / 0.18);
-  --recall-surface: rgb(255 255 255 / 0.55);
+  --recall-ink: #1e293b;
+  --recall-muted: #64748b;
+  --recall-line: rgb(100 116 139 / 0.12);
+  --recall-surface: rgb(255 255 255 / 0.6);
+  --recall-surface-raised: rgb(255 255 255 / 0.82);
   --recall-accent: #7c3aed;
+  --recall-accent-soft: rgb(139 92 246 / 0.08);
+  --recall-accent-border: rgb(139 92 246 / 0.2);
+  --recall-radius: 12px;
+  --recall-radius-sm: 8px;
   container-type: inline-size;
-  border: 1px solid var(--recall-line);
-  border-radius: 16px;
-  box-shadow: 0 8px 24px -18px rgb(15 23 42 / 0.18);
-  background: rgb(255 255 255 / 0.55);
   color: var(--recall-ink);
 }
 .dark .recall-workspace {
-  --recall-ink: #e2e5f0;
-  --recall-muted: #9ba4bc;
-  --recall-line: rgb(148 163 184 / 0.14);
-  --recall-surface: rgb(255 255 255 / 0.035);
+  --recall-ink: #e2e8f0;
+  --recall-muted: #94a3b8;
+  --recall-line: rgb(148 163 184 / 0.1);
+  --recall-surface: rgb(255 255 255 / 0.03);
+  --recall-surface-raised: rgb(255 255 255 / 0.055);
   --recall-accent: #c4b5fd;
-  background: rgb(15 23 42 / 0.3);
+  --recall-accent-soft: rgb(139 92 246 / 0.1);
+  --recall-accent-border: rgb(139 92 246 / 0.18);
 }
 .recall-workspace button {
   transition:
@@ -26,6 +29,9 @@
     box-shadow 160ms ease,
     transform 160ms ease;
 }
+
+/* ── Header ──────────────────────────────────────────────── */
+
 .recall-header {
   display: flex;
   flex-shrink: 0;
@@ -33,8 +39,7 @@
   justify-content: space-between;
   gap: 12px;
   /* height/right-padding matched to ClipPreview's header row for AppLayout's toggle overlay */
-  padding: 8px 80px 8px 18px;
-  border-bottom: 1px solid var(--recall-line);
+  padding: 8px 80px 8px 16px;
   background: var(--recall-surface);
 }
 .recall-brand {
@@ -46,9 +51,9 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--recall-radius-sm);
   color: var(--recall-accent);
   background: linear-gradient(155deg, rgb(167 139 250 / 0.22), rgb(124 58 237 / 0.1));
   border: 1px solid rgb(167 139 250 / 0.35);
@@ -62,21 +67,24 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
 .recall-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.02em;
 }
 .recall-scope {
   font-size: 11px;
   color: var(--recall-muted);
   overflow-wrap: anywhere;
 }
+
+/* ── Header actions ──────────────────────────────────────── */
+
 .recall-new {
   display: flex;
   align-items: center;
   gap: 5px;
   flex-shrink: 0;
-  padding: 6px 9px;
+  padding: 5px 9px;
   border: 1px solid var(--recall-line);
   border-radius: 8px;
   background: var(--recall-surface);
@@ -86,8 +94,11 @@
 }
 .recall-new:hover {
   color: var(--recall-accent);
-  border-color: #a78bfa;
+  border-color: var(--recall-accent-border);
 }
+
+/* ── Body ────────────────────────────────────────────────── */
+
 .recall-body {
   padding: 20px clamp(16px, 5cqi, 32px) 18px;
 }
@@ -110,6 +121,9 @@
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+
+/* ── Answer area ─────────────────────────────────────────── */
+
 .recall-answer-label {
   display: flex;
   align-items: center;
@@ -132,8 +146,11 @@
   font-weight: 500;
 }
 .recall-evidence-count:hover {
-  background: rgb(139 92 246 / 0.08);
+  background: var(--recall-accent-soft);
 }
+
+/* ── Sources panel ───────────────────────────────────────── */
+
 .recall-sources {
   margin-top: 18px;
   padding: 12px;
@@ -151,7 +168,7 @@
   min-width: 19px;
   height: 19px;
   border-radius: 5px;
-  background: rgb(139 92 246 / 0.09);
+  background: var(--recall-accent-soft);
   color: var(--recall-accent);
   font-size: 10px;
 }
@@ -160,22 +177,31 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* ── Source cards ─────────────────────────────────────────── */
+
 .recall-source-card {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 11px;
   border: 1px solid var(--recall-line);
-  border-radius: 9px;
-  background: var(--recall-surface);
+  border-radius: var(--recall-radius-sm);
+  background: var(--recall-surface-raised);
   transition:
     border-color 160ms ease,
     background-color 160ms ease,
-    opacity 160ms ease;
+    opacity 160ms ease,
+    box-shadow 160ms ease;
 }
 .recall-source-card:hover {
+  border-color: var(--recall-accent-border);
+  box-shadow: 0 2px 8px -2px rgb(139 92 246 / 0.1);
+}
+.recall-source-card[data-selected='true'] {
   border-color: rgb(139 92 246 / 0.5);
-  background: rgb(139 92 246 / 0.04);
+  background: rgb(139 92 246 / 0.06);
+  box-shadow: 0 0 0 2px rgb(139 92 246 / 0.12);
 }
 .recall-source-card[data-excluded='true'] {
   opacity: 0.55;
@@ -191,11 +217,12 @@
   margin-top: 12px;
   color: var(--recall-muted);
 }
+
+/* ── Footer / Composer ───────────────────────────────────── */
+
 .recall-footer {
   flex-shrink: 0;
   padding: 8px 14px 12px;
-  border-top: 1px solid var(--recall-line);
-  background: linear-gradient(0deg, rgb(139 92 246 / 0.07), transparent 60%);
 }
 .recall-status-bar {
   display: flex;
@@ -204,7 +231,7 @@
   margin-bottom: 8px;
   padding: 5px 6px 5px 10px;
   border-radius: 8px;
-  background: rgb(139 92 246 / 0.08);
+  background: var(--recall-accent-soft);
   color: var(--recall-accent);
   font-size: 11px;
   font-weight: 500;
@@ -214,6 +241,7 @@
   width: 6px;
   border-radius: 50%;
   background: currentColor;
+  animation: recall-pulse 1.2s ease-in-out infinite;
 }
 .recall-stop {
   display: flex;
@@ -237,11 +265,11 @@
   align-items: flex-end;
   gap: 8px;
   padding: 10px;
-  border: 1px solid rgb(139 92 246 / 0.24);
-  border-radius: 14px;
-  background: var(--recall-surface);
+  border: 1px solid var(--recall-accent-border);
+  border-radius: var(--recall-radius);
+  background: var(--recall-surface-raised);
   box-shadow:
-    0 3px 14px -6px rgb(76 29 149 / 0.12),
+    0 2px 12px -4px rgb(76 29 149 / 0.08),
     inset 0 1px 0 rgb(255 255 255 / 0.12);
   transition:
     box-shadow 180ms ease,
@@ -251,16 +279,16 @@
 .recall-composer:focus-within {
   border-color: #a78bfa;
   box-shadow:
-    0 0 0 3px rgb(139 92 246 / 0.1),
-    0 5px 22px -6px rgb(124 58 237 / 0.2);
+    0 0 0 3px rgb(139 92 246 / 0.08),
+    0 4px 16px -4px rgb(124 58 237 / 0.14);
 }
 .recall-send {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--recall-radius-sm);
   color: white;
   background: linear-gradient(145deg, #9b73f4, #7c3aed);
   box-shadow:
@@ -313,9 +341,28 @@
   font-family: inherit;
   font-size: 9.5px;
 }
+
+/* ── Evidence panel ──────────────────────────────────────── */
+
+.recall-evidence-panel {
+  animation: recall-panel-in 200ms ease-out;
+}
+
 .recall-evidence {
   animation: recall-reveal 180ms ease-out;
 }
+
+@keyframes recall-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes recall-reveal {
   from {
     opacity: 0;
@@ -326,6 +373,61 @@
     transform: translateX(0);
   }
 }
+
+@keyframes recall-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ── Thread sidebar ──────────────────────────────────────── */
+
+.recall-sidebar-overlay {
+  animation: recall-sidebar-in 180ms ease-out;
+}
+
+@keyframes recall-sidebar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── Tool activity card ──────────────────────────────────── */
+
+.recall-tool-card {
+  border: 1px solid var(--recall-line);
+  border-radius: var(--recall-radius-sm);
+  background: var(--recall-surface);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+.recall-tool-card[data-status='running'] {
+  border-color: var(--recall-accent-border);
+}
+
+/* ── Message cards ───────────────────────────────────────── */
+
+.recall-msg-user {
+  background: var(--recall-surface-raised);
+  border: 1px solid var(--recall-line);
+  border-radius: var(--recall-radius);
+}
+.recall-msg-assistant {
+  /* Assistant messages are borderless to let the content breathe */
+}
+
+/* ── Container queries ───────────────────────────────────── */
+
 @container (min-width: 560px) {
   .recall-source-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -345,6 +447,9 @@
     display: none;
   }
 }
+
+/* ── Reduced motion ──────────────────────────────────────── */
+
 @media (prefers-reduced-motion: reduce) {
   .recall-workspace *,
   .recall-workspace *::before {
@@ -353,10 +458,14 @@
   }
 }
 
+/* ── Focus ───────────────────────────────────────────────── */
+
 .recall-workspace button:focus-visible {
   outline: 2px solid #8b5cf6;
   outline-offset: 3px;
 }
+
+/* ── Prose / answer ──────────────────────────────────────── */
 
 .recall-answer {
   font-size: 14px;
@@ -405,7 +514,7 @@
 }
 .recall-answer pre {
   overflow-x: auto;
-  border-radius: 10px;
+  border-radius: var(--recall-radius-sm);
   padding: 14px;
   margin: 1em 0;
   background: #0f172a;
@@ -419,7 +528,7 @@
 }
 .recall-answer :not(pre) > code {
   border-radius: 4px;
-  background: rgb(139 92 246 / 0.09);
+  background: var(--recall-accent-soft);
   padding: 0.15em 0.3em;
   font-size: 0.92em;
 }
@@ -457,4 +566,14 @@
   line-height: 1.4;
   vertical-align: baseline;
   font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recall-workspace *,
+  .recall-workspace *::before,
+  .recall-workspace *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

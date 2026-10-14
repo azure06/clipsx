@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const PIPELINE_VERSION: &str = "4";
 pub const TARGET_EMBED_BYTES: usize = 1_536;
-pub const MAX_EMBED_BYTES: usize = 2_048;
+pub const MAX_EMBED_BYTES: usize = crate::providers::contracts::text_embedding::MAX_INPUT_BYTES;
 pub const MAX_CONTEXT_BYTES: usize = 384;
 pub const FALLBACK_OVERLAP_BYTES: usize = 256;
 pub const MAX_CHUNKS_PER_CLIP: usize = 64;

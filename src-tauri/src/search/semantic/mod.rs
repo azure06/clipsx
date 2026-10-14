@@ -7,3 +7,4 @@ pub mod store;
 mod qualification;
 
 pub use service::*;
+pub mod eligibility;

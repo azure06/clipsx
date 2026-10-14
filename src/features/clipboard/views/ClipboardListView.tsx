@@ -1,10 +1,12 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ClipSummary } from '../../../shared/types/v2'
 import { ClipboardListItem } from '../components'
 
 type ClipboardListViewProps = {
   readonly clips: ClipSummary[]
+  readonly relatedClipIds?: string[]
   readonly onCopy: (text: string, clipId: string) => void
   readonly onSelect?: (text: string, clipId: string) => void
   readonly onDoubleClick?: (text: string, clipId: string) => void
@@ -21,7 +23,17 @@ export const ClipboardListView = memo(function ClipboardListView({
   infiniteScrollTrigger,
   scrollContainerRef,
   selectedIndex,
+  relatedClipIds,
 }: ClipboardListViewProps) {
+  const { t } = useTranslation()
+  const relatedStart = relatedClipIds?.length
+    ? clips.findIndex(clip => relatedClipIds.includes(clip.id))
+    : -1
+  const relatedHeading = (
+    <div className="px-4 pt-3 pb-1 text-[11px] font-semibold text-slate-500">
+      {t('recallPage.relatedMatches')}
+    </div>
+  )
   const parentRef = useRef<HTMLDivElement>(null)
   // TanStack Virtual intentionally owns mutable measurement state; the React
   // compiler must not memoize the hook's returned functions.
@@ -58,6 +70,7 @@ export const ClipboardListView = memo(function ClipboardListView({
       >
         {bootstrapClip && (
           <div className="absolute top-0 left-0 w-full">
+            {relatedStart === 0 && relatedHeading}
             <ClipboardListItem
               clip={bootstrapClip}
               onCopy={onCopy}
@@ -79,6 +92,7 @@ export const ClipboardListView = memo(function ClipboardListView({
               className="absolute top-0 left-0 w-full"
               style={{ transform: `translateY(${item.start}px)` }}
             >
+              {item.index === relatedStart && relatedHeading}
               <ClipboardListItem
                 clip={clip}
                 onCopy={onCopy}

@@ -1,0 +1,50 @@
+{
+  "openai": {
+    "id": "context",
+    "object": "response",
+    "created_at": 1,
+    "model": "fixture-model",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "id": "context-message",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{ "type": "output_text", "text": "Context verified", "annotations": [] }]
+      }
+    ],
+    "usage": { "input_tokens": 10, "output_tokens": 3, "total_tokens": 13 }
+  },
+  "anthropic": {
+    "id": "context",
+    "type": "message",
+    "role": "assistant",
+    "model": "fixture-model",
+    "content": [{ "type": "text", "text": "Context verified" }],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": { "input_tokens": 10, "output_tokens": 3 }
+  },
+  "gemini": {
+    "candidates": [
+      {
+        "content": { "role": "model", "parts": [{ "text": "Context verified" }] },
+        "finishReason": "STOP"
+      }
+    ],
+    "usageMetadata": { "promptTokenCount": 10, "candidatesTokenCount": 3, "totalTokenCount": 13 }
+  },
+  "openrouter": {
+    "choices": [
+      { "message": { "role": "assistant", "content": "Context verified" }, "finish_reason": "stop" }
+    ],
+    "usage": { "prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13 }
+  },
+  "ollama": {
+    "choices": [
+      { "message": { "role": "assistant", "content": "Context verified" }, "finish_reason": "stop" }
+    ],
+    "usage": { "prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13 }
+  }
+}

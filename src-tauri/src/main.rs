@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
 mod app;
 mod artifacts;
 mod auth_storage;
@@ -13,6 +14,7 @@ mod history;
 mod ipc;
 mod output;
 mod providers;
+mod recall;
 mod search;
 mod share;
 mod shared;

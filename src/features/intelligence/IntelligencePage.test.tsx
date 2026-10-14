@@ -38,23 +38,18 @@ const toastTitles = (): string[] =>
   (toastMock.mock.calls as Array<[{ title: string }]>).map(([value]) => value.title)
 
 describe('IntelligencePage indexing actions', () => {
-  it('keeps setup help reachable when the connection has no capable models', async () => {
-    const originalImplementation = invokeMock.getMockImplementation()!
-    invokeMock.mockImplementation((command: string) =>
-      command === 'get_model_provider_connection'
-        ? Promise.resolve({ ...connection, models: [] })
-        : (originalImplementation(command) as Promise<unknown>)
-    )
+  it('opens named AI configurations by default for Recall setup', () => {
     render(<IntelligencePage />)
-    await screen.findByText('No installed model reports embedding support.')
-    expect(screen.getByRole('button', { name: 'Local AI setup guide' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Choose an embedding model' }))
-    await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith('open_external_url', {
-        url: 'https://docs.clipsx.app/local-ai#embedding-models',
-      })
+    expect(screen.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('routes the former connections destination into the unified Models tab', () => {
+    render(<IntelligencePage initialSection="connections" />)
+    expect(screen.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: 'AI configurations' })).not.toBeInTheDocument()
+    expect(invokeMock.mock.calls.some(call => call[0] === 'get_model_provider_connection')).toBe(
+      false
     )
-    expect(screen.getByRole('button', { name: 'Choose a generation model' })).toBeEnabled()
   })
   let currentStatus: TextEmbeddingStatus
   let failNextStatusRefresh: boolean
@@ -130,6 +125,11 @@ describe('IntelligencePage indexing actions', () => {
       }
     )
     invokeMock.mockImplementation((command: string) => {
+      if (command === 'ai_configuration_state')
+        return Promise.resolve({
+          configuration: { version: 2, connections: [], presets: [], selections: {} },
+          connectionStates: [],
+        })
       if (command === 'get_text_embedding_status') {
         if (failNextStatusRefresh) {
           failNextStatusRefresh = false
@@ -175,7 +175,7 @@ describe('IntelligencePage indexing actions', () => {
       return Promise.resolve(null)
     })
 
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'OCR & vision' }))
 
     expect(await screen.findByText('Windows.Media.Ocr')).toBeInTheDocument()
@@ -207,7 +207,7 @@ describe('IntelligencePage indexing actions', () => {
       return Promise.resolve(null)
     })
 
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const button = await screen.findByRole('button', { name: 'Reindex all' })
     fireEvent.click(button)
@@ -232,7 +232,7 @@ describe('IntelligencePage indexing actions', () => {
   })
 
   it('settles a no-work Index Missing action from its fresh terminal status', async () => {
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const button = await screen.findByRole('button', { name: 'Index missing' })
     fireEvent.click(button)
@@ -242,7 +242,7 @@ describe('IntelligencePage indexing actions', () => {
   })
 
   it('clears loading and reports command and status-refresh failures', async () => {
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     const reindexButton = await screen.findByRole('button', { name: 'Reindex all' })
     invokeMock.mockRejectedValueOnce(new Error('command rejected'))
@@ -260,25 +260,16 @@ describe('IntelligencePage indexing actions', () => {
     expect(toastTitles()).not.toContain('Index missing complete')
   })
 
-  it('confirms a successful disconnect', async () => {
-    render(<IntelligencePage />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Disable' }))
+  it('separates model assignments from indexing operations', async () => {
+    render(<IntelligencePage initialSection="models" />)
 
-    await waitFor(() => expect(toastTitles()).toContain('Meaning Search disabled'))
-  })
-
-  it('uses one connection and separates model assignment from indexing', async () => {
-    render(<IntelligencePage />)
-
-    expect(await screen.findByText('Ollama Connection')).toBeInTheDocument()
-    expect(screen.getByText('1 embedding')).toBeInTheDocument()
-    expect(screen.getByText('1 generative')).toBeInTheDocument()
+    expect(await screen.findByText('Active models')).toBeInTheDocument()
     expect(screen.queryByLabelText('Generation endpoint')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reindex all' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Indexing' }))
     expect(await screen.findByRole('button', { name: 'Reindex all' })).toBeInTheDocument()
-    expect(screen.queryByText('Ollama Connection')).not.toBeInTheDocument()
+    expect(screen.queryByText('Which models power ClipsX?')).not.toBeInTheDocument()
   })
 
   it('persists a device-local meaning threshold from Search settings', async () => {
@@ -299,7 +290,7 @@ describe('IntelligencePage indexing actions', () => {
       return Promise.resolve(null)
     })
 
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Search' }))
     fireEvent.click(screen.getByRole('switch', { name: 'Filter weak meaning matches' }))
 
@@ -318,7 +309,7 @@ describe('IntelligencePage indexing actions', () => {
       diagnostic: 'provider unavailable',
       failedJobs: 1,
     })
-    render(<IntelligencePage />)
+    render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))
     await screen.findByText(/Ollama was unavailable during the last attempt/)
 

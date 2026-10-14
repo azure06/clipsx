@@ -17,6 +17,11 @@ export type TabsProps = {
   readonly onTabChange?: (tabId: string) => void
   readonly orientation?: TabsOrientation
   readonly className?: string
+  readonly activeTab?: string
+  readonly keepMounted?: boolean
+  readonly listClassName?: string
+  readonly panelsClassName?: string
+  readonly panelClassName?: string
 }
 
 export const Tabs = ({
@@ -25,18 +30,24 @@ export const Tabs = ({
   onTabChange,
   orientation = 'horizontal',
   className = '',
+  activeTab,
+  keepMounted = false,
+  listClassName = '',
+  panelsClassName = '',
+  panelClassName = '',
 }: TabsProps) => {
   const isVertical = orientation === 'vertical'
 
   return (
     <TabsPrimitive.Root
       defaultValue={defaultTab || tabs[0]?.id}
+      value={activeTab}
       onValueChange={onTabChange}
       orientation={orientation}
       className={`flex ${isVertical ? 'flex-row gap-4' : 'flex-col'} ${className}`}
     >
       <TabsPrimitive.List
-        className={`flex ${isVertical ? 'flex-col' : 'flex-row gap-0.5'} ${
+        className={`flex ${listClassName} ${isVertical ? 'flex-col' : 'flex-row gap-0.5'} ${
           !isVertical &&
           'border-b border-gray-200 dark:border-gray-800 bg-slate-100/60 dark:bg-slate-900/30 px-3'
         }`}
@@ -46,7 +57,7 @@ export const Tabs = ({
             key={tab.id}
             value={tab.id}
             disabled={tab.disabled}
-            className={`group flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all duration-200 border-b-2 relative overflow-hidden cursor-pointer data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 data-[state=inactive]:border-transparent data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 hover:scale-105 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`group outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all duration-200 border-b-2 relative overflow-hidden cursor-pointer data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 dark:data-[state=active]:text-blue-400 data-[state=inactive]:border-transparent data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 hover:scale-105 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {tab.icon && (
               <span className="transition-transform duration-200 group-hover:scale-110">
@@ -54,16 +65,22 @@ export const Tabs = ({
               </span>
             )}
             {tab.label}
-            <TabsPrimitive.Content value={tab.id} asChild>
-              <span className="data-[state=active]:absolute data-[state=active]:inset-x-0 data-[state=active]:bottom-0 data-[state=active]:h-0.5 data-[state=active]:bg-linear-to-r data-[state=active]:from-blue-500 data-[state=active]:to-violet-500 data-[state=active]:animate-pulse" />
-            </TabsPrimitive.Content>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-linear-to-r from-blue-500 to-violet-500 opacity-0 group-data-[state=active]:opacity-100"
+            />
           </TabsPrimitive.Trigger>
         ))}
       </TabsPrimitive.List>
 
-      <div className="flex-1">
+      <div className={`flex-1 ${panelsClassName}`}>
         {tabs.map(tab => (
-          <TabsPrimitive.Content key={tab.id} value={tab.id} className="focus:outline-none">
+          <TabsPrimitive.Content
+            key={tab.id}
+            value={tab.id}
+            forceMount={keepMounted ? true : undefined}
+            className={`focus:outline-none ${keepMounted ? 'data-[state=inactive]:hidden' : ''} ${panelClassName}`}
+          >
             {tab.content}
           </TabsPrimitive.Content>
         ))}

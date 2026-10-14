@@ -68,6 +68,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     }))
   )
 
+  const relatedClipIds = useClipboardStore(state => state.relatedClipIds)
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
   const settings = useSettingsStore(state => state.settings)
@@ -590,6 +591,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       <>
         <ClipboardListView
           clips={clips}
+          relatedClipIds={relatedClipIds}
           onSelect={onSelectHandler}
           onDoubleClick={onDoubleClickHandler}
           onCopy={onCopyHandler}

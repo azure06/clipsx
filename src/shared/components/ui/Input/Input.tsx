@@ -1,8 +1,12 @@
-import type { ReactNode } from 'react'
+import { useId } from 'react'
+import type { ReactNode, ComponentPropsWithoutRef } from 'react'
 
-type InputType = 'text' | 'number' | 'email' | 'password'
+type InputType = 'text' | 'number' | 'email' | 'password' | 'datetime-local'
 
-export type InputProps = {
+export type InputProps = Omit<
+  ComponentPropsWithoutRef<'input'>,
+  'type' | 'value' | 'onChange' | 'className' | 'size'
+> & {
   readonly type?: InputType
   readonly value: string
   readonly onChange: (value: string) => void
@@ -28,13 +32,20 @@ export const Input = ({
   leftIcon,
   rightIcon,
   className = '',
+  id,
+  ...inputProps
 }: InputProps) => {
   const hasError = Boolean(error)
+  const generatedId = useId()
+  const inputId = id ?? generatedId
 
   return (
     <div className={`space-y-1 ${className}`}>
       {label && (
-        <label className="block text-sm font-medium text-gray-900 dark:text-gray-100">
+        <label
+          htmlFor={inputId}
+          className="block text-sm font-medium text-gray-900 dark:text-gray-100"
+        >
           {label}
         </label>
       )}
@@ -45,6 +56,13 @@ export const Input = ({
         )}
 
         <input
+          {...inputProps}
+          id={inputId}
+          aria-invalid={hasError || inputProps['aria-invalid']}
+          aria-describedby={
+            inputProps['aria-describedby'] ??
+            (error || helperText ? `${inputId}-description` : undefined)
+          }
           type={type}
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -64,6 +82,7 @@ export const Input = ({
 
       {(error || helperText) && (
         <p
+          id={`${inputId}-description`}
           className={`text-xs ${hasError ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-500'}`}
         >
           {error || helperText}

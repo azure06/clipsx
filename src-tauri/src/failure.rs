@@ -18,8 +18,11 @@ pub enum FailureCode {
     ContextOverflow,
     ProviderNotConfigured,
     ProviderDisabled,
+    HostedIndexingDisabled,
+    CredentialStorageUnavailable,
     ProviderConfiguration,
     ModelUnavailable,
+    EmbeddingSpaceChanged,
     ConnectionUnavailable,
     ProviderTimeout,
     ProviderRateLimited,
@@ -59,8 +62,11 @@ impl FailureCode {
             Self::ContextOverflow => "context_overflow",
             Self::ProviderNotConfigured => "provider_not_configured",
             Self::ProviderDisabled => "provider_disabled",
+            Self::HostedIndexingDisabled => "hosted_indexing_disabled",
+            Self::CredentialStorageUnavailable => "credential_storage_unavailable",
             Self::ProviderConfiguration => "provider_configuration",
             Self::ModelUnavailable => "model_unavailable",
+            Self::EmbeddingSpaceChanged => "embedding_space_changed",
             Self::ConnectionUnavailable => "connection_unavailable",
             Self::ProviderTimeout => "provider_timeout",
             Self::ProviderRateLimited => "provider_rate_limited",
@@ -87,11 +93,14 @@ impl FailureCode {
         match self {
             Self::InputLimit => "The input exceeds the supported request size. Shorten the input and try again.",
             Self::ContextOverflow => "The model reported insufficient context. Shorten the input or choose a model with a larger context.",
-            Self::ProviderNotConfigured => "Local Text Generation is not configured.",
-            Self::ProviderDisabled => "Local Text Generation is disabled.",
-            Self::ProviderConfiguration => "The text generation configuration is invalid. Review Local Text Generation settings.",
-            Self::ModelUnavailable => "The selected model is unavailable. Check or install it in Local Text Generation settings.",
-            Self::ConnectionUnavailable => "ClipsX cannot reach the model provider. Check that Ollama is running.",
+            Self::ProviderNotConfigured => "Text generation is not configured. Choose a model in Intelligence → Models.",
+            Self::ProviderDisabled => "The selected model connection is disabled.",
+            Self::HostedIndexingDisabled => "Enable hosted indexing in the embedding preset before activating it. This sends clipboard text to the selected provider, including when the model is free.",
+            Self::CredentialStorageUnavailable => "ClipsX cannot access secure credential storage. Unlock your desktop credential store and retry. On Linux, enable a Secret Service in your desktop session, then restart ClipsX.",
+            Self::ProviderConfiguration => "The model configuration is invalid. Review Intelligence → Models.",
+            Self::ModelUnavailable => "The selected model is unavailable. Review its ID and provider in Intelligence → Models.",
+            Self::EmbeddingSpaceChanged => "The embedding model changed. Validate and rebuild its index in Intelligence → Indexing. Keyword search remains available.",
+            Self::ConnectionUnavailable => "ClipsX cannot reach the model provider. Check its endpoint and connection.",
             Self::ProviderTimeout => "The model provider did not finish within the allowed time.",
             Self::ProviderRateLimited => "The model provider is temporarily limiting requests.",
             Self::ProviderServerError => "The model provider reported a temporary server error.",
@@ -117,8 +126,11 @@ impl FailureCode {
         let recovery = match self {
             Self::ProviderNotConfigured
             | Self::ProviderDisabled
+            | Self::HostedIndexingDisabled
+            | Self::CredentialStorageUnavailable
             | Self::ProviderConfiguration
             | Self::ModelUnavailable => Recovery::Wait,
+            Self::EmbeddingSpaceChanged => Recovery::Wait,
             Self::ConnectionUnavailable
             | Self::ProviderTimeout
             | Self::ProviderRateLimited

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from './clipboardStore'
+import { useUIStore } from './uiStore'
 import { useSettingsStore } from './settingsStore'
 import type { ClipSummary, V2Tag } from '../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../shared/types'
@@ -18,6 +19,8 @@ vi.mock('@tauri-apps/api/window', () => ({
     hide: mockHide,
   }),
 }))
+
+afterEach(() => useClipboardStore.getState().cancelSearch())
 
 describe('useClipboardStore.copyDerivedText', () => {
   beforeEach(() => {
@@ -207,6 +210,7 @@ describe('search replacement consistency', () => {
       true
     )
     mockInvoke.mockReset()
+    useUIStore.setState({ isSemanticActive: false })
   })
 
   const deferred = <T>() => {
@@ -463,7 +467,7 @@ describe('useClipboardStore filtered view stability', () => {
     expect(useClipboardStore.getState().currentOffset).toBe(0)
   })
 
-  it('re-runs search when active tab changes during search mode', async () => {
+  it('re-runs keyword search when active tab changes during search mode', async () => {
     mockInvoke.mockResolvedValueOnce([])
     mockInvoke.mockResolvedValueOnce([])
 
@@ -487,7 +491,7 @@ describe('useClipboardStore filtered view stability', () => {
         tagId: null,
         limit: 50,
         cursor: null,
-        enabledSourceIds: ['builtin.search.fts', 'builtin.search.semantic_text'],
+        enabledSourceIds: ['builtin.search.fts'],
       },
     })
   })
@@ -557,5 +561,132 @@ describe('useClipboardStore authoritative summary updates', () => {
 
     expect(useClipboardStore.getState().clips).toHaveLength(1)
     expect(useClipboardStore.getState().clips[0]!.id).toBe('img-1')
+  })
+})
+
+describe('progressive History retrieval', () => {
+  const page = (ids: string[], semantic = false, cursor: string | null = null) => ({
+    items: ids.map(id => ({
+      clip: makeClip({ id }),
+      rank: 1,
+      snippet: id,
+      matches: [
+        {
+          sourceId: semantic ? 'builtin.search.semantic_text' : 'builtin.search.fts',
+          sourceRank: 1,
+        },
+      ],
+    })),
+    nextCursor: cursor,
+    sourceOutcomes: [
+      {
+        sourceId: semantic ? 'builtin.search.semantic_text' : 'builtin.search.fts',
+        status: 'used',
+      },
+    ],
+  })
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useClipboardStore.getState().resetPagination()
+    useClipboardStore.setState(useClipboardStore.getInitialState(), true)
+    useUIStore.setState({ isSemanticActive: true })
+    mockInvoke.mockReset()
+  })
+  afterEach(() => {
+    useClipboardStore.getState().resetPagination()
+    vi.useRealTimers()
+  })
+  it('publishes keywords before semantic response and preserves keyword cursor and row order', async () => {
+    let finish!: (value: ReturnType<typeof page>) => void
+    mockInvoke
+      .mockResolvedValueOnce(page(['keyword'], false, 'keyword-cursor'))
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValueOnce(page(['second-keyword']))
+    await useClipboardStore.getState().enterSearchMode('deployment')
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword'])
+    expect(useClipboardStore.getState().semanticPending).toBe(true)
+    await vi.advanceTimersByTimeAsync(175)
+    expect(mockInvoke).toHaveBeenCalledTimes(2)
+    finish(page(['keyword', 'related'], true))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword', 'related'])
+    expect(useClipboardStore.getState().relatedClipIds).toEqual(['related'])
+    await useClipboardStore.getState().loadMoreClips()
+    expect(mockInvoke).toHaveBeenLastCalledWith('search_clips', {
+      request: {
+        query: 'deployment',
+        representationFamilies: [],
+        facetIds: [],
+        scope: 'all',
+        tagId: null,
+        limit: 50,
+        cursor: 'keyword-cursor',
+        enabledSourceIds: ['builtin.search.fts'],
+      },
+    })
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual([
+      'keyword',
+      'second-keyword',
+      'related',
+    ])
+    expect(useClipboardStore.getState().searchSourceOutcomes).toContainEqual({
+      sourceId: 'builtin.search.semantic_text',
+      status: 'used',
+    })
+  })
+  it('ignores semantic results from an obsolete query and cancels pending enrichment', async () => {
+    let finish!: (value: ReturnType<typeof page>) => void
+    mockInvoke.mockResolvedValueOnce(page(['old'])).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    await useClipboardStore.getState().enterSearchMode('old')
+    await vi.advanceTimersByTimeAsync(175)
+    useClipboardStore.getState().prepareSearch('new')
+    finish(page(['obsolete-related'], true))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['old'])
+    expect(useClipboardStore.getState().semanticPending).toBe(false)
+    mockInvoke.mockResolvedValueOnce(page(['new']))
+    await useClipboardStore.getState().commitSearch()
+    useClipboardStore.getState().prepareSearch('newer')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(mockInvoke).toHaveBeenCalledTimes(3)
+  })
+  it('clears pending enrichment and related rows when history is cleared', async () => {
+    mockInvoke.mockResolvedValueOnce(page(['keyword'])).mockResolvedValueOnce(undefined)
+    await useClipboardStore.getState().enterSearchMode('query')
+    useClipboardStore.setState({ relatedClipIds: ['old-related'] })
+    await useClipboardStore.getState().clearAllClips()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(mockInvoke).toHaveBeenCalledTimes(2)
+    expect(useClipboardStore.getState()).toMatchObject({
+      clips: [],
+      relatedClipIds: [],
+      semanticPending: false,
+    })
+  })
+  it('preserves usable keyword rows when semantic retrieval fails', async () => {
+    mockInvoke.mockResolvedValueOnce(page(['keyword'])).mockRejectedValueOnce(new Error('offline'))
+    await useClipboardStore.getState().enterSearchMode('query')
+    await vi.advanceTimersByTimeAsync(175)
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['keyword'])
+    expect(useClipboardStore.getState()).toMatchObject({
+      resultsStale: false,
+      error: null,
+      semanticPending: false,
+    })
+    expect(useClipboardStore.getState().searchSourceOutcomes).toContainEqual({
+      sourceId: 'builtin.search.semantic_text',
+      status: 'unavailable',
+      diagnostic: null,
+    })
   })
 })

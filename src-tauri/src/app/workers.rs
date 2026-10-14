@@ -92,8 +92,33 @@ impl SingleWorker {
             let mut validated = false;
             let mut cleanup_reported = false;
             let mut indexing_reported = false;
+            let mut space_changed = false;
             loop {
+                match crate::recall::mutations::process_index_intents(&history).await {
+                    Ok(count) if count > 0 => continue,
+                    Ok(_) => {}
+                    Err(_) => {
+                        crate::diagnostic!("assistant.index_intents.failed");
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
+                }
                 let cleanup_result = embeddings::process_cleanup(&history).await;
+                match crate::ai::configuration::reconcile_embedding_activation(&history).await {
+                    Ok(true) => {
+                        validated = false;
+                        let _ = app.emit("embedding-space-changed", ());
+                    }
+                    Ok(false) => {}
+                    Err(_) => {
+                        crate::diagnostic!("ai.embedding.activation.failed");
+                        let _ = app.emit("embedding-index-failed", "embedding_activation_pending");
+                        let delay = delays[retry.min(delays.len() - 1)];
+                        retry = (retry + 1).min(delays.len() - 1);
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                        continue;
+                    }
+                }
                 let cleanup_count = match &cleanup_result {
                     Ok(count) => {
                         cleanup_reported = false;
@@ -143,6 +168,12 @@ impl SingleWorker {
                         }
                         Err(error) => {
                             let _ = app.emit("embedding-index-failed", error.to_string());
+                            if crate::failure::OperationFailure::from_error(&error).code
+                                == crate::failure::FailureCode::EmbeddingSpaceChanged
+                            {
+                                space_changed = true;
+                                break;
+                            }
                             let delay = delays[retry.min(delays.len() - 1)];
                             retry = (retry + 1).min(delays.len() - 1);
                             tokio::time::sleep(Duration::from_secs(delay)).await;
@@ -174,6 +205,13 @@ impl SingleWorker {
                     }
                     Err(error) => {
                         crate::diagnostic!("search.index.batch.failed");
+                        if crate::failure::OperationFailure::from_error(&error).code
+                            == crate::failure::FailureCode::EmbeddingSpaceChanged
+                        {
+                            space_changed = true;
+                            let _ = app.emit("embedding-index-failed", error.to_string());
+                            break;
+                        }
                         if retry == delays.len() - 1 && !indexing_reported {
                             crate::app::diagnostics::report_error("search_index_terminal");
                             indexing_reported = true;
@@ -193,11 +231,22 @@ impl SingleWorker {
                 }
             }
             guard.running.store(false, Ordering::SeqCst);
-            let indexing_pending = embeddings::status(&history)
-                .await
-                .is_ok_and(|status| status.enabled && status.pending_jobs > 0);
+            let indexing_pending = !space_changed
+                && embeddings::status(&history)
+                    .await
+                    .is_ok_and(|status| status.enabled && status.pending_jobs > 0);
             let cleanup_pending = embeddings::cleanup_pending(&history).await.unwrap_or(false);
-            if indexing_pending || cleanup_pending {
+            let intents_pending: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_index_intents)")
+                    .fetch_one(&history.pool)
+                    .await
+                    .unwrap_or(false);
+            let activation_pending: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ai_embedding_activation)")
+                    .fetch_one(&history.pool)
+                    .await
+                    .unwrap_or(false);
+            if indexing_pending || cleanup_pending || intents_pending || activation_pending {
                 guard.wake_text_index(app.clone(), history.clone());
             }
             let _ = app.emit(

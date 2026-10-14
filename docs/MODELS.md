@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The published baseline is `clipsx-local-v3`, schema version 15. Development and production use the same database; build mode and release version do not affect compatibility. Published SQL migrations are immutable and future schema changes use appended forward migrations. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 28. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
@@ -48,13 +48,13 @@ flowchart TB
 | `provider_runtime_diagnostics` | Operational | Records the latest model-provider connection and capability health observations. | Provider catalog, embedding, and generation services | Replaceable operational state. Safe to overwrite or clear; not user configuration. |
 | `system_managed_file_deletions` | Operational | Durably records managed files that should be deleted after database changes commit. | Database deletion triggers; consumed by the managed-file GC worker | Queue entries remain until cleanup succeeds. The worker rechecks references and retries failures to avoid orphaned files after crashes. |
 
-Model configuration uses three device-local keys with distinct ownership:
+Semantic indexing retains its active runtime descriptor. Legacy Ollama keys remain migration inputs and compatibility settings; extension generation resolves the named preset in `ai_selections`:
 
 | Key | Owner | Stored value |
 | --- | --- | --- |
 | `providers.ollama.connection` | Model-provider connection | The validated loopback endpoint. |
 | `providers.text_embedding.active` | Semantic Search | Provider ID, model ID, enablement, and similarity threshold; never an endpoint. |
-| `providers.generation.text.active` | Local Text Generation | Provider ID, model ID, and enablement; never an endpoint. |
+| `providers.generation.text.active` | Legacy generation compatibility | Migration input; named `extension_generation` owns execution after migration. |
 
 Installed-model inventory, model digests, capability inspection results, and connection health are derived observations rather than settings. The application refreshes them from Ollama and may discard them at any time. Changing the endpoint retains capability assignments so a missing model is visible and recoverable instead of being silently replaced.
 
@@ -102,6 +102,16 @@ flowchart TB
 | `clip_transform_provenance` | Canonical | Links a saved output clip to its source and transform description. | “Save as New Clip” after a successful transform | Owned by the saved output clip. Source links become null if the source is deleted; bounded snapshots preserve provenance. |
 
 Renderer choice is deliberately absent: it is UI policy, not persisted clip state. Shared binary rows outlive one clip when another representation still references the same hash.
+
+### Assistant clipboard actions
+
+`assistant_clip_provenance` is owned by the generated clip. It records the authenticated actor, origin, verified source representation IDs and fingerprints, and optional model attribution. Native attribution comes from the host run; external model names are explicitly client-supplied. Source fingerprints remain meaningful when source clips disappear; source references do not own their clips.
+
+`assistant_actions` retains request IDs, argument hashes, recorded results, prior organization fields, and resulting revision tokens for 30 days, independently of clip retention. Mutation and action writes share one transaction. Reusing an actor's request ID with different arguments conflicts. Undo restores organization or deletes an unchanged generated clip; later edits invalidate it, including edits subsequently reverted. These records stay local and are excluded from sync.
+
+`clip_items.assistant_revision` advances for changes relevant to assistant access or editing. Assistant revision tokens also cover canonical representation fingerprints and organization metadata. Access counts and UI recency touches do not invalidate an operation.
+
+`assistant_index_intents` records pending FTS and semantic projection work in the mutation transaction. The Rust indexing worker drains it even when semantic indexing is disabled or Recall is unmounted; conditional acknowledgement preserves newer work. Deletion uses the existing semantic cleanup and managed-file queues. Identical canonical payloads may belong to distinct saved clips; capture still performs its ordinary fingerprint lookup, while request IDs govern assistant creation retries.
 
 ### File lists versus managed binary payloads
 
@@ -192,9 +202,19 @@ flowchart TB
 | `search_embedding_spaces` | Infrastructure | Identifies an immutable provider/model vector space, including revision, dimensions, normalization, and distance metric. | Provider discovery/probing and semantic-index setup | Long-lived compatibility boundary. Prevents embeddings from incompatible vector spaces being mixed. |
 | `search_index_generations` | Operational | Tracks lifecycle plus backend ID, encoding, candidate count, safe sidecar path, byte size, and checkpoint checksum. | Semantic indexing coordinator | Generation-scoped lifecycle supports validated activation and retention of the previous active sidecar. The checksum is cleared before an active-generation clip update and can be refreshed at a later durable checkpoint. |
 | `search_index_jobs` | Operational | Tracks per-generation, per-clip indexing progress, attempts, and failures. | Semantic indexing coordinator/workers | Retryable recovery state owned by its generation/clip scope; cascades with either side. |
+| `search_semantic_cleanup` | Operational | Queues removal of deleted, secret-faceted, or pre-policy clip vectors from retained sidecars. | Canonical deletion/facet triggers and forward migrations; drained by search worker | Independent of clip lifetime and provider availability. Pending IDs are excluded from semantic candidates until cleanup succeeds. |
 | Generation sidecar | Derived file | Stores bounded chunks, provenance, stable ordinals, paged binary clip-routing signatures, normalized float32 chunk vectors, and mappings for exactly one generation. | `SemanticIndexStore` only | Rebuildable and generation-owned. Pages hold at most 256 clips, avoiding per-row scan overhead while keeping updates local. It contains no canonical clip data and is addressed only by an owned relative path from `search_index_generations`. |
 
 Promotion is atomic: a building generation becomes active only after every job succeeds; otherwise the previous active generation remains searchable. Reindexing replaces a clip’s chunks transactionally.
+
+Schema 26 queues existing indexed clips for cleanup and revalidation through the
+deterministic secret policy, including notes and OCR. It preserves canonical
+clips, FTS, configuration, conversations and files. Known secret facets exclude
+clips from semantic indexing and assistant access; newly detected facets retain
+cleanup intent transactionally. Ollama digest changes stop embedding work until
+an explicit validated rebuild. Hosted identities cannot detect revisions the
+provider does not report. See [search architecture](SEMANTIC_SEARCH_ARCHITECTURE.md)
+for eligibility, bounds and recovery behavior.
 
 Release search builds a compact eligible-clip ordinal bitset, scans one binary routing signature per clip in parallel, retains 100 clips, then reranks every chunk of those clips with exact float32 cosine similarity. This remains linear in clip count, but it is deterministic, dependency-free, immediately mutable, and has no trained graph. The full-generation float32 scan exists only as a test oracle.
 
@@ -453,3 +473,67 @@ default; an installed-language override is optional.
 Restart recovers interrupted jobs. Configuration changes cancel stale work;
 enablement/language changes rebuild only OCR and related search data. Image
 bytes remain unchanged on failure, cancellation, or disablement.
+
+## Local MCP grants
+
+`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
+
+## Named AI configurations
+
+Explicit configuration removal is separate from import's non-destructive merge.
+Removing a preset clears every feature assignment to it. Removing a connection
+also removes its presets and optional web-search assignment. No replacement is
+chosen automatically. Affected saved chats clear their model and reasoning
+override, then follow the existing global chat default if available. Transcripts,
+source snapshots, historical model attribution, and clips remain unchanged.
+Active embedding removal queues a durable disable intent; keyword search remains
+usable and retained index data remains disposable. Already admitted requests keep
+their frozen configuration and can finish.
+
+`ai_credential_cleanup` stores removed connection IDs and request times outside
+configuration exports and sync. Removal commits configuration, assignments, chat
+links, embedding intent and credential cleanup intent atomically. Protected-store
+deletion follows commit and is retried by the background configuration reconciler
+and the Models retry action. Failed cleanup stays visible. Import cannot reuse a
+pending connection ID, and credential updates serialize with removal, preventing
+delayed cleanup from deleting a newly configured credential. Schema 27 adds this
+operational table with a forward migration.
+
+The shared Rust `ai` layer owns provider configuration, credentials, observations,
+restricted HTTP, and saved embedding resolution. Search, Recall, and extension
+generation consume this layer; provider adapters do not depend on Recall.
+Embedding presets use dimensions, task policy, and hosted-indexing consent.
+Schema 28 adds nullable `search_embedding_spaces.provider_binding_json` through
+a forward migration. The binding snapshots nonsecret execution configuration,
+keeps credentials as protected-store references, and stays outside AI exports
+and sync. Existing spaces and clipboard data remain intact; unbound spaces are
+bound lazily only after descriptor verification. Replacing the selected preset
+does not replace the binding of a different retained space. See the
+[search lifecycle](SEMANTIC_SEARCH_ARCHITECTURE.md#index-lifecycle-and-recovery).
+Legacy context/output values remain stored for compatibility but do not control
+embedding requests. Discovery returns host execution bounds and known protocol
+options separately from model context capacities; unknown support stays unknown.
+
+`ai_connections` stores stable IDs, names, provider kinds, API base URLs, enablement, whitelisted nonsecret options, protected credential references, and curated connection-test state. `ai_model_presets` stores model IDs, purpose (`chat`, `embedding`, `decision`, or `rerank`), context/output limits, namespaced provider options, and capabilities with their observation source. Optional limitPolicy selects Auto or explicit limits; older presets remain explicit. Auto is the default for new chat presets only. Unknown capabilities remain unknown. `ai_selections` independently selects default chat, active embeddings, extension text generation, reserved decision and rerank models, and optional Tavily web search. Migration markers make the original Ollama assignments idempotent; already-migrated registries backfill extension generation once, preserving disabled legacy assignments. Multiple connections for one provider coexist. Selecting decision or rerank presets does not activate automation or remote reranking.
+
+Configuration stays device-local and outside configuration sync. The version-3 AI JSON document includes connections, presets, and selections; it excludes credentials, conversations, MCP grants, and operational diagnostics. Version-1 and version-2 imports remain accepted and preserve selections they predate. Imports reject unknown fields, invalid options, duplicate IDs, insecure endpoints, missing references, and incompatible selections before writes. Stable-ID merges preserve omitted records. The Models interface validates file imports with a read-only preview and preserves feature assignments unless the user explicitly enables their import. Export can include selected connections and their presets; assignments outside that subset are null. Imported connections require locally configured credentials. Changes to the selected embedding identity require a successful native probe before application. Hosted indexing requires explicit enablement; no hosted fallback occurs. `ai_embedding_activation` retains one nonsecret, verified activation intent in the same transaction as the saved selection. Imports and background recovery serialize activation; identical saves and restarts retry pending work without another provider probe. The intent is removed only after activation succeeds, and a later selection supersedes it. Recovery fills missing indexing jobs without resetting completed work.
+
+AI credentials use a separate protected namespace with no renderer read API. Windows stores per-connection DPAPI-protected files in `ai-credentials` under the application data directory. macOS/Linux use `com.infiniti.clipsx.ai` keyring entries and nonsecret reference files identifying saved credentials for reads and factory-reset cleanup. Connections without a saved credential do not require a desktop keyring. Saving or reading a referenced credential requires macOS Keychain or a Linux Secret Service session; unavailable secure storage is an error, with no plaintext fallback. Connection tests use the draft credential without saving it, so a successful test does not establish secure-storage availability. If credential saving fails, the connection remains saved and the editor allows retry with the same connection ID; the error identifies secure storage and its recovery steps. Credential updates do not change embedding-space identity or rebuild an index. Credential references and raw credentials are never exported, returned through MCP, or included in diagnostics.
+
+Connection tests check catalog access only; a successful catalog request does not establish that a particular model can generate or embed. Failed catalog requests expose the HTTP status and an allowlisted Gemini reason when available. Raw provider response text and credentials are never returned as test diagnostics.
+
+## Local Recall conversations
+
+`recall_threads` stores device-local titles, archive state, the chosen chat preset, web enablement, and the selected message head. Web research defaults off. `reasoning_json` stores an optional typed conversation override (effort, token budget, or supported thinking on/off); null follows the saved preset. Model changes in Recall clear the override. Thread edits preserve it, and host validation rejects unsupported selections without modifying the shared model preset. `recall_messages` stores typed content parts, metadata, status, and parent links within a thread; edits and regenerated answers form branches instead of overwriting user messages. Parent links cannot cross threads. Messages are bounded to 512 KiB of content and 16 KiB of metadata; a thread permits 2,000 messages and 16 MiB of message content/metadata. Thread listings use bounded pages.
+
+`recall_runs` records the frozen nonsecret provider/model context, reply identity, ordered checkpoints, and terminal state, including the host-validated reasoning override. Checkpoints retain provider-returned reasoning as separate typed text parts; provider-private protocol metadata is not rendered as reasoning text. User messages are saved before model requests. Streaming checkpoints occur at most once per second and terminal state is saved immediately. Startup marks running records interrupted; loaders never resume or replay their tool actions. Late or post-terminal checkpoints cannot replace a settled reply. Stop a run before deleting its thread.
+
+`recall_source_snapshots` retains bounded verified text/OCR/metadata and managed image references independently of source clips. Clipboard links become unavailable when a source is removed or excluded from assistant access. Snapshots contain at most 32 sources per reply and 8 MiB of text/metadata per thread. Image previews are copied to the owned `recall-attachments` directory, keyed by content hash; reads verify size, ownership, and hash. Deleting a chat cascades its messages, runs, and snapshots, then removes image files with no remaining references. Startup reconciles orphaned image files.
+
+Conversations and their attachments remain outside clipboard and configuration sync. Clearing clipboard history does not clear saved chats; deleting a chat does not delete captured clips. Factory reset removes the owned chat attachments along with the local database. assistant-ui history and thread-list adapters use these native APIs without hosted persistence.
+
+### Model observations and Recall context summaries
+
+`ai_model_observations` stores normalized nonsecret observations keyed by provider, connection, endpoint and model identity. Observations expire after five minutes and do not establish exact token counts. Ollama training capacity and configured runner capacity remain distinct. Run contexts freeze resolved input/output policy and capability observations; saved preset numbers are not rewritten by run resolution.
+
+`recall_context_summaries` stores at most 16 derived summaries per thread, bounded to 32 KiB each. A summary identifies its covered message and a fingerprint of that message's ancestry and content. Reads reject stale summaries; unfinished assistant messages cannot be covered. Summaries cascade with conversation deletion, stay outside sync and exports, and never replace transcripts, source snapshots or action records. Schema upgrades append migrations and preserve intermediate development databases.

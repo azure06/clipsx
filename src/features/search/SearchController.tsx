@@ -3,6 +3,7 @@ import { useClipboardStore } from '../../stores/clipboardStore'
 import { useUIStore } from '../../stores/uiStore'
 import { SearchBar, type SearchBarHandle } from './SearchBar'
 import { parseSearch } from './searchQuery'
+import { KEYWORD_DELAY_MS } from './progressive'
 
 type Props = Omit<
   ComponentPropsWithoutRef<typeof SearchBar>,
@@ -15,7 +16,9 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
   function SearchController(props, ref) {
     const query = useUIStore(state => state.searchQuery)
     const setQuery = useUIStore(state => state.setSearchQuery)
-    const isUpdatingResults = useClipboardStore(state => state.resultsStale && !state.error)
+    const isUpdatingResults = useClipboardStore(
+      state => (state.resultsStale || state.semanticPending) && !state.error
+    )
     const composing = useRef(false)
     const scheduleRef = useRef<(() => void) | null>(null)
 
@@ -28,7 +31,10 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
         // during the debounce interval. Do not delay the controlled input.
         state.prepareSearch(useUIStore.getState().searchQuery)
         if (!composing.current && useClipboardStore.getState().searchScheduled) {
-          timer = setTimeout(() => void useClipboardStore.getState().commitSearch(), 300)
+          timer = setTimeout(
+            () => void useClipboardStore.getState().commitSearch(),
+            KEYWORD_DELAY_MS
+          )
         }
       }
       scheduleRef.current = schedule
@@ -47,6 +53,7 @@ export const SearchController = forwardRef<SearchBarHandle, Props>(
       return () => {
         clearTimeout(timer)
         unsubscribe()
+        useClipboardStore.getState().cancelSearch()
         scheduleRef.current = null
       }
     }, [])

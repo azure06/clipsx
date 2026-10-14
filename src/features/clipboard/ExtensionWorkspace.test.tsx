@@ -343,7 +343,7 @@ describe('one durable transformation path', () => {
       />
     )
     expect(screen.getByText(/selected model is unavailable/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Local Text Generation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Text generation' }))
     expect(useUIStore.getState().activeView).toBe('intelligence')
     useUIStore.getState().setActiveView('clipsx')
   })

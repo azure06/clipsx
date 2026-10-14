@@ -15,7 +15,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Eye, Sparkles } from 'lucide-react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -31,15 +30,11 @@ import { TitleBar } from '../../shared/components/TitleBar'
 import { BottomBar } from '../../shared/components/BottomBar'
 import { ClipboardHistory } from '../clipboard/ClipboardHistory'
 import type { SettingsTab } from '../settings/Settings'
-import { useRecall } from '../recall/useRecall'
+import type { ClipFilters } from '../recall/contracts.generated'
 import { parseSearch } from '../search/searchQuery'
 import { useAuthStore, useClipboardStore, useUIStore, useSettingsStore } from '../../stores'
 import { useTheme } from '../../shared/hooks/useTheme'
-import type {
-  GenerationProviderStatus,
-  SearchSourceDescriptor,
-  TextEmbeddingStatus,
-} from '../../shared/types/v2'
+import type { SearchSourceDescriptor, TextEmbeddingStatus } from '../../shared/types/v2'
 import { useTranslation } from 'react-i18next'
 import {
   PROFILE_MUTATED_EVENT,
@@ -58,8 +53,8 @@ const Plugins = lazy(() =>
 const IntelligencePage = lazy(() =>
   import('../intelligence/IntelligencePage').then(module => ({ default: module.IntelligencePage }))
 )
-const RecallWorkspace = lazy(() =>
-  import('../recall/RecallWorkspace').then(module => ({ default: module.RecallWorkspace }))
+const RecallPage = lazy(() =>
+  import('../recall/RecallPage').then(module => ({ default: module.RecallPage }))
 )
 
 const ScreenLoading = () => {
@@ -88,7 +83,6 @@ export const AppLayout = () => {
   const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
   const refreshSearch = useClipboardStore(state => state.refreshSearch)
-  const addNewClip = useClipboardStore(state => state.addNewClip)
   const searchSourceOutcomes = useClipboardStore(state => state.searchSourceOutcomes)
   const { setThemeMode } = useTheme()
   const initializeAuth = useAuthStore(state => state.initialize)
@@ -97,10 +91,12 @@ export const AppLayout = () => {
   const authUserId = useAuthStore(state => state.userId)
   const [textSearchStatus, setTextSearchStatus] = useState<TextEmbeddingStatus | null>(null)
   const [searchSources, setSearchSources] = useState<SearchSourceDescriptor[]>([])
-  const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
-  const recall = useRecall()
-  const [rightTab, setRightTab] = useState<'preview' | 'recall'>('preview')
-  const effectiveRightTab = recall.turns.length > 0 ? rightTab : 'preview'
+  const [recallEntry, setRecallEntry] = useState<{
+    id: string
+    query: string
+    filters: ClipFilters
+    ask: boolean
+  } | null>(null)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const searchBarRef = useRef<SearchBarHandle>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
@@ -112,60 +108,29 @@ export const AppLayout = () => {
   const [splitSaveError, setSplitSaveError] = useState(false)
   const effectiveHistoryRatio = clampHistoryRatio(historyRatio, splitContainerWidth)
   const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
-  const tabSwitcher = (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200/70 bg-slate-100/50 p-0.5 dark:border-white/5 dark:bg-white/5">
-      {(['preview', 'recall'] as const).map(tab => {
-        const disabled = tab === 'recall' && recall.turns.length === 0
-        const active = effectiveRightTab === tab
-        const Icon = tab === 'preview' ? Eye : Sparkles
-        return (
-          <button
-            key={tab}
-            disabled={disabled}
-            title={disabled ? i18n.t('desktopUi.askAQuestionToStartARecallSession') : tab}
-            aria-label={tab}
-            onClick={() => setRightTab(tab)}
-            className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
-              active
-                ? 'bg-white text-violet-700 shadow-sm dark:bg-white/10 dark:text-violet-200'
-                : disabled
-                  ? 'cursor-not-allowed text-gray-300 dark:text-gray-700'
-                  : 'text-gray-500 hover:bg-white/70 dark:hover:bg-white/10'
-            }`}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </button>
-        )
-      })}
-    </div>
-  )
-  const getRecallScope = useCallback(() => {
-    const parsed = parseSearch(useUIStore.getState().searchQuery)
-    const { activeTab: scope, tagFilter } = useClipboardStore.getState()
-    return {
-      scope,
-      tagId: tagFilter,
-      representationFamilies: parsed.representationFamilies,
-      facetIds: parsed.facetIds,
-      enabledSourceIds: searchSources.filter(source => source.enabled).map(source => source.id),
-      label: scope === 'all' ? 'All history' : scope === 'favorites' ? 'Favorites' : 'Pinned',
-    }
-  }, [searchSources])
   const runRecall = useCallback(() => {
-    const { query } = parseSearch(useUIStore.getState().searchQuery)
-    if (!query || recall.isRunning) return
-    if (!generationStatus?.enabled || !generationStatus.available) {
-      setActiveView('intelligence')
-      return
-    }
-    setRightTab('recall')
-    void recall.startRoot(query, getRecallScope())
-  }, [generationStatus, recall, getRecallScope, setActiveView])
+    const parsed = parseSearch(useUIStore.getState().searchQuery)
+    if (!parsed.query.trim()) return
+    const { activeTab: scope, tagFilter } = useClipboardStore.getState()
+    setRecallEntry({
+      id: crypto.randomUUID(),
+      ask: true,
+      query: parsed.query,
+      filters: {
+        scope,
+        tagId: tagFilter,
+        representationFamilies: parsed.representationFamilies,
+        facetIds: parsed.facetIds,
+        capturedAfter: null,
+        capturedBefore: null,
+        sourceAppIds: [],
+        excludedClipIds: [],
+      },
+    })
+    setActiveView('recall')
+  }, [setActiveView])
   const handlePreviewItem = useCallback(
-    (clipId: string | null) => {
-      setPreviewClipId(clipId)
-      setRightTab('preview')
-    },
+    (clipId: string | null) => setPreviewClipId(clipId),
     [setPreviewClipId]
   )
 
@@ -341,15 +306,13 @@ export const AppLayout = () => {
     let disposed = false
     const loadTextSearchStatus = async () => {
       try {
-        const [status, sources, generation] = await Promise.all([
+        const [status, sources] = await Promise.all([
           invoke<TextEmbeddingStatus>('get_text_embedding_status'),
           invoke<SearchSourceDescriptor[]>('list_search_sources'),
-          invoke<GenerationProviderStatus>('get_text_generation_status'),
         ])
         if (disposed) return
         setTextSearchStatus(status)
         setSearchSources(Array.isArray(sources) ? sources : [])
-        setGenerationStatus(generation)
         setSemanticActive(
           Array.isArray(sources) &&
             sources.some(source => source.id === 'builtin.search.semantic_text' && source.enabled)
@@ -575,14 +538,10 @@ export const AppLayout = () => {
                     onToggleSource={sourceId => void handleToggleSource(sourceId)}
                     sourceOutcomes={searchSourceOutcomes}
                     placeholder={i18n.t('desktopUi.searchClipsOrAskAQuestion')}
-                    isRecalling={recall.isRunning}
-                    recallElapsedSeconds={recall.elapsedSeconds}
                     recallShortcut={formatShortcut(
                       commandShortcut('core.recall', { modifiers: ['primary'], key: 'Enter' })
                     )}
-                    recallAvailable={Boolean(
-                      generationStatus?.enabled && generationStatus.available
-                    )}
+                    recallAvailable
                     onRecall={() => void runRecall()}
                   />
                 </div>
@@ -622,57 +581,7 @@ export const AppLayout = () => {
                     id="preview-panel"
                     className="relative min-w-0 flex-1 flex flex-col overflow-hidden"
                   >
-                    <div className="pointer-events-none absolute right-4.5 top-3 z-10">
-                      <div className="pointer-events-auto">{tabSwitcher}</div>
-                    </div>
                     {(() => {
-                      if (effectiveRightTab === 'recall' && recall.turns.length > 0) {
-                        return (
-                          <Suspense fallback={<ScreenLoading />}>
-                            <RecallWorkspace
-                              turns={recall.turns}
-                              scopeLabel={recall.scope?.label ?? getRecallScope().label}
-                              isRunning={recall.isRunning}
-                              expired={recall.expired}
-                              onCancel={() => void recall.cancel()}
-                              onClear={() => {
-                                recall.clear()
-                                setRightTab('preview')
-                                searchBarRef.current?.focus()
-                              }}
-                              onFollowUp={question => void recall.followUp(question)}
-                              onRetry={turn =>
-                                void recall.startRoot(
-                                  turn.question,
-                                  recall.scope ?? getRecallScope()
-                                )
-                              }
-                              onApplySources={(turn, clipIds) =>
-                                void recall.rerunWithSources(turn.question, clipIds)
-                              }
-                              onSearchAll={turn => void recall.searchAll(turn.question)}
-                              onOpenClip={clipId => {
-                                const open = async () => {
-                                  if (
-                                    !useClipboardStore
-                                      .getState()
-                                      .clips.some(clip => clip.id === clipId)
-                                  ) {
-                                    const detail = await invoke<{ clip: (typeof clips)[number] }>(
-                                      'get_clip_detail',
-                                      { clipId }
-                                    )
-                                    addNewClip(detail.clip)
-                                  }
-                                  setPreviewClipId(clipId)
-                                  setRightTab('preview')
-                                }
-                                void open()
-                              }}
-                            />
-                          </Suspense>
-                        )
-                      }
                       const displayedClip = previewClip
                       if (displayedClip) {
                         return (
@@ -700,6 +609,20 @@ export const AppLayout = () => {
                   )}
                 </div>
               </div>
+            )}
+
+            {activeView === 'recall' && (
+              <Suspense fallback={<ScreenLoading />}>
+                <RecallPage
+                  key={recallEntry?.id ?? 'recall'}
+                  initialQuery={recallEntry?.ask ? recallEntry.query : undefined}
+                  initialFilters={recallEntry?.ask ? recallEntry.filters : undefined}
+                  initialAsk={recallEntry?.ask ?? false}
+                  onInitialAskConsumed={() =>
+                    setRecallEntry(current => (current ? { ...current, ask: false } : null))
+                  }
+                />
+              </Suspense>
             )}
 
             {activeView === 'settings' && (
