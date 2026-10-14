@@ -1617,6 +1617,13 @@
     }
   },
   "recallContext": {
+    "automatic": {
+      "searching": "Finding clipboard context…",
+      "ready": "Automatically included {{count}} sources. Only relevant evidence should be used.",
+      "empty": "No usable context was automatically included.",
+      "unavailable": "Automatic retrieval was unavailable. The assistant can continue without it.",
+      "budget": "No room for automatic sources within this model’s context limit."
+    },
     "title": "Context",
     "close": "Close context",
     "viewContext": "View context",

@@ -380,7 +380,7 @@ export interface RecallChatProps {
   preset: AiModelPreset | null
   filters: ClipFilters
   attachments: ClipRevision[]
-  ask: { id: string; text: string } | null
+  ask: { id: string; text: string; retrieve?: boolean } | null
   onAskConsumed(this: void): void
   onRunning(this: void, running: boolean): void
   onComplete(this: void): void
@@ -498,12 +498,13 @@ export function RecallChat(props: RecallChatProps) {
       )
         return
       sent.current = props.ask.id
+      controller.prepareInitialRetrieval(props.ask.retrieve ? props.ask.text : undefined)
       runtime.thread.append(props.ask.text)
       props.onAskConsumed()
     }
     submit()
     return runtime.thread.subscribe(submit)
-  }, [props, runtime])
+  }, [props, runtime, controller])
   return (
     <OpenSource.Provider value={props.onOpenSource}>
       <SavedSources.Provider value={{ threadId: props.thread.id, sources }}>
@@ -650,7 +651,13 @@ function createChatController(
   refreshSources: () => void
 ) {
   let current = initial
+  let pendingRetrieval: string | undefined
   const adapter = createRecallAdapter({
+    initialRetrieval: () => {
+      const query = pendingRetrieval
+      pendingRetrieval = undefined
+      return query
+    },
     configuration: () => ({
       presetId: current.preset?.id ?? '',
       filters: current.filters,
@@ -670,6 +677,9 @@ function createChatController(
   })
   return {
     adapter,
+    prepareInitialRetrieval: (query: string | undefined) => {
+      pendingRetrieval = query
+    },
     setProps: (next: RecallChatProps) => {
       current = next
     },

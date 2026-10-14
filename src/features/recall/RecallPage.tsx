@@ -53,7 +53,7 @@ export function RecallPage({
   const [draft, setDraft] = useState<ReturnType<typeof createDraftConversation> | null>(null)
   const [threadOffset, setThreadOffset] = useState(0)
   const [attachments, setAttachments] = useState<ClipRevision[]>([])
-  const [ask, setAsk] = useState<{ id: string; text: string } | null>(null)
+  const [ask, setAsk] = useState<{ id: string; text: string; retrieve?: boolean } | null>(null)
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
@@ -143,7 +143,7 @@ export function RecallPage({
                 )
             )
           if (canAsk && initialQuery.trim()) {
-            setAsk({ id: crypto.randomUUID(), text: initialQuery.trim() })
+            setAsk({ id: crypto.randomUUID(), text: initialQuery.trim(), retrieve: true })
           } else {
             setDraftSeed(initialQuery)
             onInitialAskConsumed?.()
