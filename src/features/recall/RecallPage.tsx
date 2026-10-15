@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Sparkles, PanelRight, X, SlidersHorizontal, Paperclip, PanelLeft } from 'lucide-react'
+import { PanelRight, X, SlidersHorizontal, Paperclip, PanelLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button, Input, Select } from '../../shared/components/ui'
 import { DocumentationLink } from '../../shared/components/DocumentationLink'
@@ -57,7 +57,7 @@ export function RecallPage({
   const [running, setRunning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
-  const [contextOpen, setContextOpen] = useState(() => window.innerWidth >= 1280)
+  const [contextOpen, setContextOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024)
   const [attachmentLabels, setAttachmentLabels] = useState<Record<string, string>>({})
   const busyRef = useRef(false)
@@ -643,22 +643,63 @@ export function RecallPage({
       className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200/60 bg-slate-100/30 dark:border-white/10 dark:bg-slate-100/5"
       aria-label={t('recallPage.chat')}
     >
-      {/* Slim scope bar — styled as clean card sub-header */}
-      <div className="shrink-0 border-b border-slate-200/50 bg-slate-50/50 px-3.5 py-2 flex items-center justify-between gap-2 dark:border-white/5 dark:bg-white/[0.01]">
-        <button
-          type="button"
-          onClick={openContext}
-          className="group flex max-w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-slate-500 transition-colors hover:bg-violet-50 hover:text-violet-600 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:hover:bg-violet-500/10 dark:hover:text-violet-300"
-        >
-          <SlidersHorizontal
-            size={12}
-            className="shrink-0 text-slate-400 group-hover:text-violet-500"
-            aria-hidden="true"
-          />
-          <span className="truncate font-medium">
-            {scopeLabels.length ? scopeLabels.join(' · ') : t('recallPage.allEligibleClips')}
-          </span>
-        </button>
+      {/* Slim toolbar: navigation and context controls on the card's own header */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200/50 bg-slate-50/50 px-2.5 py-1.5 dark:border-white/5 dark:bg-white/[0.01]">
+        <div className="flex min-w-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={t('recallPage.toggleSidebar')}
+            ref={sidebarToggle}
+            onClick={() => setSidebarOpen(prev => !prev)}
+            className="size-8 shrink-0 rounded-xl p-0 hover:bg-slate-100 dark:hover:bg-white/5"
+          >
+            <PanelLeft size={15} aria-hidden="true" />
+          </Button>
+          <button
+            type="button"
+            onClick={openContext}
+            className="group flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-slate-500 transition-colors hover:bg-violet-50 hover:text-violet-600 focus-visible:ring-2 focus-visible:ring-violet-500/50 dark:hover:bg-violet-500/10 dark:hover:text-violet-300"
+          >
+            <SlidersHorizontal
+              size={12}
+              className="shrink-0 text-slate-400 group-hover:text-violet-500"
+              aria-hidden="true"
+            />
+            <span className="truncate font-medium">
+              {scopeLabels.length ? scopeLabels.join(' · ') : t('recallPage.allEligibleClips')}
+            </span>
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant={contextOpen ? 'outline' : 'ghost'}
+            ref={contextToggle}
+            aria-expanded={contextOpen}
+            aria-label={t('recallContext.title')}
+            onClick={contextOpen ? closeContext : openContext}
+            className={`h-8 gap-1.5 rounded-xl text-xs ${
+              Boolean(query.trim()) && !running
+                ? 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/30 dark:text-violet-300'
+                : ''
+            }`}
+          >
+            <PanelRight size={13} aria-hidden="true" />
+            <span className="hidden sm:inline">{t('recallContext.title')}</span>
+            {query.trim() && (
+              <span
+                className="rounded bg-violet-500/10 px-1.5 text-[10px]"
+                aria-label={t('recallPage.resultCount', {
+                  count: (search.keyword?.items.length ?? 0) + search.related.length,
+                })}
+              >
+                {(search.keyword?.items.length ?? 0) + search.related.length}
+              </span>
+            )}
+          </Button>
+          <DocumentationLink guide="recall" label={t('documentation.recallGuide')} compact />
+        </div>
       </div>
       <div className="min-h-0 flex-1">
         {thread ? (
@@ -748,64 +789,7 @@ export function RecallPage({
   )
   return (
     <div className="recall-workspace relative flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 sm:p-4">
-      <header className="shrink-0 rounded-2xl border border-violet-300/40 bg-linear-to-br from-violet-500/10 via-fuchsia-500/5 to-white/35 px-3 py-2.5 dark:border-violet-400/15 dark:to-white/[.02]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label={t('recallPage.toggleSidebar')}
-              ref={sidebarToggle}
-              onClick={() => setSidebarOpen(prev => !prev)}
-              className="size-8 rounded-xl p-0 hover:bg-slate-100 dark:hover:bg-white/5"
-            >
-              <PanelLeft size={15} aria-hidden="true" />
-            </Button>
-            <div className="flex items-center gap-2">
-              <div className="flex size-8 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 ring-1 ring-violet-500/15 dark:text-violet-300">
-                <Sparkles size={14} aria-hidden="true" />
-              </div>
-              <h1 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {t('recallPage.title')}
-              </h1>
-            </div>
-            {thread?.title && (
-              <span className="hidden md:inline-block max-w-48 truncate rounded-lg bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-white/5 dark:text-slate-400">
-                {thread.title}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant={contextOpen ? 'outline' : 'ghost'}
-              ref={contextToggle}
-              aria-expanded={contextOpen}
-              aria-label={t('recallContext.title')}
-              onClick={contextOpen ? closeContext : openContext}
-              className={`h-8 rounded-xl text-xs gap-1.5 ${
-                Boolean(query.trim()) && !running
-                  ? 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/30 dark:text-violet-300'
-                  : ''
-              }`}
-            >
-              <PanelRight size={13} aria-hidden="true" />
-              <span className="hidden sm:inline">{t('recallContext.title')}</span>
-              {query.trim() && (
-                <span
-                  className="rounded bg-violet-500/10 px-1.5 text-[10px]"
-                  aria-label={t('recallPage.resultCount', {
-                    count: (search.keyword?.items.length ?? 0) + search.related.length,
-                  })}
-                >
-                  {(search.keyword?.items.length ?? 0) + search.related.length}
-                </span>
-              )}
-            </Button>
-            <DocumentationLink guide="recall" label={t('documentation.recallGuide')} compact />
-          </div>
-        </div>
-      </header>
+      <h1 className="sr-only">{t('recallPage.title')}</h1>
       {error && (
         <p
           role="alert"
