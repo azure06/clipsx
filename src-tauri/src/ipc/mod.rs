@@ -3576,8 +3576,18 @@ crate::recall::ipc::recall_snapshot_image,
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running ClipsX");
+        .build(tauri::generate_context!())
+        .expect("error while building ClipsX")
+        .run(|app, event| {
+            // Clicking the Dock icon must always surface the window, including
+            // when it is hidden in the tray or sitting behind other windows.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let _ = host::show_main_window_and_focus_search(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
