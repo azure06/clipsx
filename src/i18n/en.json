@@ -293,10 +293,8 @@
     "payload": "Payload",
     "signature": "Signature",
     "payloadNotDecoded": "Payload content is not decoded in this view.",
-    "sensitiveDetected": "Sensitive Content Detected",
-    "sensitiveDescription": "This clip contains potentially sensitive data. The content is masked for safety.",
-    "revealSecret": "Reveal secret",
-    "hideSecret": "Hide secret",
+    "secretDetected": "Secret detected",
+    "secretDescription": "This clip looks like a secret, so it isn't shown here. Open the Original tab to see it.",
     "searchDomain": "Search {{domain}}",
     "secretKinds": {
       "awsAccessKey": "AWS access key",
@@ -304,9 +302,10 @@
       "stripeKey": "Stripe key",
       "privateKey": "Private key",
       "credentialAssignment": "Credential",
-      "genericToken": "Generic token"
+      "apiKey": "API key",
+      "urlCredential": "URL with password",
+      "authorizationHeader": "Authorization header"
     },
-    "value": "Value",
     "urlPreview": "URL Preview",
     "urlStructure": "URL Structure",
     "mathExpression": "Math Expression",

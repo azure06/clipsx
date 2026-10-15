@@ -152,7 +152,9 @@ const SECRET_KIND_KEYS = {
   stripe_key: 'preview.secretKinds.stripeKey',
   private_key: 'preview.secretKinds.privateKey',
   credential_assignment: 'preview.secretKinds.credentialAssignment',
-  generic_token: 'preview.secretKinds.genericToken',
+  api_key: 'preview.secretKinds.apiKey',
+  url_credential: 'preview.secretKinds.urlCredential',
+  authorization_header: 'preview.secretKinds.authorizationHeader',
 } as const
 
 const iframeDocument = (html: string, theme: 'light' | 'dark', richText = false) => {
@@ -612,10 +614,7 @@ const SemanticView = ({
   kind: string
   clipId: string
 }) => {
-  const [revealedSecretId, setRevealedSecretId] = useState<string | null>(null)
   const { t, i18n } = useTranslation()
-  const secretId = `${clipId}:${model.facetId}:${model.text}`
-  const revealed = revealedSecretId === secretId
 
   if (kind === 'url') {
     const href = semanticScalar(model.payload, 'href') ?? model.text
@@ -871,38 +870,19 @@ const SemanticView = ({
     const secretKindLabel = secretKindKey ? t(secretKindKey) : secretKind.replaceAll('_', ' ')
     return (
       <div className={`${SCROLL_AREA} p-4`}>
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-red-500/20 bg-linear-to-br from-red-500/10 to-rose-500/10 p-5">
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-red-500/20 bg-linear-to-br from-red-500/15 via-rose-500/10 to-transparent p-6">
           <div className="rounded-full bg-red-500/20 p-3 text-red-400 ring-1 ring-red-500/30">
             <ShieldAlert className="h-6 w-6" />
           </div>
           <span className="text-sm font-semibold text-red-700 dark:text-red-300">
-            {t('preview.sensitiveDetected')}
+            {t('preview.secretDetected')}
           </span>
           <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
             {secretKindLabel}
           </span>
           <p className="max-w-xs text-center text-xs text-gray-500 dark:text-gray-400">
-            {t('preview.sensitiveDescription')}
+            {t('preview.secretDescription')}
           </p>
-        </div>
-        <div className="mt-4 rounded-lg bg-slate-100/70 p-3 dark:bg-black/20">
-          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-            {t('preview.value')}
-          </span>
-          <code className="block max-w-full select-none break-all font-mono text-sm text-gray-700 dark:text-gray-300">
-            {revealed
-              ? model.text
-              : model.text.length > 12
-                ? `${model.text.slice(0, 4)}${'•'.repeat(Math.min(model.text.length - 8, 32))}${model.text.slice(-4)}`
-                : '•'.repeat(model.text.length)}
-          </code>
-          <button
-            aria-label={revealed ? t('preview.hideSecret') : t('preview.revealSecret')}
-            className="mt-3 rounded-lg border border-slate-200 px-3 py-1.5 text-sm transition-colors hover:bg-white/70 dark:border-white/10 dark:hover:bg-white/5"
-            onClick={() => setRevealedSecretId(value => (value === secretId ? null : secretId))}
-          >
-            {revealed ? t('preview.hideSecret') : t('preview.revealSecret')}
-          </button>
         </div>
       </div>
     )

@@ -60,8 +60,12 @@ source; distinct representations remain searchable.
 Semantic indexing excludes secret-faceted clips for every provider, including
 local Ollama. Before chunking or provider access, the host also scans complete
 text inputs (including notes and existing OCR) with its deterministic secret
-classifier; a match excludes the whole clip. This is a heuristic, not a guarantee
-that every secret is recognized. History and local FTS retain their normal access.
+classifier; a match excludes the whole clip. The classifier favors precision: it
+requires credential evidence (provider-specific key formats, private-key blocks,
+credentialed URLs, `Authorization` headers, or credential-named assignments with
+literal values) and never treats entropy or string shape alone, such as hashes,
+IDs or an unlabeled JWT, as a secret. It is not a guarantee that every secret is
+recognized. History and local FTS retain their normal access.
 The same Rust eligibility predicate restricts semantic retrieval and assistant
 access. New secret facets queue durable vector cleanup. Schema 26 also queues
 existing indexed clips for cleanup and eligibility review; pending cleanup IDs

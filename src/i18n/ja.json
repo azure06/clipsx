@@ -232,8 +232,6 @@
     "sourceNote": "メモ"
   },
   "preview": {
-    "revealSecret": "秘密を表示",
-    "hideSecret": "秘密を隠す",
     "searchDomain": "{{domain}} を検索",
     "secretKinds": {
       "awsAccessKey": "AWSアクセスキー",
@@ -241,7 +239,9 @@
       "stripeKey": "Stripeキー",
       "privateKey": "秘密鍵",
       "credentialAssignment": "認証情報",
-      "genericToken": "汎用トークン"
+      "apiKey": "APIキー",
+      "urlCredential": "パスワード付きURL",
+      "authorizationHeader": "認証ヘッダー"
     },
     "moreActions": "その他の操作",
     "emptyCsv": "CSVは空です",
@@ -304,9 +304,8 @@
     "payload": "ペイロード",
     "signature": "署名",
     "payloadNotDecoded": "この画面ではペイロードの内容はデコードされません。",
-    "sensitiveDetected": "機密コンテンツを検出しました",
-    "sensitiveDescription": "このクリップには機密情報が含まれている可能性があります。安全のため内容をマスクしています。",
-    "value": "値",
+    "secretDetected": "機密情報を検出しました",
+    "secretDescription": "このクリップは機密情報と思われるため、ここには表示されません。内容は「元の内容」タブで確認できます。",
     "urlPreview": "URLプレビュー",
     "urlStructure": "URLの構造",
     "mathExpression": "数式",

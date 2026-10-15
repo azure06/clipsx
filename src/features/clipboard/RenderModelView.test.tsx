@@ -246,31 +246,21 @@ describe('RenderModelView', () => {
     }
   })
 
-  it('keeps secrets out of the DOM until reveal and resets for a different clip', async () => {
-    const firstSecret = 'sk_test_0123456789abcdefghijklmnop'
+  it('explains a secret without rendering or offering to reveal its value', () => {
+    const secret = 'sk_test_0123456789abcdefghijklmnop'
     const secretModel: RenderModel = {
       kind: 'semantic',
       facetId: 'core.security.secret',
-      text: firstSecret,
+      text: secret,
       payload: { kind: 'stripe_key' },
     }
-    const { rerender } = render(
+    const { container } = render(
       <RenderModelView presentation={presentation(secretModel, 'secret')} />
     )
-    expect(screen.queryByText(firstSecret)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /reveal secret/i }))
-    expect(screen.getByText(firstSecret)).toBeInTheDocument()
-    const next = presentation(
-      { ...secretModel, text: 'ghp_0123456789abcdefghijklmnopqrstuvwxyz' },
-      'secret'
-    )
-    next.id = 'clip-2'
-    rerender(<RenderModelView presentation={next} />)
-    await waitFor(() =>
-      expect(
-        screen.queryByText(next.model.kind === 'semantic' ? next.model.text : '')
-      ).not.toBeInTheDocument()
-    )
+    expect(screen.getByText('Secret detected')).toBeInTheDocument()
+    expect(screen.getByText('Stripe key')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(container).not.toHaveTextContent(secret)
   })
 
   it('restores URL video and domain-search actions', () => {
