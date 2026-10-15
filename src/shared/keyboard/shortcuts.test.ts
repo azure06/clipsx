@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatShortcut,
   getDefaultGlobalShortcut,
+  getDefaultGlobalShortcutDef,
   getDeleteShortcut,
   getShortcutChips,
   getShortcutFromKeyboardEvent,
@@ -129,7 +130,16 @@ describe('shortcut helpers', () => {
   })
 
   it('returns platform-specific default global accelerators', () => {
-    expect(getDefaultGlobalShortcut('macos')).toBe('Cmd+Shift+V')
-    expect(getDefaultGlobalShortcut('windows')).toBe('Ctrl+Shift+V')
+    expect(getDefaultGlobalShortcut('macos')).toBe('Cmd+Ctrl+V')
+    expect(getDefaultGlobalShortcut('windows')).toBe('Ctrl+Alt+V')
+    expect(getDefaultGlobalShortcut('linux')).toBe('Ctrl+Alt+V')
+    expect(getShortcutChips(getDefaultGlobalShortcutDef('macos'), 'macos')).toEqual(['⌘', '⌃', 'V'])
+    for (const platform of ['windows', 'linux'] as const) {
+      expect(getShortcutChips(getDefaultGlobalShortcutDef(platform), platform)).toEqual([
+        'Ctrl',
+        'Alt',
+        'V',
+      ])
+    }
   })
 })

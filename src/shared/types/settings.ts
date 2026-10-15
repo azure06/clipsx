@@ -12,6 +12,7 @@ export interface AppSettings {
   language_initialized: boolean
 
   // Shortcuts
+  /** Empty disables the global shortcut. */
   global_shortcut: string
 
   // Clipboard monitoring

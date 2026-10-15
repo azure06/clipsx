@@ -70,6 +70,7 @@ pub struct AppSettings {
     pub auto_start: bool,
     pub verbose_logging_enabled: bool,
     pub error_reporting_enabled: bool,
+    /// Empty disables the global shortcut; an absent saved value uses the platform default.
     pub global_shortcut: String,
     pub excluded_apps: Vec<String>,
     pub capture_filters: CaptureFilters,
@@ -94,17 +95,20 @@ impl Default for AppSettings {
             auto_start: false,
             verbose_logging_enabled: false,
             error_reporting_enabled: true,
-            global_shortcut: if cfg!(target_os = "macos") {
-                "Cmd+Shift+V".into()
-            } else {
-                "Ctrl+Shift+V".into()
-            },
+            global_shortcut: default_global_shortcut(std::env::consts::OS).into(),
             excluded_apps: vec![],
             capture_filters: CaptureFilters::default(),
             capture: CaptureSettings::default(),
         }
     }
 }
+fn default_global_shortcut(os: &str) -> &'static str {
+    match os {
+        "macos" => "Cmd+Ctrl+V",
+        _ => "Ctrl+Alt+V",
+    }
+}
+
 impl AppSettings {
     pub fn validate(&self) -> Result<()> {
         if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
@@ -120,12 +124,14 @@ impl AppSettings {
         {
             bail!("language is invalid");
         }
-        if self.global_shortcut.is_empty() || self.global_shortcut.len() > 128 {
+        if self.global_shortcut.len() > 128 {
             bail!("global shortcut is invalid");
         }
-        self.global_shortcut
-            .parse::<tauri_plugin_global_shortcut::Shortcut>()
-            .map_err(|_| anyhow::anyhow!("global shortcut is invalid"))?;
+        if !self.global_shortcut.is_empty() {
+            self.global_shortcut
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .map_err(|_| anyhow::anyhow!("global shortcut is invalid"))?;
+        }
         if self.excluded_apps.len() > 256
             || self.excluded_apps.iter().any(|value| {
                 value.is_empty() || value.len() > 512 || value.chars().any(char::is_control)
@@ -184,6 +190,35 @@ impl Default for CaptureSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_shortcut_defaults_match_each_platform() {
+        for (os, expected) in [
+            ("macos", "Cmd+Ctrl+V"),
+            ("windows", "Ctrl+Alt+V"),
+            ("linux", "Ctrl+Alt+V"),
+        ] {
+            assert_eq!(default_global_shortcut(os), expected);
+            assert!(expected
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .is_ok());
+        }
+        assert_eq!(
+            AppSettings::default().global_shortcut,
+            default_global_shortcut(std::env::consts::OS)
+        );
+    }
+
+    #[test]
+    fn global_shortcut_can_be_disabled_but_invalid_bindings_are_rejected() {
+        let mut settings = AppSettings::default();
+        settings.global_shortcut.clear();
+        assert!(settings.validate().is_ok());
+        for invalid in [" ", "invalid shortcut!", &"V".repeat(129)] {
+            settings.global_shortcut = invalid.into();
+            assert!(settings.validate().is_err());
+        }
+    }
 
     #[test]
     fn app_settings_defaults_to_copy_only_double_click_activation() {

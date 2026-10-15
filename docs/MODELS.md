@@ -417,13 +417,22 @@ Auth session; revoked sessions cannot replace their device identity.
 
 ### Settings changes and recovery
 
+The device-local show/hide shortcut defaults to Ctrl+Cmd+V on macOS and
+Ctrl+Alt+V on Windows/Linux when no saved preference exists. Saved bindings
+are preserved, including previous defaults. Clearing the shortcut saves an
+empty string and unregisters it; it stays disabled across restarts. Reset
+settings restores the platform default. Registration failures appear in the
+main window and Keyboard settings, where users can choose another binding,
+disable it, or retry after resolving a conflict. Desktop sessions without
+global shortcut support can leave it disabled and open ClipsX from the tray.
+
 | Operation                    | Guarantee                                                                                                                                                     |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Read                         | Coherent SQLite snapshot                                                                                                                                      |
 | Save                         | Host validates patch against latest values under one lifecycle lock; commits capture/profile/device values and outbox together                                |
 | Frontend edits               | Serialized; display committed values; preserve unedited fields, including exact byte limits                                                                   |
 | Native effects               | Startup reconciles autostart, shortcuts, window behaviour, logging, retention; failures have Retry                                                            |
-| Shortcut edit                | Register replacement before removing old binding; persist after success; restore old registration if save fails and report failed rollback                    |
+| Shortcut edit                | Register replacement before removing old binding, or unregister when cleared; persist after success; restore old registration if save fails and report failed rollback |
 | Retention failure after save | Report failed effect, not an unsaved setting                                                                                                                  |
 | Reset settings               | Restore defaults and logging; clear built-in shortcut overrides/pending intent; preserve clips, account, Intelligence, renderer/extension settings and grants |
 | App language change          | Atomically invalidate automatic-language OCR; recover interrupted jobs after restart                                                                          |

@@ -74,14 +74,25 @@ export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => 
   const { t } = useTranslation()
   const [isRecording, setIsRecording] = useState(false)
   const [pendingShortcut, setPendingShortcut] = useState<ReturnType<typeof parseAccelerator>>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLButtonElement>(null)
 
   const chips = getShortcutChips(
     isRecording && pendingShortcut ? pendingShortcut : parseAccelerator(value)
   )
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isRecording) return
+    if (e.key === 'Tab' || e.key === 'Escape') {
+      setIsRecording(false)
+      setPendingShortcut(null)
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+      return
+    }
     e.preventDefault()
+    e.stopPropagation()
     const shortcut = getShortcutFromKeyboardEvent(e.nativeEvent)
 
     if (shortcut.key) {
@@ -103,46 +114,62 @@ export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => 
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div
-        ref={containerRef}
-        tabIndex={0}
-        role="button"
-        aria-label={t('settings.shortcutAria')}
-        onFocus={() => {
-          setIsRecording(true)
-          setPendingShortcut(null)
-        }}
-        onBlur={() => {
-          setIsRecording(false)
-          setPendingShortcut(null)
-        }}
-        onKeyDown={handleKeyDown}
-        onKeyUp={handleKeyUp}
-        className={`relative flex items-center justify-center gap-1 min-w-36 px-2.5 py-1.5 rounded-lg border-2 cursor-pointer transition-all duration-150 select-none outline-none ${
-          isRecording
-            ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-500/10 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]'
-            : 'border-gray-200 dark:border-white/10 bg-slate-100/60 dark:bg-slate-100/5 hover:border-blue-300 dark:hover:border-blue-500/40 hover:bg-blue-50/30 dark:hover:bg-blue-500/5'
-        }`}
-      >
-        {/* Recording pulse dot */}
-        {isRecording && (
-          <span className="absolute top-1.5 right-1.5 flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500" />
-          </span>
-        )}
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          ref={containerRef}
+          aria-label={t('settings.shortcutAria')}
+          aria-pressed={isRecording}
+          onClick={() => {
+            setIsRecording(true)
+            setPendingShortcut(null)
+          }}
+          onBlur={() => {
+            setIsRecording(false)
+            setPendingShortcut(null)
+          }}
+          onKeyDown={handleKeyDown}
+          onKeyUp={handleKeyUp}
+          className={`relative flex items-center justify-center gap-1 min-w-36 px-2.5 py-1.5 rounded-lg border-2 cursor-pointer transition-all duration-150 select-none outline-none ${
+            isRecording
+              ? 'border-violet-500 bg-violet-50/60 dark:bg-violet-500/10 shadow-[0_0_0_3px_rgba(139,92,246,0.15)]'
+              : 'border-gray-200 dark:border-white/10 bg-slate-100/60 dark:bg-slate-100/5 hover:border-violet-300 dark:hover:border-violet-500/40 hover:bg-violet-50/30 dark:hover:bg-violet-500/5'
+          }`}
+        >
+          {/* Recording pulse dot */}
+          {isRecording && (
+            <span className="absolute top-1.5 right-1.5 flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500" />
+            </span>
+          )}
 
-        {/* Key chips */}
-        {chips.map((chip, i) => (
-          <KeyChip key={i} label={chip} />
-        ))}
+          {/* Key chips */}
+          {chips.map((chip, i) => (
+            <KeyChip key={i} label={chip} />
+          ))}
 
-        {/* Placeholder if no keys yet */}
-        {chips.length === 0 && (
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {t('settings.pressShortcut')}
-          </span>
-        )}
+          {/* Placeholder if no keys yet */}
+          {chips.length === 0 && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {isRecording ? t('settings.pressShortcut') : t('settings.shortcutDisabled')}
+            </span>
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!value}
+          onClick={() => {
+            setIsRecording(false)
+            setPendingShortcut(null)
+            onChange('')
+            containerRef.current?.focus()
+          }}
+        >
+          {t('settings.clearShortcut')}
+        </Button>
       </div>
 
       {/* Contextual hint */}
@@ -544,7 +571,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                 </SettingRow>
                 {shortcutError && (
                   <p role="alert" className="px-4 pb-3 text-xs text-red-600 dark:text-red-400">
-                    {shortcutError}
+                    {t('settings.shortcutChangeFailed')} {shortcutError}
                   </p>
                 )}
               </SettingsSection>
