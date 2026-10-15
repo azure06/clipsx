@@ -130,7 +130,28 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           instructions += ` Initial application retrieval: ${initialEvidence.state}; incomplete=${initialEvidence.incomplete}. Automatically supplied clips are candidate evidence, not guaranteed relevant. Use only relevant facts; explain insufficient evidence when appropriate.`
         }
         const clipboardTools = createClipboardTools(context, bridge, state)
-        const fitted = fitContext(messages, context, state.citations, true)
+        const nativeWeb =
+          context.webRoute === 'native' ? createNativeWebTools(connection, transport) : {}
+        const tools =
+          context.preset.capabilities.tools === false
+            ? nativeWeb
+            : { ...clipboardTools, ...nativeWeb }
+        const requestDefinitions = await Promise.all(
+          Object.entries(tools).map(async ([name, tool]) => ({
+            name,
+            description: tool.description,
+            type: tool.type,
+            inputSchema: await asSchema(tool.inputSchema).jsonSchema,
+          }))
+        )
+        const fitted = fitContext(messages, context, state.citations, true, {
+          policy,
+          instructions,
+          tools: requestDefinitions,
+        })
+        if (fitted.shortenedSources || fitted.omittedSources)
+          instructions +=
+            ' Some attached clipboard evidence was shortened or omitted to fit the model context. Entries with truncated=true show only shownBytes of totalBytes. State that the evidence is partial and never claim to have read text that was not provided.'
         metadata = {
           runId,
           provider: connection.provider,
@@ -138,6 +159,8 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           connectionId: connection.id,
           presetId: context.preset.id,
           contextOmitted: fitted.omitted,
+          shortenedSources: fitted.shortenedSources,
+          omittedSources: fitted.omittedSources,
           ...(initialEvidence ? { initialRetrieval: initialEvidence } : {}),
           webRoute: context.webRoute,
           reasoning: context.reasoning ?? null,
@@ -159,20 +182,6 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
           originalResult?.(name, result)
         }
         metadata['toolsAvailable'] = toolSupport
-        const nativeWeb =
-          context.webRoute === 'native' ? createNativeWebTools(connection, transport) : {}
-        const tools =
-          context.preset.capabilities.tools === false
-            ? nativeWeb
-            : { ...clipboardTools, ...nativeWeb }
-        const requestDefinitions = await Promise.all(
-          Object.entries(tools).map(async ([name, tool]) => ({
-            name,
-            description: tool.description,
-            type: tool.type,
-            inputSchema: await asSchema(tool.inputSchema).jsonSchema,
-          }))
-        )
         const steps = 8
         let modelSteps = 0
         const providerOptions = reasoningProviderOptions(context)
@@ -228,22 +237,25 @@ export function createRecallAdapter(options: RecallAdapterOptions): ChatModelAda
               },
             ]
           : []
-        const bound = async (value: ModelMessage[], names: string[], reserve = true) =>
-          coordinator.prepare(
-            {
-              messages: [
-                ...value.filter(
-                  message =>
-                    !ledger.some(entry => JSON.stringify(entry) === JSON.stringify(message))
-                ),
-                ...ledger,
-              ],
-              instructions,
-              tools: requestDefinitions.filter(tool => names.includes(tool.name)),
-            },
-            question,
-            reserve
-          )
+        const bound = async (value: ModelMessage[], names: string[], reserve = true) => {
+          const request = {
+            messages: [
+              ...value.filter(
+                message => !ledger.some(entry => JSON.stringify(entry) === JSON.stringify(message))
+              ),
+              ...ledger,
+            ],
+            instructions,
+            tools: requestDefinitions.filter(tool => names.includes(tool.name)),
+          }
+          const prepared = await coordinator.prepare(request, question, reserve)
+          // Tools consult this so a long read/search loop cannot outgrow the context.
+          state.contextRoom =
+            policy.inputLimit -
+            estimateRequest({ ...request, messages: prepared }).tokens -
+            Math.floor(policy.inputLimit / 8)
+          return prepared
+        }
         const recoveredModel = withContextRecovery(
           model as Parameters<typeof withContextRecovery>[0],
           {

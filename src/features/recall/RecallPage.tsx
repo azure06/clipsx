@@ -728,6 +728,7 @@ export function RecallPage({
             preset={preset}
             filters={search.filters}
             attachments={attachments}
+            onClearAttachments={() => setAttachments([])}
             ask={ask}
             onAskConsumed={() => {
               setAsk(null)

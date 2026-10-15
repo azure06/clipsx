@@ -341,3 +341,78 @@ it.each([
   render(<RecallChat {...props()} />)
   expect(await screen.findByText('recallPage.' + key)).toBeInTheDocument()
 })
+
+describe('Recall context overflow recovery', () => {
+  const blockedHistory = (custom: Record<string, unknown>): RecallHistory => ({
+    thread: { ...thread, headMessageId: 'answer' },
+    sources: [],
+    messages: [
+      {
+        id: 'question',
+        parentId: null,
+        role: 'user',
+        contentJson: '[{"type":"text","text":"Summarize these"}]',
+        metadataJson: '{"custom":{}}',
+        statusJson: null,
+        createdAt: 1,
+      },
+      {
+        id: 'answer',
+        parentId: 'question',
+        role: 'assistant',
+        contentJson: '[{"type":"text","text":"Partial"}]',
+        metadataJson: JSON.stringify({ custom }),
+        statusJson: JSON.stringify({ type: 'incomplete', reason: 'error' }),
+        createdAt: 2,
+      },
+    ],
+  })
+
+  it('regenerates a blocked reply without the attachments that did not fit', async () => {
+    history = blockedHistory({ failure: 'question_exceeds_context' })
+    const attachments = [{ clipId: 'clip', revision: 'r1' }]
+    let attachedAtRun: unknown
+    vi.mocked(createRecallAdapter).mockImplementation(options => ({
+      run: async function* () {
+        await Promise.resolve()
+        attachedAtRun = options.configuration().attachments
+        yield {
+          content: [{ type: 'text' as const, text: 'Answered without them.' }],
+          status: { type: 'complete' as const, reason: 'stop' as const },
+        }
+      },
+    }))
+    const onClearAttachments = vi.fn()
+    render(
+      <RecallChat {...props()} attachments={attachments} onClearAttachments={onClearAttachments} />
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'recallPage.removeAttachmentsAndRegenerate' })
+    )
+
+    expect(await screen.findByText('Answered without them.')).toBeInTheDocument()
+    expect(onClearAttachments).toHaveBeenCalledOnce()
+    expect(attachedAtRun).toEqual([])
+  })
+
+  it('offers no attachment action when nothing is attached', async () => {
+    history = blockedHistory({ failure: 'context_limit' })
+    vi.mocked(createRecallAdapter).mockReturnValue({ run: vi.fn() })
+    render(<RecallChat {...props()} />)
+
+    expect(await screen.findByText('recallPage.contextBlocked')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'recallPage.removeAttachmentsAndRegenerate' })
+    ).toBeNull()
+  })
+
+  it('tells the user when attached sources were shortened or left out', async () => {
+    history = blockedHistory({ shortenedSources: 2, omittedSources: 1 })
+    vi.mocked(createRecallAdapter).mockReturnValue({ run: vi.fn() })
+    render(<RecallChat {...props()} />)
+
+    expect(await screen.findByText('recallPage.evidenceShortened')).toBeInTheDocument()
+    expect(screen.getByText('recallPage.evidenceOmitted')).toBeInTheDocument()
+  })
+})

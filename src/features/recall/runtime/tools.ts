@@ -3,8 +3,18 @@ import type { ToolSet } from 'ai'
 import type { AssistantRunContext, ClipImageResult } from '../contracts.generated'
 import type { NativeAgentBridge } from './native'
 import { CitationRegistry } from './citations'
+import { utf8Size } from './estimator'
 
 const writes = new Set(['create_clip', 'organize_clips', 'undo_clipboard_action'])
+/** A read below this cannot return a useful page; a search below it cannot return one result. */
+const MIN_READ_ROOM = 1024
+const SEARCH_RESULT_BYTES = 2048
+const IMAGE_ALLOWANCE = 8192
+const contextBudgetExhausted = () => ({
+  error: 'context_budget_exhausted',
+  message:
+    'The model context is nearly full. Answer from the evidence already read and state what is incomplete.',
+})
 const argumentGuidance: Record<string, string> = {
   create_clip:
     ' Include the complete text and format="plain_text" or "markdown". Each sources entry requires clipId, representationId, and fingerprint from read_clip; do not use id instead of clipId. ClipsX supplies requestId. Correct these rejected arguments and retry within the step budget.',
@@ -17,6 +27,8 @@ export interface ToolRuntime {
   searches: number
   images: ClipImageResult[]
   imageBytes: number
+  /** Bytes the model context can still absorb; refreshed before every model step. */
+  contextRoom?: number
   citations?: CitationRegistry
   onResult?: (name: string, result: unknown) => void
 }
@@ -29,6 +41,9 @@ export function createClipboardTools(
   const requestIds = new Map<string, string>()
   const results = new Map<string, Promise<unknown>>()
   const argumentsByCall = new Map<string, string>()
+  // The SDK can execute several calls at once. Apply their shared budget and
+  // citations in order so later calls see the room spent by earlier results.
+  let pending: Promise<unknown> = Promise.resolve()
   return Object.fromEntries(
     context.tools.map(definition => {
       const schema: unknown = JSON.parse(definition.inputSchemaJson)
@@ -61,7 +76,19 @@ export function createClipboardTools(
               return cached
             }
             argumentsByCall.set(toolCallId, signature)
-            const operation = (async () => {
+            const operation = pending.then(async () => {
+              abortSignal?.throwIfAborted()
+              const room = state.contextRoom
+              const spend = (value: unknown, bytes = utf8Size(JSON.stringify(value)) + 256) => {
+                if (state.contextRoom !== undefined) state.contextRoom -= bytes
+              }
+              if (
+                room !== undefined &&
+                ((definition.name === 'read_clip' && room < MIN_READ_ROOM) ||
+                  (definition.name === 'search_clips' && room < SEARCH_RESULT_BYTES) ||
+                  (definition.name === 'read_clip_image' && room < IMAGE_ALLOWANCE))
+              )
+                return contextBudgetExhausted()
               if (definition.name === 'search_clips' && state.searches++ >= 3)
                 return {
                   error: 'search_round_limit',
@@ -77,7 +104,11 @@ export function createClipboardTools(
                   ...input,
                   pageBytes: Math.max(
                     128,
-                    Math.min(Number(input['pageBytes'] ?? 8192), Math.floor(reserve / 4))
+                    Math.min(
+                      Number(input['pageBytes'] ?? 8192),
+                      Math.floor(reserve / 4),
+                      room === undefined ? Infinity : room - 768
+                    )
                   ),
                 }
               if (definition.name === 'search_clips')
@@ -85,7 +116,11 @@ export function createClipboardTools(
                   ...input,
                   limit: Math.max(
                     1,
-                    Math.min(Number(input['limit'] ?? 20), Math.floor(reserve / 2048))
+                    Math.min(
+                      Number(input['limit'] ?? 20),
+                      Math.floor(reserve / SEARCH_RESULT_BYTES),
+                      room === undefined ? Infinity : Math.floor(room / SEARCH_RESULT_BYTES)
+                    )
                   ),
                 }
               if (writes.has(definition.name)) {
@@ -95,6 +130,15 @@ export function createClipboardTools(
               }
               try {
                 const result = await bridge.tool(context.runId, definition.name, args)
+                // Page limits bound text, not metadata or JSON escaping. Reject an
+                // oversized read before assigning a citation or admitting its bytes.
+                if (
+                  room !== undefined &&
+                  ['read_clip', 'search_clips'].includes(definition.name) &&
+                  utf8Size(JSON.stringify(result)) + (definition.name === 'read_clip' ? 512 : 256) >
+                    room
+                )
+                  return contextBudgetExhausted()
                 if (
                   definition.name === 'read_clip_image' &&
                   isRecord(result) &&
@@ -102,11 +146,14 @@ export function createClipboardTools(
                 ) {
                   const image = result as unknown as ClipImageResult
                   const { data: encoded, ...metadata } = image
+                  const imageCost = IMAGE_ALLOWANCE + utf8Size(JSON.stringify(metadata)) + 512
                   if (context.preset.capabilities.vision === false)
                     return { ...metadata, warning: 'image_input_unsupported_use_existing_ocr' }
+                  if (room !== undefined && room < imageCost) return contextBudgetExhausted()
                   if (state.imageBytes + encoded.length > 6 * 1024 * 1024)
                     return { ...metadata, warning: 'image_context_limit' }
                   state.imageBytes += encoded.length
+                  spend(image, imageCost)
                   state.images.push(image)
                   const output = {
                     ...metadata,
@@ -129,9 +176,11 @@ export function createClipboardTools(
                     ...result,
                     citation: citations.register(result['clip']['id'], result['clip']['revision']),
                   }
+                  spend(output)
                   state.onResult?.(definition.name, output)
                   return output
                 }
+                spend(result)
                 state.onResult?.(definition.name, result)
                 return result
               } catch (error) {
@@ -151,7 +200,8 @@ export function createClipboardTools(
                 state.onResult?.(definition.name, result)
                 return result
               }
-            })()
+            })
+            pending = operation.catch(() => undefined)
             results.set(toolCallId, operation)
             return operation
           },

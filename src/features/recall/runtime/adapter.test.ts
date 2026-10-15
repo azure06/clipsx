@@ -32,6 +32,74 @@ function runOptions(controller = new AbortController()): ChatModelRunOptions {
   }
 }
 
+it.each(['x', '\\'])(
+  'runs with an oversized %j attachment through the streamed model loop',
+  async char => {
+    const context = fixtureContext()
+    context.preset.contextLimit = 8192
+    context.preset.outputLimit = 512
+    context.attachments = [
+      {
+        apiVersion: 1,
+        clip: {
+          id: 'attached',
+          revision: 'r1',
+          capturedAt: 1,
+          sourceAppId: null,
+          sourceAppName: null,
+          favorite: false,
+          pinned: false,
+          tags: [],
+          representations: [],
+          ocrStatus: 'unavailable',
+        },
+        representationId: 'text',
+        kind: 'captured',
+        text: char.repeat(8192),
+        textFingerprint: 'hash',
+        totalBytes: 40000,
+        nextCursor: 'next-page',
+        warnings: [],
+      },
+    ]
+    const bridge: NativeAgentBridge = {
+      begin: request => Promise.resolve({ ...context, runId: request.runId }),
+      tool: vi.fn<NativeAgentBridge['tool']>().mockResolvedValue({ items: [] }),
+      finish: vi.fn(async () => {}),
+      verifyTools: vi.fn(async () => {}),
+    }
+    const { commands, requests } = fixtureBridge('ollama', (records, phase) =>
+      phase === 'text'
+        ? (JSON.parse(
+            JSON.stringify(records).replace(/verified/g, 'verified [1](#clip-1)')
+          ) as unknown[])
+        : records
+    )
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge,
+      transport: id => createRustFetch(id, commands),
+    })
+    const updates = adapter.run(runOptions())
+    if (!('next' in updates)) throw new Error('Expected streaming adapter')
+    let last: ChatModelRunResult | undefined
+    for await (const update of updates) last = update
+    expect(last?.status?.type).toBe('complete')
+    expect(last?.metadata?.custom?.['shortenedSources']).toBe(1)
+    expect(last?.metadata?.custom?.['omittedSources']).toBe(0)
+    expect(last?.metadata?.custom?.['contextRecovered']).not.toBe(true)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]?.body).toContain('Find a relevant clip')
+    expect(requests[0]?.body).toContain('truncated')
+    expect(requests[0]?.body).toContain('40000')
+  }
+)
+
 it.each([
   { provider: 'ollama' as const, valid: true },
   { provider: 'openai' as const, valid: true },
