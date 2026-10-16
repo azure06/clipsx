@@ -1,4 +1,26 @@
 {
+  "about": {
+    "workingTree": "Working tree",
+    "clean": "Clean",
+    "title": "About",
+    "description": "App version, build information and updates",
+    "advancedDescription": "System integration, diagnostics and configuration tools",
+    "version": "Version",
+    "commit": "Commit",
+    "os": "Operating system",
+    "architecture": "Architecture",
+    "buildType": "Build type",
+    "development": "Development",
+    "release": "Release",
+    "modified": "Locally modified",
+    "unavailable": "Unavailable",
+    "loading": "Loading app information…",
+    "loadFailed": "Could not load app information.",
+    "retry": "Retry",
+    "copy": "Copy app info",
+    "copied": "App information copied.",
+    "copyFailed": "Could not copy app information. Try again."
+  },
   "documentation": {
     "localAiSetup": "Local AI setup guide",
     "chooseEmbedding": "Choose an embedding model",

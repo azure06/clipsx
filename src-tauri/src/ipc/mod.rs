@@ -387,12 +387,32 @@ fn set_tray_labels(labels: TrayLabels, state: State<'_, HostState>) -> Result<()
 #[serde(rename_all = "camelCase")]
 struct ReleaseInfo {
     updater_configured: bool,
+    version: String,
+    commit: Option<&'static str>,
+    modified: Option<bool>,
+    os: &'static str,
+    architecture: &'static str,
+    build_type: &'static str,
 }
 
 #[tauri::command]
-fn get_release_info(state: State<'_, HostState>) -> ReleaseInfo {
+fn get_release_info(app: tauri::AppHandle, state: State<'_, HostState>) -> ReleaseInfo {
     ReleaseInfo {
         updater_configured: state.updater_configured,
+        version: app.package_info().version.to_string(),
+        commit: option_env!("CLIPSX_BUILD_COMMIT").filter(|value| !value.is_empty()),
+        modified: match option_env!("CLIPSX_BUILD_MODIFIED") {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        },
+        os: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        build_type: if cfg!(debug_assertions) {
+            "development"
+        } else {
+            "release"
+        },
     }
 }
 

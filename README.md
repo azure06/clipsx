@@ -74,6 +74,12 @@ ClipsX includes, but is not limited to:
 - Sandboxed WebAssembly extensions for focused detectors, renderers,
   transformations, and contextual actions.
 
+### App information
+
+Settings → About shows the installed version, source commit, local modifications, operating system, architecture and build type. Copy app info copies these details for bug reports. Update checks, installation and restart actions are also available there; diagnostics remain in Settings → Advanced.
+
+Native builds embed source identity independently of telemetry. `CLIPSX_BUILD_COMMIT` overrides `GITHUB_SHA`, followed by the checkout’s Git revision. Git supplies working-tree status when available; source archives without Git show unavailable metadata. Changes to Git metadata and source files refresh build identity while preserving incremental builds.
+
 ### Platforms
 
 Published targets are Windows x64, macOS Apple Silicon and Intel, and Linux/X11 x64 (AppImage and `.deb`). Wayland is outside the advertised targets. Consult the selected release’s notes for verified capabilities and limitations.

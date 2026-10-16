@@ -10,6 +10,12 @@ export type UpdaterStatus =
 
 export type ReleaseInfo = {
   readonly updaterConfigured: boolean
+  readonly version: string
+  readonly commit: string | null
+  readonly modified: boolean | null
+  readonly os: string
+  readonly architecture: string
+  readonly buildType: 'development' | 'release'
 }
 
 export type AvailableUpdate = {

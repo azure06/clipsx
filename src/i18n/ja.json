@@ -1,4 +1,26 @@
 {
+  "about": {
+    "workingTree": "作業ツリー",
+    "clean": "変更なし",
+    "title": "このアプリについて",
+    "description": "アプリのバージョン、ビルド情報、アップデート",
+    "advancedDescription": "システム連携、診断、設定ツール",
+    "version": "バージョン",
+    "commit": "コミット",
+    "os": "オペレーティングシステム",
+    "architecture": "アーキテクチャ",
+    "buildType": "ビルドの種類",
+    "development": "開発版",
+    "release": "リリース版",
+    "modified": "ローカルで変更あり",
+    "unavailable": "取得できません",
+    "loading": "アプリ情報を読み込み中…",
+    "loadFailed": "アプリ情報を読み込めませんでした。",
+    "retry": "再試行",
+    "copy": "アプリ情報をコピー",
+    "copied": "アプリ情報をコピーしました。",
+    "copyFailed": "アプリ情報をコピーできませんでした。もう一度お試しください。"
+  },
   "documentation": {
     "localAiSetup": "ローカルAIの設定ガイド",
     "chooseEmbedding": "埋め込みモデルの選び方",

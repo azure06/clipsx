@@ -1,5 +1,9 @@
 //! Desktop composition root.
 
+#[cfg(test)]
+#[path = "../../build_identity.rs"]
+mod build_identity;
+
 pub(crate) mod crash_reports;
 pub(crate) mod diagnostics;
 pub(crate) mod global_shortcut;

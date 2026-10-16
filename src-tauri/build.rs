@@ -1,4 +1,7 @@
+mod build_identity;
+
 fn main() {
+    build_identity::emit();
     println!("cargo:rerun-if-changed=migrations");
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[

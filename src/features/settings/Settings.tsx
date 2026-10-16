@@ -1,3 +1,4 @@
+import { AboutAppInfo } from './AboutAppInfo'
 import { DiagnosticsActions } from './DiagnosticsActions'
 import { diagnostic } from '../../shared/diagnostics'
 import { PortableRecovery } from './components/PortableRecovery'
@@ -39,6 +40,7 @@ import {
   LogOut,
   Cloud,
   Bug,
+  Info,
 } from 'lucide-react'
 import { useUpdaterStore } from '../../stores'
 import { useTranslation } from 'react-i18next'
@@ -48,7 +50,15 @@ import { SettingsNavigation, type SettingsNavigationItem } from './components/Se
 import { ButtonGroup, SettingRow, SettingsSection } from './components/SettingsPrimitives'
 
 export type SettingsTab =
-  'general' | 'clipboard' | 'keyboard' | 'storage' | 'privacy' | 'sync' | 'account' | 'advanced'
+  | 'general'
+  | 'clipboard'
+  | 'keyboard'
+  | 'storage'
+  | 'privacy'
+  | 'sync'
+  | 'account'
+  | 'advanced'
+  | 'about'
 
 type SettingsProps = {
   initialTab?: SettingsTab
@@ -382,6 +392,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
       icon: <SettingsIcon className="h-4 w-4" />,
       group: 'system',
     },
+    { id: 'about', label: t('about.title'), icon: <Info className="h-4 w-4" />, group: 'system' },
   ]
 
   const tabDescriptions: Record<SettingsTab, string> = {
@@ -392,7 +403,8 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
     privacy: i18n.t('desktopUi.whenLocalClipboardDataIsCleared'),
     sync: i18n.t('desktopUi.configurationStatusDevicesAndConflicts'),
     account: i18n.t('desktopUi.signInAndIdentityForAccountBackedServices'),
-    advanced: i18n.t('desktopUi.updatesSystemIntegrationAndConfigurationTools'),
+    advanced: t('about.advancedDescription'),
+    about: t('about.description'),
   }
 
   const themeOptions = [
@@ -1106,54 +1118,16 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
             </>
           )}
 
-          {/* ADVANCED TAB */}
-          {activeTab === 'advanced' && (
+          {activeTab === 'about' && (
             <>
-              <PortableRecovery />
-              <SettingsSection
-                icon={<SettingsIcon className="h-4 w-4" />}
-                title={t('settings.system')}
-                description={t('settings.systemDescription')}
-              >
-                <SettingRow
-                  label={t('settings.autoStart')}
-                  description={t('settings.autoStartDescription')}
-                >
-                  <Switch
-                    checked={settings.auto_start}
-                    onChange={value => void updateSettings({ auto_start: value })}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label={t('settings.copyToast')}
-                  description={t('settings.copyToastDescription')}
-                >
-                  <Switch
-                    checked={settings.show_copy_toast}
-                    onChange={value => void updateSettings({ show_copy_toast: value })}
-                  />
-                </SettingRow>
-              </SettingsSection>
-
-              <SettingsSection
-                icon={<Bug className="h-4 w-4" />}
-                title={t('diagnostics.title')}
-                description={t('diagnostics.description')}
-              >
-                <DiagnosticsActions
-                  preferences={settings}
-                  onPreferencesChange={updates => void updateSettings(updates)}
-                />
-              </SettingsSection>
-
+              <AboutAppInfo />
               <SettingsSection
                 icon={<RefreshCw className="h-4 w-4" />}
                 title={t('settings.updates')}
                 description={t('settings.updatesDescription')}
               >
                 <div className="rounded-xl border border-gray-200/70 dark:border-white/10 bg-slate-100/40 dark:bg-slate-100/5 px-4 py-3">
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                         ClipsX {currentVersion ?? '...'}
@@ -1212,6 +1186,49 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                     </div>
                   </div>
                 </div>
+              </SettingsSection>
+            </>
+          )}
+
+          {/* ADVANCED TAB */}
+          {activeTab === 'advanced' && (
+            <>
+              <PortableRecovery />
+              <SettingsSection
+                icon={<SettingsIcon className="h-4 w-4" />}
+                title={t('settings.system')}
+                description={t('settings.systemDescription')}
+              >
+                <SettingRow
+                  label={t('settings.autoStart')}
+                  description={t('settings.autoStartDescription')}
+                >
+                  <Switch
+                    checked={settings.auto_start}
+                    onChange={value => void updateSettings({ auto_start: value })}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label={t('settings.copyToast')}
+                  description={t('settings.copyToastDescription')}
+                >
+                  <Switch
+                    checked={settings.show_copy_toast}
+                    onChange={value => void updateSettings({ show_copy_toast: value })}
+                  />
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection
+                icon={<Bug className="h-4 w-4" />}
+                title={t('diagnostics.title')}
+                description={t('diagnostics.description')}
+              >
+                <DiagnosticsActions
+                  preferences={settings}
+                  onPreferencesChange={updates => void updateSettings(updates)}
+                />
               </SettingsSection>
 
               <Card className="shadow-sm">
