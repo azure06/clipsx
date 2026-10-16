@@ -419,9 +419,15 @@ impl RendererContribution for KeyValueRenderer {
     }
     fn render(&self, r: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
         let facet = f.context("facet unavailable")?;
+        // The secret view only explains the classification; the value stays in Original.
+        let text = if facet.id == "core.security.secret" {
+            String::new()
+        } else {
+            r.text_value.clone().unwrap_or_default()
+        };
         Ok(RenderModel::Semantic {
             facet_id: facet.id.clone(),
-            text: r.text_value.clone().unwrap_or_default(),
+            text,
             payload: facet.payload.clone(),
         })
     }
@@ -813,7 +819,7 @@ impl DetectorContribution for SecretDetector {
         "core.security.secret"
     }
     fn version(&self) -> &'static str {
-        "3"
+        "4"
     }
     fn payload_schema_version(&self) -> u64 {
         2
@@ -827,7 +833,7 @@ impl DetectorContribution for SecretDetector {
     }
     fn detect(&self, s: &TextSource) -> Vec<DetectedFacet> {
         let value = s.text.trim();
-        if let Some((kind, warning)) = classify_secret_document(value) {
+        if let Some((kind, warning)) = super::secrets::classify_document(value) {
             vec![DetectedFacet {
                 id: self.id(),
                 name: self.name(),
@@ -841,181 +847,7 @@ impl DetectorContribution for SecretDetector {
 
 /// Reuse deterministic secret detection at the semantic egress boundary, including notes and OCR.
 pub(crate) fn contains_secret(value: &str) -> bool {
-    classify_secret_document(value).is_some()
-}
-
-fn classify_secret_document(value: &str) -> Option<(&'static str, &'static str)> {
-    if let Some(classification) = classify_secret(value) {
-        return Some(classification);
-    }
-
-    // Config files and shell snippets are common clipboard content. Inspect bounded lines and
-    // tokens while keeping the facet attached to the complete representation so the UI hides the
-    // whole source until the user explicitly reveals it.
-    for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let line = line.strip_prefix("export ").unwrap_or(line).trim();
-        if line.starts_with("-----BEGIN ") && line.contains("PRIVATE KEY-----") {
-            return Some(("private_key", "privateKey"));
-        }
-        if let Some(classification) = classify_credential_assignment(line) {
-            return Some(classification);
-        }
-        for token in line.split_ascii_whitespace() {
-            let token = token.trim_matches(|ch: char| {
-                matches!(
-                    ch,
-                    '\'' | '"' | '`' | ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}'
-                )
-            });
-            if let Some(classification) = classify_credential_assignment(token) {
-                return Some(classification);
-            }
-            if let Some(classification) = classify_known_secret(token) {
-                return Some(classification);
-            }
-        }
-    }
-    None
-}
-
-fn classify_secret(value: &str) -> Option<(&'static str, &'static str)> {
-    if value.starts_with("-----BEGIN ") && value.contains("PRIVATE KEY-----") {
-        return Some(("private_key", "privateKey"));
-    }
-    if let Some(classification) = classify_known_secret(value) {
-        return Some(classification);
-    }
-    if let Some(classification) = classify_credential_assignment(value) {
-        return Some(classification);
-    }
-
-    let uuid_like = value.len() == 36
-        && value.matches('-').count() == 4
-        && value.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-');
-    let structured = url::Url::parse(value).is_ok()
-        || value.contains('@')
-        || value.contains('/')
-        || value.contains('\\')
-        || value.matches('.').count() == 2
-        || uuid_like;
-    let opaque = (32..=512).contains(&value.len())
-        && !structured
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '=' | '+'))
-        && value.chars().any(|ch| ch.is_ascii_alphabetic())
-        && value.chars().any(|ch| ch.is_ascii_digit())
-        && value
-            .chars()
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            >= 12;
-    opaque.then_some(("generic_token", "genericToken"))
-}
-
-fn classify_known_secret(value: &str) -> Option<(&'static str, &'static str)> {
-    if value.len() == 20
-        && value.starts_with("AKIA")
-        && value[4..]
-            .chars()
-            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
-    {
-        return Some(("aws_access_key", "awsAccessKey"));
-    }
-    if ((value.starts_with("github_pat_") && value.len() >= 30)
-        || (["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
-            .iter()
-            .any(|prefix| value.starts_with(prefix))
-            && value.len() >= 36))
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return Some(("github_token", "githubToken"));
-    }
-    if ["sk_live_", "sk_test_", "rk_live_", "rk_test_"]
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
-        && value.len() >= 20
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return Some(("stripe_key", "stripeKey"));
-    }
-
-    let known_generic = [
-        ("sk-proj-", 20),
-        ("sk-svcacct-", 20),
-        ("sntrys_", 20),
-        ("xoxb-", 20),
-        ("xoxp-", 20),
-        ("xoxa-", 20),
-        ("npm_", 20),
-    ];
-    if known_generic.iter().any(|(prefix, minimum)| {
-        value.starts_with(prefix)
-            && value.len() >= *minimum
-            && value
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
-    }) || (value.starts_with("AIza")
-        && value.len() == 39
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
-    {
-        return Some(("generic_token", "genericToken"));
-    }
-
-    let jwt_segments = value.split('.').collect::<Vec<_>>();
-    if jwt_segments.len() == 3
-        && jwt_segments[0].starts_with("eyJ")
-        && jwt_segments.iter().all(|segment| {
-            segment.len() >= 8
-                && segment
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
-        })
-    {
-        return Some(("generic_token", "genericToken"));
-    }
-
-    None
-}
-
-fn classify_credential_assignment(value: &str) -> Option<(&'static str, &'static str)> {
-    let lower = value.to_ascii_lowercase();
-    let credential_assignment = value.split_once(['=', ':']).is_some_and(|(key, secret)| {
-        let key = key
-            .trim()
-            .trim_matches(|ch: char| matches!(ch, '\'' | '"'))
-            .to_ascii_lowercase();
-        let secret = secret
-            .trim()
-            .trim_end_matches(',')
-            .trim()
-            .trim_matches(|ch: char| matches!(ch, '\'' | '"'));
-        [
-            "api_key",
-            "apikey",
-            "api-key",
-            "access_key",
-            "client_secret",
-            "secret",
-            "token",
-            "password",
-            "passwd",
-            "pwd",
-        ]
-        .iter()
-        .any(|marker| key.contains(marker))
-            && secret.len() >= 8
-            && !secret.chars().any(char::is_whitespace)
-    }) || lower
-        .strip_prefix("bearer ")
-        .is_some_and(|secret| secret.len() >= 16 && !secret.chars().any(char::is_whitespace));
-    credential_assignment.then_some(("credential_assignment", "credentialAssignment"))
+    super::secrets::classify_document(value).is_some()
 }
 
 static JSON: JsonDetector = JsonDetector;
@@ -1933,15 +1765,11 @@ mod tests {
     }
 
     #[test]
-    fn secret_detector_names_precise_credentials() {
+    fn secret_detector_emits_versioned_kind_payloads() {
         for (value, kind) in [
             ("AKIAIOSFODNN7EXAMPLE", "aws_access_key"),
-            ("ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github_token"),
-            ("sk_test_0123456789abcdefghijklmnop", "stripe_key"),
-            (
-                "-----BEGIN PRIVATE KEY-----\nvalue\n-----END PRIVATE KEY-----",
-                "private_key",
-            ),
+            ("sk-proj-0123456789abcdefghijklmnop", "api_key"),
+            ("API_KEY=Abcdefghijklmnop123456", "credential_assignment"),
         ] {
             let facets = SECRET.detect(&source(value));
             assert_eq!(facets[0].payload["kind"], kind);
@@ -1950,51 +1778,16 @@ mod tests {
     }
 
     #[test]
-    fn secret_detector_keeps_generic_detection_conservative() {
-        assert!(SECRET
-            .detect(&source("api_key=Abcdefghijklmnop123456"))
-            .first()
-            .is_some_and(|facet| facet.payload["kind"] == "credential_assignment"));
-        assert!(SECRET
-            .detect(&source("aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY"))
-            .first()
-            .is_some_and(|facet| facet.payload["kind"] == "generic_token"));
+    fn secret_detector_ignores_unlabeled_tokens_and_identifiers() {
         for value in [
-            "https://example.com/a/long/path/that/is/not/a/secret",
-            "550e8400-e29b-41d4-a716-446655440000",
-            "this is ordinary prose that happens to be longer than thirty two characters",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+            "eyJhbGciOiJub25lIn0.eyJzdWIiOiJjbGlwc3gifQ.c2lnbmF0dXJl",
+            "aB3dE5fG7hJ9kL2mN4pQ6rS8tU0vW1xY",
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709",
         ] {
             assert!(SECRET.detect(&source(value)).is_empty(), "{value}");
         }
     }
 
-    #[test]
-    fn secret_detector_finds_credentials_inside_common_clipboard_documents() {
-        for value in [
-            "APP_NAME=ClipsX\nAPI_KEY=Abcdefghijklmnop123456\nDEBUG=false",
-            "{\n  \"client_secret\": \"correct-horse-battery-staple\"\n}",
-            "curl -H 'Authorization: Bearer' https://example.com -H x-token:ghp_0123456789abcdefghijklmnopqrstuvwxyz",
-            "notes\n-----BEGIN PRIVATE KEY-----\nvalue\n-----END PRIVATE KEY-----",
-            "token=eyJhbGciOiJub25lIn0.eyJzdWIiOiJjbGlwc3gifQ.c2lnbmF0dXJl",
-        ] {
-            assert!(!SECRET.detect(&source(value)).is_empty(), "{value}");
-        }
-    }
-
-    #[test]
-    fn secret_detector_recognizes_current_provider_token_families() {
-        for value in [
-            "github_pat_0123456789abcdefghijklmnopqrstuv",
-            "sk-proj-0123456789abcdefghijklmnop",
-            "sntrys_0123456789abcdefghijklmnop",
-            concat!("xoxb-", "0123456789-abcdefghijklmnop"),
-            "npm_0123456789abcdefghijklmnop",
-            "AIza0123456789abcdefghijklmnopqrstuvwxy",
-        ] {
-            assert!(!SECRET.detect(&source(value)).is_empty(), "{value}");
-        }
-    }
     #[test]
     fn sanitizes_active_html() {
         let safe = sanitize_html(
@@ -2167,7 +1960,7 @@ mod tests {
         assert!(matches!(
             model,
             RenderModel::Semantic { facet_id, text, .. }
-                if facet_id == "core.security.secret" && text == secret
+                if facet_id == "core.security.secret" && text.is_empty()
         ));
     }
 

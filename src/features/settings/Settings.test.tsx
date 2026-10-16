@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
+import { getDefaultGlobalShortcut } from '../../shared/keyboard/shortcuts'
 
 const { mockInvoke } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
@@ -17,7 +18,7 @@ const v2Settings = (overrides: Record<string, unknown> = {}) => ({
   hideOnBlur: false,
   alwaysOnTop: false,
   showCopyToast: true,
-  globalShortcut: 'Ctrl+Shift+V',
+  globalShortcut: getDefaultGlobalShortcut(),
   excludedApps: [],
   autoClearMinutes: null,
   clearOnExit: false,
@@ -96,7 +97,7 @@ describe('useSettingsStore', () => {
     await useSettingsStore.getState().resetSettings()
 
     expect(mockInvoke).toHaveBeenCalledWith('reset_app_settings', undefined)
-    expect(useSettingsStore.getState().settings?.global_shortcut).toBe('Ctrl+Shift+V')
+    expect(useSettingsStore.getState().settings?.global_shortcut).toBe(getDefaultGlobalShortcut())
     expect(useSettingsStore.getState().isLoading).toBe(false)
   })
 
@@ -105,6 +106,53 @@ describe('useSettingsStore', () => {
     expect(DEFAULT_SETTINGS.paste_on_enter).toBe(false)
     expect(DEFAULT_SETTINGS.hide_on_copy).toBe(false)
     expect(DEFAULT_SETTINGS.hide_on_blur).toBe(false)
+  })
+
+  it.each(['Cmd+Shift+V', 'Ctrl+Shift+V', 'Ctrl+Alt+K', ''])(
+    'preserves the saved shortcut %j on load',
+    async saved => {
+      mockInvoke
+        .mockResolvedValueOnce(v2Settings({ globalShortcut: saved }))
+        .mockResolvedValueOnce([])
+      await useSettingsStore.getState().loadSettings()
+      expect(useSettingsStore.getState().settings?.global_shortcut).toBe(saved)
+      expect(mockInvoke).not.toHaveBeenCalledWith('update_app_settings', expect.anything())
+    }
+  )
+
+  it('saves a cleared shortcut and keeps it disabled on reload', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    mockInvoke.mockResolvedValueOnce({
+      settings: v2Settings({ globalShortcut: '' }),
+      failedEffects: [],
+    })
+    await useSettingsStore.getState().updateSettings({ global_shortcut: '' })
+    expect(mockInvoke).toHaveBeenCalledWith('update_app_settings', {
+      settings: { globalShortcut: '' },
+    })
+    mockInvoke.mockResolvedValueOnce(v2Settings({ globalShortcut: '' })).mockResolvedValueOnce([])
+    await useSettingsStore.getState().loadSettings()
+    expect(useSettingsStore.getState().settings?.global_shortcut).toBe('')
+  })
+
+  it('retains the shortcut and exposes registration and clearing failures', async () => {
+    for (const requested of ['Ctrl+Alt+K', '']) {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+      mockInvoke.mockRejectedValueOnce(new Error('Could not register or remove shortcut'))
+      await expect(
+        useSettingsStore.getState().updateSettings({ global_shortcut: requested })
+      ).rejects.toThrow('shortcut')
+      expect(useSettingsStore.getState().settings?.global_shortcut).toBe(
+        DEFAULT_SETTINGS.global_shortcut
+      )
+      expect(useSettingsStore.getState().saveError).toContain('shortcut')
+    }
+  })
+
+  it('exposes shortcut registration failures discovered at startup', async () => {
+    mockInvoke.mockResolvedValueOnce(v2Settings()).mockResolvedValueOnce(['shortcut'])
+    await useSettingsStore.getState().loadSettings()
+    expect(useSettingsStore.getState().failedEffects).toEqual(['shortcut'])
   })
   it('serializes rapid edits without losing successful changes after a failure', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })

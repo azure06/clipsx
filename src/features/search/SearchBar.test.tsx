@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { SearchBar } from './SearchBar'
+import type { TextEmbeddingStatus } from '../../shared/types/v2'
 
 const ScopeHarness = ({
   initialValue = '',
@@ -293,5 +294,20 @@ describe('SearchBar scope slash commands', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
 
     expect(onClear).not.toHaveBeenCalled()
+  })
+  it('reports semantic indexing through a status icon instead of an extra text row', () => {
+    const status = {
+      enabled: true,
+      activeSpaceId: 'space',
+      pendingSpaceId: null,
+      pendingJobs: 3,
+    } as TextEmbeddingStatus
+    const { container } = render(
+      <SearchBar value="" onChange={vi.fn()} onClear={vi.fn()} semanticStatus={status} />
+    )
+
+    const indicator = screen.getByRole('status')
+    expect(indicator).toHaveAttribute('aria-label', expect.stringContaining('indexing'))
+    expect(container.querySelector('.mt-2.px-1')).toBeNull()
   })
 })

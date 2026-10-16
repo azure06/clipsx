@@ -136,6 +136,53 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn global_shortcut_defaults_only_when_absent_and_preserves_saved_choices() {
+        let (temp, repo) = crate::sync::tests::repo().await;
+        assert_eq!(
+            repo.app_settings().await.unwrap().global_shortcut,
+            AppSettings::default().global_shortcut
+        );
+        for saved in ["Cmd+Shift+V", "Ctrl+Shift+V", "Ctrl+Alt+K", ""] {
+            // Emulate preferences saved by an older installation, including its default.
+            sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES('window.global_shortcut',?,0,0) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json")
+                .bind(serde_json::to_string(saved).unwrap())
+                .execute(&repo.pool).await.unwrap();
+            let mut settings = repo.app_settings().await.unwrap();
+            assert_eq!(settings.global_shortcut, saved);
+            settings.theme = "dark".into();
+            repo.save_app_settings(&settings, false).await.unwrap();
+            assert_eq!(repo.app_settings().await.unwrap().global_shortcut, saved);
+        }
+        repo.pool.close().await;
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        let restarted = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        assert_eq!(restarted.app_settings().await.unwrap().global_shortcut, "");
+        let enabled = merge_settings(
+            restarted.app_settings().await.unwrap(),
+            json!({"globalShortcut":"Ctrl+Alt+K"}),
+        )
+        .unwrap();
+        restarted.save_app_settings(&enabled, false).await.unwrap();
+        assert_eq!(
+            restarted.app_settings().await.unwrap().global_shortcut,
+            "Ctrl+Alt+K"
+        );
+        restarted
+            .save_app_settings(&AppSettings::default(), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            restarted.app_settings().await.unwrap().global_shortcut,
+            AppSettings::default().global_shortcut
+        );
+    }
+
     #[test]
     fn patches_preserve_unedited_limits_and_reject_bad_input() {
         let current = AppSettings::default();

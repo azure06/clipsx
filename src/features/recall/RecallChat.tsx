@@ -60,6 +60,10 @@ const SavedSources = createContext<{ threadId: string; sources: RecallSourceSnap
 })
 const SelectContext = createContext<(messageId: string, citation?: number) => void>(() => {})
 const OpenSource = createContext<(id: string) => void>(() => {})
+const AttachmentActions = createContext<{ count: number; clear: () => void }>({
+  count: 0,
+  clear: () => {},
+})
 const textClass =
   'w-full resize-none rounded-lg border border-slate-200 bg-slate-50/60 p-2 text-sm outline-none focus:ring-2 focus:ring-violet-500/50 dark:border-white/10 dark:bg-white/5'
 function MarkdownText({ text }: TextMessagePartProps) {
@@ -209,6 +213,7 @@ function useUndoState() {
 function TranscriptMessage() {
   const { t } = useTranslation()
   const selectContext = useContext(SelectContext)
+  const attachmentActions = useContext(AttachmentActions)
   const messageId = useAuiState(s => s.message.id)
   const role = useAuiState(s => s.message.role)
   const custom = useAuiState(s => s.message.metadata.custom)
@@ -299,6 +304,16 @@ function TranscriptMessage() {
             {t('recallPage.contextOmitted')}
           </p>
         )}
+        {typeof custom['shortenedSources'] === 'number' && custom['shortenedSources'] > 0 && (
+          <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
+            {t('recallPage.evidenceShortened', { count: custom['shortenedSources'] })}
+          </p>
+        )}
+        {typeof custom['omittedSources'] === 'number' && custom['omittedSources'] > 0 && (
+          <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
+            {t('recallPage.evidenceOmitted', { count: custom['omittedSources'] })}
+          </p>
+        )}
         {custom['webRoute'] === 'unavailable' && (
           <p className="mt-1 text-xs text-amber-600 dark:text-amber-300">
             {t('recallPage.webUnavailable')}
@@ -313,6 +328,18 @@ function TranscriptMessage() {
           <p role="status" className="mt-2 text-xs text-amber-600 dark:text-amber-300">
             {t(`recallPage.${incompleteKey}`)}
           </p>
+          {incompleteKey === 'contextBlocked' && attachmentActions.count > 0 && (
+            <ActionBarPrimitive.Reload asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-1.5 h-7 px-2 text-xs"
+                onClick={attachmentActions.clear}
+              >
+                {t('recallPage.removeAttachmentsAndRegenerate')}
+              </Button>
+            </ActionBarPrimitive.Reload>
+          )}
         </AuiIf>
         <ActionBarPrimitive.Root className="mt-2.5 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5 dark:border-white/5">
           <ActionBarPrimitive.Edit asChild>
@@ -380,8 +407,9 @@ export interface RecallChatProps {
   preset: AiModelPreset | null
   filters: ClipFilters
   attachments: ClipRevision[]
-  ask: { id: string; text: string } | null
+  ask: { id: string; text: string; retrieve?: boolean } | null
   onAskConsumed(this: void): void
+  onClearAttachments?(this: void): void
   onRunning(this: void, running: boolean): void
   onComplete(this: void): void
   onOpenSource(this: void, id: string): void
@@ -498,12 +526,13 @@ export function RecallChat(props: RecallChatProps) {
       )
         return
       sent.current = props.ask.id
+      controller.prepareInitialRetrieval(props.ask.retrieve ? props.ask.text : undefined)
       runtime.thread.append(props.ask.text)
       props.onAskConsumed()
     }
     submit()
     return runtime.thread.subscribe(submit)
-  }, [props, runtime])
+  }, [props, runtime, controller])
   return (
     <OpenSource.Provider value={props.onOpenSource}>
       <SavedSources.Provider value={{ threadId: props.thread.id, sources }}>
@@ -536,12 +565,19 @@ export function RecallChat(props: RecallChatProps) {
                     </div>
                   </AuiIf>
                   <div className="mx-auto w-full max-w-3xl space-y-3">
-                    <ThreadPrimitive.Messages
-                      components={{
-                        UserMessage: TranscriptMessage,
-                        AssistantMessage: TranscriptMessage,
+                    <AttachmentActions.Provider
+                      value={{
+                        count: props.attachments.length,
+                        clear: controller.clearAttachments,
                       }}
-                    />
+                    >
+                      <ThreadPrimitive.Messages
+                        components={{
+                          UserMessage: TranscriptMessage,
+                          AssistantMessage: TranscriptMessage,
+                        }}
+                      />
+                    </AttachmentActions.Provider>
                   </div>
                   <AuiIf condition={s => s.thread.isRunning}>
                     <div
@@ -650,7 +686,13 @@ function createChatController(
   refreshSources: () => void
 ) {
   let current = initial
+  let pendingRetrieval: string | undefined
   const adapter = createRecallAdapter({
+    initialRetrieval: () => {
+      const query = pendingRetrieval
+      pendingRetrieval = undefined
+      return query
+    },
     configuration: () => ({
       presetId: current.preset?.id ?? '',
       filters: current.filters,
@@ -670,8 +712,16 @@ function createChatController(
   })
   return {
     adapter,
+    prepareInitialRetrieval: (query: string | undefined) => {
+      pendingRetrieval = query
+    },
     setProps: (next: RecallChatProps) => {
       current = next
+    },
+    // Applies before the regenerate that follows, ahead of the parent re-render.
+    clearAttachments: () => {
+      current = { ...current, attachments: [] }
+      current.onClearAttachments?.()
     },
     onRunning: (running: boolean) => current.onRunning(running),
     onDraft: (text: string) => current.onDraft?.(text),

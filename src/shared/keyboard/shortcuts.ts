@@ -74,11 +74,6 @@ const ACCELERATOR_MODIFIER_LABELS: Record<Platform, Record<ShortcutModifier, str
   },
 }
 
-const DEFAULT_GLOBAL_SHORTCUT_DEF: ShortcutDef = {
-  modifiers: ['primary', 'shift'],
-  key: 'V',
-}
-
 const MODIFIER_TOKEN_TO_MODIFIER: Record<string, ShortcutModifier | 'cmd_or_ctrl'> = {
   primary: 'cmd_or_ctrl',
   cmd: 'primary',
@@ -143,9 +138,9 @@ export const getDeleteShortcut = (platform = getPlatform()): ShortcutDef =>
     ? { modifiers: ['primary'], key: 'Backspace' }
     : { modifiers: [], key: 'Delete' }
 
-export const getDefaultGlobalShortcutDef = (): ShortcutDef => ({
-  modifiers: [...DEFAULT_GLOBAL_SHORTCUT_DEF.modifiers],
-  key: DEFAULT_GLOBAL_SHORTCUT_DEF.key,
+export const getDefaultGlobalShortcutDef = (platform = getPlatform()): ShortcutDef => ({
+  modifiers: platform === 'macos' ? ['primary', 'secondary'] : ['primary', 'alt'],
+  key: 'V',
 })
 
 export const getShortcutChips = (
@@ -283,4 +278,4 @@ export const parseAccelerator = (
 }
 
 export const getDefaultGlobalShortcut = (platform = getPlatform()): string =>
-  toAccelerator(getDefaultGlobalShortcutDef(), platform)
+  toAccelerator(getDefaultGlobalShortcutDef(platform), platform)

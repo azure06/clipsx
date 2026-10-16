@@ -14,6 +14,7 @@ import {
   Pin,
   SlidersHorizontal,
   Check,
+  Loader2,
 } from 'lucide-react'
 import { forwardRef, useRef, useEffect, useState, useImperativeHandle } from 'react'
 import { getPlatform } from '../../shared/keyboard/shortcuts'
@@ -173,6 +174,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
       : semanticStatus && (!isSemanticAvailable || semanticStatus.diagnostic)
         ? t('search.semanticFallback')
         : null
+  const showUnavailableChip = !isSemanticAvailable && semanticStatus && searchSources.length === 0
 
   useEffect(() => {
     if (autoFocus) {
@@ -440,7 +442,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
             </button>
           ) : null}
 
-          {!isSemanticAvailable && semanticStatus && searchSources.length === 0 && (
+          {showUnavailableChip && (
             <div
               className="hidden sm:flex items-center gap-1 rounded-md border border-amber-200/70 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
               title={t('search.semanticFallback')}
@@ -448,6 +450,22 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
               <Sparkles className="w-3.5 h-3.5" />
               <span>{t('search.aiUnavailable')}</span>
             </div>
+          )}
+
+          {/* A fixed-size indicator keeps the layout stable as indexing starts and stops. */}
+          {semanticHint && !showUnavailableChip && (
+            <span
+              role="status"
+              aria-label={semanticHint}
+              title={semanticHint}
+              className="flex h-6 w-6 shrink-0 items-center justify-center text-indigo-500 dark:text-indigo-400"
+            >
+              {isSemanticIndexing && !queryFallback ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-300" />
+              )}
+            </span>
           )}
 
           {value ? (
@@ -469,10 +487,6 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function Se
           )}
         </div>
       </div>
-
-      {semanticHint && (
-        <div className="mt-2 px-1 text-xs text-gray-600 dark:text-gray-400">{semanticHint}</div>
-      )}
 
       {/* Slash-Command Filter Menu */}
       {showFilterMenu && (

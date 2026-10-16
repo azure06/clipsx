@@ -60,6 +60,41 @@ fn tool_inputs_expose_nested_types_without_schema_references() {
     assert_eq!(revision["required"], json!(["clipId", "revision"]));
 }
 
+#[test]
+fn advertised_search_examples_use_explicit_modes_and_valid_contracts() {
+    let tool = tools(false)
+        .into_iter()
+        .find(|tool| tool.name == "search_clips")
+        .unwrap();
+    let schema = json!(tool.input_schema);
+    let examples = schema["examples"].as_array().unwrap();
+    assert_eq!(examples.len(), 3);
+    let requests: Vec<ClipSearchRequest> = examples
+        .iter()
+        .map(|example| super::contracts::parse_tool_arguments(example.clone()).unwrap())
+        .collect();
+    assert_eq!(requests[0].mode, Some(RetrievalMode::Hybrid));
+    assert!(!requests[0].query.is_empty());
+    assert_eq!(requests[1].mode, Some(RetrievalMode::Keyword));
+    assert_eq!(requests[1].query, "ERR_CONNECTION_RESET");
+    assert_eq!(requests[2].mode, Some(RetrievalMode::Keyword));
+    assert!(requests[2].query.is_empty());
+    assert_eq!(
+        requests[2].filters.as_ref().unwrap().scope.as_deref(),
+        Some("pinned")
+    );
+    for request in requests {
+        assert!((1..=50).contains(&request.limit.unwrap()));
+        assert!(request.cursor.is_none());
+    }
+    for field in ["query", "mode", "filters", "cursor"] {
+        assert!(!schema["properties"][field]["description"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+    }
+}
+
 async fn rpc(
     client: &Client,
     url: &str,
@@ -98,6 +133,7 @@ async fn initialize(client: &Client, url: &str, token: &str) -> String {
     let (status,session,result)=rpc(client,url,token,None,json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ClipsX protocol fixture","version":"1"}}})).await;
     assert!(status.is_success(), "{status}: {result}");
     assert_eq!(result["result"]["serverInfo"]["name"], "ClipsX");
+    assert_eq!(result["result"]["instructions"], MCP_INSTRUCTIONS);
     let session = session.unwrap();
     let (status, _, _) = rpc(
         client,
@@ -449,7 +485,7 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
         .0,
         401
     );
-    initialize(&client, &url, &rotated.token).await;
+    let rotated_session = initialize(&client, &url, &rotated.token).await;
     revoke(&service.history, &write.grant.id).await.unwrap();
     runtime.invalidate(&write.grant.id).await;
     assert_eq!(
@@ -464,6 +500,44 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
         .0,
         401
     );
+    let actor = format!("mcp:{}", write.grant.id);
+    let actions_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM assistant_actions WHERE actor_id=?")
+            .bind(&actor)
+            .fetch_one(&service.history.pool)
+            .await
+            .unwrap();
+    assert!(actions_before > 0);
+    delete_grant(&service.history, &write.grant.id)
+        .await
+        .unwrap();
+    delete_grant(&service.history, &read.grant.id)
+        .await
+        .unwrap();
+    runtime.invalidate(&read.grant.id).await;
+    assert!(grants(&service.history).await.unwrap().is_empty());
+    let actions_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM assistant_actions WHERE actor_id=?")
+            .bind(&actor)
+            .fetch_one(&service.history.pool)
+            .await
+            .unwrap();
+    assert_eq!(actions_before, actions_after);
+    assert!(service.metadata(&public).await.is_ok());
+    for session in [Some(rotated_session.as_str()), None] {
+        assert_eq!(
+            rpc(
+                &client,
+                &url,
+                &rotated.token,
+                session,
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})
+            )
+            .await
+            .0,
+            401
+        );
+    }
     configure(
         &service.history,
         McpConfiguration {
@@ -482,6 +556,34 @@ async fn protocol_grants_sessions_images_writes_revocation_and_shutdown() {
         "disabled"
     );
     assert!(client.post(&url).send().await.is_err());
+}
+
+#[tokio::test]
+async fn deleting_a_grant_is_scoped_idempotent_and_rejects_invalid_ids() {
+    let (_temp, service) = repository().await;
+    let first = issue(&service.history, "delete fixture", false, None)
+        .await
+        .unwrap();
+    let other = issue(&service.history, "keep fixture", true, None)
+        .await
+        .unwrap();
+    assert!(delete_grant(&service.history, "invalid").await.is_err());
+    assert_eq!(grants(&service.history).await.unwrap().len(), 2);
+    delete_grant(&service.history, &first.grant.id)
+        .await
+        .unwrap();
+    delete_grant(&service.history, &first.grant.id)
+        .await
+        .unwrap();
+    let remaining = grants(&service.history).await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, other.grant.id);
+    assert!(!remaining[0].revoked);
+    assert!(
+        issue(&service.history, "deleted", false, Some(&first.grant.id))
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

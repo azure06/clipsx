@@ -40,6 +40,21 @@ export function RecallContext({
   const answer =
     (running ? latest : answers.find(message => message.id === selection.messageId)) ?? latest
   const citations = readCitations(answer?.metadata.custom['citations'])
+  const retrieval = answer?.metadata.custom['initialRetrieval']
+  const automatic = isRecord(retrieval) ? retrieval : null
+  const automaticSources = Array.isArray(automatic?.['sources']) ? automatic['sources'] : []
+  const automaticLabels = {
+    searching: t('recallContext.automatic.searching'),
+    ready: t('recallContext.automatic.ready', { count: automaticSources.length }),
+    empty: t('recallContext.automatic.empty'),
+    unavailable: t('recallContext.automatic.unavailable'),
+    budget: t('recallContext.automatic.budget'),
+  }
+  const automaticState = automatic?.['state']
+  const automaticLabel =
+    typeof automaticState === 'string' && Object.hasOwn(automaticLabels, automaticState)
+      ? automaticLabels[automaticState as keyof typeof automaticLabels]
+      : undefined
   const tools = answer?.content.filter(part => part.type === 'tool-call') ?? []
   const searches = tools.filter(part => part.toolName === 'search_clips')
   const citationFor = (source: RecallSourceSnapshot) => {
@@ -93,11 +108,34 @@ export function RecallContext({
       return source.id
     }
   }
-  const retainedIdentities = new Set(retained.map(sourceIdentity))
-  const evidence = [
-    ...retained,
-    ...live.filter(source => !retainedIdentities.has(sourceIdentity(source))),
-  ].filter(source => citationFor(source))
+  const automaticLive: RecallSourceSnapshot[] = automaticSources.flatMap(
+    (value: unknown, index: number) => {
+      if (
+        !answer ||
+        !isRecord(value) ||
+        !isRecord(value['clip']) ||
+        typeof value['clip']['id'] !== 'string'
+      )
+        return []
+      return [
+        {
+          id: 'automatic-' + index,
+          messageId: answer.id,
+          clipId: value['clip']['id'],
+          available: true,
+          assetHash: null,
+          snapshotJson: JSON.stringify(value),
+        },
+      ]
+    }
+  )
+  const seen = new Set<string>()
+  const evidence = [...retained, ...live, ...automaticLive].filter(source => {
+    const identity = sourceIdentity(source)
+    if (!citationFor(source) || seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  })
   const question = answer
     ? messages.slice(0, messages.indexOf(answer)).findLast(message => message.role === 'user')
     : null
@@ -133,6 +171,11 @@ export function RecallContext({
           />
           {questionText && (
             <p className="line-clamp-2 break-words text-xs text-slate-500">{questionText}</p>
+          )}
+          {automaticLabel && (
+            <p role="status" className="text-[11px] leading-relaxed text-slate-500">
+              {automaticLabel}
+            </p>
           )}
           <div>
             <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200">

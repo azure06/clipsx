@@ -387,12 +387,32 @@ fn set_tray_labels(labels: TrayLabels, state: State<'_, HostState>) -> Result<()
 #[serde(rename_all = "camelCase")]
 struct ReleaseInfo {
     updater_configured: bool,
+    version: String,
+    commit: Option<&'static str>,
+    modified: Option<bool>,
+    os: &'static str,
+    architecture: &'static str,
+    build_type: &'static str,
 }
 
 #[tauri::command]
-fn get_release_info(state: State<'_, HostState>) -> ReleaseInfo {
+fn get_release_info(app: tauri::AppHandle, state: State<'_, HostState>) -> ReleaseInfo {
     ReleaseInfo {
         updater_configured: state.updater_configured,
+        version: app.package_info().version.to_string(),
+        commit: option_env!("CLIPSX_BUILD_COMMIT").filter(|value| !value.is_empty()),
+        modified: match option_env!("CLIPSX_BUILD_MODIFIED") {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        },
+        os: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        build_type: if cfg!(debug_assertions) {
+            "development"
+        } else {
+            "release"
+        },
     }
 }
 
@@ -3372,6 +3392,7 @@ pub(crate) fn run() {
             crate::recall::ipc::mcp_list_grants,
             crate::recall::ipc::mcp_issue_grant,
             crate::recall::ipc::mcp_revoke_grant,
+            crate::recall::ipc::mcp_delete_grant,
             crate::recall::ipc::mcp_test_access,
             crate::recall::ipc::ai_configuration_state,
             crate::recall::ipc::ai_configuration_export,
@@ -3576,8 +3597,18 @@ crate::recall::ipc::recall_snapshot_image,
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running ClipsX");
+        .build(tauri::generate_context!())
+        .expect("error while building ClipsX")
+        .run(|app, event| {
+            // Clicking the Dock icon must always surface the window, including
+            // when it is hidden in the tray or sitting behind other windows.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let _ = host::show_main_window_and_focus_search(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]

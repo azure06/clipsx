@@ -221,15 +221,17 @@ describe('Recall workspace context', () => {
       vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_run_begin')
     ).toBe(false)
   })
-  it('keeps the same chat mounted while opening and closing context', async () => {
+  it('opens context by default and keeps the same chat mounted while closing and reopening it', async () => {
     render(<RecallPage />)
     const chat = await screen.findByTestId('chat-submission')
     const toggle = screen.getByRole('button', { name: 'recallContext.title' })
-    fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('chat-submission')).toBe(chat)
     fireEvent.click(screen.getByRole('button', { name: 'recallContext.close' }))
     await waitFor(() => expect(toggle).toHaveFocus())
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('chat-submission')).toBe(chat)
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('chat-submission')).toBe(chat)
   })
   it('keeps draft suggestions available without chat configuration', async () => {
@@ -263,7 +265,6 @@ describe('Recall workspace context', () => {
     })
     render(<RecallPage initialQuery="preview" />)
     await screen.findByTestId('chat-submission')
-    fireEvent.click(screen.getByRole('button', { name: 'recallContext.title' }))
     fireEvent.click(await screen.findByRole('button', { name: 'recallPage.preview' }))
     expect(screen.getByRole('button', { name: 'recallContext.closePreview' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'recallContext.closePreview' }))
@@ -291,7 +292,6 @@ it('attaches at most three suggested clips explicitly without starting generatio
   )
   render(<RecallPage initialQuery="notes" />)
   await screen.findByTestId('chat-submission')
-  fireEvent.click(screen.getByRole('button', { name: 'recallContext.title' }))
   fireEvent.click(await screen.findByRole('button', { name: 'recallContext.attachMatches' }))
   expect(screen.getByTestId('attachments')).toHaveTextContent(
     JSON.stringify(['one', 'two', 'three'].map(clipId => ({ clipId, revision: 'r' })))

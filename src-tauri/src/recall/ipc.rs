@@ -459,6 +459,21 @@ pub async fn mcp_revoke_grant(
 }
 
 #[tauri::command]
+pub async fn mcp_delete_grant(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    runtime: State<'_, super::mcp::McpRuntime>,
+    id: String,
+) -> Result<(), OperationFailure> {
+    service(&webview, &state)?;
+    super::mcp::delete_grant(&state.history, &id)
+        .await
+        .map_err(public_failure)?;
+    runtime.invalidate(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn mcp_test_access(
     webview: tauri::Webview,
     state: State<'_, AppState>,

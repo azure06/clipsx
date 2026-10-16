@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import { Button, Input, Select, Switch } from '../../shared/components/ui'
 import { copyLiteralText } from '../../shared/clipboardOutput'
@@ -27,16 +28,21 @@ import { ModelSettingsPanel } from './ModelSettingsPanel'
 const surface =
   'rounded-2xl border border-slate-200/70 bg-white/55 dark:border-white/10 dark:bg-white/[.025]'
 type Template = 'codex' | 'claude' | 'other'
+const codexRemoveCommand = 'codex mcp remove clipsx'
+const powershellTokenCommand = "$env:CLIPSX_MCP_TOKEN = 'PASTE_YOUR_TOKEN_HERE'"
+const windowsUserTokenCommand =
+  "[Environment]::SetEnvironmentVariable('CLIPSX_MCP_TOKEN', 'PASTE_YOUR_TOKEN_HERE', 'User')"
 
 function CopyText({ value, label }: { value: string; label: string }) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
   return (
-    <div className="space-y-1">
+    <div className="shrink-0 space-y-1">
       <Button
         size="sm"
         variant="ghost"
+        className="whitespace-nowrap"
         aria-label={label}
         leftIcon={copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         onClick={() => {
@@ -67,6 +73,16 @@ function SetupInstructions({
   onTemplate: (value: Template) => void
 }) {
   const { t } = useTranslation()
+  const [shell, setShell] = useState<'powershell' | 'posix'>('powershell')
+  const [codexClient, setCodexClient] = useState<'cli' | 'desktop'>(() =>
+    navigator.userAgent.includes('Windows') ? 'desktop' : 'cli'
+  )
+  const desktop = codexClient === 'desktop'
+  const setTokenCommand = desktop
+    ? windowsUserTokenCommand
+    : shell === 'powershell'
+      ? powershellTokenCommand
+      : "export CLIPSX_MCP_TOKEN='PASTE_YOUR_TOKEN_HERE'"
   const command =
     template === 'codex'
       ? `codex mcp add clipsx --url ${endpoint} --bearer-token-env-var CLIPSX_MCP_TOKEN`
@@ -84,9 +100,10 @@ function SetupInstructions({
           2
         )
   return (
-    <section className={`${surface} space-y-3 p-4`} aria-label={t('mcp.setup')}>
+    <section className={`${surface} grid min-w-0 gap-3 p-4`} aria-label={t('mcp.setup')}>
       <Select
         label={t('mcpWorkspace.assistantApp')}
+        className="w-full"
         value={template}
         onChange={onTemplate}
         options={[
@@ -95,16 +112,66 @@ function SetupInstructions({
           { value: 'other', label: t('mcpWorkspace.other') },
         ]}
       />
-      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{t('mcp.setupHint')}</p>
+      {template !== 'codex' && (
+        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{t('mcp.setupHint')}</p>
+      )}
+      {template === 'codex' && (
+        <div className="grid min-w-0 gap-3 border-t border-slate-200/70 pt-3 dark:border-white/10">
+          <Select
+            label={t('mcpWorkspace.codexClient')}
+            className="w-full"
+            value={codexClient}
+            onChange={setCodexClient}
+            options={[
+              { value: 'cli', label: t('mcpWorkspace.codexCli') },
+              { value: 'desktop', label: t('mcpWorkspace.codexDesktopWindows') },
+            ]}
+          />
+          <h4 className="text-xs font-semibold">
+            {t(desktop ? 'mcpWorkspace.saveWindowsToken' : 'mcpWorkspace.setToken')}
+          </h4>
+          {!desktop && (
+            <Select
+              label={t('mcpWorkspace.terminalShell')}
+              className="w-full"
+              value={shell}
+              onChange={setShell}
+              options={[
+                { value: 'powershell', label: 'PowerShell' },
+                { value: 'posix', label: 'Bash / Zsh' },
+              ]}
+            />
+          )}
+          <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+            {t('mcpWorkspace.setTokenHelp')}
+          </p>
+          <div className="flex justify-end">
+            <CopyText
+              key={`${codexClient}:${shell}`}
+              value={setTokenCommand}
+              label={t('mcpWorkspace.copySetToken')}
+            />
+          </div>
+          <pre className="min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-slate-100/80 p-3 text-xs dark:bg-slate-950/40">
+            {setTokenCommand}
+          </pre>
+        </div>
+      )}
       {template !== 'other' ? (
         <>
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-xs font-semibold">
-              {t(template === 'codex' ? 'mcp.codex' : 'mcp.claude')}
+              {t(
+                template === 'codex'
+                  ? desktop
+                    ? 'mcpWorkspace.registerCodexDesktop'
+                    : 'mcpWorkspace.registerCodex'
+                  : 'mcp.claude'
+              )}
             </h4>
             <CopyText key={command} value={command} label={t('mcpWorkspace.copySetup')} />
           </div>
-          <pre className="max-h-64 overflow-auto rounded-xl bg-slate-100/80 p-3 text-xs dark:bg-slate-950/40">
+          <pre className="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-slate-100/80 p-3 text-xs dark:bg-slate-950/40">
             {command}
           </pre>
         </>
@@ -116,7 +183,74 @@ function SetupInstructions({
           </code>
         </div>
       )}
-      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{t('mcp.localOnly')}</p>
+      {template === 'codex' && (
+        <div className="grid min-w-0 gap-2">
+          <h4 className="text-xs font-semibold">{t('mcpWorkspace.restartAndVerify')}</h4>
+          <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+            {t(desktop ? 'mcpWorkspace.restartDesktop' : 'mcpWorkspace.restartCli')}
+          </p>
+          <details className="min-w-0">
+            <summary className="cursor-pointer text-xs font-medium text-slate-500 focus-visible:outline-violet-500 dark:text-slate-400">
+              {t('mcpWorkspace.setupTroubleshooting')}
+            </summary>
+            <div className="mt-3 grid gap-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+              <p>{t(desktop ? 'mcpWorkspace.windowsTokenScope' : 'mcpWorkspace.tokenSession')}</p>
+              {desktop && <p>{t('mcpWorkspace.sharedCodexConfig')}</p>}
+              <p>
+                {t(
+                  desktop
+                    ? 'mcpWorkspace.desktopTroubleshooting'
+                    : 'mcpWorkspace.cliTroubleshooting'
+                )}
+              </p>
+              <p>{t('mcpWorkspace.verifyMcp')}</p>
+            </div>
+          </details>
+        </div>
+      )}
+      {template === 'codex' && (
+        <details className="min-w-0 border-t border-slate-200/70 pt-3 dark:border-white/10">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700 focus-visible:outline-violet-500 dark:text-slate-200">
+            {t('mcpWorkspace.findToken')}
+          </summary>
+          <div className="mt-3 grid min-w-0 gap-3">
+            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+              {t(desktop ? 'mcpWorkspace.findDesktopTokenHelp' : 'mcpWorkspace.findTokenHelp')}
+            </p>
+            {(desktop
+              ? [
+                  {
+                    shell: 'PowerShell',
+                    command: "[Environment]::GetEnvironmentVariable('CLIPSX_MCP_TOKEN', 'User')",
+                  },
+                ]
+              : [
+                  { shell: 'PowerShell', command: '$env:CLIPSX_MCP_TOKEN' },
+                  { shell: 'Bash / Zsh', command: 'printenv CLIPSX_MCP_TOKEN' },
+                ]
+            ).map(({ shell, command: tokenCommand }) => (
+              <div key={shell} className="min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-semibold">{shell}</h4>
+                  <CopyText
+                    value={tokenCommand}
+                    label={t('mcpWorkspace.copyTokenCommand', { shell })}
+                  />
+                </div>
+                <code className="block break-all rounded-xl bg-slate-100/80 p-3 text-xs dark:bg-slate-950/40">
+                  {tokenCommand}
+                </code>
+              </div>
+            ))}
+            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+              {t('mcpWorkspace.tokenUnavailable')}
+            </p>
+          </div>
+        </details>
+      )}
+      {template !== 'codex' && (
+        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{t('mcp.localOnly')}</p>
+      )}
     </section>
   )
 }
@@ -127,14 +261,25 @@ export const IntegrationsPanel = () => {
   const [grants, setGrants] = useState<McpGrant[]>([])
   const [activity, setActivity] = useState<ClipboardActivity[]>([])
   const [view, setView] = useState('overview')
+  const addButton = useRef<HTMLButtonElement>(null)
+  const restoreAddFocus = useRef(false)
   const [template, setTemplate] = useState<Template>('codex')
   const [port, setPort] = useState('39389')
   const [name, setName] = useState('')
   const [canWrite, setCanWrite] = useState(false)
   const [secret, setSecret] = useState<McpGrantSecret | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deleteButton = useRef<HTMLButtonElement>(null)
+  const [feedback, setFeedback] = useState('')
   const [testToken, setTestToken] = useState('')
   const [testResult, setTestResult] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (view === 'overview' && !busy && restoreAddFocus.current) {
+      addButton.current?.focus({ preventScroll: true })
+      restoreAddFocus.current = false
+    }
+  }, [view, busy])
   const busyRef = useRef(false)
   const [error, setError] = useState(false)
   const refresh = useCallback(async () => {
@@ -170,13 +315,16 @@ export const IntegrationsPanel = () => {
     }
   }
   const navigate = (next: string) => {
+    restoreAddFocus.current = next === 'overview' && view === 'add'
     setView(next)
     setSecret(null)
     setTestToken('')
     setTestResult(null)
     setError(false)
+    setConfirmDelete(false)
+    setFeedback('')
     if (next === 'add') {
-      setName('')
+      setName('Codex')
       setCanWrite(false)
       setTemplate('codex')
     } else if (next !== 'guide') setTemplate('other')
@@ -209,7 +357,7 @@ export const IntegrationsPanel = () => {
   const writeTools = ['create_clip', 'organize_clips', 'undo_clipboard_action']
 
   return (
-    <div role="tabpanel" aria-label={t('mcp.integrations')} className="space-y-4 text-sm">
+    <div role="tabpanel" aria-label={t('mcp.integrations')} className="min-w-0 space-y-4 text-sm">
       {view !== 'overview' && (
         <Button
           variant="ghost"
@@ -231,6 +379,11 @@ export const IntegrationsPanel = () => {
             {t('mcp.refresh')}
           </Button>
         </div>
+      )}
+      {feedback && (
+        <p role="status" className="text-xs text-emerald-700 dark:text-emerald-400">
+          {feedback}
+        </p>
       )}
       {view === 'overview' && (
         <>
@@ -356,6 +509,7 @@ export const IntegrationsPanel = () => {
                 size="sm"
                 disabled={busy || !status}
                 leftIcon={<Plus className="h-3.5 w-3.5" />}
+                ref={addButton}
                 onClick={() => navigate('add')}
               >
                 {t('mcpWorkspace.add')}
@@ -412,10 +566,19 @@ export const IntegrationsPanel = () => {
                     .map(grant => (
                       <li
                         key={grant.id}
-                        className="flex items-center justify-between gap-2 text-xs text-slate-500"
+                        className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500"
                       >
-                        <span className="break-words">{grant.name}</span>
+                        <span className="min-w-0 flex-1 break-words">{grant.name}</span>
                         <span>{t('mcp.revoked')}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          aria-label={t('mcpWorkspace.manageNamed', { name: grant.name })}
+                          onClick={() => navigate(grant.id)}
+                        >
+                          {t('modelsWorkspace.manage')}
+                        </Button>
                       </li>
                     ))}
                 </ul>
@@ -507,6 +670,25 @@ export const IntegrationsPanel = () => {
           icon={<Bot className="h-4 w-4" />}
           onClose={() => navigate('overview')}
         >
+          <ol
+            aria-label={t('mcpWorkspace.connectionSteps')}
+            className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3 text-xs"
+          >
+            {(['accessStep', 'setupStep', 'testStep'] as const).map((step, index) => (
+              <li
+                key={step}
+                className="flex min-w-0 items-start gap-2 text-slate-500 dark:text-slate-400"
+              >
+                <span
+                  aria-hidden
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-500/10 font-semibold text-violet-600 dark:text-violet-300"
+                >
+                  {index + 1}
+                </span>
+                <span className="leading-5">{t(`mcpWorkspace.${step}`)}</span>
+              </li>
+            ))}
+          </ol>
           <form
             className="space-y-4"
             onSubmit={event => {
@@ -514,9 +696,11 @@ export const IntegrationsPanel = () => {
               if (!busy && name.trim()) void issue()
             }}
           >
-            <fieldset className="space-y-4" disabled={busy}>
+            <fieldset className={`${surface} grid min-w-0 gap-4 p-4`} disabled={busy}>
               <Select
                 label={t('mcpWorkspace.assistantApp')}
+                className="w-full py-2"
+                disabled={busy}
                 value={template}
                 onChange={value => {
                   setTemplate(value)
@@ -533,23 +717,45 @@ export const IntegrationsPanel = () => {
                 autoFocus
                 required
                 label={t('mcp.clientName')}
+                helperText={t('mcpWorkspace.nameHelp')}
                 value={name}
                 onChange={setName}
                 maxLength={128}
               />
-              <div className={`${surface} space-y-3 p-4`}>
-                <Switch
-                  label={t('mcp.allowWrites')}
-                  checked={canWrite}
-                  onChange={setCanWrite}
-                  disabled={busy}
-                />
-                <p className="text-xs leading-5 text-slate-500">
+              <div className="space-y-2 border-t border-slate-200/70 pt-4 dark:border-white/10">
+                <div className="flex items-start justify-between gap-3">
+                  <label
+                    htmlFor="assistant-allow-writes"
+                    className="cursor-pointer text-sm font-medium text-slate-900 dark:text-slate-100"
+                  >
+                    {t('mcp.allowWrites')}
+                  </label>
+                  <Switch
+                    id="assistant-allow-writes"
+                    ariaLabel={t('mcp.allowWrites')}
+                    className="shrink-0"
+                    checked={canWrite}
+                    onChange={setCanWrite}
+                    disabled={busy}
+                  />
+                </div>
+                <p className="text-xs font-semibold text-violet-600 dark:text-violet-300">
+                  {t(canWrite ? 'mcpWorkspace.readOrganize' : 'mcp.readOnly')}
+                </p>
+                <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
                   {t(canWrite ? 'mcpWorkspace.writeHelp' : 'mcpWorkspace.readHelp')}
                 </p>
               </div>
             </fieldset>
-            <div className="flex justify-end gap-2">
+            {status?.state !== 'running' && (
+              <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+                {t('mcpWorkspace.enableBeforeConnecting')}
+              </p>
+            )}
+            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+              {t('mcpWorkspace.afterCreate')}
+            </p>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200/70 pt-4 dark:border-white/10">
               <Button
                 size="sm"
                 variant="outline"
@@ -684,6 +890,94 @@ export const IntegrationsPanel = () => {
               <p className="text-xs text-slate-500">{t('mcpWorkspace.revokeHint')}</p>
             </>
           )}
+          <section
+            className="space-y-3 border-t border-slate-200/70 pt-4 dark:border-white/10"
+            aria-label={t('mcpWorkspace.deleteAssistant')}
+          >
+            <div className="grid min-w-0 gap-3">
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                {t('mcpWorkspace.deleteHelp')}
+              </p>
+              <Button
+                ref={deleteButton}
+                size="sm"
+                variant="ghost"
+                className="justify-self-end text-red-600 dark:text-red-400"
+                disabled={busy}
+                aria-expanded={confirmDelete}
+                leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                onClick={() => setConfirmDelete(true)}
+              >
+                {t('mcpWorkspace.deleteAssistant')}
+              </Button>
+            </div>
+            {confirmDelete && (
+              <div
+                className="space-y-3 rounded-xl border border-red-400/20 bg-red-500/5 p-4"
+                onKeyDown={event => {
+                  if (event.key === 'Escape' && !busy) {
+                    event.preventDefault()
+                    setConfirmDelete(false)
+                    deleteButton.current?.focus()
+                  }
+                }}
+              >
+                <h4 className="break-words text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  {t('mcpWorkspace.deleteNamed', { name: selected.name })}
+                </h4>
+                <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                  {t('mcpWorkspace.deleteWarning')}
+                </p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    autoFocus
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirmDelete(false)
+                      deleteButton.current?.focus()
+                    }}
+                  >
+                    {t('common.cancel')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    isLoading={busy}
+                    onClick={() =>
+                      void perform(async () => {
+                        await invoke('mcp_delete_grant', { id: selected.id })
+                        setGrants(previous => previous.filter(grant => grant.id !== selected.id))
+                        navigate('overview')
+                        restoreAddFocus.current = true
+                        setFeedback(t('mcpWorkspace.assistantDeleted', { name: selected.name }))
+                      })
+                    }
+                  >
+                    {t('mcpWorkspace.confirmDelete')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <details className="min-w-0">
+              <summary className="cursor-pointer text-xs font-medium text-slate-500 focus-visible:outline-violet-500 dark:text-slate-400">
+                {t('mcpWorkspace.removeExternal')}
+              </summary>
+              <div className="mt-3 grid min-w-0 gap-2">
+                <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  {t('mcpWorkspace.removeCodexHelp')}
+                </p>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-100/80 p-3 dark:bg-slate-950/40">
+                  <code className="break-all text-xs">{codexRemoveCommand}</code>
+                  <CopyText
+                    value={codexRemoveCommand}
+                    label={t('mcpWorkspace.copyRemoveCommand')}
+                  />
+                </div>
+              </div>
+            </details>
+          </section>
         </ModelSettingsPanel>
       )}
     </div>

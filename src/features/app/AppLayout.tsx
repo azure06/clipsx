@@ -24,6 +24,7 @@ import { type SearchBarHandle } from '../search/SearchBar'
 import { SearchController } from '../search/SearchController'
 import { ResultInteractionBoundary } from '../clipboard/ResultInteractionBoundary'
 import { UpdateBanner } from './UpdateBanner'
+import { GlobalShortcutNotice } from './GlobalShortcutNotice'
 import { ClipPreview } from '../clipboard/ClipPreview'
 import { Sidebar } from '../../shared/components/Sidebar'
 import { TitleBar } from '../../shared/components/TitleBar'
@@ -508,6 +509,7 @@ export const AppLayout = () => {
     >
       {/* 1. TitleBar (Top, Full Width) */}
       <TitleBar />
+      <GlobalShortcutNotice onOpenSettings={() => openSettings('keyboard')} />
 
       {/* Middle Section: Sidebar + Content */}
       <div className="flex flex-1 overflow-hidden">

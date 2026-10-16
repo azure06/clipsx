@@ -30,7 +30,7 @@ permissions = [
   "allow-ai-discover-models",
   "allow-ai-test-connection",
   "allow-mcp-integration-status", "allow-mcp-configure", "allow-mcp-list-grants", "allow-mcp-issue-grant", "allow-mcp-revoke-grant",
-            "allow-mcp-test-access",
+            "allow-mcp-test-access", "allow-mcp-delete-grant",
   "allow-ai-http-start", "allow-ai-http-acknowledge", "allow-ai-http-cancel",
   "allow-assistant-clipboard-status", "allow-assistant-clipboard-filters",
   "allow-assistant-create-clip", "allow-assistant-organize-clips", "allow-assistant-undo-action", "allow-assistant-action-activity",

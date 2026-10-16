@@ -12,26 +12,15 @@ impl GlobalShortcutState {
     }
 
     pub fn clear(&self, app: &tauri::AppHandle) -> Result<(), String> {
-        let mut active = self
-            .active
-            .lock()
-            .map_err(|_| "Global shortcut state is unavailable")?;
-        if let Some(value) = active.as_deref() {
-            let shortcut = value
-                .parse::<Shortcut>()
-                .map_err(|_| "Invalid global shortcut")?;
-            app.global_shortcut()
-                .unregister(shortcut)
-                .map_err(|_| "Unable to remove shortcut")?;
-        }
-        *active = None;
-        Ok(())
+        self.replace(app, "")
     }
 
     pub fn replace(&self, app: &tauri::AppHandle, requested: &str) -> Result<(), String> {
-        requested
-            .parse::<Shortcut>()
-            .map_err(|error| format!("Invalid global shortcut: {error}"))?;
+        if !requested.is_empty() {
+            requested
+                .parse::<Shortcut>()
+                .map_err(|error| format!("Invalid global shortcut: {error}"))?;
+        }
         let manager = app.global_shortcut();
         let mut active = self
             .active
@@ -66,6 +55,13 @@ fn replace_registration(
     mut register: impl FnMut(&str) -> Result<(), String>,
     mut unregister: impl FnMut(&str) -> Result<(), String>,
 ) -> Result<(), String> {
+    if requested.is_empty() {
+        if let Some(previous) = active.as_deref() {
+            unregister(previous).map_err(|error| format!("Could not remove shortcut: {error}"))?;
+        }
+        *active = None;
+        return Ok(());
+    }
     if active.as_deref() == Some(requested) {
         return Ok(());
     }
@@ -87,6 +83,53 @@ fn replace_registration(
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn clearing_unregisters_without_registering_and_is_idempotent() {
+        let removed = RefCell::new(Vec::new());
+        let mut active = Some("Ctrl+Alt+V".to_string());
+        for _ in 0..2 {
+            replace_registration(
+                &mut active,
+                "",
+                |_| panic!("must not register an empty shortcut"),
+                |value| {
+                    removed.borrow_mut().push(value.to_string());
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(active, None);
+        }
+        assert_eq!(removed.into_inner(), ["Ctrl+Alt+V"]);
+    }
+
+    #[test]
+    fn failed_clear_preserves_the_working_shortcut() {
+        let mut active = Some("Ctrl+Alt+V".to_string());
+        let error = replace_registration(
+            &mut active,
+            "",
+            |_| panic!("must not register"),
+            |_| Err("platform failure".into()),
+        )
+        .unwrap_err();
+        assert!(error.contains("Could not remove shortcut"));
+        assert_eq!(active.as_deref(), Some("Ctrl+Alt+V"));
+    }
+
+    #[test]
+    fn disabled_shortcut_can_be_enabled_again() {
+        let mut active = None;
+        replace_registration(
+            &mut active,
+            "Ctrl+Alt+V",
+            |_| Ok(()),
+            |_| panic!("must not unregister"),
+        )
+        .unwrap();
+        assert_eq!(active.as_deref(), Some("Ctrl+Alt+V"));
+    }
 
     #[test]
     fn successful_replacement_registers_before_unregistering() {

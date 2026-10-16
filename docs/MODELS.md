@@ -417,13 +417,22 @@ Auth session; revoked sessions cannot replace their device identity.
 
 ### Settings changes and recovery
 
+The device-local show/hide shortcut defaults to Ctrl+Cmd+V on macOS and
+Ctrl+Alt+V on Windows/Linux when no saved preference exists. Saved bindings
+are preserved, including previous defaults. Clearing the shortcut saves an
+empty string and unregisters it; it stays disabled across restarts. Reset
+settings restores the platform default. Registration failures appear in the
+main window and Keyboard settings, where users can choose another binding,
+disable it, or retry after resolving a conflict. Desktop sessions without
+global shortcut support can leave it disabled and open ClipsX from the tray.
+
 | Operation                    | Guarantee                                                                                                                                                     |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Read                         | Coherent SQLite snapshot                                                                                                                                      |
 | Save                         | Host validates patch against latest values under one lifecycle lock; commits capture/profile/device values and outbox together                                |
 | Frontend edits               | Serialized; display committed values; preserve unedited fields, including exact byte limits                                                                   |
 | Native effects               | Startup reconciles autostart, shortcuts, window behaviour, logging, retention; failures have Retry                                                            |
-| Shortcut edit                | Register replacement before removing old binding; persist after success; restore old registration if save fails and report failed rollback                    |
+| Shortcut edit                | Register replacement before removing old binding, or unregister when cleared; persist after success; restore old registration if save fails and report failed rollback |
 | Retention failure after save | Report failed effect, not an unsaved setting                                                                                                                  |
 | Reset settings               | Restore defaults and logging; clear built-in shortcut overrides/pending intent; preserve clips, account, Intelligence, renderer/extension settings and grants |
 | App language change          | Atomically invalidate automatic-language OCR; recover interrupted jobs after restart                                                                          |
@@ -476,7 +485,7 @@ bytes remain unchanged on failure, cancellation, or disablement.
 
 ## Local MCP grants
 
-`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
+`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation retains the row; deletion removes it and its verifier. Both cancel the client's session service. Deletion retains clipboard actions under their original actor ID without retaining the grant's name. See [MCP integration](MCP.md) for the transport and setup contract.
 
 ## Named AI configurations
 
@@ -537,3 +546,7 @@ Conversations and their attachments remain outside clipboard and configuration s
 `ai_model_observations` stores normalized nonsecret observations keyed by provider, connection, endpoint and model identity. Observations expire after five minutes and do not establish exact token counts. Ollama training capacity and configured runner capacity remain distinct. Run contexts freeze resolved input/output policy and capability observations; saved preset numbers are not rewritten by run resolution.
 
 `recall_context_summaries` stores at most 16 derived summaries per thread, bounded to 32 KiB each. A summary identifies its covered message and a fingerprint of that message's ancestry and content. Reads reject stale summaries; unfinished assistant messages cannot be covered. Summaries cascade with conversation deletion, stay outside sync and exports, and never replace transcripts, source snapshots or action records. Schema upgrades append migrations and preserve intermediate development databases.
+
+Recall fits attached and auto-retrieved evidence to the frozen input limit. Small sources stay whole; larger ones become excerpts marked `truncated` with `shownBytes` and the original `totalBytes`. Native text pages are also marked partial. Sources without room for a useful excerpt are omitted and not cited. The reply records `shortenedSources` and `omittedSources`, and the model is told its evidence is partial. The question stays intact; completed conversation may be compacted into a summary.
+
+During a run, clipboard reads share the remaining context budget, including parallel tool calls. Text pages and search counts are bounded; results whose serialized contents still cannot fit are withheld without citations. Reads return `context_budget_exhausted` when there is no useful room. A run can still block when its required question, instructions, tool definitions or in-flight exchanges cannot fit, or history compaction fails. When attachments are present, the recovery action removes them before regenerating.
