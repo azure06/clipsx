@@ -485,7 +485,7 @@ bytes remain unchanged on failure, cancellation, or disablement.
 
 ## Local MCP grants
 
-`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation cancels the client's session service. See [MCP integration](MCP.md) for the transport and setup contract.
+`assistant_mcp_grants` stores named read-only or read/write grants, SHA-256 bearer-token verifiers, and creation, rotation and revocation times. Raw tokens appear only in creation/rotation responses. Grants are device-local and independent of provider credentials, conversations, clip retention and configuration sync. Revocation retains the row; deletion removes it and its verifier. Both cancel the client's session service. Deletion retains clipboard actions under their original actor ID without retaining the grant's name. See [MCP integration](MCP.md) for the transport and setup contract.
 
 ## Named AI configurations
 

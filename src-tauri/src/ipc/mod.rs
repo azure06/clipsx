@@ -3392,6 +3392,7 @@ pub(crate) fn run() {
             crate::recall::ipc::mcp_list_grants,
             crate::recall::ipc::mcp_issue_grant,
             crate::recall::ipc::mcp_revoke_grant,
+            crate::recall::ipc::mcp_delete_grant,
             crate::recall::ipc::mcp_test_access,
             crate::recall::ipc::ai_configuration_state,
             crate::recall::ipc::ai_configuration_export,

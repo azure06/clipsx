@@ -28,6 +28,7 @@ fn main() {
             "mcp_list_grants",
             "mcp_issue_grant",
             "mcp_revoke_grant",
+            "mcp_delete_grant",
             "mcp_test_access",
             "ai_configuration_state",
             "ai_configuration_export",
