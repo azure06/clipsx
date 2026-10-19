@@ -156,6 +156,7 @@ fn activate_main_window(app: &tauri::AppHandle, focus_search: bool) -> Result<()
 }
 
 fn run_activation(app: &tauri::AppHandle, window: &tauri::Window, id: u64, focus_search: bool) {
+    tauri::async_runtime::block_on(super::window_size::controller(app).wait_until_ready());
     let started = Instant::now();
     let stage = Arc::new(AtomicU8::new(ActivationStage::Scheduled as u8));
     let completed = Arc::new(AtomicBool::new(false));
@@ -286,7 +287,8 @@ pub fn toggle_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     let focused = main_window_is_active(&window);
     let minimized = window.is_minimized().unwrap_or(false);
     match shortcut_window_action(visible, focused, minimized) {
-        MainWindowAction::Hide => window.hide().map_err(|error| error.to_string()),
+        MainWindowAction::Hide => tauri::async_runtime::block_on(super::window_size::hide(window))
+            .map_err(|error| error.to_string()),
         MainWindowAction::Show => show_main_window_and_focus_search(app),
     }
 }

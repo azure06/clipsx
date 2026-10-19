@@ -3,6 +3,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::contracts::HistoryPreview;
 
+/// Device-local normal window content size, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub(crate) struct NormalWindowSize {
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Default for NormalWindowSize {
+    fn default() -> Self {
+        Self {
+            width: 1100.0,
+            height: 600.0,
+        }
+    }
+}
+
+impl NormalWindowSize {
+    pub fn is_valid(self) -> bool {
+        self.width.is_finite() && self.height.is_finite() && self.width > 0.0 && self.height > 0.0
+    }
+
+    pub fn approximately_eq(self, other: Self) -> bool {
+        (self.width - other.width).abs() < 1.0 && (self.height - other.height).abs() < 1.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureSettings {
