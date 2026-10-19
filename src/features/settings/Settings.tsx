@@ -131,7 +131,9 @@ export const ShortcutRecorder = ({ value, onChange }: ShortcutRecorderProps) => 
           ref={containerRef}
           aria-label={t('settings.shortcutAria')}
           aria-pressed={isRecording}
-          onClick={() => {
+          onClick={event => {
+            // WebKit does not automatically focus buttons clicked with the mouse.
+            event.currentTarget.focus()
             setIsRecording(true)
             setPendingShortcut(null)
           }}

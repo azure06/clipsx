@@ -1,10 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { Settings, ShortcutRecorder } from './Settings'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUpdaterStore } from '../../stores/updaterStore'
 import { DEFAULT_SETTINGS } from '../../shared/types/settings'
+import { CommandShortcuts } from './components/CommandShortcuts'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn().mockResolvedValue([]) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -17,6 +18,47 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../shared/hooks/useTheme', () => ({ useTheme: () => ({ setThemeMode: vi.fn() }) }))
 
 describe('global shortcut recorder', () => {
+  it('takes focus when clicking does not automatically focus the recorder', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<ShortcutRecorder value="" onChange={onChange} />)
+    const recorder = screen.getByRole('button', { name: 'settings.shortcutAria' })
+    expect(recorder).not.toHaveFocus()
+    // Dispatch only the click: unlike user.click, this does not supply browser focus.
+    fireEvent.click(recorder)
+    expect(recorder).toHaveFocus()
+    await user.keyboard('{Control>}{Alt>}v{/Alt}{/Control}')
+    expect(onChange).toHaveBeenCalledWith('Ctrl+Alt+V')
+  })
+
+  it('focuses the built-in command recorder and saves the captured keys', async () => {
+    const user = userEvent.setup()
+    invoke.mockImplementation((command: string) => {
+      if (command === 'get_command_shortcuts') return Promise.resolve({})
+      if (command === 'get_command_catalog') {
+        return Promise.resolve([
+          {
+            id: 'core.focus_search',
+            labelKey: 'commands.focusSearch',
+            defaultShortcut: 'Primary+K',
+            effectiveShortcut: 'Primary+K',
+          },
+        ])
+      }
+      return Promise.resolve(null)
+    })
+    render(<CommandShortcuts />)
+    const recorder = await screen.findByRole('button', { name: 'commands.record' })
+    fireEvent.click(recorder)
+    expect(recorder).toHaveFocus()
+    await user.keyboard('{Control>}{Shift>}k{/Shift}{/Control}')
+    await user.click(screen.getByRole('button', { name: 'common.save' }))
+    expect(invoke).toHaveBeenCalledWith('set_command_shortcut', {
+      commandId: 'core.focus_search',
+      accelerator: 'Primary+Shift+K',
+    })
+  })
+
   it('clears an existing shortcut using the keyboard and shows the disabled state', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
