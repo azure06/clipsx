@@ -412,7 +412,7 @@ fn unpack(archive: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut files = BTreeMap::new();
     for index in 0..zip.len() {
         let mut file = zip.by_index(index)?;
-        let name = file.name().to_owned();
+        let name = file.name()?.into_owned();
         if !allowed_path(&name)
             || name.contains('\\')
             || name.starts_with('.')

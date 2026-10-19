@@ -14,6 +14,7 @@ pub(crate) mod state;
 pub(crate) mod telemetry;
 pub(crate) mod window_behavior;
 pub(crate) mod window_chrome;
+pub(crate) mod window_size;
 pub(crate) mod workers;
 
 pub fn run() {

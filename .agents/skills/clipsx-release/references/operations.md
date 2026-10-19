@@ -213,7 +213,7 @@ before the shared production frontend build. Native jobs verify those exact
 assets and CSP before compilation. Environment variables can be supplied directly in CI or
 loaded from the ignored local `.env`. macOS production builds require hardened
 runtime and real Developer ID credentials; development's ad-hoc defaults remain
-separate. Windows publishes NSIS only. Native tests explicitly select the
+separate. Windows publishes NSIS only. The updater disables unused ZIP support: Windows uses the signed EXE, Linux uses raw AppImage/deb, and macOS retains tar.gz support. Native tests explicitly select the
 application binary to avoid Windows library-test GUI linking. macOS OCR explicitly
 links Vision and CoreImage so runtime class discovery also works in headless test
 processes. Both Mac architectures must pass language discovery and bitmap OCR.

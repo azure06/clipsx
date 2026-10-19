@@ -1,6 +1,6 @@
 [package]
 name = "clipsx"
-version = "0.1.6"
+version = "0.1.7"
 description = "Free, programmable desktop clipboard"
 license = "Apache-2.0"
 authors = ["gabriele.sato"]
@@ -70,7 +70,7 @@ semver = "1.0"
 toml = "0.8"
 wasmtime = { version = "=48.0.6", default-features = false, features = ["async", "cache", "component-model", "component-model-async", "cranelift", "runtime", "std"] }
 wit-component = "0.247.0"
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 rtf-parser = { version = "0.4.3", default-features = false }
 pulldown-cmark = "0.13.4"
 scraper = "0.27.0"
@@ -82,7 +82,8 @@ tauri-plugin-autostart = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-tauri-plugin-updater = "2"
+# Published updates use NSIS EXE, raw AppImage/deb and macOS tar.gz; ZIP updates are unused.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 ts-rs = "=12.0.1"
 schemars = "=1.2.2"
 iana-time-zone = "=0.1.65"

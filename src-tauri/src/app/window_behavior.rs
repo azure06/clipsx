@@ -8,7 +8,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::Window;
+use tauri::{Manager, Window};
 
 const BLUR_DELAY: Duration = Duration::from_millis(250);
 const INTERACTION_GUARD: Duration = Duration::from_millis(300);
@@ -79,7 +79,15 @@ impl WindowBehaviorState {
             {
                 return;
             }
-            let _ = window.hide();
+            // Sample before hiding, without holding the native event loop or
+            // delaying focus handoff for persistence. Recheck after the sample.
+            let controller = super::window_size::controller(window.app_handle());
+            controller.remember_before_hide(window.clone()).await;
+            if state.generation.load(Ordering::SeqCst) == generation
+                && !window.is_focused().unwrap_or(true)
+            {
+                let _ = window.hide();
+            }
         });
     }
 }

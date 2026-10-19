@@ -65,6 +65,14 @@ Diagnostic logging uses the device-local boolean `diagnostics.logging_enabled`
 it. Settings read a consistent SQLite snapshot and commit host-validated patches
 with their sync outbox entries atomically.
 
+The device-local `window.normal_size` value stores the main window's normal
+content width and height in logical pixels. Missing or invalid values use the
+1100 × 600 default. Native window lifecycle code saves settled resizes and
+captures the latest normal size before hiding or restarting; screen fitting
+does not replace the saved preference. Geometry is excluded from configuration
+sync and portable exports. Ordinary settings reset preserves it; factory reset
+removes it with the device database.
+
 ### Why settings are stored as JSON values in SQLite
 
 ClipsX uses JSON as the **settings format**, but SQLite as the **persistence layer**. Each setting is stored under a stable namespaced key in either profile or device scope.

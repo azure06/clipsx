@@ -1265,6 +1265,28 @@ impl HistoryRepository {
         Ok(settings)
     }
 
+    pub(crate) async fn normal_window_size(&self) -> Result<Option<NormalWindowSize>> {
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value_json FROM config_device_values WHERE key='window.normal_size'",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(value
+            .and_then(|value| serde_json::from_str::<NormalWindowSize>(&value).ok())
+            .filter(|size| size.is_valid()))
+    }
+
+    pub(crate) async fn set_normal_window_size(&self, size: NormalWindowSize) -> Result<()> {
+        if !size.is_valid() {
+            bail!("window dimensions must be finite and positive");
+        }
+        let now = now_ms();
+        sqlx::query("INSERT INTO config_device_values(key,value_json,created_at,updated_at) VALUES('window.normal_size',?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+            .bind(serde_json::to_string(&size)?).bind(now).bind(now)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn history_split_ratio(&self) -> Result<f64> {
         let value: Option<String> = sqlx::query_scalar(
             "SELECT value_json FROM config_device_values WHERE key='window.history_split_ratio'",

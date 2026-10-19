@@ -108,7 +108,9 @@ export function CommandShortcuts() {
                   type="button"
                   aria-label={t('commands.record', { action: label })}
                   aria-pressed={recording === command.id}
-                  onClick={() => {
+                  onClick={event => {
+                    // Recording needs keyboard focus even when WebKit does not focus on click.
+                    event.currentTarget.focus()
                     setDraft({ id: command.id, value })
                     setRecording(command.id)
                     setError(null)

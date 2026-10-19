@@ -350,7 +350,8 @@ fn factory_reset(
 }
 
 #[tauri::command]
-fn restart_app(app: tauri::AppHandle) {
+async fn restart_app(app: tauri::AppHandle) {
+    crate::app::window_size::flush(&app).await;
     app.request_restart();
 }
 
@@ -1800,7 +1801,7 @@ async fn execute_clipboard_output_impl(
     }
     let focus_target = host_state.take_paste_target();
     if let Ok(window) = host::main_window(&app) {
-        if let Err(error) = window.hide() {
+        if let Err(error) = crate::app::window_size::hide(window).await {
             let message = error.to_string();
             let _ = app.emit("paste-failed", &message);
             return Err(message);
@@ -2919,6 +2920,9 @@ fn recover_startup(
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
+        .manage(std::sync::Arc::new(
+            crate::app::window_size::WindowSizeController::default(),
+        ))
         .manage(crate::recall::transport::Transport::default())
         .manage(crate::recall::mcp::McpRuntime::default())
         .manage(crate::recall::agent::AgentRuntime::default())
@@ -3038,6 +3042,9 @@ pub(crate) fn run() {
             }
         })
         .setup(|app| {
+            let _window_startup = crate::app::window_size::StartupGuard(
+                crate::app::window_size::controller(app.handle()),
+            );
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
@@ -3169,6 +3176,9 @@ pub(crate) fn run() {
                     Ok(services) => services,
                     Err(error) => { recover_startup(app.handle(), Some(roots), "services_initialize", &error); return Ok(()); }
                 };
+                if let Ok(window) = host::main_window(app.handle()) {
+                    crate::app::window_size::controller(app.handle()).restore(&window, &history);
+                }
                 if let Err(error)=tauri::async_runtime::block_on(crate::recall::configuration::migrate_legacy(&history)) { recover_startup(app.handle(),Some(roots),"ai_configuration_migrate",&error); return Ok(()); }
                 if let Err(error)=tauri::async_runtime::block_on(crate::recall::conversations::recover(&history)) { recover_startup(app.handle(),Some(roots),"recall_conversations_recover",&error); return Ok(()); }
                 crate::diagnostic!("startup.services.ready");
@@ -3592,14 +3602,37 @@ crate::recall::ipc::recall_snapshot_image,
                     _ => {}
                 }
             }
+            if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }) {
+                crate::app::window_size::controller(window.app_handle()).resized(window.clone());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::app::window_size::hide(window).await;
+                });
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building ClipsX")
         .run(|app, event| {
+            // Restart is flushed by restart_app before requesting it; Tauri does
+            // not allow preventing a restart ExitRequested event.
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                let controller = crate::app::window_size::controller(app);
+                if *code != Some(tauri::RESTART_EXIT_CODE) && !controller.exit_ready() {
+                    api.prevent_exit();
+                    if controller.begin_exit() {
+                        let app = app.clone();
+                        let code = code.unwrap_or(0);
+                        tauri::async_runtime::spawn(async move {
+                            crate::app::window_size::flush(&app).await;
+                            controller.finish_exit();
+                            app.exit(code);
+                        });
+                    }
+                }
+            }
             // Clicking the Dock icon must always surface the window, including
             // when it is hidden in the tray or sitting behind other windows.
             #[cfg(target_os = "macos")]

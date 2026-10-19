@@ -224,6 +224,18 @@ Z-order, confirms foreground within a bound, then focuses the embedded webview.
 OS refusal is visible. Stage/timing diagnostics and a watchdog report stalls
 without releasing the single-flight guard or starting competing workers.
 
+Main-window size is restored once, before startup activation, including hidden
+autostart. Early activations wait for restoration; storage recovery releases
+them with the default geometry. Restarts use the last normal content dimensions
+in logical pixels, centered on the startup display where the OS permits it.
+The window fits the monitor work area, accounting for native borders; its
+600 × 450 minimum is reduced only when the display is smaller. Temporary fitting
+does not overwrite the preferred size. Position, minimized, maximized and
+fullscreen states are not restored. Same-session activation preserves geometry.
+Native resizes settle for 500 ms before saving, and hide/quit/restart capture
+the latest normal size. Writes are serialized; failures never block startup or
+exit. The persistence contract is in [the data model](../../../../docs/MODELS.md).
+
 The device-local `window.history_split_ratio` defaults to 0.50; valid range is
 0.20–0.80. Layout subtracts the separator and preserves 280 px history / 420 px
 preview minimums where possible; narrow windows scale minima without rewriting
