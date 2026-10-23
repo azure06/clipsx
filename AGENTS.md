@@ -11,6 +11,18 @@ Rust in `src-tauri/`, and shared frontend controls in `src/shared/components/ui/
 - Update affected documentation when behavior or architecture changes. Describe the current intended system, not change history.
 - Run relevant checks and add meaningful regression tests when behavior changes.
 
+## Branch workflow
+
+Use `develop` → `release/<version>` → `main` for desktop releases.
+Ordinary work targets `develop`; working directly there is the default. Use a
+short-lived feature branch when isolation or review needs it, then merge into
+`develop` and remove the branch locally and remotely.
+
+When ready, create the release branch from checked `develop`. Finish release
+validation and candidate certification there before merging into `main`, using
+the release skill. Bring release fixes back into `develop` so the branches stay
+aligned. Do not push ordinary feature work directly to `main`.
+
 ## Navigation
 
 When `.codegraph/` exists, use CodeGraph before broad searches or file reads to
