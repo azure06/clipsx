@@ -85,6 +85,9 @@ pub struct AiSelections {
     #[serde(default)]
     pub default_decision: Option<String>,
     #[serde(default)]
+    #[ts(optional = nullable)]
+    pub privacy_decision: Option<String>,
+    #[serde(default)]
     pub active_rerank: Option<String>,
 }
 dto!(AiConfiguration { version: u32, connections: Vec<AiConnection>, presets: Vec<AiModelPreset>, selections: AiSelections });

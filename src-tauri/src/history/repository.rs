@@ -259,6 +259,7 @@ impl HistoryRepository {
         }) {
             bail!("representation exceeds configured limit")
         }
+        let privacy = crate::ai::privacy::evaluate(self, &snapshot).await?;
         let fingerprint = capture_fingerprint(&snapshot.representations);
         let now = now_ms();
         let mut tx = self.pool.begin().await?;
@@ -274,6 +275,7 @@ impl HistoryRepository {
                 let source_platform = source_platform(snapshot.source_app_id.as_deref());
                 sqlx::query("UPDATE clip_items SET captured_at=?, updated_at=?, source_app_name=?, source_app_id=?, source_app_platform=? WHERE id=?").bind(now).bind(now).bind(&snapshot.source_app_name).bind(&snapshot.source_app_id).bind(source_platform).bind(&id).execute(&mut *tx).await?;
                 replace_format_observations(&mut tx, &id, &snapshot.format_observations).await?;
+                privacy.persist(&mut tx, &id).await?;
                 enqueue_capture_intents(&mut tx, &id, &snapshot, false, now).await?;
                 tx.commit().await?;
                 return Ok((id, true));
@@ -291,6 +293,7 @@ impl HistoryRepository {
             .bind(&id)
             .execute(&mut *tx)
             .await?;
+        privacy.persist(&mut tx, &id).await?;
         if !force_new {
             enqueue_capture_intents(&mut tx, &id, &snapshot, true, now).await?;
         }

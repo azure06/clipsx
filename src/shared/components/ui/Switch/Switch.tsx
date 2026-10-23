@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 
 type SwitchSize = 'sm' | 'md'
@@ -34,12 +35,14 @@ export const Switch = ({
   ariaLabel,
   id,
 }: SwitchProps) => {
+  const generatedId = useId()
+  const controlId = id ?? generatedId
   const { root, thumb } = sizeClasses[size]
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <SwitchPrimitive.Root
-        id={id}
+        id={controlId}
         checked={checked}
         onCheckedChange={onChange}
         disabled={disabled}
@@ -51,7 +54,10 @@ export const Switch = ({
         />
       </SwitchPrimitive.Root>
       {label && (
-        <label className="text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer">
+        <label
+          htmlFor={controlId}
+          className="text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer"
+        >
           {label}
         </label>
       )}

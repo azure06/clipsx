@@ -48,13 +48,14 @@ async fn fixture() -> (tempfile::TempDir, HistoryRepository, AiConfiguration) {
         });
     }
     let document = AiConfiguration {
-        version: 3,
+        version: 4,
         connections: vec![connection, other],
         selections: AiSelections {
             default_chat: Some(presets[0].id.clone()),
             extension_generation: Some(presets[0].id.clone()),
             active_embedding: Some(presets[1].id.clone()),
             default_decision: Some(presets[2].id.clone()),
+            privacy_decision: Some(presets[2].id.clone()),
             active_rerank: Some(presets[3].id.clone()),
             web_search: None,
         },

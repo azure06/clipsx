@@ -171,6 +171,7 @@ pub struct RuntimeBrokerContext {
     pub injected_headers: BTreeMap<String, BTreeMap<String, String>>,
     pub protected_secrets: Vec<Vec<u8>>,
     pub generation_allowed: bool,
+    pub decision_allowed: bool,
     pub generation_cancellation: crate::providers::contracts::generation::GenerationCancellation,
     pub invocation_failure: Arc<tokio::sync::Mutex<Option<OperationFailure>>>,
     pub package_id: String,

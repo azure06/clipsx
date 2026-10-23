@@ -371,7 +371,7 @@ async fn revision(repo: &HistoryRepository, package_id: &str, column: &str) -> R
 
 async fn provider_revision(repo: &HistoryRepository) -> Result<i64> {
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'",
+        "SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')",
     )
     .fetch_optional(&repo.pool)
     .await?
@@ -454,7 +454,7 @@ pub(crate) async fn run_next(
                 _ = watcher_cancel.cancelled() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
             }
-            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')),0)")
                 .bind(&watcher_job).fetch_optional(&watcher_repo.pool).await.unwrap_or(None);
             if active != Some(claim) {
                 watcher_cancel.cancel();
@@ -601,7 +601,7 @@ async fn persist_outputs(
     }
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
-    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')),0)")
             .bind(job_id)
             .bind(claim)
             .fetch_optional(&mut *tx)

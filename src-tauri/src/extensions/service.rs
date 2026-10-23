@@ -36,6 +36,20 @@ use super::{
     OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
 
+async fn providers_available(repo: &HistoryRepository, providers: &[String]) -> Result<bool> {
+    for provider in providers {
+        let available = match provider.as_str() {
+            "generation.text" => crate::providers::generation::available(repo).await?,
+            "decision.text" => crate::ai::decision::available(repo).await?,
+            _ => false,
+        };
+        if !available {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 const RELEASE_REDIRECT_LIMIT: usize = 5;
 const RELEASE_DOWNLOAD_HOSTS: &[&str] = &[
     "github.com",
@@ -374,8 +388,8 @@ impl ExtensionService {
         let installed = entry.installed.clone();
         let (activations, transformers, automation_permissions) = if installed.is_some() {
             let (_, package) = self.package_for_settings(repo, package_id).await?;
-            let provider_available = package.manifest.permissions.providers.is_empty()
-                || crate::providers::generation::available(repo).await?;
+            let provider_available =
+                providers_available(repo, &package.manifest.permissions.providers).await?;
             let transformers = package
                 .manifest
                 .contributions
@@ -997,7 +1011,7 @@ impl ExtensionService {
         detectors: &[ActiveContribution],
         force: bool,
     ) -> Result<usize> {
-        if detectors.is_empty() {
+        if detectors.is_empty() || crate::ai::privacy::restricted(repo, clip_id).await? {
             return Ok(0);
         }
         let settled: HashSet<(String, String, String)> = if force {
@@ -1511,11 +1525,7 @@ impl ExtensionService {
                 setups: item.declaration.setups,
                 default_view: item.declaration.default_view,
                 result_controls: item.declaration.result_controls,
-                provider_available: !item
-                    .providers
-                    .iter()
-                    .any(|provider| provider == "generation.text")
-                    || crate::providers::generation::available(repo).await?,
+                provider_available: providers_available(repo, &item.providers).await?,
                 setup_availability,
                 custom_availability,
             });
@@ -2244,13 +2254,8 @@ impl ExtensionService {
                 .failure()
                 .into());
         }
-        if contribution
-            .providers
-            .iter()
-            .any(|value| value == "generation.text")
-            && !crate::providers::generation::available(repo).await?
-        {
-            bail!("generation.text provider is not configured");
+        if !providers_available(repo, &contribution.providers).await? {
+            bail!("required model provider is not configured");
         }
         let token = uuid::Uuid::now_v7().to_string();
         let expires_at = now_ms() + 30_000;
@@ -3223,6 +3228,10 @@ impl ExtensionService {
                 .providers
                 .iter()
                 .any(|provider| provider == "generation.text"),
+            decision_allowed: contribution
+                .providers
+                .iter()
+                .any(|provider| provider == "decision.text"),
             generation_cancellation:
                 crate::providers::contracts::generation::GenerationCancellation::default(),
             invocation_failure: Default::default(),
@@ -3309,12 +3318,7 @@ impl ExtensionService {
                 contribution.declaration.input_limit_bytes,
             )));
         }
-        if contribution
-            .providers
-            .iter()
-            .any(|provider| provider == "generation.text")
-            && !crate::providers::generation::available(repo).await?
-        {
+        if !providers_available(repo, &contribution.providers).await? {
             return Ok(ExtensionActionState::Disabled(
                 "Text generation provider is not configured".into(),
             ));
@@ -3357,6 +3361,9 @@ impl ExtensionService {
         detail: &crate::history::ClipDetail,
         facets: &[crate::contributions::FacetDescriptor],
     ) -> Result<Vec<crate::contributions::ClipViewDescriptor>> {
+        if crate::ai::privacy::restricted(repo, clip_id).await? {
+            return Ok(Vec::new());
+        }
         let renderers = self.contributions(repo, ContributionKind::Renderer).await?;
         let mut views = Vec::new();
         for representation in &detail.representations {
@@ -3949,6 +3956,11 @@ impl ExtensionService {
                 .bind(job_id)
                 .fetch_one(&repo.pool)
                 .await?;
+        if background && crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
+        }
         let (input, _) = repo
             .source_representation(&source_clip_id, source_id)
             .await?;
@@ -4013,10 +4025,14 @@ impl ExtensionService {
         .to_string();
         let mut broker = self.runtime_broker_context(repo, &contribution).await?;
         broker.generation_cancellation = cancellation;
+        if crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+            broker.decision_allowed = false;
+        }
         if contribution.declaration.execution == ExecutionClass::Local {
             broker.http_permissions.clear();
             broker.write_permissions.clear();
             broker.generation_allowed = false;
+            broker.decision_allowed = false;
         }
         let state_schemas = broker.state_schemas.clone();
         let state_allowed = broker.state_allowed;
@@ -4343,6 +4359,11 @@ impl ExtensionService {
             let package_id: String = event.get(1);
             let activation_id: String = event.get(2);
             let source_clip_id: String = event.get(3);
+            if crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+                sqlx::query("UPDATE extension_activation_events SET status='skipped',reason_code='privacy_restricted',updated_at=? WHERE event_id=?")
+                    .bind(now_ms()).bind(&event_id).execute(&repo.pool).await?;
+                continue;
+            }
             let application =
                 event
                     .get::<Option<String>, _>(4)

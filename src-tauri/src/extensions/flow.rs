@@ -48,7 +48,7 @@ fn kind_name(kind: StepKind) -> &'static str {
 }
 
 async fn active(repo: &HistoryRepository, job_id: &str, claim: i64) -> Result<()> {
-    let valid: Option<i64> = sqlx::query_scalar("SELECT 1 FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND j.status='running' AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND (j.automation_rule_id IS NULL OR EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=j.package_id AND a.rule_id=j.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=j.app_platform AND a.app_id=j.app_id)))) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let valid: Option<i64> = sqlx::query_scalar("SELECT 1 FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND j.status='running' AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND (j.automation_rule_id IS NULL OR EXISTS(SELECT 1 FROM extension_automation_rules a WHERE a.package_id=j.package_id AND a.rule_id=j.automation_rule_id AND a.enabled=1 AND (a.app_platform IS NULL OR (a.app_platform=j.app_platform AND a.app_id=j.app_id)))) AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')),0)")
         .bind(job_id).bind(claim).fetch_optional(&repo.pool).await?;
     if valid.is_none() {
         return Err(FailureCode::StaleContext.failure().into());
@@ -118,6 +118,29 @@ async fn execute_step(
             .to_string())
         }
         StepKind::ModelCall => {
+            let value: serde_json::Value = serde_json::from_str(&step.request_json)
+                .map_err(|_| FailureCode::InvalidParameters.failure())?;
+            if value.get("decision").is_some() {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct DecisionStep {
+                    decision: crate::ai::decision::DecisionRequest,
+                }
+                let request: DecisionStep = serde_json::from_value(value)
+                    .map_err(|_| FailureCode::InvalidParameters.failure())?;
+                if !context.decision_allowed {
+                    return Err(FailureCode::PermissionRequired.failure().into());
+                }
+                runtime::require_live_grant(context, "provider", "decision.text").await?;
+                if crate::contributions::contains_secret(&request.decision.text) {
+                    return Err(FailureCode::PermissionRequired.failure().into());
+                }
+                let probability = tokio::select! {
+                    _ = context.generation_cancellation.cancelled() => return Err(FailureCode::ProviderCancelled.failure().into()),
+                    result = crate::ai::decision::general(&context.repo, request.decision) => result?,
+                };
+                return Ok(serde_json::json!({"probability":probability}).to_string());
+            }
             if !context.generation_allowed {
                 return Err(FailureCode::PermissionRequired.failure().into());
             }
@@ -195,6 +218,13 @@ async fn send_step(
     context: &RuntimeBrokerContext,
 ) -> Result<String> {
     active(repo, job_id, claim).await?;
+    if step.kind == StepKind::ModelCall
+        && serde_json::from_str::<serde_json::Value>(&step.request_json)?
+            .get("decision")
+            .is_some()
+    {
+        check_decision_source(repo, job_id).await?;
+    }
     // Reject requests before recording a dispatch: invalid requests were never sent.
     if matches!(step.kind, StepKind::Read | StepKind::Write) {
         let request: BrokerHttpRequest = serde_json::from_str(&step.request_json)?;
@@ -257,6 +287,15 @@ async fn send_step(
     }
     active(repo, job_id, claim).await?;
     Ok(response)
+}
+
+async fn check_decision_source(repo: &HistoryRepository, job_id: &str) -> Result<()> {
+    let restricted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extension_jobs j JOIN content_clip_facets f ON f.clip_id=j.source_clip_id WHERE j.id=? AND f.facet_id IN ('core.security.secret','core.security.private'))")
+        .bind(job_id).fetch_one(&repo.pool).await?;
+    if restricted {
+        return Err(FailureCode::PermissionRequired.failure().into());
+    }
+    Ok(())
 }
 
 async fn mark_unknown(
@@ -467,6 +506,69 @@ mod tests {
             OperationFailure::from_error(&error).recovery,
             crate::failure::Recovery::Stop
         );
+    }
+
+    #[tokio::test]
+    async fn decision_steps_require_their_own_live_grant_and_reject_credentials() {
+        let (_temp, repo, _job, _clip) = fixture().await;
+        let mut context = RuntimeBrokerContext {
+            repo: repo.clone(),
+            http_permissions: vec![],
+            write_permissions: vec![],
+            extension_id: "decision-fixture".into(),
+            package_sha256: "a".repeat(64),
+            injected_headers: Default::default(),
+            protected_secrets: vec![],
+            generation_allowed: true,
+            decision_allowed: false,
+            generation_cancellation: Default::default(),
+            invocation_failure: Default::default(),
+            package_id: "example.tool".into(),
+            state_keys: vec![],
+            state_schemas: Default::default(),
+            state_allowed: false,
+            staged_state: None,
+        };
+        let mut step = StepCall { id: "decide".into(), kind: StepKind::ModelCall, request_json: serde_json::json!({"decision":{"text":"Example text", "question":"Is this actionable?"}}).to_string(), state_json: "{}".into() };
+        assert!(execute_step(&context, &step, "fixture")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("permission"));
+        context.decision_allowed = true;
+        sqlx::query("INSERT INTO extension_installs(id,package_id,version,api_version,source,sha256,relative_path,installed_at,updated_at) VALUES('decision-fixture','example.tool','1.0.0','^3.2','developer',?,'fixture',0,0)")
+            .bind(&context.package_sha256).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO extension_permission_grants VALUES('decision-fixture',?,'provider','generation.text',0)")
+            .bind(&context.package_sha256).execute(&repo.pool).await.unwrap();
+        assert!(execute_step(&context, &step, "fixture").await.is_err());
+        sqlx::query("INSERT INTO extension_permission_grants VALUES('decision-fixture',?,'provider','decision.text',0)")
+            .bind(&context.package_sha256).execute(&repo.pool).await.unwrap();
+        assert!(execute_step(&context, &step, "fixture")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("missing_decision_preset"));
+        step.request_json = serde_json::json!({"decision":{"text":"password=ActualPassword123!", "question":"Is this actionable?"}}).to_string();
+        assert!(execute_step(&context, &step, "fixture")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("permission"));
+    }
+
+    #[tokio::test]
+    async fn decision_source_is_rechecked_after_a_job_has_started() {
+        let (_temp, repo, job, clip) = fixture().await;
+        check_decision_source(&repo, &job).await.unwrap();
+        sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES('core.security.private','builtin.privacy','1','Private')")
+            .execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version,payload_json) SELECT clip_id,'core.security.private',id,'builtin.privacy','1','{}' FROM clip_representations WHERE clip_id=?")
+            .bind(&clip).execute(&repo.pool).await.unwrap();
+        assert!(check_decision_source(&repo, &job)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("permission"));
     }
 
     async fn fixture() -> (tempfile::TempDir, HistoryRepository, String, String) {

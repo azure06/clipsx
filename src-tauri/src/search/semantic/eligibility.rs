@@ -1,7 +1,7 @@
 //! One semantic-index policy, independent of model/provider selection.
 use crate::history::HistoryRepository;
 
-pub const NOT_SECRET: &str = "NOT EXISTS(SELECT 1 FROM content_clip_facets secret WHERE secret.clip_id=c.id AND secret.facet_id='core.security.secret')";
+pub const NOT_SECRET: &str = "NOT EXISTS(SELECT 1 FROM content_clip_facets secret WHERE secret.clip_id=c.id AND secret.facet_id IN ('core.security.secret','core.security.private'))";
 
 pub async fn clip_is_eligible(repo: &HistoryRepository, clip_id: &str) -> anyhow::Result<bool> {
     let sql = format!("SELECT EXISTS(SELECT 1 FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready' AND {NOT_SECRET})");
