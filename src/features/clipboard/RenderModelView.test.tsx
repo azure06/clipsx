@@ -246,6 +246,26 @@ describe('RenderModelView', () => {
     }
   })
 
+  it.each(['privacy_check', 'unreviewed'])(
+    'explains private clips without exposing raw classification fields (%s)',
+    kind => {
+      const model: RenderModel = {
+        kind: 'semantic',
+        facetId: 'core.security.private',
+        text: 'Customer contract content',
+        payload: { schemaVersion: 2, kind },
+      }
+      const { container } = render(
+        <RenderModelView presentation={presentation(model, 'private')} />
+      )
+      expect(screen.getByText('Private clip')).toBeVisible()
+      expect(screen.getByText(/Use Original/)).toBeVisible()
+      expect(container).not.toHaveTextContent('Customer contract content')
+      expect(container).not.toHaveTextContent('schemaVersion')
+      if (kind === 'unreviewed') expect(screen.getByText(/could not complete/)).toBeVisible()
+    }
+  )
+
   it('explains a secret without rendering or offering to reveal its value', () => {
     const secret = 'sk_test_0123456789abcdefghijklmnop'
     const secretModel: RenderModel = {

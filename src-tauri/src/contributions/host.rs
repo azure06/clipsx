@@ -34,6 +34,7 @@ pub struct FacetDescriptor {
 pub(crate) fn facet_presentation_priority(facet_id: &str) -> i32 {
     match facet_id {
         "core.security.secret" => 200,
+        "core.security.private" => 190,
         "core.link.url" => 180,
         "core.contact.email" => 170,
         "core.value.color" => 160,
@@ -420,7 +421,10 @@ impl RendererContribution for KeyValueRenderer {
     fn render(&self, r: &RepresentationDetail, f: Option<&FacetDescriptor>) -> Result<RenderModel> {
         let facet = f.context("facet unavailable")?;
         // The secret view only explains the classification; the value stays in Original.
-        let text = if facet.id == "core.security.secret" {
+        let text = if matches!(
+            facet.id.as_str(),
+            "core.security.secret" | "core.security.private"
+        ) {
             String::new()
         } else {
             r.text_value.clone().unwrap_or_default()
@@ -1066,8 +1070,9 @@ fn validate_facet(facet: &DetectedFacet, detector: &dyn DetectorContribution) ->
 }
 
 pub async fn facets(repo: &HistoryRepository, clip_id: &str) -> Result<Vec<FacetDescriptor>> {
-    let rows=sqlx::query("SELECT f.facet_id,d.display_name,f.source_representation_id,f.detector_id,f.detector_version,f.payload_json FROM content_clip_facets f JOIN content_facet_definitions d ON d.id=f.facet_id WHERE f.clip_id=? ORDER BY f.facet_id").bind(clip_id).fetch_all(&repo.pool).await?;
-    rows.into_iter()
+    let rows=sqlx::query("SELECT f.facet_id,d.display_name,f.source_representation_id,f.detector_id,f.detector_version,f.payload_json FROM content_clip_facets f JOIN content_facet_definitions d ON d.id=f.facet_id WHERE f.clip_id=? ORDER BY f.facet_id,CASE WHEN f.detector_id='core.security.secret' THEN 0 ELSE 1 END").bind(clip_id).fetch_all(&repo.pool).await?;
+    let mut facets: Vec<FacetDescriptor> = rows
+        .into_iter()
         .map(|r| {
             Ok(FacetDescriptor {
                 id: r.get(0),
@@ -1078,7 +1083,14 @@ pub async fn facets(repo: &HistoryRepository, clip_id: &str) -> Result<Vec<Facet
                 payload: serde_json::from_str(&r.get::<String, _>(5))?,
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    // Native and privacy detectors may agree on a credential; expose one view per source.
+    // Keep privacy-owned rows in storage so later native redetection cannot remove protection.
+    let mut secrets = HashSet::new();
+    facets.retain(|facet| {
+        facet.id != "core.security.secret" || secrets.insert(facet.source_representation_id.clone())
+    });
+    Ok(facets)
 }
 pub fn renderers() -> Vec<RendererDescriptor> {
     renderer_registry()
@@ -1313,6 +1325,7 @@ pub async fn views(
         };
         let (renderer, kind) = match facet.id.as_str() {
             "core.security.secret" => ("builtin.key_value", "secret"),
+            "core.security.private" => ("builtin.key_value", "private"),
             "core.link.url" => ("builtin.url", "url"),
             "core.contact.email" => ("builtin.key_value", "email"),
             "core.value.color" => ("builtin.key_value", "color"),

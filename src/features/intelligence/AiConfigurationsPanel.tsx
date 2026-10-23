@@ -156,6 +156,13 @@ export function AiConfigurationsPanel() {
       purpose: 'chat',
     },
     {
+      key: 'privacyDecision',
+      icon: ShieldCheck,
+      title: t('decisionRules.privacyModel'),
+      help: t('decisionRules.privacyModelHelp'),
+      purpose: 'decision',
+    },
+    {
       key: 'defaultDecision',
       icon: BrainCircuit,
       title: t('modelsWorkspace.decision'),
@@ -345,7 +352,7 @@ export function AiConfigurationsPanel() {
                             void perform(() =>
                               apply({
                                 ...current,
-                                version: 3,
+                                version: 4,
                                 selections: {
                                   ...current.selections,
                                   [key]: id === 'none' ? null : id,
@@ -552,7 +559,7 @@ export function AiConfigurationsPanel() {
                   await perform(async () => {
                     await apply({
                       ...current,
-                      version: 3,
+                      version: 4,
                       connections: [...current.connections.filter(c => c.id !== item.id), item],
                     })
                     if (credential)
@@ -613,7 +620,7 @@ export function AiConfigurationsPanel() {
                   await perform(() =>
                     apply({
                       ...current,
-                      version: 3,
+                      version: 4,
                       presets: [...current.presets.filter(p => p.id !== preset.id), preset],
                     })
                   )

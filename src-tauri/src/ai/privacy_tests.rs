@@ -1,0 +1,414 @@
+use super::{configuration, contracts::*, privacy::*};
+use crate::history::{
+    new_id, CaptureSettings, CapturedPayload, CapturedRepresentation, CapturedSnapshot,
+};
+
+fn snapshot(text: &str) -> CapturedSnapshot {
+    CapturedSnapshot {
+        token: 1,
+        source_app_name: None,
+        source_app_id: None,
+        format_observations: vec![],
+        representations: vec![CapturedRepresentation {
+            format_key: "text/plain".into(),
+            canonical_mime_type: Some("text/plain".into()),
+            native_type: None,
+            platform: "windows".into(),
+            capture_priority: 1,
+            payload: CapturedPayload::Text(text.into()),
+        }],
+    }
+}
+fn rule(action: RuleAction) -> DecisionRule {
+    DecisionRule {
+        id: new_id(),
+        name: "Customer privacy".into(),
+        question: "Does this contain confidential customer information?".into(),
+        action,
+        tag: None,
+        enabled: true,
+    }
+}
+
+#[tokio::test]
+async fn heuristics_restrict_immediately_and_skip_happens_before_storage() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let secret = "APP_PASSWORD=correct-horse-battery-staple";
+    let (id, _) = repo
+        .capture(snapshot(secret), &CaptureSettings::default())
+        .await
+        .unwrap();
+    assert!(restricted(repo, &id).await.unwrap());
+    crate::contributions::detect_clip(repo, &id).await.unwrap();
+    assert!(restricted(repo, &id).await.unwrap());
+    let facets = crate::contributions::facets(repo, &id).await.unwrap();
+    assert_eq!(
+        facets
+            .iter()
+            .filter(|facet| facet.id == "core.security.secret")
+            .count(),
+        1
+    );
+    assert!(
+        !crate::search::semantic::eligibility::clip_is_eligible(repo, &id)
+            .await
+            .unwrap()
+    );
+    let long = format!(
+        "{}\nAPI_KEY=abcdef0123456789abcdef",
+        "public information ".repeat(300)
+    );
+    let (long_id, _) = repo
+        .capture(snapshot(&long), &CaptureSettings::default())
+        .await
+        .unwrap();
+    crate::contributions::detect_clip(repo, &long_id)
+        .await
+        .unwrap();
+    assert!(restricted(repo, &long_id).await.unwrap());
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(repo
+        .capture(
+            snapshot("API_KEY=abcdef0123456789abcdef"),
+            &CaptureSettings::default()
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("not_saved"));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM clip_items")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    assert!(settings(repo).await.unwrap().skip_secrets);
+}
+
+#[tokio::test]
+async fn missing_models_retain_private_or_skip_without_partial_writes() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let config = PrivacySettings {
+        skip_secrets: false,
+        rules: vec![rule(RuleAction::MarkPrivate)],
+    };
+    save(repo, config).await.unwrap();
+    let (id, _) = repo
+        .capture(
+            snapshot("A customer called about their contract"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(restricted(repo, &id).await.unwrap());
+    let cleanup: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM search_semantic_cleanup WHERE clip_id=?")
+            .bind(&id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(cleanup, 1);
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![rule(RuleAction::Skip)],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(repo
+        .capture(snapshot("Another customer"), &CaptureSettings::default())
+        .await
+        .is_err());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM clip_items")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn privacy_precedes_general_model_and_negative_models_cannot_override_heuristics() {
+    use axum::{routing::post, Router};
+    use std::sync::{Arc, Mutex};
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let received = requests.clone();
+    let positive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let model_positive = positive.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let connection = AiConnection {
+        id: new_id(),
+        name: "Fixture".into(),
+        provider: AiProviderKind::Ollama,
+        base_url: format!("http://{}", listener.local_addr().unwrap()),
+        enabled: true,
+        options: AiConnectionOptions {
+            organization: None,
+            project: None,
+        },
+    };
+    let preset = AiModelPreset {
+        id: new_id(),
+        name: "Privacy".into(),
+        connection_id: connection.id.clone(),
+        model_id: "fixture".into(),
+        purpose: AiModelPurpose::Decision,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: configuration::default_options(),
+        capabilities: configuration::unknown_capabilities(),
+    };
+    let mut general = preset.clone();
+    general.id = new_id();
+    general.model_id = "general-must-not-run".into();
+    configuration::import(
+        repo,
+        AiConfiguration {
+            version: 4,
+            connections: vec![connection],
+            presets: vec![preset.clone(), general.clone()],
+            selections: AiSelections {
+                privacy_decision: Some(preset.id),
+                default_decision: Some(general.id),
+                ..Default::default()
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let app = Router::new().route("/v1/systemone", post(move |bytes: axum::body::Bytes| {
+        let received = received.clone(); let positive = model_positive.load(std::sync::atomic::Ordering::SeqCst); async move {
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            received.lock().unwrap().push(body.clone());
+            let answers: serde_json::Map<String, serde_json::Value> = body["questions"].as_object().unwrap().keys().map(|id| (id.clone(), serde_json::json!({"type":"noul","noul":if id == "secret" || !positive {0.1} else {0.9}}))).collect();
+            serde_json::json!({"answers": answers}).to_string()
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut tag = rule(RuleAction::Tag);
+    tag.tag = Some("Customer".into());
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![
+                rule(RuleAction::MarkPrivate),
+                tag.clone(),
+                rule(RuleAction::Favorite),
+                rule(RuleAction::Pin),
+            ],
+        },
+    )
+    .await
+    .unwrap();
+    let (id, _) = repo
+        .capture(
+            snapshot("Customer Alice has a confidential contract"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(restricted(repo, &id).await.unwrap());
+    let flags = repo.summary(&id).await.unwrap();
+    assert!(!flags.is_favorite && !flags.is_pinned);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(requests.lock().unwrap()[0]["model"], "fixture");
+    assert_eq!(
+        requests.lock().unwrap()[0]["state"]["clipboard_text"],
+        "Customer Alice has a confidential contract"
+    );
+    // No detector or general call sees a credential already settled by native checks.
+    let (secret, _) = repo
+        .capture(
+            snapshot("password=MyActualPassword123!"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(restricted(repo, &secret).await.unwrap());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![tag, rule(RuleAction::Favorite), rule(RuleAction::Pin)],
+        },
+    )
+    .await
+    .unwrap();
+    let (public, _) = repo
+        .capture(
+            snapshot("A public customer guide"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(!restricted(repo, &public).await.unwrap());
+    let tag_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM catalog_clip_tags WHERE clip_id=?")
+            .bind(&public)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(tag_count, 1);
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    assert_eq!(requests.lock().unwrap()[2]["model"], "general-must-not-run");
+    // A changed policy cannot disclose a previously private duplicate to the general model.
+    let before = requests.lock().unwrap().len();
+    let (private_duplicate, reused) = repo
+        .capture(
+            snapshot("Customer Alice has a confidential contract"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(reused);
+    assert_eq!(private_duplicate, id);
+    assert!(restricted(repo, &private_duplicate).await.unwrap());
+    assert_eq!(requests.lock().unwrap().len(), before + 1);
+    assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "fixture");
+    let flags = repo.summary(&public).await.unwrap();
+    assert!(flags.is_favorite && flags.is_pinned);
+    for action in [RuleAction::Favorite, RuleAction::Pin] {
+        assert_eq!(
+            test_rule(repo, rule(action), "Public work notes".into())
+                .await
+                .unwrap(),
+            0.9
+        );
+        assert!(
+            test_rule(repo, rule(action), "password=MyActualPassword123!".into())
+                .await
+                .is_err()
+        );
+    }
+    positive.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (duplicate, reused) = repo
+        .capture(
+            snapshot("A public customer guide"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    assert!(reused);
+    assert_eq!(duplicate, public);
+    let flags = repo.summary(&duplicate).await.unwrap();
+    assert!(flags.is_favorite && flags.is_pinned);
+    let (negative, _) = repo
+        .capture(
+            snapshot("An unrelated public clip"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    let flags = repo.summary(&negative).await.unwrap();
+    assert!(!flags.is_favorite && !flags.is_pinned);
+    positive.store(true, std::sync::atomic::Ordering::SeqCst);
+    // A model-backed skip rule must leave no canonical clip behind.
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![rule(RuleAction::Skip)],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(repo
+        .capture(
+            snapshot("Do not keep this customer contract"),
+            &CaptureSettings::default()
+        )
+        .await
+        .is_err());
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM clip_items")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 4);
+    server.abort();
+}
+
+#[tokio::test]
+async fn old_configuration_imports_preserve_privacy_and_removal_clears_it() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let connection = AiConnection {
+        id: new_id(),
+        name: "Fixture".into(),
+        provider: AiProviderKind::Ollama,
+        base_url: "http://127.0.0.1:11434".into(),
+        enabled: true,
+        options: AiConnectionOptions {
+            organization: None,
+            project: None,
+        },
+    };
+    let preset = AiModelPreset {
+        id: new_id(),
+        name: "Privacy".into(),
+        connection_id: connection.id.clone(),
+        model_id: "fixture".into(),
+        purpose: AiModelPurpose::Decision,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: configuration::default_options(),
+        capabilities: configuration::unknown_capabilities(),
+    };
+    let doc = AiConfiguration {
+        version: 4,
+        connections: vec![connection],
+        presets: vec![preset.clone()],
+        selections: AiSelections {
+            privacy_decision: Some(preset.id.clone()),
+            ..Default::default()
+        },
+    };
+    configuration::import(repo, doc.clone()).await.unwrap();
+    let mut old = doc;
+    old.version = 3;
+    old.selections.privacy_decision = None;
+    configuration::import(repo, old).await.unwrap();
+    assert_eq!(
+        configuration::export(repo)
+            .await
+            .unwrap()
+            .selections
+            .privacy_decision,
+        Some(preset.id.clone())
+    );
+    configuration::remove(repo, None, Some(preset.id.clone()))
+        .await
+        .unwrap();
+    assert!(configuration::export(repo)
+        .await
+        .unwrap()
+        .selections
+        .privacy_decision
+        .is_none());
+}
+
+#[test]
+fn invalid_rules_are_rejected_before_saving() {
+    let mut config = PrivacySettings {
+        skip_secrets: false,
+        rules: vec![rule(RuleAction::Tag)],
+    };
+    assert!(config.validate().is_err());
+    config.rules[0].tag = Some("Work".into());
+    assert!(config.validate().is_ok());
+    config.rules.push(config.rules[0].clone());
+    assert!(config.validate().is_err());
+}

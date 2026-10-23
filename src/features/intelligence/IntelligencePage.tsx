@@ -1,3 +1,5 @@
+import { IntelligenceOverview } from './IntelligenceOverview'
+import { DecisionRulesPanel } from './DecisionRulesPanel'
 import { AiConfigurationsPanel } from './AiConfigurationsPanel'
 import { IntegrationsPanel } from './IntegrationsPanel'
 import { Trans, useTranslation } from 'react-i18next'
@@ -15,6 +17,7 @@ import {
   Database,
   LayoutDashboard,
   Languages,
+  ListChecks,
   Loader2,
   Plus,
   Plug,
@@ -26,7 +29,6 @@ import {
 } from 'lucide-react'
 import type {
   FailedTextEmbeddingJob,
-  GenerationProviderStatus,
   SearchSourceDescriptor,
   TextEmbeddingStatus,
 } from '../../shared/types/v2'
@@ -81,7 +83,7 @@ type ActiveIndexAction = {
 }
 
 const intelligenceSections: Array<{
-  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations'
+  id: 'overview' | 'search' | 'models' | 'indexing' | 'vision' | 'integrations' | 'rules'
   label: string
   description: string
 }> = [
@@ -110,6 +112,15 @@ const intelligenceSections: Array<{
     },
     get description() {
       return i18n.t('modelsWorkspace.sectionDescription')
+    },
+  },
+  {
+    id: 'rules',
+    get label() {
+      return i18n.t('decisionRules.title')
+    },
+    get description() {
+      return i18n.t('decisionRules.description')
     },
   },
   {
@@ -148,7 +159,7 @@ const indexActionLabel: Record<IndexAction, string> = {
 }
 
 export const IntelligencePage = ({
-  initialSection = 'models',
+  initialSection = 'overview',
 }: { initialSection?: (typeof intelligenceSections)[number]['id'] | 'connections' } = {}) => {
   useTranslation()
 
@@ -163,12 +174,12 @@ export const IntelligencePage = ({
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [thresholdDraft, setThresholdDraft] = useState('70')
   const [thresholdSaving, setThresholdSaving] = useState(false)
-  const [generationStatus, setGenerationStatus] = useState<GenerationProviderStatus | null>(null)
   const [ocrStatus, setOcrStatus] = useState<OcrRuntimeStatus | null>(null)
   const [ocrSaving, setOcrSaving] = useState(false)
   const [activeSection, setActiveSection] = useState<(typeof intelligenceSections)[number]['id']>(
     initialSection === 'connections' ? 'models' : initialSection
   )
+  const overviewNavigation = useRef<HTMLElement>(null)
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
 
@@ -180,11 +191,10 @@ export const IntelligencePage = ({
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
     try {
-      const [s, sources, settings, generation, jobs, ocr] = await Promise.all([
+      const [s, sources, settings, jobs, ocr] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
         invoke<SearchSourceDescriptor[]>('list_search_sources'),
         invoke<SearchSettings>('get_search_settings'),
-        invoke<GenerationProviderStatus>('get_text_generation_status'),
         invoke<FailedTextEmbeddingJob[]>('list_failed_text_embedding_jobs'),
         invoke<OcrRuntimeStatus>('get_ocr_runtime_status'),
       ])
@@ -193,9 +203,6 @@ export const IntelligencePage = ({
       setSearchSettings(settings)
       setFailedJobs(Array.isArray(jobs) ? jobs : [])
       if (ocr) setOcrStatus(ocr)
-      if (generation) {
-        setGenerationStatus(generation)
-      }
       if (s.phase === 'ready') lastFailureToastRef.current = null
       return s
     } catch (e) {
@@ -460,12 +467,13 @@ export const IntelligencePage = ({
               <Trans i18nKey="desktopUi.intelligence" />
             </h1>
             <p className="text-xs text-gray-500">
-              <Trans i18nKey="desktopUi.onDeviceAiSemanticSearchImageSearchAndMore" />
+              <Trans i18nKey="intelligenceOverview.pageDescription" />
             </p>
           </div>
         </div>
 
         <nav
+          ref={overviewNavigation}
           aria-label={i18n.t('desktopUi.intelligenceAreas')}
           role="tablist"
           className="relative flex w-full max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-300/70 bg-slate-100/80 p-1 shadow-[0_6px_18px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-slate-800/60 dark:shadow-[0_6px_18px_rgba(0,0,0,0.16)]"
@@ -473,6 +481,7 @@ export const IntelligencePage = ({
           {intelligenceSections.map(section => (
             <button
               key={section.id}
+              data-intelligence-section={section.id}
               type="button"
               role="tab"
               aria-selected={activeSection === section.id}
@@ -490,61 +499,27 @@ export const IntelligencePage = ({
               {section.id === 'indexing' && <Database className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'integrations' && <Plug className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.id === 'vision' && <ScanSearch className="h-3.5 w-3.5" strokeWidth={1.7} />}
+              {section.id === 'rules' && <ListChecks className="h-3.5 w-3.5" strokeWidth={1.7} />}
               {section.label}
             </button>
           ))}
         </nav>
 
         {activeSection === 'models' && <AiConfigurationsPanel />}
+        {activeSection === 'rules' && <DecisionRulesPanel />}
         {activeSection === 'integrations' && <IntegrationsPanel />}
         {activeSection === 'overview' && (
-          <div
-            role="tabpanel"
-            className="rounded-2xl border border-violet-200/70 bg-linear-to-br from-violet-500/[0.10] via-slate-50/70 to-transparent p-5 dark:border-violet-400/15 dark:from-violet-500/[0.14] dark:via-white/[0.035]"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  <Trans i18nKey="desktopUi.yourLocalIntelligence" />
-                </h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  <Trans i18nKey="desktopUi.configureModelsTuneSearchAndMaintainDerivedIndexesWithout" />
-                </p>
-              </div>
-              <span className="rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm dark:bg-white/10 dark:text-slate-300">
-                {phaseLabel(status?.phase)}
-              </span>
-            </div>
-            <div className="mt-5 grid gap-2 sm:grid-cols-3">
-              <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  <Trans i18nKey="desktopUi.meaningSearch" />
-                </p>
-                <p className="mt-1 truncate text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {status?.model ?? i18n.t('desktopUi.notConfigured')}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  <Trans i18nKey="desktopUi.indexed" />
-                </p>
-                <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {status?.indexedClips?.toLocaleString() ?? '—'}{' '}
-                  <Trans i18nKey="desktopUi.clips" />
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/70 bg-white/60 px-3 py-2.5 dark:border-white/10 dark:bg-black/10">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  <Trans i18nKey="desktopUi.generation" />
-                </p>
-                <p className="mt-1 text-xs font-medium text-slate-800 dark:text-slate-100">
-                  {generationStatus?.available
-                    ? i18n.t('desktopUi.availablee674')
-                    : i18n.t('desktopUi.notConfigured')}
-                </p>
-              </div>
-            </div>
-          </div>
+          <IntelligenceOverview
+            status={status}
+            loading={loadingStatus}
+            ocr={ocrStatus}
+            onNavigate={destination => {
+              setActiveSection(destination)
+              overviewNavigation.current
+                ?.querySelector<HTMLButtonElement>(`[data-intelligence-section="${destination}"]`)
+                ?.focus()
+            }}
+          />
         )}
 
         {/* Semantic Search */}

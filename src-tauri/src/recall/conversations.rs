@@ -344,7 +344,7 @@ pub async fn load(repo: &HistoryRepository, id: &str) -> Result<RecallHistory> {
                 created_at: r.get("created_at"),
             })
             .collect();
-    let sources = sqlx::query("SELECT s.*,EXISTS(SELECT 1 FROM clip_items c WHERE c.id=s.clip_id AND c.lifecycle_state='ready' AND NOT EXISTS(SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret')) AS available FROM recall_source_snapshots s WHERE thread_id=?").bind(id).fetch_all(&repo.pool).await?.iter().map(|r| RecallSourceSnapshot {id:r.get("id"),message_id:r.get("message_id"),clip_id:r.get("clip_id"),snapshot_json:r.get("snapshot_json"),asset_hash:r.get("asset_hash"),available:r.get("available")}).collect();
+    let sources = sqlx::query("SELECT s.*,EXISTS(SELECT 1 FROM clip_items c WHERE c.id=s.clip_id AND c.lifecycle_state='ready' AND NOT EXISTS(SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id IN ('core.security.secret','core.security.private'))) AS available FROM recall_source_snapshots s WHERE thread_id=?").bind(id).fetch_all(&repo.pool).await?.iter().map(|r| RecallSourceSnapshot {id:r.get("id"),message_id:r.get("message_id"),clip_id:r.get("clip_id"),snapshot_json:r.get("snapshot_json"),asset_hash:r.get("asset_hash"),available:r.get("available")}).collect();
     Ok(RecallHistory {
         thread,
         messages,

@@ -1,9 +1,9 @@
-# Extension API v3.2
+# Extension API v3.3
 
 ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
-`schemaVersion = 3`, `contractRevision = 3`, `apiVersion = "^3.2"`, and
-`clipsx:extension@3.2.0`. The host rejects other contract revisions. A fresh
+`schemaVersion = 3`, `contractRevision = 3`, host API `3.3.0`, and
+WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability does not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. A fresh
 local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
@@ -73,6 +73,25 @@ snapshots its view, labels and controls, so they survive uninstall.
 Operations inherit the package icon when they do not declare their own icon.
 Specific operation icons take precedence; pinned buttons use current installed
 icons rather than stale icon snapshots.
+
+## Decision models
+
+Capability-backed transformers may declare `providers = ["decision.text"]` separately from `generation.text`. Existing checksum-bound provider grants apply; model credentials and assignment selection remain host-owned. Offline `assess`, detection, rendering and local execution cannot call a decision model.
+
+A durable `model-call` step can request a predicate instead of generation:
+
+```json
+{
+  "decision": {
+    "text": "The selected input to evaluate",
+    "question": "Does this describe a software failure?"
+  }
+}
+```
+
+The response is `{ "probability": 0.82 }`, a finite number in [0, 1]. The host validates the response, uses the user's General decisions assignment, and applies the existing durable-step cancellation and stale-context checks. Text is limited to 64 KiB and questions to 2 KiB; empty, oversized, unsupported and malformed requests fail without truncation or chat fallback. Recognized credential inputs and secret/private source clips cannot use this general capability. A probability is model judgment, not correctness or permission to perform an external write. Extensions choose their own non-security workflow threshold and should test representative examples.
+
+Capture privacy classification completes before automatic extensions receive input. Secret/private clips are excluded from automatic detectors, renderer selection, and capture automation. Manual operations continue to require their declared grants; decision calls recheck source restrictions before each dispatch, including sources classified private after a job starts. The privacy model assignment does not grant extensions access to a second provider.
 
 ## Manifest
 

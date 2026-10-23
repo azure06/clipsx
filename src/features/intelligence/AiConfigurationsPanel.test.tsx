@@ -22,6 +22,31 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
 }))
 let state: AiConfigurationState
 
+it('assigns one decision preset independently to privacy and general use', async () => {
+  const user = userEvent.setup()
+  const connection = { ...emptyConnection(), name: 'Local decisions' }
+  const preset = {
+    ...emptyPreset(connection.id),
+    name: 'Decision fixture',
+    modelId: 'fixture',
+    purpose: 'decision' as const,
+  }
+  state.configuration.connections = [connection]
+  state.configuration.presets = [preset]
+  render(<AiConfigurationsPanel />)
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+  for (const name of ['Privacy checks', 'General decisions']) {
+    await user.click(screen.getByRole('combobox', { name }))
+    await user.click(screen.getByRole('option', { name: 'Local decisions / Decision fixture' }))
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name })).toHaveTextContent('Decision fixture')
+    )
+  }
+  expect(state.configuration.selections.privacyDecision).toBe(preset.id)
+  expect(state.configuration.selections.defaultDecision).toBe(preset.id)
+  expect(state.configuration.version).toBe(4)
+})
+
 it('previews affected defaults inline, cancels with Escape, and removes a model explicitly', async () => {
   const user = userEvent.setup()
   const connection = { ...emptyConnection(), name: 'Local fixture' }

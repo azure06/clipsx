@@ -161,8 +161,16 @@ pub(crate) fn allowed_destination(
     let openrouter_all_models = connection.provider == AiProviderKind::Openrouter
         && url.path() == format!("{}models", base.path())
         && url.query() == Some("output_modalities=all");
+    let decisions_path = base
+        .path()
+        .trim_end_matches('/')
+        .strip_suffix("/v1")
+        .map(|prefix| format!("{prefix}/alpha/decisions"));
+    let openrouter_decision = connection.provider == AiProviderKind::Openrouter
+        && decisions_path.as_deref() == Some(url.path())
+        && url.query().is_none();
     url.origin() == base.origin()
-        && url.path().starts_with(base.path())
+        && (url.path().starts_with(base.path()) || openrouter_decision)
         && (url.query().is_none() || openrouter_all_models)
         && url.fragment().is_none()
 }
@@ -189,6 +197,39 @@ mod rejection_tests {
             assert!(!super::context_overflow(body));
         }
         assert!(!super::context_overflow(&vec![b'x'; 16385]));
+    }
+
+    #[test]
+    fn decision_route_is_exact_and_never_changes_the_credential_origin() {
+        use super::*;
+        let connection = AiConnection {
+            id: "00000000-0000-4000-8000-000000000001".into(),
+            name: "Fixture".into(),
+            provider: AiProviderKind::Openrouter,
+            base_url: "https://provider.example/api/v1/".into(),
+            enabled: true,
+            options: crate::ai::contracts::AiConnectionOptions {
+                organization: None,
+                project: None,
+            },
+        };
+        let base = url::Url::parse(&connection.base_url).unwrap();
+        assert!(allowed_destination(
+            &connection,
+            &base,
+            &url::Url::parse("https://provider.example/api/alpha/decisions").unwrap()
+        ));
+        for path in [
+            "https://other.example/api/alpha/decisions",
+            "https://provider.example/api/alpha/other",
+            "https://provider.example/api/alpha/decisions?key=private",
+        ] {
+            assert!(!allowed_destination(
+                &connection,
+                &base,
+                &url::Url::parse(path).unwrap()
+            ));
+        }
     }
 
     #[test]
