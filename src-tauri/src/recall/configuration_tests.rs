@@ -360,7 +360,7 @@ async fn feature_assignments_are_independent_and_old_imports_preserve_new_defaul
     config.selections.default_decision = Some(decision.id.clone());
     import(repo, config.clone()).await.unwrap();
     let saved = export(repo).await.unwrap();
-    assert_eq!(saved.version, 3);
+    assert_eq!(saved.version, 4);
     assert!(saved.selections.default_chat.is_none());
     let missing_credential = crate::providers::generation::resolve(repo)
         .await
@@ -728,7 +728,7 @@ async fn configuration_v3_auto_and_legacy_explicit_limits_round_trip() {
     config.version = 3;
     import(&service.history, config).await.unwrap();
     let saved = export(&service.history).await.unwrap();
-    assert_eq!(saved.version, 3);
+    assert_eq!(saved.version, 4);
     assert!(matches!(
         saved.presets[0].options.limit_policy,
         Some(AiLimitPolicy::Auto)

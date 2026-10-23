@@ -385,9 +385,7 @@ impl ExtensionManifest {
             bail!("unsupported extension schema; build this package for Extension API v3");
         }
         if value.get("contractRevision").is_none() {
-            bail!(
-                "obsolete extension package; rebuild with Extension API v3.2 contractRevision = 3"
-            );
+            bail!("obsolete extension package; rebuild with Extension API contractRevision = 3");
         }
         let manifest: Self = toml::from_str(source)
             .context("extension manifest is not valid Extension API v3 TOML")?;
@@ -403,9 +401,7 @@ impl ExtensionManifest {
             bail!("unsupported extension manifest schema; expected schemaVersion = 3");
         }
         if self.contract_revision != 3 {
-            bail!(
-                "unsupported Extension API v3.2 contract revision; expected contractRevision = 3"
-            );
+            bail!("unsupported Extension API contract revision; expected contractRevision = 3");
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
@@ -725,7 +721,7 @@ impl ExtensionManifest {
             .permissions
             .providers
             .iter()
-            .any(|provider| provider != "generation.text")
+            .any(|provider| !["generation.text", "decision.text"].contains(&provider.as_str()))
         {
             bail!("extension requests an unsupported provider capability");
         }
@@ -1451,6 +1447,21 @@ mod tests {
     }
 
     #[test]
+    fn additive_decision_api_preserves_older_extension_compatibility() {
+        let mut value = manifest(contribution(ContributionKind::Transformer));
+        value.api_version = "^3.2".into();
+        assert!(value.validate().is_ok());
+        value.api_version = "^3.3".into();
+        value.permissions.providers.push("decision.text".into());
+        assert!(value.validate().is_ok());
+        assert!(!VersionReq::parse(&value.api_version)
+            .unwrap()
+            .matches(&Version::parse("3.2.0").unwrap()));
+        value.api_version = "^3.4".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
     fn generation_contract_does_not_require_direct_http_access() {
         let mut action = contribution(ContributionKind::Action);
         action.execution = ExecutionClass::CapabilityBacked;
@@ -1460,6 +1471,7 @@ mod tests {
         action.ui_entry = Some("ui/index.html".into());
         let mut value = manifest(action);
         value.permissions.providers.push("generation.text".into());
+        value.permissions.providers.push("decision.text".into());
         assert!(value.validate().is_ok());
     }
 

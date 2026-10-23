@@ -863,6 +863,24 @@ const SemanticView = ({
     )
   }
 
+  if (kind === 'private') {
+    const unreviewed = semanticScalar(model.payload, 'kind') === 'unreviewed'
+    return (
+      <div className={`${SCROLL_AREA} p-4`}>
+        <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+            <ShieldAlert className="h-5 w-5" />
+            {t('decisionRules.privateClip')}
+          </div>
+          <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+            {t(unreviewed ? 'decisionRules.unreviewedClip' : 'decisionRules.privateClipHelp')}
+          </p>
+          <p className="text-xs text-slate-500">{t('decisionRules.originalHelp')}</p>
+        </div>
+      </div>
+    )
+  }
+
   if (kind === 'secret') {
     const secretKind =
       semanticScalar(model.payload, 'kind') ?? semanticScalar(model.payload, 'format') ?? 'secret'

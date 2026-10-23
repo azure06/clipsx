@@ -38,9 +38,17 @@ const toastTitles = (): string[] =>
   (toastMock.mock.calls as Array<[{ title: string }]>).map(([value]) => value.title)
 
 describe('IntelligencePage indexing actions', () => {
-  it('opens named AI configurations by default for Recall setup', () => {
+  it('opens Overview by default', () => {
     render(<IntelligencePage />)
-    expect(screen.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('moves focus to the destination tab when opening setup from Overview', () => {
+    render(<IntelligencePage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage models' }))
+    const tab = screen.getByRole('tab', { name: 'Models' })
+    expect(tab).toHaveAttribute('aria-selected', 'true')
+    expect(tab).toHaveFocus()
   })
 
   it('routes the former connections destination into the unified Models tab', () => {
@@ -125,6 +133,7 @@ describe('IntelligencePage indexing actions', () => {
       }
     )
     invokeMock.mockImplementation((command: string) => {
+      if (command === 'privacy_settings') return Promise.resolve({ skipSecrets: false, rules: [] })
       if (command === 'ai_configuration_state')
         return Promise.resolve({
           configuration: { version: 2, connections: [], presets: [], selections: {} },

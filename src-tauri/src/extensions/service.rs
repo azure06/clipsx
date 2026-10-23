@@ -36,6 +36,20 @@ use super::{
     OFFICIAL_REGISTRY_SIGNATURES_URL, OFFICIAL_REGISTRY_URL,
 };
 
+async fn providers_available(repo: &HistoryRepository, providers: &[String]) -> Result<bool> {
+    for provider in providers {
+        let available = match provider.as_str() {
+            "generation.text" => crate::providers::generation::available(repo).await?,
+            "decision.text" => crate::ai::decision::available(repo).await?,
+            _ => false,
+        };
+        if !available {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 const RELEASE_REDIRECT_LIMIT: usize = 5;
 const RELEASE_DOWNLOAD_HOSTS: &[&str] = &[
     "github.com",
@@ -374,8 +388,8 @@ impl ExtensionService {
         let installed = entry.installed.clone();
         let (activations, transformers, automation_permissions) = if installed.is_some() {
             let (_, package) = self.package_for_settings(repo, package_id).await?;
-            let provider_available = package.manifest.permissions.providers.is_empty()
-                || crate::providers::generation::available(repo).await?;
+            let provider_available =
+                providers_available(repo, &package.manifest.permissions.providers).await?;
             let transformers = package
                 .manifest
                 .contributions
@@ -997,7 +1011,7 @@ impl ExtensionService {
         detectors: &[ActiveContribution],
         force: bool,
     ) -> Result<usize> {
-        if detectors.is_empty() {
+        if detectors.is_empty() || crate::ai::privacy::restricted(repo, clip_id).await? {
             return Ok(0);
         }
         let settled: HashSet<(String, String, String)> = if force {
@@ -1511,11 +1525,7 @@ impl ExtensionService {
                 setups: item.declaration.setups,
                 default_view: item.declaration.default_view,
                 result_controls: item.declaration.result_controls,
-                provider_available: !item
-                    .providers
-                    .iter()
-                    .any(|provider| provider == "generation.text")
-                    || crate::providers::generation::available(repo).await?,
+                provider_available: providers_available(repo, &item.providers).await?,
                 setup_availability,
                 custom_availability,
             });
@@ -2244,13 +2254,8 @@ impl ExtensionService {
                 .failure()
                 .into());
         }
-        if contribution
-            .providers
-            .iter()
-            .any(|value| value == "generation.text")
-            && !crate::providers::generation::available(repo).await?
-        {
-            bail!("generation.text provider is not configured");
+        if !providers_available(repo, &contribution.providers).await? {
+            bail!("required model provider is not configured");
         }
         let token = uuid::Uuid::now_v7().to_string();
         let expires_at = now_ms() + 30_000;
@@ -3223,6 +3228,10 @@ impl ExtensionService {
                 .providers
                 .iter()
                 .any(|provider| provider == "generation.text"),
+            decision_allowed: contribution
+                .providers
+                .iter()
+                .any(|provider| provider == "decision.text"),
             generation_cancellation:
                 crate::providers::contracts::generation::GenerationCancellation::default(),
             invocation_failure: Default::default(),
@@ -3309,12 +3318,7 @@ impl ExtensionService {
                 contribution.declaration.input_limit_bytes,
             )));
         }
-        if contribution
-            .providers
-            .iter()
-            .any(|provider| provider == "generation.text")
-            && !crate::providers::generation::available(repo).await?
-        {
+        if !providers_available(repo, &contribution.providers).await? {
             return Ok(ExtensionActionState::Disabled(
                 "Text generation provider is not configured".into(),
             ));
@@ -3357,6 +3361,9 @@ impl ExtensionService {
         detail: &crate::history::ClipDetail,
         facets: &[crate::contributions::FacetDescriptor],
     ) -> Result<Vec<crate::contributions::ClipViewDescriptor>> {
+        if crate::ai::privacy::restricted(repo, clip_id).await? {
+            return Ok(Vec::new());
+        }
         let renderers = self.contributions(repo, ContributionKind::Renderer).await?;
         let mut views = Vec::new();
         for representation in &detail.representations {
@@ -3949,6 +3956,11 @@ impl ExtensionService {
                 .bind(job_id)
                 .fetch_one(&repo.pool)
                 .await?;
+        if background && crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+            return Err(crate::failure::FailureCode::PermissionRequired
+                .failure()
+                .into());
+        }
         let (input, _) = repo
             .source_representation(&source_clip_id, source_id)
             .await?;
@@ -4013,10 +4025,14 @@ impl ExtensionService {
         .to_string();
         let mut broker = self.runtime_broker_context(repo, &contribution).await?;
         broker.generation_cancellation = cancellation;
+        if crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+            broker.decision_allowed = false;
+        }
         if contribution.declaration.execution == ExecutionClass::Local {
             broker.http_permissions.clear();
             broker.write_permissions.clear();
             broker.generation_allowed = false;
+            broker.decision_allowed = false;
         }
         let state_schemas = broker.state_schemas.clone();
         let state_allowed = broker.state_allowed;
@@ -4155,12 +4171,14 @@ impl ExtensionService {
         .fetch_optional(&repo.pool)
         .await?
         .unwrap_or(0);
-        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,setup_kind,setup_ref,setup_label,default_view,reason_code FROM extension_automation_rules WHERE package_id=? ORDER BY lower(app_display_name),rule_id")
+        let rows = sqlx::query("SELECT rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,setup_kind,setup_ref,setup_label,default_view,reason_code,condition_question,rule_order FROM extension_automation_rules WHERE package_id=? ORDER BY rule_order,rule_id")
             .bind(package_id).fetch_all(&repo.pool).await?;
         let rules = rows
             .into_iter()
             .map(|row| {
                 Ok(super::ApplicationRule {
+                    condition_question: row.get(13),
+                    order: row.get(14),
                     id: row.get(0),
                     activation_id: row.get(1),
                     application: row.get::<Option<String>, _>(2).map(|platform| {
@@ -4209,7 +4227,6 @@ impl ExtensionService {
         {
             bail!("automation requires declared background and selected input permissions");
         }
-        let mut unique = std::collections::BTreeSet::new();
         let mut rule_ids = std::collections::BTreeSet::new();
         for rule in &rules {
             if !rule_ids.insert(&rule.id) {
@@ -4218,13 +4235,12 @@ impl ExtensionService {
             if let Some(application) = &rule.application {
                 valid_rule_application(application)?;
             }
-            if !unique.insert((
-                &rule.activation_id,
-                rule.application
-                    .as_ref()
-                    .map(|app| (&app.platform, &app.id)),
-            )) {
-                bail!("automation rules must be unique per activation and application");
+            super::automation::validate_condition(rule.condition_question.as_deref())?;
+            if rule.enabled
+                && rule.condition_question.is_some()
+                && !crate::ai::decision::available(repo).await?
+            {
+                bail!("missing_decision_preset");
             }
         }
         let mut tx = repo.pool.begin().await?;
@@ -4279,9 +4295,9 @@ impl ExtensionService {
             .execute(&mut *tx)
             .await?;
         let has_enabled_rules = rules.iter().any(|rule| rule.enabled);
-        for rule in rules {
-            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,setup_kind,setup_ref,setup_label,default_view,reason_code,revision,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.as_ref().map(|app| &app.platform)).bind(rule.application.as_ref().map(|app| &app.id)).bind(rule.application.as_ref().map(|app| &app.display_name)).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).execute(&mut *tx).await?;
+        for (position, rule) in rules.into_iter().enumerate() {
+            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,setup_kind,setup_ref,setup_label,default_view,reason_code,revision,updated_at,condition_question,rule_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(package_id).bind(rule.id).bind(rule.activation_id).bind(rule.application.as_ref().map(|app| &app.platform)).bind(rule.application.as_ref().map(|app| &app.id)).bind(rule.application.as_ref().map(|app| &app.display_name)).bind(rule.enabled as i64).bind(serde_json::to_string(&rule.parameters)?).bind(rule.setup_kind).bind(rule.setup_ref).bind(rule.setup_label).bind(rule.default_view).bind(rule.reason_code).bind(next).bind(now_ms()).bind(rule.condition_question).bind(position as i64).execute(&mut *tx).await?;
         }
         if has_enabled_rules {
             for (kind, value) in [("background_clip_created", "clip.created")] {
@@ -4330,35 +4346,249 @@ impl ExtensionService {
         Ok(next)
     }
 
+    async fn automation_input(
+        &self,
+        repo: &HistoryRepository,
+        event: &sqlx::sqlite::SqliteRow,
+    ) -> Result<bool> {
+        let (_, package) = self
+            .package_for_settings(repo, event.get::<&str, _>("package_id"))
+            .await?;
+        let Some(activation) = package
+            .manifest
+            .activations
+            .iter()
+            .find(|a| a.id == event.get::<String, _>("activation_id"))
+        else {
+            return Ok(false);
+        };
+        let Some(transformer) = package
+            .manifest
+            .contributions
+            .iter()
+            .find(|t| t.id == activation.transformer_id)
+        else {
+            return Ok(false);
+        };
+        if !activation.applications.is_empty()
+            && !activation.applications.iter().any(|app| {
+                Some(&app.platform) == event.get::<Option<String>, _>("app_platform").as_ref()
+                    && Some(&app.id) == event.get::<Option<String>, _>("app_id").as_ref()
+            })
+        {
+            return Ok(false);
+        }
+        let clip_id: String = event.get("source_clip_id");
+        let constrained = activation
+            .matchers
+            .iter()
+            .chain(transformer.matchers.iter())
+            .any(|m| !m.facet_ids.is_empty());
+        if constrained {
+            crate::contributions::detect_clip(repo, &clip_id).await?;
+            self.detect_clip(repo, &clip_id).await?;
+        }
+        let clip = repo.detail(&clip_id).await?;
+        for representation_detail in &clip.representations {
+            let Ok((input, _)) = repo
+                .source_representation(&clip_id, &representation_detail.id)
+                .await
+            else {
+                continue;
+            };
+            let facets: Vec<String> = sqlx::query_scalar(
+                "SELECT f.facet_id FROM content_clip_facets f JOIN content_detection_jobs j ON j.representation_id=f.source_representation_id AND j.detector_id=f.detector_id AND j.detector_version=f.detector_version AND j.status='completed' WHERE f.source_representation_id=?",
+            )
+            .bind(&representation_detail.id)
+            .fetch_all(&repo.pool)
+            .await?;
+            if std::iter::once(None)
+                .chain(facets.iter().map(|id| Some(id.as_str())))
+                .any(|facet| {
+                    activation
+                        .matchers
+                        .iter()
+                        .any(|m| matcher_accepts(m, &input, facet))
+                        && accepts(transformer, &input, facet)
+                })
+            {
+                sqlx::query("UPDATE extension_activation_events SET source_representation_id=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                    .bind(&representation_detail.id).bind(event.get::<String,_>("event_id")).bind(event.get::<String,_>("package_id")).bind(event.get::<String,_>("activation_id")).bind(event.get::<i64,_>("evaluation_claim")).execute(&repo.pool).await?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub async fn test_automation_rules(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        activation_id: &str,
+        rules: Vec<super::ApplicationRule>,
+        application: Option<super::SourceApplication>,
+        text: String,
+    ) -> Result<super::automation::TestResult> {
+        if rules.len() > 64 {
+            bail!("automation_rule_limit");
+        }
+        if let Some(app) = &application {
+            valid_rule_application(app)?;
+        }
+        let (_, package) = self.package_for_settings(repo, package_id).await?;
+        let mut tx = repo.pool.begin().await?;
+        let mut candidates = Vec::new();
+        for rule in rules
+            .iter()
+            .filter(|r| r.enabled && r.activation_id == activation_id)
+        {
+            super::automation::validate_condition(rule.condition_question.as_deref())?;
+            let (parameters, label, view) =
+                resolve_rule_setup(&mut tx, &package.manifest, rule).await?;
+            candidates.push(super::automation::Candidate {
+                rule_id: rule.id.clone(),
+                condition_question: rule.condition_question.clone(),
+                order: rule.order,
+                application: rule.application.clone(),
+                parameters,
+                setup_label: label,
+                default_view: view,
+            });
+        }
+        tx.rollback().await?;
+        let candidates = super::automation::ordered(candidates, application.as_ref());
+        ai_test_input(&text)?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            super::automation::evaluate(repo, &text, &candidates, None),
+        )
+        .await
+        .context("decision_timeout")?
+    }
+
+    pub async fn automation_attempts(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+    ) -> Result<serde_json::Value> {
+        let rows=sqlx::query("SELECT event_id,activation_id,status,reason_code,setup_label,captured_at FROM extension_activation_events WHERE package_id=? ORDER BY captured_at DESC,event_id DESC LIMIT 20").bind(package_id).fetch_all(&repo.pool).await?;
+        Ok(serde_json::Value::Array(rows.iter().map(|r| serde_json::json!({"eventId":r.get::<String,_>(0),"activationId":r.get::<String,_>(1),"status":r.get::<String,_>(2),"reasonCode":r.get::<Option<String>,_>(3),"setupLabel":r.get::<String,_>(4),"capturedAt":r.get::<i64,_>(5)})).collect()))
+    }
+
+    pub async fn retry_automation(
+        &self,
+        repo: &HistoryRepository,
+        package_id: &str,
+        event_id: &str,
+        activation_id: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE extension_activation_events SET status='pending',reason_code=NULL,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND status='failed'")
+            .bind(now_ms()).bind(event_id).bind(package_id).bind(activation_id).execute(&repo.pool).await?;
+        Ok(())
+    }
+
     pub async fn enqueue_capture_automations(
         &self,
         repo: &HistoryRepository,
         clip_id: &str,
     ) -> Result<usize> {
-        let events = sqlx::query("SELECT event_id,package_id,activation_id,source_clip_id,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,is_new_clip,setup_label,default_view FROM extension_activation_events WHERE status='pending' AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
-            .bind(clip_id).bind(clip_id).fetch_all(&repo.pool).await?;
-        let processed = events.len();
+        let events = sqlx::query("SELECT * FROM extension_activation_events WHERE status='pending' AND lease_until<=? AND (?='' OR source_clip_id=?) ORDER BY captured_at,event_id LIMIT 100")
+            .bind(now_ms()).bind(clip_id).bind(clip_id).fetch_all(&repo.pool).await?;
+        let mut processed = 0;
         for event in events {
-            let event_id: String = event.get(0);
-            let package_id: String = event.get(1);
-            let activation_id: String = event.get(2);
-            let source_clip_id: String = event.get(3);
-            let application =
-                event
-                    .get::<Option<String>, _>(4)
-                    .map(|platform| super::SourceApplication {
-                        platform,
-                        id: event.get(5),
-                        display_name: event
-                            .get::<Option<String>, _>(6)
-                            .unwrap_or_else(|| "Application".into()),
-                    });
-            let checksum: String = event.get(7);
-            let _configuration_revision: i64 = event.get(8);
-            let grant_revision: i64 = event.get(9);
-            let rule_id: String = event.get(10);
-            let parameters_json: String = event.get(11);
-            let is_new_clip = event.get::<i64, _>(12) != 0;
+            let event_id: String = event.get("event_id");
+            let package_id: String = event.get("package_id");
+            let activation_id: String = event.get("activation_id");
+            let source_clip_id: String = event.get("source_clip_id");
+            let claimed=sqlx::query("UPDATE extension_activation_events SET evaluation_claim=evaluation_claim+1,lease_until=?,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND status='pending' AND lease_until<=?")
+                .bind(now_ms()+180_000).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(now_ms()).execute(&repo.pool).await?.rows_affected();
+            if claimed == 0 {
+                continue;
+            }
+            processed += 1;
+            let event=sqlx::query("SELECT * FROM extension_activation_events WHERE event_id=? AND package_id=? AND activation_id=?")
+                .bind(&event_id).bind(&package_id).bind(&activation_id).fetch_one(&repo.pool).await?;
+            let claim: i64 = event.get("evaluation_claim");
+            let request_id = super::automation::request_id(&event_id, &package_id, &activation_id);
+            if sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE request_id=? UNION SELECT job_id FROM extension_automation_dispatches WHERE request_id=? LIMIT 1")
+                .bind(&request_id).bind(&request_id)
+                .fetch_optional(&repo.pool)
+                .await?
+                .is_some()
+            {
+                sqlx::query("UPDATE extension_activation_events SET status='completed',reason_code='scheduled',lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                    .bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+                continue;
+            }
+
+            let key = super::automation::EventKey {
+                event: &event_id,
+                package: &package_id,
+                activation: &activation_id,
+                claim,
+            };
+            let eligibility = match super::automation::live(repo, &key).await {
+                Ok(()) => self.automation_input(repo, &event).await,
+                Err(error) => Err(error),
+            };
+            if !matches!(eligibility, Ok(true)) {
+                let (status, reason) = match &eligibility {
+                    Ok(false) => ("skipped", "ineligible"),
+                    Err(error) if error.to_string() == "automation_privacy_restricted" => {
+                        ("skipped", "privacy_restricted")
+                    }
+                    Err(error) if error.to_string() == "automation_stale" => {
+                        ("skipped", "stale_context")
+                    }
+                    _ => ("failed", "prepare_failed"),
+                };
+                sqlx::query("UPDATE extension_activation_events SET status=?,reason_code=?,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                    .bind(status).bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+                continue;
+            }
+            let event=sqlx::query("SELECT * FROM extension_activation_events WHERE event_id=? AND package_id=? AND activation_id=?")
+                .bind(&event_id).bind(&package_id).bind(&activation_id).fetch_one(&repo.pool).await?;
+            let selected = super::automation::select_event(repo, &key, &event).await;
+            let candidate = match selected {
+                Ok(Some(candidate)) => candidate,
+                outcome => {
+                    let reason = match &outcome {
+                        Ok(None) => "no_match",
+                        Err(error) if error.to_string() == "automation_privacy_restricted" => {
+                            "privacy_restricted"
+                        }
+                        Err(error) if error.to_string() == "automation_stale" => "stale_context",
+                        _ => "decision_unavailable",
+                    };
+                    sqlx::query("UPDATE extension_activation_events SET status=?,reason_code=?,lease_until=0,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                        .bind(if outcome.is_ok() || reason=="privacy_restricted" || reason=="stale_context" { "skipped" } else { "failed" }).bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+                    continue;
+                }
+            };
+            sqlx::query("UPDATE extension_activation_events SET rule_id=?,selected_rule_id=?,parameters_json=?,setup_label=?,default_view=?,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                .bind(&candidate.rule_id).bind(&candidate.rule_id).bind(serde_json::to_string(&candidate.parameters)?).bind(&candidate.setup_label).bind(&candidate.default_view).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+            let event=sqlx::query("SELECT * FROM extension_activation_events WHERE event_id=? AND package_id=? AND activation_id=?")
+                .bind(&event_id).bind(&package_id).bind(&activation_id).fetch_one(&repo.pool).await?;
+            if crate::ai::privacy::restricted(repo, &source_clip_id).await? {
+                sqlx::query("UPDATE extension_activation_events SET status='skipped',reason_code='privacy_restricted',updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=?")
+                    .bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim).execute(&repo.pool).await?;
+                continue;
+            }
+            let application = event
+                .get::<Option<String>, _>("app_platform")
+                .map(|platform| super::SourceApplication {
+                    platform,
+                    id: event.get("app_id"),
+                    display_name: event
+                        .get::<Option<String>, _>("app_display_name")
+                        .unwrap_or_else(|| "Application".into()),
+                });
+            let checksum: String = event.get("package_sha256");
+            let _configuration_revision: i64 = event.get("configuration_revision");
+            let grant_revision: i64 = event.get("grant_revision");
+            let rule_id: String = event.get("rule_id");
+            let parameters_json: String = event.get("parameters_json");
+            let is_new_clip = event.get::<i64, _>("is_new_clip") != 0;
             let active = sqlx::query("SELECT i.relative_path,i.source FROM extension_installs i JOIN extension_runtime_state s ON s.extension_id=i.id JOIN extension_automation_rules r ON r.package_id=i.package_id LEFT JOIN extension_package_revisions p ON p.package_id=i.package_id WHERE i.package_id=? AND i.sha256=? AND i.enabled=1 AND s.status='ready' AND r.rule_id=? AND r.activation_id=? AND r.enabled=1 AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND COALESCE(p.grant_revision,0)=? AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
                 .bind(&package_id).bind(&checksum).bind(&rule_id).bind(&activation_id)
                 .bind(application.as_ref().map(|app| &app.platform)).bind(application.as_ref().map(|app| &app.id)).bind(grant_revision)
@@ -4495,7 +4725,7 @@ impl ExtensionService {
                                                     &activation.transformer_id,
                                                 ),
                                             parameters,
-                                            request_id: None,
+                                            request_id: Some(request_id.clone()),
                                             regenerate: false,
                                             invocation_token: None,
                                             capture_application: application.clone(),
@@ -4504,10 +4734,11 @@ impl ExtensionService {
                                             settings_snapshot_revision: None,
                                             inventory_json: String::new(),
                                             setup_id: None,
-                                            display_label: Some(event.get(13)),
-                                            default_view: Some(event.get(14)),
+                                            display_label: Some(event.get("setup_label")),
+                                            default_view: Some(event.get("default_view")),
                                             result_controls: Vec::new(),
                                         };
+                                        super::automation::live(repo, &key).await?;
                                         if self
                                             .enqueue_durable_transform(repo, request, true)
                                             .await
@@ -4525,13 +4756,24 @@ impl ExtensionService {
                     }
                 }
             }
-            sqlx::query("UPDATE extension_activation_events SET status=?,reason_code=?,updated_at=? WHERE event_id=? AND package_id=? AND activation_id=? AND status='pending'")
-                .bind(if reason == "scheduled" { "completed" } else { "skipped" })
-                .bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id)
+            sqlx::query("UPDATE extension_activation_events SET status=?,reason_code=?,updated_at=?,lease_until=0 WHERE event_id=? AND package_id=? AND activation_id=? AND evaluation_claim=? AND status='pending'")
+                .bind(match reason { "scheduled" => "completed", "prepare_failed" | "enqueue_failed" | "detection_failed" => "failed", _ => "skipped" })
+                .bind(reason).bind(now_ms()).bind(&event_id).bind(&package_id).bind(&activation_id).bind(claim)
                 .execute(&repo.pool).await?;
         }
         Ok(processed)
     }
+}
+
+fn ai_test_input(text: &str) -> Result<()> {
+    crate::ai::decision::validate(&crate::ai::decision::DecisionRequest {
+        text: text.into(),
+        question: "Test automation".into(),
+    })?;
+    if crate::contributions::contains_secret(text) {
+        bail!("automation_privacy_restricted");
+    }
+    Ok(())
 }
 
 fn setup_display_label(operation: &str, setup: &str) -> String {
@@ -5836,7 +6078,61 @@ mod tests {
             .automation_rules(&repo, "infiniti.rewrite")
             .await
             .unwrap();
+        use crate::ai::{configuration, contracts::*};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connection = AiConnection {
+            id: new_id(),
+            name: "Fixture".into(),
+            provider: AiProviderKind::Ollama,
+            base_url: format!("http://{}", listener.local_addr().unwrap()),
+            enabled: true,
+            options: AiConnectionOptions {
+                organization: None,
+                project: None,
+            },
+        };
+        let preset = AiModelPreset {
+            id: new_id(),
+            name: "General".into(),
+            connection_id: connection.id.clone(),
+            model_id: "fixture".into(),
+            purpose: AiModelPurpose::Decision,
+            context_limit: 32768,
+            output_limit: 4096,
+            options: configuration::default_options(),
+            capabilities: configuration::unknown_capabilities(),
+        };
+        configuration::import(
+            &repo,
+            AiConfiguration {
+                version: 4,
+                connections: vec![connection],
+                presets: vec![preset.clone()],
+                selections: AiSelections {
+                    default_decision: Some(preset.id),
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let router = axum::Router::new().route(
+            "/v1/systemone",
+            axum::routing::post(|bytes: axum::body::Bytes| async move {
+                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                let answers: serde_json::Map<String, serde_json::Value> = body["questions"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(|id| (id.clone(), serde_json::json!({"type":"noul","noul":0.9})))
+                    .collect();
+                serde_json::json!({"answers":answers}).to_string()
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let rule = super::super::ApplicationRule {
+            condition_question: Some("Is this a draft?".into()),
+            order: 0,
             id: "outlook-rule".into(),
             activation_id: "on-copy".into(),
             application: if std::env::var_os("CLIPSX_TEST_ALL_CLIPS").is_some() {
@@ -5857,10 +6153,35 @@ mod tests {
             parameters: serde_json::json!({"forged":"ignored"}),
             revision: 0,
         };
+        let mut second = rule.clone();
+        second.id = "second-same-scope".into();
+        second.condition_question = None;
+        second.order = 1;
+        second.setup_kind = "builtin".into();
+        second.setup_ref = "business".into();
+        let mut global = second.clone();
+        global.id = "global-fallback".into();
+        global.application = None;
+        global.order = 2;
         service
-            .set_automation_rules(&repo, "infiniti.rewrite", revision, vec![rule])
+            .set_automation_rules(
+                &repo,
+                "infiniti.rewrite",
+                revision,
+                vec![rule, second, global],
+            )
             .await
             .unwrap();
+        let persisted = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap()
+            .1;
+        assert_eq!(persisted.len(), 3);
+        assert_eq!(
+            persisted.iter().map(|rule| rule.order).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
         let capture = || crate::history::CapturedSnapshot {
             token: 1,
             source_app_name: Some("Outlook".into()),
@@ -5921,6 +6242,17 @@ mod tests {
             // A later canonical observation must not replace an unknown captured source.
             sqlx::query("UPDATE clip_items SET source_app_platform='windows',source_app_id='exe:slack.exe',source_app_name='Slack' WHERE id=?").bind(&clip).execute(&repo.pool).await.unwrap();
         }
+        let (first, concurrent) = tokio::join!(
+            service.enqueue_capture_automations(&repo, &clip),
+            service.enqueue_capture_automations(&repo, &clip)
+        );
+        first.unwrap();
+        concurrent.unwrap();
+        // Simulate a restart after enqueue but before the event status was committed.
+        sqlx::query("UPDATE extension_activation_events SET status='pending',lease_until=0")
+            .execute(&repo.pool)
+            .await
+            .unwrap();
         service
             .enqueue_capture_automations(&repo, &clip)
             .await
@@ -5969,6 +6301,17 @@ mod tests {
             .iter()
             .any(|job| job.job_id == old.job_id && job.status == "completed"));
         assert!(retained.iter().any(|job| job.status == "cancelled"));
+        let (revision, mut rules) = service
+            .automation_rules(&repo, "infiniti.rewrite")
+            .await
+            .unwrap();
+        for rule in &mut rules {
+            rule.enabled = false;
+        }
+        service
+            .set_automation_rules(&repo, "infiniti.rewrite", revision, rules)
+            .await
+            .unwrap();
         repo.capture(capture(), &crate::history::CaptureSettings::default())
             .await
             .unwrap();
@@ -5990,6 +6333,7 @@ mod tests {
                 .setup_ref,
             setup.id
         );
+        server.abort();
     }
 
     #[test]

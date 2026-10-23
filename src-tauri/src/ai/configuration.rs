@@ -122,7 +122,7 @@ fn bounded(value: &str, max: usize) -> Result<()> {
     Ok(())
 }
 fn validate(document: &AiConfiguration) -> Result<()> {
-    if ![1, 2, 3].contains(&document.version)
+    if ![1, 2, 3, 4].contains(&document.version)
         || document.connections.len() > 64
         || document.presets.len() > 256
     {
@@ -272,6 +272,10 @@ fn validate(document: &AiConfiguration) -> Result<()> {
             &document.selections.active_embedding,
             AiModelPurpose::Embedding,
         ),
+        (
+            &document.selections.privacy_decision,
+            AiModelPurpose::Decision,
+        ),
         (&document.selections.active_rerank, AiModelPurpose::Rerank),
     ] {
         if let Some(id) = id {
@@ -335,12 +339,13 @@ async fn read_in(pool: &mut SqliteConnection) -> Result<AiConfiguration> {
             "web_search" => selections.web_search = id,
             "extension_generation" => selections.extension_generation = id,
             "default_decision" => selections.default_decision = id,
+            "privacy_decision" => selections.privacy_decision = id,
             "active_rerank" => selections.active_rerank = id,
             _ => (),
         }
     }
     Ok(AiConfiguration {
-        version: 3,
+        version: 4,
         connections,
         presets,
         selections,
@@ -364,6 +369,7 @@ async fn persist(tx: &mut SqliteConnection, document: &AiConfiguration) -> Resul
             &document.selections.extension_generation,
         ),
         ("default_decision", &document.selections.default_decision),
+        ("privacy_decision", &document.selections.privacy_decision),
         ("active_rerank", &document.selections.active_rerank),
     ] {
         sqlx::query("INSERT INTO ai_selections(selection_key,selected_id) VALUES(?,?) ON CONFLICT(selection_key) DO UPDATE SET selected_id=excluded.selected_id").bind(key).bind(id).execute(&mut *tx).await?;
@@ -630,7 +636,7 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
             merged.presets.push(item);
         }
     }
-    if ![1, 2, 3].contains(&incoming.version) {
+    if ![1, 2, 3, 4].contains(&incoming.version) {
         bail!("unsupported_configuration_version");
     }
     merged.selections = incoming.selections;
@@ -640,6 +646,9 @@ pub fn merge(current: &AiConfiguration, incoming: AiConfiguration) -> Result<AiC
     if incoming.version == 1 {
         merged.selections.extension_generation = current.selections.extension_generation.clone();
         merged.selections.default_decision = current.selections.default_decision.clone();
+    }
+    if incoming.version < 4 {
+        merged.selections.privacy_decision = current.selections.privacy_decision.clone();
     }
     validate(&merged)?;
     Ok(merged)
@@ -690,6 +699,10 @@ async fn import_merged(
         bail!("configuration_changed");
     }
     persist(&mut tx, &merged).await?;
+    if serde_json::to_string(&current)? != serde_json::to_string(&merged)? {
+        sqlx::query("INSERT INTO config_device_values(key,value_json,updated_at) VALUES('providers.decision.text.active','null',?) ON CONFLICT(key) DO UPDATE SET updated_at=MAX(config_device_values.updated_at+1,excluded.updated_at)")
+            .bind(now_ms()).execute(&mut *tx).await?;
+    }
     for preset in current
         .presets
         .iter()
@@ -791,6 +804,7 @@ pub async fn remove(
         &mut next.selections.active_embedding,
         &mut next.selections.extension_generation,
         &mut next.selections.default_decision,
+        &mut next.selections.privacy_decision,
         &mut next.selections.active_rerank,
     ] {
         if selection

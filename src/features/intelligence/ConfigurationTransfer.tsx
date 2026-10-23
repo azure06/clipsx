@@ -18,6 +18,7 @@ const selectionKeys: Array<keyof AiSelections> = [
   'activeEmbedding',
   'extensionGeneration',
   'defaultDecision',
+  'privacyDecision',
   'activeRerank',
   'webSearch',
 ]
@@ -26,6 +27,7 @@ const labelKeys: Record<keyof AiSelections, string> = {
   activeEmbedding: 'aiConfig.activeEmbedding',
   extensionGeneration: 'modelsWorkspace.extensionGeneration',
   defaultDecision: 'modelsWorkspace.decision',
+  privacyDecision: 'decisionRules.privacyModel',
   activeRerank: 'modelsWorkspace.rerank',
   webSearch: 'aiConfig.webConnection',
 }
@@ -77,7 +79,7 @@ export function ConfigurationTransfer({
     })
     const effective = {
       ...document,
-      version: 3,
+      version: 4,
       selections: assignments ? validated.selections : current.selections,
     }
     setPreview(
@@ -289,7 +291,7 @@ export function ConfigurationTransfer({
                   await writeTextFile(
                     path,
                     JSON.stringify(
-                      { ...document, version: 3, connections, presets, selections },
+                      { ...document, version: 4, connections, presets, selections },
                       null,
                       2
                     )
@@ -314,7 +316,7 @@ export function ConfigurationTransfer({
                       await invoke('ai_configuration_import', {
                         configuration: {
                           ...incoming,
-                          version: 3,
+                          version: 4,
                           selections: includeAssignments ? preview.selections : latest.selections,
                         },
                       })

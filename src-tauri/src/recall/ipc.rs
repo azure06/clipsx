@@ -89,6 +89,40 @@ pub async fn ai_configuration_preview(
 }
 
 #[tauri::command]
+pub async fn privacy_settings(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<crate::ai::privacy::PrivacySettings, String> {
+    service(&webview, &state).map_err(|_| "access_denied".to_string())?;
+    crate::ai::privacy::settings(&state.history)
+        .await
+        .map_err(|_| "privacy_settings_unavailable".into())
+}
+#[tauri::command]
+pub async fn privacy_save_settings(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    settings: crate::ai::privacy::PrivacySettings,
+) -> Result<(), String> {
+    service(&webview, &state).map_err(|_| "access_denied".to_string())?;
+    crate::ai::privacy::save(&state.history, settings)
+        .await
+        .map_err(|_| "invalid_privacy_settings".into())
+}
+#[tauri::command]
+pub async fn privacy_test_rule(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    rule: crate::ai::privacy::DecisionRule,
+    text: String,
+) -> Result<f64, String> {
+    service(&webview, &state).map_err(|_| "access_denied".to_string())?;
+    crate::ai::privacy::test_rule(&state.history, rule, text)
+        .await
+        .map_err(|_| "privacy_test_unavailable".into())
+}
+
+#[tauri::command]
 pub async fn ai_test_decision(
     webview: tauri::Webview,
     state: State<'_, AppState>,

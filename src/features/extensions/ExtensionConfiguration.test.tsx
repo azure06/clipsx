@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { AutomationEditor, SavedSetupsEditor } from './ExtensionConfiguration'
+import { AutomationEditor, SavedSetupsEditor, type AutomationRule } from './ExtensionConfiguration'
 import type { PackageDetail } from '../settings/extensions/types'
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
@@ -172,5 +172,129 @@ describe('all copied clips automation', () => {
     )
     if (previous) Object.defineProperty(window, 'confirm', previous)
     else Reflect.deleteProperty(window, 'confirm')
+  })
+})
+
+describe('ordered conditional automation rules', () => {
+  let rules: AutomationRule[]
+  let revision: number
+  const confirm = vi.fn(() => true)
+  beforeEach(() => {
+    rules = []
+    revision = 0
+    Object.defineProperty(window, 'confirm', { configurable: true, value: confirm })
+    confirm.mockClear()
+    invoke.mockReset()
+    invoke.mockImplementation((command: string, args?: { rules?: AutomationRule[] }) => {
+      if (command === 'get_extension_automation') return Promise.resolve({ revision, rules })
+      if (command === 'set_extension_automation') {
+        rules = args?.rules ?? []
+        revision++
+        return Promise.resolve(revision)
+      }
+      if (command === 'test_extension_automation')
+        return Promise.resolve({
+          selectedRuleId: rules[0]?.id,
+          setupLabel: 'Business',
+          evaluations: [{ ruleId: rules[0]?.id, probability: 0.7, matched: true }],
+        })
+      return Promise.resolve([])
+    })
+  })
+  function editor() {
+    render(
+      <AutomationEditor
+        packageId="example"
+        detail={{
+          ...detail,
+          activations: [{ id: 'on-copy', event: 'clip_created', transformerId: 'rewrite' }],
+          transformers: detail.transformers.map(item => ({ ...item, localId: 'rewrite' })),
+        }}
+        onChanged={() => Promise.resolve()}
+      />
+    )
+  }
+  async function chooseSetup(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('combobox', { name: 'Automation setup' }))
+    await user.click(screen.getByRole('option', { name: 'Business' }))
+  }
+  it('adds multiple rules in the same scope, duplicates disabled, reorders, and deletes', async () => {
+    const user = userEvent.setup()
+    editor()
+    await chooseSetup(user)
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await waitFor(() => expect(rules).toHaveLength(1))
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await waitFor(() => expect(rules).toHaveLength(2))
+    expect(rules[0]?.id).not.toBe(rules[1]?.id)
+    expect(rules.map(rule => rule.order)).toEqual([0, 1])
+    const first = rules[0]?.id
+    await user.click(screen.getByRole('button', { name: 'Move rule 2 up' }))
+    await waitFor(() => expect(rules[1]?.id).toBe(first))
+    await waitFor(() =>
+      expect(document.activeElement?.closest('[data-rule]')?.getAttribute('data-rule')).toBe(
+        rules[0]?.id
+      )
+    )
+    await user.click(screen.getAllByRole('button', { name: 'Duplicate' })[0]!)
+    await waitFor(() => expect(rules).toHaveLength(3))
+    expect(rules[2]?.enabled).toBe(false)
+    await user.click(screen.getAllByRole('button', { name: 'Delete automation rule' })[2]!)
+    await waitFor(() => expect(rules).toHaveLength(2))
+  })
+  it('persists a condition with renewed consent and tests samples without generation or saving', async () => {
+    const user = userEvent.setup()
+    editor()
+    await chooseSetup(user)
+    await user.click(screen.getByRole('switch', { name: 'Only run when…' }))
+    await user.type(
+      screen.getByRole('textbox', { name: 'Question to evaluate' }),
+      'Is this an email draft?'
+    )
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await waitFor(() => expect(rules[0]?.conditionQuestion).toBe('Is this an email draft?'))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('hosted'))
+    invoke.mockClear()
+    await user.type(
+      screen.getByRole('textbox', { name: 'Sample text' }),
+      'Hello, please review this draft'
+    )
+    await user.click(screen.getByRole('button', { name: 'Test rules' }))
+    expect(await screen.findByText('Would run: Business')).toBeInTheDocument()
+    expect(invoke).toHaveBeenCalledWith(
+      'test_extension_automation',
+      expect.objectContaining({ text: 'Hello, please review this draft', rules })
+    )
+    expect(invoke).not.toHaveBeenCalledWith('set_extension_automation', expect.anything())
+    expect(invoke.mock.calls.some(([command]) => /enqueue|generate/.test(String(command)))).toBe(
+      false
+    )
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await user.clear(screen.getByRole('textbox', { name: 'Question to evaluate' }))
+    await user.type(
+      screen.getByRole('textbox', { name: 'Question to evaluate' }),
+      'Is this a business email?'
+    )
+    confirm.mockClear()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(rules[0]?.conditionQuestion).toBe('Is this a business email?'))
+  })
+  it('retains the draft on save failure and supports retry', async () => {
+    const user = userEvent.setup()
+    editor()
+    await chooseSetup(user)
+    const implementation = invoke.getMockImplementation()!
+    invoke.mockImplementation((command, args) =>
+      command === 'set_extension_automation'
+        ? Promise.reject(new Error('offline'))
+        : (implementation(command, args) as Promise<unknown>)
+    )
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your draft is retained')
+    expect(screen.getByRole('combobox', { name: 'Automation setup' })).toHaveTextContent('Business')
+    invoke.mockImplementation(implementation)
+    await user.click(screen.getByRole('button', { name: 'Add rule' }))
+    await waitFor(() => expect(rules).toHaveLength(1))
   })
 })

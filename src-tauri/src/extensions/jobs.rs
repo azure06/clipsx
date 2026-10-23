@@ -23,6 +23,10 @@ pub struct SourceApplication {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationRule {
+    #[serde(default)]
+    pub condition_question: Option<String>,
+    #[serde(default)]
+    pub order: i64,
     pub id: String,
     pub activation_id: String,
     pub application: Option<SourceApplication>,
@@ -293,13 +297,16 @@ pub(crate) async fn enqueue(
         &state_revision.to_string(),
         &provider_revision.to_string(),
     ]);
+    let mut tx = repo.pool.begin().await?;
     if let Some(request_id) = request.request_id.as_deref() {
         if let Some(id) =
-            sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE request_id=?")
+            sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE request_id=? UNION SELECT job_id FROM extension_automation_dispatches WHERE request_id=? LIMIT 1")
                 .bind(request_id)
-                .fetch_optional(&repo.pool)
+                .bind(request_id)
+                .fetch_optional(&mut *tx)
                 .await?
         {
+            tx.commit().await?;
             return Ok(ExtensionJobResult {
                 job_id: id,
                 reused: true,
@@ -308,19 +315,26 @@ pub(crate) async fn enqueue(
     }
     if !request.regenerate {
         if let Some(id) = sqlx::query_scalar::<_, String>("SELECT id FROM extension_jobs WHERE dedupe_key=? AND regeneration_nonce IS NULL AND status IN ('pending','running','waiting_provider','waiting_write_review','completed') ORDER BY created_at DESC LIMIT 1")
-            .bind(&dedupe).fetch_optional(&repo.pool).await? {
+            .bind(&dedupe).fetch_optional(&mut *tx).await? {
+            if priority == 1 {
+                if let Some(request_id) = request.request_id.as_deref() {
+                    sqlx::query("INSERT INTO extension_automation_dispatches(request_id,job_id) VALUES(?,?)")
+                        .bind(request_id).bind(&id).execute(&mut *tx).await?;
+                }
+            }
+            tx.commit().await?;
             return Ok(ExtensionJobResult { job_id: id, reused: true });
         }
     }
-    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await?;
+    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&mut *tx).await?;
     if outstanding >= 1000 {
         bail!("extension job queue is full");
     }
-    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')").bind(package_id).fetch_one(&repo.pool).await?;
+    let package_outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE package_id=? AND status IN ('pending','running','waiting_provider','waiting_write_review')").bind(package_id).fetch_one(&mut *tx).await?;
     if package_outstanding >= 100 {
         bail!("extension package job queue is full");
     }
-    let completed: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE source_clip_id=? AND package_id=? AND status='completed'").bind(&request.clip_id).bind(package_id).fetch_one(&repo.pool).await?;
+    let completed: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE source_clip_id=? AND package_id=? AND status='completed'").bind(&request.clip_id).bind(package_id).fetch_one(&mut *tx).await?;
     if completed >= 20 {
         bail!("source clip already has 20 retained results from this package");
     }
@@ -328,11 +342,23 @@ pub(crate) async fn enqueue(
     let now = now_ms();
     let nonce = request.regenerate.then(new_id);
     sqlx::query("INSERT INTO extension_jobs(id,request_id,source_clip_id,source_representation_id,package_id,contribution_id,contribution_version,package_sha256,input_sha256,parameters_json,settings_json,inventory_json,automation_rule_id,setup_id,display_label,default_view,parameter_sha256,result_controls_json,app_platform,app_id,app_display_name,settings_revision,grant_revision,state_revision,provider_revision,priority,dedupe_key,regeneration_nonce,status,requested_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
-        .bind(&id).bind(request.request_id).bind(&request.clip_id).bind(&request.source_id)
+        .bind(&id).bind(request.request_id.as_deref()).bind(&request.clip_id).bind(&request.source_id)
         .bind(package_id).bind(&request.transformer_id).bind(contribution_version).bind(package_sha256)
         .bind(input_sha).bind(parameters_json).bind(if request.settings_snapshot_json.is_empty() { "{}" } else { &request.settings_snapshot_json }).bind(if request.inventory_json.is_empty() { "[]" } else { &request.inventory_json }).bind(request.automation_rule_id).bind(request.setup_id).bind(display_label).bind(default_view).bind(parameter_sha).bind(serde_json::to_string(&request.result_controls)?).bind(app_platform).bind(app_id).bind(app_name)
         .bind(settings_revision).bind(grant_revision).bind(state_revision).bind(provider_revision).bind(priority)
-        .bind(dedupe).bind(nonce).bind(now).bind(now).bind(now).execute(&repo.pool).await?;
+        .bind(dedupe).bind(nonce).bind(now).bind(now).bind(now).execute(&mut *tx).await?;
+    if priority == 1 {
+        if let Some(request_id) = request.request_id.as_deref() {
+            sqlx::query(
+                "INSERT INTO extension_automation_dispatches(request_id,job_id) VALUES(?,?)",
+            )
+            .bind(request_id)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    tx.commit().await?;
     Ok(ExtensionJobResult {
         job_id: id,
         reused: false,
@@ -371,7 +397,7 @@ async fn revision(repo: &HistoryRepository, package_id: &str, column: &str) -> R
 
 async fn provider_revision(repo: &HistoryRepository) -> Result<i64> {
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'",
+        "SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')",
     )
     .fetch_optional(&repo.pool)
     .await?
@@ -382,6 +408,9 @@ pub(crate) async fn recover(repo: &HistoryRepository) -> Result<()> {
     let now = now_ms();
     sqlx::query("UPDATE extension_jobs SET status=CASE WHEN interruption_count >= 2 THEN 'failed' ELSE 'pending' END, interruption_count=interruption_count+1, reason_code=CASE WHEN interruption_count >= 2 THEN 'interrupted_too_often' ELSE 'restart_recovery' END, started_at=NULL, updated_at=? WHERE status='running'")
         .bind(now).execute(&repo.pool).await?;
+    sqlx::query("UPDATE extension_activation_events SET lease_until=0 WHERE status='pending'")
+        .execute(&repo.pool)
+        .await?;
     cleanup_expired(repo).await?;
     Ok(())
 }
@@ -454,7 +483,7 @@ pub(crate) async fn run_next(
                 _ = watcher_cancel.cancelled() => break,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
             }
-            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+            let active: Option<i64> = sqlx::query_scalar("SELECT j.claim_generation FROM extension_jobs j LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id JOIN extension_installs i ON i.package_id=j.package_id WHERE j.id=? AND j.status='running' AND i.enabled=1 AND i.sha256=j.package_sha256 AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')),0)")
                 .bind(&watcher_job).fetch_optional(&watcher_repo.pool).await.unwrap_or(None);
             if active != Some(claim) {
                 watcher_cancel.cancel();
@@ -601,7 +630,7 @@ async fn persist_outputs(
     }
     let now = now_ms();
     let mut tx = repo.pool.begin().await?;
-    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT updated_at FROM config_device_values WHERE key='providers.generation.text.active'),0)")
+    let active: Option<String> = sqlx::query_scalar("SELECT j.status FROM extension_jobs j JOIN clip_items c ON c.id=j.source_clip_id JOIN clip_representations r ON r.id=j.source_representation_id LEFT JOIN clip_text_values t ON t.representation_id=r.id LEFT JOIN clip_binary_files b ON b.id=r.binary_file_id JOIN extension_installs i ON i.package_id=j.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=j.package_id WHERE j.id=? AND j.claim_generation=? AND c.lifecycle_state='ready' AND r.lifecycle_state='ready' AND COALESCE(t.sha256,b.sha256)=j.input_sha256 AND i.sha256=j.package_sha256 AND i.enabled=1 AND s.status='ready' AND j.grant_revision=COALESCE(p.grant_revision,0) AND j.state_revision=COALESCE(p.state_revision,0) AND j.provider_revision=COALESCE((SELECT COALESCE(MAX(updated_at),0) FROM config_device_values WHERE key IN ('providers.generation.text.active','providers.decision.text.active')),0)")
             .bind(job_id)
             .bind(claim)
             .fetch_optional(&mut *tx)
@@ -1020,6 +1049,18 @@ mod tests {
         .unwrap();
         assert_eq!(paused.job_id, first.job_id);
         assert!(paused.reused);
+        // Each capture keeps its own durable identity even when sharing an existing job.
+        let alias: String = sqlx::query_scalar("SELECT job_id FROM extension_automation_dispatches WHERE request_id='paused-equivalent'")
+            .fetch_one(&repo.pool).await.unwrap();
+        assert_eq!(alias, first.job_id);
+        let mut retry = request("paused-equivalent");
+        retry.parameters = serde_json::json!({"preset":"changed-after-restart"});
+        let recovered = enqueue(&repo, retry, "example.rewrite", &checksum, "1.0.0", 1)
+            .await
+            .unwrap();
+        assert_eq!(recovered.job_id, first.job_id);
+        assert!(recovered.reused);
+
         let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE status IN ('pending','running','waiting_provider','waiting_write_review')").fetch_one(&repo.pool).await.unwrap();
         assert_eq!(outstanding, 1);
         let retained = list(&repo, &clip_id).await.unwrap();
