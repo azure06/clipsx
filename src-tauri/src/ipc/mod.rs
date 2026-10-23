@@ -1286,7 +1286,12 @@ async fn get_extension_automation(
         .automation_rules(&state.history, &package_id)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(serde_json::json!({"revision":revision,"rules":rules}))
+    let attempts = state
+        .extensions
+        .automation_attempts(&state.history, &package_id)
+        .await
+        .map_err(|_| "automation_status_unavailable".to_string())?;
+    Ok(serde_json::json!({"revision":revision,"rules":rules,"attempts":attempts}))
 }
 
 #[tauri::command]
@@ -1301,6 +1306,45 @@ async fn set_extension_automation(
         .set_automation_rules(&state.history, &package_id, expected_revision, rules)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn test_extension_automation(
+    package_id: String,
+    activation_id: String,
+    rules: Vec<crate::extensions::ApplicationRule>,
+    application: Option<crate::extensions::SourceApplication>,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<crate::extensions::automation::TestResult, String> {
+    state
+        .extensions
+        .test_automation_rules(
+            &state.history,
+            &package_id,
+            &activation_id,
+            rules,
+            application,
+            text,
+        )
+        .await
+        .map_err(|_| "automation_test_failed".into())
+}
+#[tauri::command]
+async fn retry_extension_automation(
+    package_id: String,
+    event_id: String,
+    activation_id: String,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state
+        .extensions
+        .retry_automation(&state.history, &package_id, &event_id, &activation_id)
+        .await
+        .map_err(|_| "automation_retry_failed".to_string())?;
+    crate::app::workers::wake_extensions(&app, state.history.clone(), state.extensions.clone());
+    Ok(())
 }
 
 #[tauri::command]
@@ -3502,6 +3546,8 @@ crate::recall::ipc::recall_snapshot_image,
             delete_extension_transform_setup,
             get_extension_automation,
             set_extension_automation,
+            test_extension_automation,
+            retry_extension_automation,
             list_context_actions,
             list_extension_actions,
             run_context_action,

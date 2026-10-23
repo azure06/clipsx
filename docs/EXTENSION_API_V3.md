@@ -197,30 +197,48 @@ remain plain validated values without component names or form state.
 
 ## Capture automation
 
-An activation targets one transformer and declares representation matchers
-for `clip_created`. A device-local, user-enabled rule selects all copied clips
-or an exact platform/application ID, and a built-in or saved setup. The host resolves
-and validates its parameters; rules do not expose a second parameter editor. The manifest filter and rule
-intersect. Every accepted external capture occurrence is considered, including
-a repeated copy of an existing clip. The host commits an activation intent
-with the capture, then a coordinator evaluates eligibility and runs the same
-transformer executor used by Tools. No guest or model work blocks capture.
-Equivalent jobs reuse an outstanding or completed result; explicit Regenerate
-creates another run.
+An activation targets one transformer and declares representation matchers for
+`clip_created`. Users can create up to 64 device-local rules per extension,
+including multiple rules for the same operation and application. Each rule selects
+an exact application or All copied clips, a built-in or saved setup, and an
+optional “Only run when…” question. The manifest filter and rule intersect.
 
-Extension settings are the canonical automation editor. Tools' Manage automation
-opens it with the selected setup; unsaved choices must be saved first. Rules
-store `setupKind`, `setupRef`, and host-maintained parameter/label/view snapshots.
-Editing a saved setup updates referencing rules and revisions in the same
-transaction. Accepted capture intents and existing jobs keep their snapshots;
-setup edits do not invalidate them. Deleting a setup disables its rules with
-`setup_deleted`; incompatible package declarations leave rules inactive with
-`setup_unavailable`. Live revocation, rule disablement and source deletion still
-cancel unfinished work. Completed results remain readable.
+The host tries enabled application-specific rules in their displayed order, then
+All copied clips rules in order. Only the first matching rule runs per capture,
+extension and activation. An unconditional rule always matches and hides later
+rules in its scope. Conditions use the user's General decisions model; a Yes
+probability of at least 50% matches. Related questions are batched within provider
+limits. Global questions are evaluated only if application-specific rules do not
+match. Errors stop evaluation and expose a retryable failure, never a false result
+or fallback to another provider. Manual operations bypass automation conditions.
 
-Jobs waiting for external-write review count toward outstanding quotas and
-participate in deduplication. An equivalent automatic capture cannot bypass the
-pause by creating another job.
+Every accepted external capture occurrence is considered, including repeated
+copies of an existing clip. Capture commits ordered candidate snapshots, resolved
+setup parameters, labels and views without waiting for guest or model work. A
+claimed coordinator persists decision progress and the selected rule, then
+schedules the shared transformer executor idempotently. Restart recovery cannot
+schedule a capture twice. Equivalent jobs reuse outstanding or completed results;
+a capture's dispatch identity also survives reuse. Jobs waiting for external-write
+review participate in deduplication, so another capture cannot bypass that pause.
+Explicit Regenerate creates another run.
+
+Extension settings are the canonical editor, with add, edit, duplicate, delete,
+keyboard-accessible ordering, and sample testing. Tests evaluate saved enabled
+rules without saving the sample or generating output. Tools' Manage automation
+opens the editor with the selected setup; unsaved setup choices must be saved first.
+Enabling a new or changed condition requires renewed consent. The consent names
+conditional processing and explains that configured local or hosted providers
+receive text. Host-owned conditions require no guest decision capability or WIT
+change; extension-requested model steps still require declared provider grants.
+
+Setup edits update referencing rules atomically for future captures. Accepted
+intents and existing jobs retain snapshots. Deleting a setup disables its rules
+with `setup_deleted`; incompatible declarations leave rules inactive with
+`setup_unavailable`. Privacy exclusions, source deletion, package identity and live
+permission checks apply before model disclosure and scheduling. Disabled rules
+cannot win. Recent attempts expose no-match, privacy, stale-context and retryable
+failure outcomes. Completed results stay attached and readable; automation never
+copies or pastes.
 
 Source application IDs are normalized platform-specific keys, not publisher
 proof and not the paste destination. Missing identity does not stop capture
@@ -319,9 +337,7 @@ identity, SHA-256 digest, and permission fingerprint; a protected signer
 publishes the catalog index and signature together. The desktop app installs
 only releases compatible with this contract.
 
-User automation rules may select all copied clips with `application: null`, or
-one exact safe source application. When both are enabled for an activation, the
-exact rule takes precedence. All-clips rules also cover unknown application
-identity, but remain subject to manifest representation/application filters and
-background consent. Their label, parameters and default view are snapshotted at
-capture like exact-app rules. Enabling automation does not process old history.
+All copied clips rules also cover unknown application identity, subject to the
+same manifest filters and background consent. Enabling automation processes future
+capture occurrences, not existing history. See [Capture automation](#capture-automation)
+for ordering, conditions and recovery.

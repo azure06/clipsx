@@ -1,6 +1,7 @@
 //! M5 community extension packages. Packages are untrusted component-model
 //! WebAssembly and receive no ambient host capabilities.
 
+pub(crate) mod automation;
 mod broker;
 mod catalog;
 mod flow;
