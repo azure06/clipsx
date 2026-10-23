@@ -66,12 +66,12 @@ impl SingleWorker {
                 }
             }
             guard.running.store(false, Ordering::SeqCst);
-            let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM extension_jobs WHERE (status IN ('pending','waiting_provider') AND (retry_at IS NULL OR retry_at<=?)) OR EXISTS(SELECT 1 FROM extension_activation_events WHERE status='pending')")
-                .bind(crate::history::now_ms()).fetch_one(&history.pool).await.unwrap_or(0);
+            let pending: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM extension_jobs WHERE status IN ('pending','waiting_provider') AND (retry_at IS NULL OR retry_at<=?)) + (SELECT count(*) FROM extension_activation_events WHERE status='pending' AND lease_until<=?)")
+                .bind(crate::history::now_ms()).bind(crate::history::now_ms()).fetch_one(&history.pool).await.unwrap_or(0);
             if pending > 0 {
                 guard.wake_extensions(app, history, extensions);
             } else {
-                let retry_at: Option<i64> = sqlx::query_scalar("SELECT min(retry_at) FROM extension_jobs WHERE status IN ('pending','waiting_provider') AND retry_at IS NOT NULL")
+                let retry_at: Option<i64> = sqlx::query_scalar("SELECT min(next_at) FROM (SELECT retry_at AS next_at FROM extension_jobs WHERE status IN ('pending','waiting_provider') AND retry_at IS NOT NULL UNION ALL SELECT lease_until AS next_at FROM extension_activation_events WHERE status='pending')")
                     .fetch_one(&history.pool).await.unwrap_or(None);
                 if let Some(retry_at) = retry_at {
                     let delay = (retry_at - crate::history::now_ms()).clamp(1, 60_000) as u64;

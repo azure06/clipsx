@@ -33,22 +33,45 @@ async fn enqueue_capture_intents(
     let platform = source_platform(snapshot.source_app_id.as_deref());
     let app_id = platform.and(snapshot.source_app_id.as_deref());
     let event_id = new_id();
-    sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,source_representation_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at) SELECT ?,r.package_id,r.activation_id,?,NULL,?,?,?,?,?,i.sha256,COALESCE(p.configuration_revision,0),COALESCE(p.grant_revision,0),r.rule_id,r.parameters_json,r.setup_label,r.default_view,'pending',?,? FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND ((r.app_platform=? AND r.app_id=?) OR (r.app_platform IS NULL AND NOT EXISTS(SELECT 1 FROM extension_automation_rules exact WHERE exact.package_id=r.package_id AND exact.activation_id=r.activation_id AND exact.enabled=1 AND exact.app_platform=? AND exact.app_id=?))) AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created')")
-        .bind(event_id)
-        .bind(clip_id)
-        .bind(captured_at)
-        .bind(is_new_clip)
-        .bind(platform)
-        .bind(app_id)
-        .bind(platform.and(snapshot.source_app_name.as_deref()))
-        .bind(captured_at)
-        .bind(captured_at)
-        .bind(platform)
-        .bind(app_id)
-        .bind(platform)
-        .bind(app_id)
-        .execute(&mut **tx)
-        .await?;
+    let rows=sqlx::query("SELECT r.*,i.sha256 AS package_sha256,COALESCE(p.configuration_revision,0) AS configuration_revision,COALESCE(p.grant_revision,0) AS grant_revision FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created') ORDER BY r.package_id,r.activation_id,(r.app_platform IS NULL),r.rule_order,r.rule_id")
+        .bind(platform).bind(app_id).fetch_all(&mut **tx).await?;
+    let mut groups =
+        std::collections::BTreeMap::<(String, String), Vec<&sqlx::sqlite::SqliteRow>>::new();
+    for row in &rows {
+        groups
+            .entry((row.get("package_id"), row.get("activation_id")))
+            .or_default()
+            .push(row);
+    }
+    for ((package, activation), rules) in groups {
+        let candidates = rules
+            .iter()
+            .map(|r| {
+                Ok(crate::extensions::automation::Candidate {
+                    rule_id: r.get("rule_id"),
+                    condition_question: r.get("condition_question"),
+                    order: r.get("rule_order"),
+                    application: r.get::<Option<String>, _>("app_platform").map(|platform| {
+                        crate::extensions::SourceApplication {
+                            platform,
+                            id: r.get("app_id"),
+                            display_name: r.get("app_display_name"),
+                        }
+                    }),
+                    parameters: serde_json::from_str(r.get::<&str, _>("parameters_json"))?,
+                    setup_label: r.get("setup_label"),
+                    default_view: r.get("default_view"),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let first = rules[0];
+        sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at,candidates_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
+            .bind(&event_id).bind(package).bind(activation).bind(clip_id).bind(captured_at).bind(is_new_clip)
+            .bind(platform).bind(app_id).bind(platform.and(snapshot.source_app_name.as_deref()))
+            .bind(first.get::<String,_>("package_sha256")).bind(first.get::<i64,_>("configuration_revision")).bind(first.get::<i64,_>("grant_revision"))
+            .bind(first.get::<String,_>("rule_id")).bind(first.get::<String,_>("parameters_json")).bind(first.get::<String,_>("setup_label")).bind(first.get::<String,_>("default_view"))
+            .bind(captured_at).bind(captured_at).bind(serde_json::to_string(&candidates)?).execute(&mut **tx).await?;
+    }
     Ok(())
 }
 
@@ -2572,7 +2595,12 @@ mod tests {
                 .bind(rule).bind(app).bind(rule).bind(now).execute(&repo.pool).await.unwrap();
         }
         sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.unwrap();
-        assert!(sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all-duplicate','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.is_err());
+
+        // Multiple rules in both scopes coexist, and the capture snapshots every candidate.
+        sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at,condition_question,rule_order) VALUES('example.rewrite','outlook-second','rewrite-on-capture','windows','exe:outlook.exe','Outlook',1,'{}',0,?,'Is this a draft?',1)")
+            .bind(now).execute(&repo.pool).await.unwrap();
+        sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at,rule_order) VALUES('example.rewrite','global-second','rewrite-on-capture',1,'{}',0,?,2)")
+            .bind(now).execute(&repo.pool).await.unwrap();
         let snapshot = |name: &str, app: &str| CapturedSnapshot {
             token: 1,
             source_app_name: Some(name.into()),
@@ -2595,6 +2623,37 @@ mod tests {
             .await
             .unwrap();
         assert!(!duplicate);
+        let candidates_snapshot: String = sqlx::query_scalar(
+            "SELECT candidates_json FROM extension_activation_events WHERE source_clip_id=?",
+        )
+        .bind(&clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        let candidates: Vec<crate::extensions::automation::Candidate> =
+            serde_json::from_str(&candidates_snapshot).unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|c| c.rule_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["outlook", "outlook-second", "all", "global-second"]
+        );
+        assert_eq!(
+            candidates[1].condition_question.as_deref(),
+            Some("Is this a draft?")
+        );
+        sqlx::query("DELETE FROM extension_automation_rules WHERE rule_id IN ('outlook-second','global-second')")
+            .execute(&repo.pool).await.unwrap();
+        let retained: String = sqlx::query_scalar(
+            "SELECT candidates_json FROM extension_activation_events WHERE source_clip_id=?",
+        )
+        .bind(&clip_id)
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(retained, candidates_snapshot);
+
         let (again, duplicate) = repo
             .capture(
                 snapshot("Slack", "exe:slack.exe"),

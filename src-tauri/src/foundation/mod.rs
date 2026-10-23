@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 29;
+pub const SCHEMA_VERSION: i64 = 30;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,6 +363,32 @@ fn clear_known_credentials(failures: &mut Vec<String>) {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    #[tokio::test]
+    async fn conditional_automation_migration_preserves_existing_rules() {
+        let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        let mut prefix = migrations::canonical();
+        prefix.migrations = std::borrow::Cow::Owned(
+            prefix
+                .iter()
+                .filter(|entry| entry.version < 30)
+                .cloned()
+                .collect(),
+        );
+        prefix.run(&mut db).await.unwrap();
+        for (id, app) in [("mail", Some("exe:mail.exe")), ("global", None)] {
+            sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at) VALUES('fixture',?,'copy',?,?,?,1,'{\"preset\":\"business\"}',4,1)")
+                .bind(id).bind(app.map(|_|"windows")).bind(app).bind(app.map(|_|"Mail")).execute(&mut db).await.unwrap();
+        }
+        migrations::canonical().run(&mut db).await.unwrap();
+        let rules: Vec<(String,Option<String>,i64,String)> = sqlx::query_as("SELECT rule_id,condition_question,rule_order,parameters_json FROM extension_automation_rules ORDER BY rule_order").fetch_all(&mut db).await.unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].0, "global");
+        assert_eq!(rules[1].0, "mail");
+        assert!(rules
+            .iter()
+            .all(|rule| rule.1.is_none() && rule.3.contains("business")));
+        sqlx::query("INSERT INTO extension_automation_rules SELECT package_id,'another',activation_id,app_platform,app_id,app_display_name,enabled,setup_kind,setup_ref,setup_label,default_view,reason_code,parameters_json,revision,updated_at,condition_question,2 FROM extension_automation_rules WHERE rule_id='mail'").execute(&mut db).await.unwrap();
+    }
     #[tokio::test]
     async fn upgrades_released_and_recall_schemas_without_resetting_data() {
         for version in 15..=27 {
