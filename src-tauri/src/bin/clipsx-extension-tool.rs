@@ -11,7 +11,9 @@ use sha2::{Digest, Sha256};
 use wit_component::ComponentEncoder;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const API_VERSION: &str = "3.2.0";
+#[path = "../extensions/api_version.rs"]
+mod api_version;
+use api_version::API_VERSION;
 #[allow(dead_code)]
 #[path = "../extensions/catalog.rs"]
 mod catalog;
@@ -130,7 +132,10 @@ fn is_core_module(bytes: &[u8]) -> bool {
 fn validate(path: &Path) -> Result<()> {
     let files = archive_files(path)?;
     validate_contents(&files)?;
-    println!("valid Extension API v3.2 package: {}", path.display());
+    println!(
+        "valid package for Extension API v{API_VERSION}: {}",
+        path.display()
+    );
     Ok(())
 }
 

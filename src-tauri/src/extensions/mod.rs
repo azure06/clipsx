@@ -48,7 +48,8 @@ pub use service::{
 
 use serde::{Deserialize, Serialize};
 
-pub const API_VERSION: &str = "3.3.0";
+mod api_version;
+pub use api_version::API_VERSION;
 pub const OFFICIAL_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/azure06/clipsx-registry/main/index.json";
 pub const OFFICIAL_REGISTRY_SIGNATURES_URL: &str =
