@@ -9,3 +9,6 @@
 65bc19e38427561a4a3e85129c9314de57e02e1a:src-tauri/src/contributions/host.rs:jwt:1974
 feace6a64ff129dde77cb62106c0aa029a57b081:src-tauri/src/services/intelligence.rs:generic-api-key:898
 feace6a64ff129dde77cb62106c0aa029a57b081:src-tauri/src/services/intelligence.rs:jwt:780
+0a8fa255efdbcbbd168ff78dd1c64dedb96efc77:src-tauri/src/extensions/automation.rs:generic-api-key:332
+c03f6dc254c25186c94f3065ab4dc313ef13d3f2:src-tauri/src/ai/privacy_tests.rs:generic-api-key:59
+c03f6dc254c25186c94f3065ab4dc313ef13d3f2:src-tauri/src/ai/privacy_tests.rs:generic-api-key:81
