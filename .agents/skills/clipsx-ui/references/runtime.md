@@ -154,6 +154,34 @@ semantic views, and errors. Custom extension UI follows the
 | Save transformed result | New canonical clip with provenance; source unchanged                |
 | Share                   | Explicit host-owned disclosure of supported source content          |
 
+Image previews and Mermaid diagrams start fitted and centered without enlarging
+small content. Zoom uses natural dimensions, with 10–800% manual zoom and smaller
+fit scales where needed. Drag pans; pinch or Ctrl/Command+wheel zooms around the
+pointer. Native WebKit gesture events provide modifier-free trackpad pinch on
+macOS; Chromium-style pinch uses browser-generated Ctrl+wheel events without
+requiring the user to hold Ctrl. On Windows the host enables WebView2 native
+pinch recognition for every webview while retaining disabled browser zoom
+hotkeys. An all-frame, non-passive capture listener cancels page scaling without
+stopping canvas handlers; ordinary two-finger scrolling remains unchanged.
+The main frontend also installs the guard directly. Same-origin HTML/rich-text
+preview frames receive the guard from their trusted parent's load handler,
+without enabling scripts in the sandbox. Nonvisual clips never request page zoom. Overlapping gesture and wheel
+events are consumed once, and listeners are scoped to the canvas. Ordinary wheel
+input pans overflowing standalone visuals; embedded
+diagrams preserve document scrolling. Focused canvases support +/−, arrows, 0
+for Fit and 1 for 100%. Fit follows resizing; manual views retain their center.
+The cursor is normal when all content fits; grab/grabbing is used only when
+content overflows and can be panned. Touch pinch remains available while fitted.
+Host-owned expansion preserves the mounted viewport or custom-webview session,
+closes with Escape and restores focus. View transforms are not persisted.
+
+Open externally exports the displayed, clip-owned managed image or ready result
+image to a uniquely named copy in `editor_previews`, then uses the OS-associated
+application. Rust checks ownership and payload integrity; no arbitrary path is
+accepted. External edits never modify canonical images or results and are not
+automatically imported. Copies remain local editor working files, independent of clip deletion. This action does not
+fetch remote URL images or export a preview thumbnail in place of its source.
+
 Copy plain text never substitutes OCR or rendered/extension content.
 Self-writes use a consumable native change token before readback; the snapshot
 fallback requires both matching token and fingerprint.

@@ -832,6 +832,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wat",
+ "webview2-com",
  "windows 0.62.2",
  "windows-collections",
  "wit-component 0.247.0",

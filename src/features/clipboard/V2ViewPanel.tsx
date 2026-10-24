@@ -1,3 +1,4 @@
+import { ExpandablePreview } from './ExpandablePreview'
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
@@ -27,7 +28,27 @@ type ExtensionCustomViewState = {
   message: string | null
 }
 
-export const ExtensionCustomView = ({
+export const ExtensionCustomView = (props: {
+  clipId: string
+  view: ClipViewDescriptor
+  visible?: boolean
+  trackHistorySearch?: boolean
+}) => (
+  <ExpandablePreview key={`${props.clipId}:${props.view.id}`} title={props.view.label}>
+    {expand => (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 justify-end border-b border-slate-200 px-2 py-1 dark:border-white/10">
+          {expand}
+        </div>
+        <div className="min-h-0 flex-1">
+          <ExtensionCustomViewCanvas {...props} />
+        </div>
+      </div>
+    )}
+  </ExpandablePreview>
+)
+
+const ExtensionCustomViewCanvas = ({
   clipId,
   view,
   visible = true,
@@ -55,6 +76,7 @@ export const ExtensionCustomView = ({
     let session: ExtensionCustomViewSession | null = null
     let observer: ResizeObserver | null = null
     let unlistenState: (() => void) | null = null
+    let unlistenEscape: (() => void) | null = null
     let pendingState: ExtensionCustomViewState | null = null
     let frame = 0
     let timeout = 0
@@ -81,7 +103,17 @@ export const ExtensionCustomView = ({
       if (trackHistorySearch && next.resultsStale !== previous.resultsStale) syncVisibility()
     })
     window.addEventListener('clipsx-host-overlay', handleOverlayVisibility)
+    window.addEventListener('resize', syncVisibility)
 
+    void listen<{ token: string; label: string }>('extension-custom-view-escape', event => {
+      if (session && event.payload.token === session.token && event.payload.label === session.label)
+        container.current?.dispatchEvent(
+          new CustomEvent('clipsx-preview-escape', { bubbles: true })
+        )
+    }).then(stop => {
+      if (disposed) stop()
+      else unlistenEscape = stop
+    })
     const applyState = (state: ExtensionCustomViewState) => {
       if (!session) {
         pendingState = state
@@ -199,7 +231,9 @@ export const ExtensionCustomView = ({
       window.clearTimeout(timeout)
       observer?.disconnect()
       unlistenState?.()
+      unlistenEscape?.()
       window.removeEventListener('clipsx-host-overlay', handleOverlayVisibility)
+      window.removeEventListener('resize', syncVisibility)
       unsubscribeResults()
       if (session) {
         void invoke('close_extension_custom_view', {

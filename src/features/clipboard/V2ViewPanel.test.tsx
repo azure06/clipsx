@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { ExtensionCustomView, V2ViewPanel } from './V2ViewPanel'
@@ -264,7 +264,8 @@ describe('V2ViewPanel resolver boundary', () => {
       if (command === 'open_extension_custom_view') {
         return Promise.resolve({ token: 'token-1', label: 'extension-1', entryUrl: 'extension:' })
       }
-      if (command === 'close_extension_custom_view') return Promise.resolve()
+      if (command === 'close_extension_custom_view' || command === 'sync_extension_custom_view')
+        return Promise.resolve()
       return Promise.reject(new Error(`unexpected command: ${command}`))
     })
     vi.stubGlobal(
@@ -318,6 +319,25 @@ describe('V2ViewPanel resolver boundary', () => {
         expect.objectContaining({ rendererId: 'sample.renderer' })
       )
     )
+
+    const opensBeforeExpand = invokeMock.mock.calls.filter(
+      ([command]) => command === 'open_extension_custom_view'
+    ).length
+    fireEvent.click(screen.getByRole('button', { name: 'Expand preview' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'open_extension_custom_view')
+    ).toHaveLength(opensBeforeExpand)
+    const escapeCallback = listenMock.mock.calls.find(
+      ([name]) => name === 'extension-custom-view-escape'
+    )?.[1] as (event: { payload: { token: string; label: string } }) => void
+    act(() => escapeCallback({ payload: { token: 'wrong', label: 'extension-1' } }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    act(() => escapeCallback({ payload: { token: 'token-1', label: 'extension-1' } }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'open_extension_custom_view')
+    ).toHaveLength(opensBeforeExpand)
 
     mounted.rerender(customView(false))
     await waitFor(() =>

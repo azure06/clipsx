@@ -94,6 +94,7 @@ tokio-util = { version = "=0.7.19", features = ["rt"] }
 rand = "=0.9.5"
 [target.'cfg(target_os = "windows")'.dependencies]
 tauri-plugin-decorum = "1.1.1"
+webview2-com = "=0.39.1"
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Security_Cryptography",
