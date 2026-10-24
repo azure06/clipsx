@@ -36,6 +36,19 @@ describe('request estimation', () => {
   })
 })
 describe('pure context planning', () => {
+  it('distinguishes request overhead from an oversized one-word question', () => {
+    const short: ModelMessage = { role: 'user', content: 'Hi' }
+    const overhead = {
+      messages: [short],
+      instructions: 'rules',
+      tools: [{ description: 'x'.repeat(9000) }],
+    }
+    expect(planContext(overhead, short, fallbackPolicy(8192, 2048))).toMatchObject({
+      kind: 'blocked',
+      reason: 'context_limit',
+    })
+    expect(planContext(overhead, short, fallbackPolicy(40960, 8192)).kind).toBe('ready')
+  })
   it('preserves short requests and never mutates the source', () => {
     const messages = [question]
     expect(planContext(request(messages), question, policy).kind).toBe('ready')

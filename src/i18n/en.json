@@ -1439,7 +1439,7 @@
   },
   "recallPage": {
     "citationValidationFailed": "The answer contained references that could not be verified. Your conversation and completed actions are saved. Inspect the sources or retry the answer.",
-    "contextBlocked": "This request could not fit the model context. Your conversation and completed actions are saved. Remove the attachments and regenerate, or start a new chat.",
+    "contextBlocked": "The request, including instructions and tool definitions, could not fit the available context. Your conversation and completed actions are saved. Check model limits in Advanced; reduce attachments or older conversation where applicable.",
     "title": "Recall",
     "subtitle": "Find, understand, and work with your clipboard.",
     "find": "Find",
@@ -1737,9 +1737,9 @@
   },
   "recallReliability": {
     "autoLimits": "Automatic model limits",
-    "autoLimitsHelp": "Use observed model/server limits when available. When the provider reports none, or Auto is off, the limits below apply.",
+    "autoLimitsHelp": "Use known model/server limits. Otherwise use the fallback values below (default context: 131,072). Output is additionally bounded automatically.",
     "reportedLimits": "Model limits reported by provider; server restrictions may also apply.",
-    "unverifiedLimits": "Model capacity is unverified; the configured limits apply. Adjust them in Advanced.",
+    "unverifiedLimits": "Capacity is unverified; available model information or configured fallback limits apply. Review limits in Advanced.",
     "compacting": "Compacting conversation…",
     "compacted": "Older conversation summarized. The full conversation remains saved."
   },

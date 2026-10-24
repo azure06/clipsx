@@ -32,6 +32,49 @@ function runOptions(controller = new AbortController()): ChatModelRunOptions {
   }
 }
 
+it.each([false, true])(
+  'handles a one-word tool-enabled request with cold-Qwen capacity (fits=%s)',
+  async fits => {
+    const context = fixtureContext('ollama')
+    context.preset.modelId = 'qwen3:1.7b'
+    context.executionPolicy = fits ? fallbackPolicy(40960, 8192) : fallbackPolicy(8192, 2048)
+    context.tools[0]!.description = 'x'.repeat(9000)
+    const fixture = fixtureBridge('ollama', () => streams.ollama.text)
+    const native: NativeAgentBridge = {
+      begin: request => Promise.resolve({ ...context, runId: request.runId }),
+      finish: vi.fn().mockResolvedValue(undefined),
+      tool: vi.fn(),
+      verifyTools: vi.fn(),
+    }
+    const adapter = createRecallAdapter({
+      configuration: () => ({
+        presetId: 'preset',
+        filters: null,
+        attachments: [],
+        webEnabled: false,
+      }),
+      bridge: native,
+      transport: id => createRustFetch(id, fixture.commands),
+    })
+    const updates = adapter.run({ ...runOptions(), messages: [question('Hi')] })
+    if (!('next' in updates)) throw new Error('Expected stream')
+    let last: ChatModelRunResult | undefined
+    const consume = async () => {
+      for await (const update of updates) last = update
+    }
+    if (fits) {
+      await consume()
+      expect(last?.status).toEqual({ type: 'complete', reason: 'stop' })
+      expect(fixture.requests).toHaveLength(1)
+      expect(fixture.requests[0]?.body).toContain('Hi')
+    } else {
+      await expect(consume()).rejects.toThrow('recall_run_failed')
+      expect(last?.metadata?.custom?.['failure']).toBe('context_limit')
+      expect(fixture.requests).toHaveLength(0)
+    }
+  }
+)
+
 it.each(['x', '\\'])(
   'runs with an oversized %j attachment through the streamed model loop',
   async char => {

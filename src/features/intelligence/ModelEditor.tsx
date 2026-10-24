@@ -36,11 +36,12 @@ export function ModelEditor({
   )
   const selectedModel = models.find(model => model.id === preset.modelId)
   const reportedLimits = Boolean(
-    selectedModel?.modelInformation?.contextLimit || selectedModel?.modelInformation?.inputLimit
+    selectedModel?.modelInformation?.contextLimit ||
+    selectedModel?.modelInformation?.runtimeContextLimit ||
+    selectedModel?.modelInformation?.inputLimit
   )
-  // Auto uses reported limits; unreported hosted models use the editable numbers below.
-  const limitsLocked =
-    preset.options.limitPolicy === 'auto' && (reportedLimits || connection.provider === 'ollama')
+  // Auto uses reported limits; otherwise these values are the editable fallback.
+  const limitsLocked = preset.options.limitPolicy === 'auto' && reportedLimits
   const compatible =
     selectedModel?.purposes?.includes(preset.purpose) ||
     (showUnknown && selectedModel && selectedModel.purposes == null)

@@ -197,11 +197,7 @@ pub async fn resolve(
             value
         }
     };
-    let mut info = parse(connection, &preset.model_id, &row, now_ms());
-    if connection.provider == AiProviderKind::Ollama && info.runtime_context_limit.is_none() {
-        // Keep the advertised limit visible, but do not budget against it as runtime capacity.
-        info.source = "runtime_context_unknown".into();
-    }
+    let info = parse(connection, &preset.model_id, &row, now_ms());
     save(repo, &info).await?;
     Ok(Some(info))
 }
