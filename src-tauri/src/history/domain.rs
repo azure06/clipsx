@@ -262,6 +262,8 @@ mod tests {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipSummary {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_reviews: Vec<crate::ai::privacy::DecisionReview>,
     pub id: String,
     pub source_app_name: Option<String>,
     pub source_app_id: Option<String>,
