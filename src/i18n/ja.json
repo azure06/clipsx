@@ -588,6 +588,18 @@
     "notInstalled": "未インストール"
   },
   "desktopUi": {
+    "syncRenameDevice": "名前を変更",
+    "syncRemoveDevice": "削除",
+    "syncSaveDeviceName": "保存",
+
+    "syncDeviceFallback": "デバイス · {{id}}",
+    "renameSyncDeviceLabel": "{{name}} の名前を変更",
+    "removeSyncDeviceLabel": "{{name}} を削除",
+    "syncDeviceName": "デバイス名",
+    "confirmRemoveSyncDevice": "デバイスを削除",
+    "removeSyncDeviceHelp": "{{name}} を削除しますか？同期アクセスを停止し、この一覧から削除します。ローカルとクラウドの設定は削除されません。",
+    "removeCurrentSyncDeviceHelp": "{{name}} を削除しますか？このパソコンの同期を停止し、一覧から削除します。ローカルとクラウドの設定は削除されません。再接続するには、もう一度サインインしてください。",
+
     "unableToInspectClipsxStorage": "ClipsXの保存領域を確認できません：",
     "searchClipsOrAskAQuestion": "クリップを検索、または質問…",
     "storageRecovery": "保存領域の復旧",

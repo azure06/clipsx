@@ -2120,6 +2120,17 @@ async fn get_sync_status(state: State<'_, AppState>) -> Result<crate::sync::Sync
 }
 
 #[tauri::command]
+async fn set_sync_device_name(
+    device_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::sync::set_device_name(&state.history, &device_id, &name)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn set_sync_enabled(
     user_id: String,
     enabled: bool,
@@ -3670,6 +3681,7 @@ crate::recall::ipc::recall_snapshot_image,
             export_portable_settings,
             import_portable_settings,
             get_sync_status,
+            set_sync_device_name,
             set_sync_enabled,
             prepare_sync_batch,
             begin_configuration_sync,

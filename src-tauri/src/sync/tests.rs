@@ -277,3 +277,47 @@ async fn restoring_a_default_rejects_a_conflicting_override() {
         Some("Primary+L")
     );
 }
+
+#[tokio::test]
+async fn configuration_sync_device_names_are_stable_and_legacy_names_upgrade() {
+    let (_temp, repo) = repo().await;
+    let first = status(&repo).await.unwrap();
+    assert!(!first.device_name.is_empty());
+    assert_ne!(first.device_name, "This device");
+    set_device_name(&repo, &first.device_id, "  Work laptop  ")
+        .await
+        .unwrap();
+    assert_eq!(status(&repo).await.unwrap().device_name, "Work laptop");
+    assert!(set_device_name(&repo, &first.device_id, " ").await.is_err());
+    assert!(set_device_name(&repo, &first.device_id, "bad\nname")
+        .await
+        .is_err());
+    assert!(set_device_name(&repo, &first.device_id, &"a".repeat(121))
+        .await
+        .is_err());
+    assert!(set_device_name(&repo, "another-device", "Name")
+        .await
+        .is_err());
+    sqlx::query("UPDATE sync_device_identity SET display_name='This device'")
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    let upgraded = status(&repo).await.unwrap();
+    assert_eq!(upgraded.device_id, first.device_id);
+    assert_eq!(upgraded.device_name, first.device_name);
+}
+#[test]
+fn configuration_sync_device_names_handle_unavailable_hosts_and_unicode() {
+    assert_eq!(
+        default_device_name(Some("  My Mac  "), "12345678"),
+        "My Mac"
+    );
+    assert!(default_device_name(None, "12345678").ends_with("12345678"));
+    assert!(default_device_name(Some("\nbad\tname"), "abcdefgh").ends_with("abcdefgh"));
+    assert_eq!(
+        default_device_name(Some(&"日".repeat(150)), "12345678")
+            .chars()
+            .count(),
+        120
+    );
+}

@@ -166,6 +166,7 @@ fn main() {
             "import_portable_settings",
             "register_global_shortcut",
             "get_sync_status",
+            "set_sync_device_name",
             "set_sync_enabled",
             "prepare_sync_batch",
             "begin_configuration_sync",

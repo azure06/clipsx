@@ -244,6 +244,13 @@ flowchart LR
 | `sync_pending_effects` | Operational | Stores unapplied package/setting/shortcut intent and its recovery reason. `local_import` distinguishes manually imported intent from remote restore. | Sync or portable import in the same transaction as portable values | Survives restart. Local-import effects can be retried without an account and never auto-install packages, including after matching cloud echoes. |
 | `sync_remote_quarantine` | Operational security state | Retains bounded diagnostics for invalid or unsupported remote records instead of applying them. | Configuration-sync response validator | Local diagnostic evidence retained until explicit recovery/reset policy clears it. |
 
+The local sync name starts from the operating-system hostname, with an OS and
+short identity fallback. The old “This device” placeholder is upgraded without
+changing device identity. Renaming the current device persists its name locally;
+remote device names belong to the account's sync registry. Removing a device
+revokes its sync session and removes its list entry without deleting local or
+cloud settings. A fresh sign-in is required to reconnect a removed device.
+
 The schema can represent future configuration record kinds, but the current
 runtime allowlist synchronizes only theme, language, OCR enablement, and OCR
 language. Expanding that allowlist requires a versioned server contract and
