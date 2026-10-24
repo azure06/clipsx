@@ -656,6 +656,27 @@ async fn open_detected_path(
 
 #[tauri::command]
 #[allow(deprecated)]
+async fn open_clip_image_externally(
+    clip_id: String,
+    source: crate::contracts::ImageSource,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = crate::image_editor::prepare(
+        &state.history,
+        &state.roots.data.join("editor_previews"),
+        &clip_id,
+        &source,
+    )
+    .await
+    .map_err(|_| "image_export_failed".to_string())?;
+    app.shell()
+        .open(path.to_string_lossy(), None)
+        .map_err(|_| "image_launch_failed".to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
 async fn open_clip_text_in_editor(
     clip_id: String,
     extension: String,
@@ -1618,10 +1639,21 @@ async fn open_extension_custom_view(
         // must not take history focus merely by loading; dialogs focus after ready.
         .focused(false)
         .initialization_script(initialization_script)
+        .initialization_script(format!(r#"window.addEventListener('keydown', event => {{ if(event.key === 'Escape') {{ event.preventDefault(); location.assign('clipsx-extension-bridge://{}/escape'); }} }});"#, session.token))
         .incognito(true)
         .background_color(tauri::webview::Color(0, 0, 0, 0))
         .devtools(cfg!(debug_assertions))
         .on_navigation(move |url| {
+            let mut escape_url = url.clone();
+            if url.path().ends_with("/escape") {
+                let path = url.path().strip_suffix("escape").unwrap_or_default().to_string() + "close";
+                escape_url.set_path(&path);
+                if is_extension_bridge_close_navigation(&escape_url, &bridge_token) {
+                    if let Some(main) = bridge_app.get_webview("main") { let _ = main.set_focus(); }
+                    let _ = bridge_app.emit_to("main", "extension-custom-view-escape", serde_json::json!({"token": bridge_token, "label": bridge_label}));
+                    return false;
+                }
+            }
             if is_extension_bridge_close_navigation(url, &bridge_token) {
                 if let Some(webview) = bridge_app.get_webview(&bridge_label) {
                     let _ = webview.close();
@@ -2993,7 +3025,9 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
             Some(vec!["--hidden"]),
         ));
     #[cfg(target_os = "windows")]
-    let builder = builder.plugin(tauri_plugin_decorum::init());
+    let builder = builder
+        .plugin(tauri_plugin_decorum::init())
+        .plugin(crate::app::preview_gestures::plugin());
     builder
 }
 
@@ -3565,6 +3599,7 @@ crate::recall::ipc::recall_snapshot_image,
             get_clip_file_preview,
             open_detected_path,
             open_clip_text_in_editor,
+            open_clip_image_externally,
             list_clips,
             get_clip_detail,
             capture_clipboard,

@@ -354,7 +354,23 @@
     "urlStructure": "URLの構造",
     "mathExpression": "数式",
     "invalidExpression": "無効な式です",
-    "noTextContent": "（テキスト内容なし）"
+    "noTextContent": "（テキスト内容なし）",
+    "navigation": {
+      "image": "クリップボード画像",
+      "controls": "画像の表示操作",
+      "zoomOut": "縮小",
+      "zoomIn": "拡大",
+      "zoom": "拡大率",
+      "fit": "全体を表示",
+      "actualSize": "実際のサイズ（100%）",
+      "expand": "プレビューを広げる",
+      "open": "外部アプリで開く",
+      "openHelp": "コピーを既定の画像アプリで開きます。変更はこのクリップに反映されません。",
+      "openFailed": "画像を開けませんでした。画像が利用可能で、画像アプリがインストールされていることを確認して、もう一度お試しください。",
+      "opened": "別のコピーを開きました。変更はこのクリップに反映されません。",
+      "canvas": "画像。ドラッグで移動、ピンチまたは Ctrl／Command＋ホイールで拡大・縮小できます。",
+      "hint": "ドラッグで移動 · ピンチまたは Ctrl/⌘＋ホイールで拡大・縮小 · 0で全体表示 · 1で100%"
+    }
   },
   "bottomBar": {
     "proTip": "ヒント：",

@@ -93,6 +93,7 @@ fn main() {
             "open_clip_file",
             "open_detected_path",
             "open_clip_text_in_editor",
+            "open_clip_image_externally",
             "list_clips",
             "get_clip_detail",
             "get_clip_file_preview",

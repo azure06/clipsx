@@ -1,3 +1,5 @@
+import { ImageViewport } from './ImageViewport'
+import { guardPreviewFrameZoom } from '../../shared/previewPageZoom'
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../i18n/index'
 import { invoke } from '@tauri-apps/api/core'
@@ -38,7 +40,7 @@ import {
 } from 'react'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
-import { artifactFileUrl, managedAssetUrl } from '../../shared/utils/assetUrl'
+import { managedAssetUrl } from '../../shared/utils/assetUrl'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
@@ -396,37 +398,6 @@ const KeyValueView = ({ entries, clipId }: { entries: [string, string][]; clipId
         </div>
       ))}
     </dl>
-  )
-}
-
-const ImageView = ({ model }: { model: Extract<RenderModel, { kind: 'image' }> }) => {
-  const { t } = useTranslation()
-  const sourceKey = model.source.kind === 'managed' ? model.source.assetId : model.source.fileId
-  const [failedAssetId, setFailedAssetId] = useState<string | null>(null)
-  const failed = failedAssetId === sourceKey
-  const sourceUrl =
-    model.source.kind === 'managed'
-      ? managedAssetUrl(model.source.assetId)
-      : artifactFileUrl(model.source.fileId)
-
-  return (
-    <div
-      className={`${SCROLL_AREA} flex items-center justify-center bg-slate-100/40 p-6 dark:bg-black/20`}
-    >
-      {failed ? (
-        <div className="flex flex-col items-center gap-2 text-sm text-gray-500">
-          <ImageOff className="h-8 w-8" />
-          {t('preview.noImageSource')}
-        </div>
-      ) : (
-        <img
-          className="max-h-full max-w-full rounded object-contain"
-          src={sourceUrl}
-          alt="Clipboard image"
-          onError={() => setFailedAssetId(sourceKey)}
-        />
-      )}
-    </div>
   )
 }
 
@@ -1188,13 +1159,20 @@ export const RenderModelView = memo(function RenderModelView({
         </div>
       )
     case 'image':
-      return <ImageView model={model} />
+      return (
+        <ImageViewport
+          key={`${presentation.id}:${model.source.kind}:${model.source.kind === 'managed' ? model.source.assetId : model.source.fileId}`}
+          model={model}
+          clipId={presentation.id}
+        />
+      )
     case 'html':
       return model.sanitizedHtml ? (
         <iframe
           allowTransparency={true}
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
+          onLoad={event => guardPreviewFrameZoom(event.currentTarget)}
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme)}
           title={i18n.t('desktopUi.htmlPreview')}
         />
@@ -1209,6 +1187,7 @@ export const RenderModelView = memo(function RenderModelView({
           allowTransparency={true}
           className="h-full min-h-56 w-full"
           sandbox="allow-same-origin"
+          onLoad={event => guardPreviewFrameZoom(event.currentTarget)}
           srcDoc={iframeDocument(model.sanitizedHtml, appliedTheme, true)}
           title={i18n.t('desktopUi.richTextPreview')}
         />

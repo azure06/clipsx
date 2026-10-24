@@ -354,7 +354,23 @@
     "urlStructure": "URL Structure",
     "mathExpression": "Math Expression",
     "invalidExpression": "Invalid Expression",
-    "noTextContent": "(No text content)"
+    "noTextContent": "(No text content)",
+    "navigation": {
+      "image": "Clipboard image",
+      "controls": "Image view controls",
+      "zoomOut": "Zoom out",
+      "zoomIn": "Zoom in",
+      "zoom": "Zoom level",
+      "fit": "Fit",
+      "actualSize": "Actual size (100%)",
+      "expand": "Expand preview",
+      "open": "Open externally",
+      "openHelp": "Open a copy in your default image app. Changes won’t update this clip.",
+      "openFailed": "Could not open the image. Check that the image is available and an image app is installed, then try again.",
+      "opened": "Opened a separate copy. Changes won’t update this clip.",
+      "canvas": "Image canvas. Drag to pan; pinch or Ctrl/Command + wheel to zoom.",
+      "hint": "Drag to pan · Pinch or Ctrl/⌘ + wheel to zoom · 0 to fit · 1 for 100%"
+    }
   },
   "bottomBar": {
     "proTip": "Pro Tip:",
