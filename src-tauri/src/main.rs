@@ -11,6 +11,7 @@ mod extensions;
 mod failure;
 mod foundation;
 mod history;
+mod image_editor;
 mod ipc;
 mod output;
 mod providers;

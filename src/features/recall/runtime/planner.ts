@@ -25,8 +25,14 @@ export function planContext(
   const estimate = (value: ModelMessage[]) => estimator({ ...request, messages: value }).tokens
   const total = estimate(messages)
   const reserve = reserveNextStep ? Math.floor(policy.inputLimit / 4) : 0
-  if (estimate([question]) > policy.inputLimit)
-    return { kind: 'blocked', reason: 'question_exceeds_context', estimatedInput: total }
+  if (estimate([question]) > policy.inputLimit) {
+    const questionOnly = estimator({ messages: [question], instructions: '', tools: [] }).tokens
+    return {
+      kind: 'blocked',
+      reason: questionOnly > policy.inputLimit ? 'question_exceeds_context' : 'context_limit',
+      estimatedInput: total,
+    }
+  }
   if (total + reserve <= policy.inputLimit)
     return { kind: 'ready', messages, estimatedInput: total }
   const questionIndex = messages.findLastIndex(

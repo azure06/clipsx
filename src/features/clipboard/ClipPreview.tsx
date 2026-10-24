@@ -6,6 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import { ChevronLeft, ChevronRight, ScanText, Sparkles, X } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
+import { DecisionReviewNotice } from './DecisionReviewNotice'
 import { presentationTextStats } from './presentationModel'
 import { TagChips } from './components/TagChips'
 import { NoteField } from './components/NoteField'
@@ -532,6 +533,7 @@ export const ClipPreview = memo(function ClipPreview({
         )}
       </div>
 
+      <DecisionReviewNotice reviews={clip.decisionReviews} />
       <div className="flex-1 overflow-hidden p-0 relative">
         <div className={`h-full ${selectedResultId ? 'hidden' : ''}`}>
           <V2ViewPanel

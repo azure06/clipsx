@@ -1,6 +1,6 @@
 {
   "name": "clipsx",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Free, programmable desktop clipboard built with Tauri",
   "license": "Apache-2.0",
   "type": "module",
@@ -79,7 +79,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0",
-    "zod": "4.3.6",
+    "zod": "4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

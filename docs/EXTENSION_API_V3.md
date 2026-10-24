@@ -9,7 +9,12 @@ reset and never silently converts an older database.
 
 Custom detail/dialog views share the main native window. The system-wide
 show/hide shortcut remains available while a custom view is open or focused;
-native window control and main-webview focus are handled separately.
+native window control and main-webview focus are handled separately. Detail
+previews offer host-owned expansion without creating a new custom-view session.
+The host updates native bounds and visibility, forwards Escape to its preview
+container and restores main-webview focus. Expansion requires no additional
+extension permission or WIT method; packages continue to own their canvas
+navigation and should respond to viewport resizing.
 
 ## Error reporting
 

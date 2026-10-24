@@ -2,6 +2,7 @@
 identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
+  "allow-set-sync-device-name",
   "allow-assistant-run-begin",
   "allow-assistant-model-options",
   "allow-ai-model-information",
@@ -75,7 +76,7 @@ permissions = [
   "allow-uninstall-extension", "allow-get-extension-developer-mode", "allow-set-extension-developer-mode",
   "allow-factory-reset", "allow-restart-app", "allow-open-external-url", "allow-compose-email",
   "allow-start-phone-action", "allow-open-clip-file", "allow-open-detected-path",
-  "allow-open-clip-text-in-editor", "allow-list-clips", "allow-get-clip-detail", "allow-get-clip-file-preview",
+  "allow-open-clip-text-in-editor", "allow-open-clip-image-externally", "allow-list-clips", "allow-get-clip-detail", "allow-get-clip-file-preview",
   "allow-capture-clipboard", "allow-list-transformer-contributions",
   "allow-enqueue-extension-transform", "allow-list-clip-extension-results",
   "allow-render-extension-result-output", "allow-render-extension-result-source",

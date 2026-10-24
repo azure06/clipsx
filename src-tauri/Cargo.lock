@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "clipsx"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "arboard",
@@ -791,6 +791,7 @@ dependencies = [
  "foreign-types",
  "fs2",
  "futures",
+ "hostname",
  "iana-time-zone",
  "image",
  "keyring",
@@ -832,6 +833,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wat",
+ "webview2-com",
  "windows 0.62.2",
  "windows-collections",
  "wit-component 0.247.0",

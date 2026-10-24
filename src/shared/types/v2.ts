@@ -68,6 +68,7 @@ export type GenerationProviderStatus = {
 }
 
 export type ClipSummary = {
+  decisionReviews?: DecisionReview[]
   id: string
   sourceAppName: string | null
   sourceAppPlatform?: string | null
@@ -89,6 +90,20 @@ export type ClipSummary = {
   /** Set when this summary comes from a search result; carries the fused ranking score (0–1). */
   similarityScore?: number
   searchMatches?: SearchMatch[]
+}
+
+export type DecisionReview = {
+  stage: 'privacy' | 'organization'
+  status: 'completed' | 'not_checked'
+  reason:
+    | 'input_limit'
+    | 'timeout'
+    | 'unavailable'
+    | 'invalid_response'
+    | 'other'
+    | 'privacy_not_checked'
+    | null
+  evaluatedAt: number
 }
 
 export type RepresentationDetail = {

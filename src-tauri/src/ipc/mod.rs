@@ -25,7 +25,13 @@ use anyhow::Context;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
@@ -47,6 +53,13 @@ fn emit_clip_facets_updated(app: &tauri::AppHandle, clip_id: Option<&str>) {
         ClipFacetsUpdated {
             clip_id: clip_id.map(str::to_string),
         },
+    );
+}
+
+fn emit_capture_privacy_status(app: &tauri::AppHandle, pending: usize) {
+    let _ = app.emit(
+        "capture-privacy-status",
+        serde_json::json!({ "pending": pending }),
     );
 }
 
@@ -639,6 +652,27 @@ async fn open_detected_path(
     app.shell()
         .open(path, None)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+async fn open_clip_image_externally(
+    clip_id: String,
+    source: crate::contracts::ImageSource,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let path = crate::image_editor::prepare(
+        &state.history,
+        &state.roots.data.join("editor_previews"),
+        &clip_id,
+        &source,
+    )
+    .await
+    .map_err(|_| "image_export_failed".to_string())?;
+    app.shell()
+        .open(path.to_string_lossy(), None)
+        .map_err(|_| "image_launch_failed".to_string())
 }
 
 #[tauri::command]
@@ -1605,10 +1639,21 @@ async fn open_extension_custom_view(
         // must not take history focus merely by loading; dialogs focus after ready.
         .focused(false)
         .initialization_script(initialization_script)
+        .initialization_script(format!(r#"window.addEventListener('keydown', event => {{ if(event.key === 'Escape') {{ event.preventDefault(); location.assign('clipsx-extension-bridge://{}/escape'); }} }});"#, session.token))
         .incognito(true)
         .background_color(tauri::webview::Color(0, 0, 0, 0))
         .devtools(cfg!(debug_assertions))
         .on_navigation(move |url| {
+            let mut escape_url = url.clone();
+            if url.path().ends_with("/escape") {
+                let path = url.path().strip_suffix("escape").unwrap_or_default().to_string() + "close";
+                escape_url.set_path(&path);
+                if is_extension_bridge_close_navigation(&escape_url, &bridge_token) {
+                    if let Some(main) = bridge_app.get_webview("main") { let _ = main.set_focus(); }
+                    let _ = bridge_app.emit_to("main", "extension-custom-view-escape", serde_json::json!({"token": bridge_token, "label": bridge_label}));
+                    return false;
+                }
+            }
             if is_extension_bridge_close_navigation(url, &bridge_token) {
                 if let Some(webview) = bridge_app.get_webview(&bridge_label) {
                     let _ = webview.close();
@@ -2070,6 +2115,17 @@ async fn set_history_split_ratio(ratio: f64, state: State<'_, AppState>) -> Resu
 #[tauri::command]
 async fn get_sync_status(state: State<'_, AppState>) -> Result<crate::sync::SyncStatus, String> {
     crate::sync::status(&state.history)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_sync_device_name(
+    device_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::sync::set_device_name(&state.history, &device_id, &name)
         .await
         .map_err(|error| error.to_string())
 }
@@ -2980,7 +3036,9 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
             Some(vec!["--hidden"]),
         ));
     #[cfg(target_os = "windows")]
-    let builder = builder.plugin(tauri_plugin_decorum::init());
+    let builder = builder
+        .plugin(tauri_plugin_decorum::init())
+        .plugin(crate::app::preview_gestures::plugin());
     builder
 }
 
@@ -3317,77 +3375,88 @@ pub(crate) fn run() {
                 let capture_history = history.clone();
                 let capture_extensions = extensions.clone();
                 let capture_app = app.handle().clone();
+                let capture_privacy_pending = Arc::new(AtomicUsize::new(0));
+                let worker_privacy_pending = capture_privacy_pending.clone();
                 tauri::async_runtime::spawn(async move {
                     let monitor_history = capture_history;
                     let monitor_extensions = capture_extensions;
                     let monitor_app = capture_app;
                     while let Some((snapshot, settings)) = capture_receiver.recv().await {
-                    match monitor_history.capture(snapshot, &settings).await {
-                        Ok((id, duplicate)) => {
-                            crate::app::workers::wake_managed_files(
-                                &monitor_app,
-                                monitor_history.clone(),
-                            );
-                            let _ = monitor_app.emit(
-                                if duplicate {
-                                    "clip-updated"
-                                } else {
-                                    "clip-captured"
-                                },
-                                &id,
-                            );
-                            let detection_history = monitor_history.clone();
-                            let detection_extensions = monitor_extensions.clone();
-                            let detection_app = monitor_app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                match detect_with_extensions(
-                                    &detection_history,
-                                    &detection_extensions,
-                                    &id,
-                                    false,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        emit_clip_facets_updated(
-                                            &detection_app,
-                                            Some(&id),
-                                        );
-                                    }
-                                    Err(error) => {
-                                        let _ = detection_app
-                                            .emit("detection-job-failed", error.to_string());
-                                    }
-                                }
-                                let _ =
-                                    artifacts::produce_for_clip(&detection_history, &id).await;
-                                emit_clip_artifact_updates(
-                                    &detection_app,
-                                    &detection_history,
-                                    &id,
-                                )
-                                .await;
-                                if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
-                                    crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
-                                }
-                                let _ =
-                                    search::upsert_projection(&detection_history, &id).await;
-                                let _ = embeddings::enqueue_clip(&detection_history, &id).await;
-                                crate::app::workers::wake_ocr(
-                                    &detection_app,
-                                    detection_history.clone(),
+                        let _ = monitor_app.emit("capture-decision-phase", "privacy");
+                        let progress = |phase: &str| {
+                            if matches!(phase, "privacy" | "organizing") {
+                                let _ = monitor_app.emit("capture-decision-phase", phase);
+                            }
+                        };
+                        match monitor_history.capture_with_progress(snapshot, &settings, &progress).await {
+                            Ok((id, duplicate)) => {
+                                crate::app::workers::wake_managed_files(
+                                    &monitor_app,
+                                    monitor_history.clone(),
                                 );
-                                wake_embedding_worker(detection_app, detection_history);
-                            });
+                                let _ = monitor_app.emit(
+                                    if duplicate {
+                                        "clip-updated"
+                                    } else {
+                                        "clip-captured"
+                                    },
+                                    &id,
+                                );
+                                let detection_history = monitor_history.clone();
+                                let detection_extensions = monitor_extensions.clone();
+                                let detection_app = monitor_app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    match detect_with_extensions(
+                                        &detection_history,
+                                        &detection_extensions,
+                                        &id,
+                                        false,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            emit_clip_facets_updated(
+                                                &detection_app,
+                                                Some(&id),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            let _ = detection_app
+                                                .emit("detection-job-failed", error.to_string());
+                                        }
+                                    }
+                                    let _ =
+                                        artifacts::produce_for_clip(&detection_history, &id).await;
+                                    emit_clip_artifact_updates(
+                                        &detection_app,
+                                        &detection_history,
+                                        &id,
+                                    )
+                                    .await;
+                                    if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
+                                        crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
+                                    }
+                                    let _ =
+                                        search::upsert_projection(&detection_history, &id).await;
+                                    let _ = embeddings::enqueue_clip(&detection_history, &id).await;
+                                    crate::app::workers::wake_ocr(
+                                        &detection_app,
+                                        detection_history.clone(),
+                                    );
+                                    wake_embedding_worker(detection_app, detection_history);
+                                });
+                            }
+                            Err(error) => {
+                                let _ = monitor_app.emit("capture-rejected", error.to_string());
+                            }
                         }
-                        Err(error) => {
-                            let _ = monitor_app.emit("capture-rejected", error.to_string());
-                        }
-                    }
+                        let pending = worker_privacy_pending.fetch_sub(1, Ordering::AcqRel) - 1;
+                        emit_capture_privacy_status(&monitor_app, pending);
                     }
                 });
                 let monitor_history = history.clone();
                 let monitor_app = app.handle().clone();
+                let monitor_privacy_pending = capture_privacy_pending;
                 tauri::async_runtime::spawn(async move {
                     let mut adapter = SystemClipboardAdapter::new();
                     let mut last_token = adapter.snapshot_token().unwrap_or_default();
@@ -3424,15 +3493,29 @@ pub(crate) fn run() {
                             continue;
                         }
                         apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+                        let representation_count = snapshot.representations.len();
                         apply_representation_size_limit(
                             &mut snapshot,
                             app_settings.capture.max_representation_bytes,
                         );
                         if snapshot.representations.is_empty() {
+                            let _ = monitor_app.emit("capture-rejected", "representation exceeds configured limit");
                             continue;
                         }
-                        if capture_sender.try_send((snapshot, app_settings.capture)).is_err() {
-                            let _ = monitor_app.emit("capture-rejected", "Privacy checks are busy; this snapshot was not saved");
+                        if snapshot.representations.len() < representation_count {
+                            let _ = monitor_app.emit("capture-rejected", "representation exceeds configured limit");
+                        }
+                        match capture_sender.try_reserve() {
+                            Ok(permit) => {
+                                let pending = monitor_privacy_pending
+                                    .fetch_add(1, Ordering::AcqRel)
+                                    + 1;
+                                emit_capture_privacy_status(&monitor_app, pending);
+                                permit.send((snapshot, app_settings.capture));
+                            }
+                            Err(_) => {
+                                let _ = monitor_app.emit("capture-rejected", "Privacy checks are busy; this snapshot was not saved");
+                            }
                         }
                     }
                 });
@@ -3527,6 +3610,7 @@ crate::recall::ipc::recall_snapshot_image,
             get_clip_file_preview,
             open_detected_path,
             open_clip_text_in_editor,
+            open_clip_image_externally,
             list_clips,
             get_clip_detail,
             capture_clipboard,
@@ -3597,6 +3681,7 @@ crate::recall::ipc::recall_snapshot_image,
             export_portable_settings,
             import_portable_settings,
             get_sync_status,
+            set_sync_device_name,
             set_sync_enabled,
             prepare_sync_batch,
             begin_configuration_sync,

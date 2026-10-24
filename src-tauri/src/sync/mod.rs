@@ -70,9 +70,62 @@ pub struct SyncServerResponse {
     pub acknowledgements: Vec<Value>,
     pub has_more: bool,
 }
+fn default_device_name(host: Option<&str>, device_id: &str) -> String {
+    let host = host.unwrap_or_default().trim();
+    if !host.is_empty() && !host.chars().any(char::is_control) {
+        return host.chars().take(120).collect();
+    }
+    let platform = match std::env::consts::OS {
+        "macos" => "Mac",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        _ => "Computer",
+    };
+    format!(
+        "{platform} · {}",
+        device_id
+            .chars()
+            .rev()
+            .take(8)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+    )
+}
 async fn ensure_device(repo: &HistoryRepository) -> Result<()> {
-    sqlx::query("INSERT OR IGNORE INTO sync_device_identity(singleton,device_id,display_name,created_at) VALUES(1,?,'This device',?)")
-        .bind(new_id()).bind(now_ms()).execute(&repo.pool).await?;
+    let id = new_id();
+    let host = hostname::get().ok();
+    let name = default_device_name(host.as_ref().and_then(|v| v.to_str()), &id);
+    sqlx::query("INSERT OR IGNORE INTO sync_device_identity(singleton,device_id,display_name,created_at) VALUES(1,?,?,?)")
+        .bind(&id).bind(&name).bind(now_ms()).execute(&repo.pool).await?;
+    // Upgrade the old placeholder once; never overwrite a user-selected name.
+    let existing: String =
+        sqlx::query_scalar("SELECT device_id FROM sync_device_identity WHERE singleton=1")
+            .fetch_one(&repo.pool)
+            .await?;
+    let name = default_device_name(host.as_ref().and_then(|v| v.to_str()), &existing);
+    sqlx::query("UPDATE sync_device_identity SET display_name=? WHERE singleton=1 AND display_name='This device'")
+        .bind(name).execute(&repo.pool).await?;
+    Ok(())
+}
+pub async fn set_device_name(repo: &HistoryRepository, device_id: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
+        bail!("Invalid device name");
+    }
+    ensure_device(repo).await?;
+    let updated = sqlx::query(
+        "UPDATE sync_device_identity SET display_name=? WHERE singleton=1 AND device_id=?",
+    )
+    .bind(name)
+    .bind(device_id)
+    .execute(&repo.pool)
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        bail!("Device identity changed");
+    }
     Ok(())
 }
 pub async fn status(repo: &HistoryRepository) -> Result<SyncStatus> {

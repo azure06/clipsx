@@ -9,34 +9,36 @@ pub fn resolve(
 ) -> Result<ResolvedExecutionPolicy> {
     let auto = matches!(preset.options.limit_policy, Some(AiLimitPolicy::Auto));
     let shared = information.and_then(|m| {
-        if m.source == "runtime_context_unknown" {
-            m.runtime_context_limit
-        } else {
-            m.runtime_context_limit.or(m.context_limit)
-        }
+        [m.context_limit, m.runtime_context_limit]
+            .into_iter()
+            .flatten()
+            .min()
     });
     let separate_input = information.and_then(|m| m.input_limit);
     let known_output = information.and_then(|m| m.output_limit);
     let capacity = shared.or(separate_input);
-    // A server that reports no runtime window keeps the small fallback. Otherwise an
-    // unreported capacity uses the preset's numbers, which the user can edit.
-    let server_unknown = information.is_some_and(|m| m.source == "runtime_context_unknown");
-    let unreported = auto && capacity.is_none() && !server_unknown;
-    let context = if auto && !unreported {
-        capacity.unwrap_or(8192).min(32768)
+    let context = if auto {
+        capacity.unwrap_or(preset.context_limit)
     } else {
         preset.context_limit.min(capacity.unwrap_or(u32::MAX))
     };
-    let output = if unreported {
-        preset.output_limit.min(known_output.unwrap_or(u32::MAX))
-    } else if auto {
+    let output = if auto {
         (context / 4)
             .min(8192)
             .min(known_output.unwrap_or(u32::MAX))
+            .min(if capacity.is_none() {
+                preset.output_limit
+            } else {
+                u32::MAX
+            })
     } else {
         preset.output_limit
     };
-    if output == 0 || output >= context || known_output.is_some_and(|limit| output > limit) {
+    let shared_window = shared.is_some() || separate_input.is_none();
+    if output == 0
+        || (shared_window && output >= context)
+        || known_output.is_some_and(|limit| output > limit)
+    {
         bail!("invalid_model_limits");
     }
     let thinking = match reasoning.as_ref() {
@@ -58,8 +60,8 @@ pub fn resolve(
     if thinking.is_some_and(|budget| budget > 0 && budget >= output) {
         bail!("invalid_thinking_budget");
     }
-    let input = if shared.is_some() || separate_input.is_none() {
-        context - output
+    let input = if shared_window {
+        (context - output).min(separate_input.unwrap_or(u32::MAX))
     } else {
         context
     };
@@ -67,7 +69,9 @@ pub fn resolve(
         input_limit: input,
         output_limit: output,
         context_limit: context,
-        estimated: capacity.is_none(),
+        // Advertised capacity remains usable even when the runtime allocation is unverified.
+        estimated: capacity.is_none()
+            || information.is_some_and(|m| m.source == "runtime_context_unknown"),
         source: information
             .map(|m| m.source.clone())
             .unwrap_or_else(|| "unverified_configuration".into()),
@@ -137,7 +141,7 @@ mod tests {
         unknown_server.runtime_context_limit = None;
         unknown_server.output_limit = None;
         let small = resolve(&p, Some(&unknown_server), None).unwrap();
-        assert_eq!((small.input_limit, small.output_limit), (6144, 2048));
+        assert_eq!((small.input_limit, small.output_limit), (12288, 4096));
         p.context_limit = 32768;
         p.output_limit = 4096;
         let mut i = info();
@@ -148,6 +152,82 @@ mod tests {
         assert_eq!((separate.input_limit, separate.output_limit), (32768, 8192));
         i.output_limit = Some(1024);
         assert_eq!(resolve(&p, Some(&i), None).unwrap().output_limit, 1024);
+    }
+    #[test]
+    fn auto_uses_model_capacity_without_a_runtime_and_has_no_application_cap() {
+        let mut p = preset();
+        p.options.limit_policy = Some(AiLimitPolicy::Auto);
+        let mut i = info();
+        i.source = "runtime_context_unknown".into();
+        i.context_limit = Some(40960);
+        i.runtime_context_limit = None;
+        let cold = resolve(&p, Some(&i), None).unwrap();
+        assert_eq!(
+            (cold.context_limit, cold.input_limit, cold.output_limit),
+            (40960, 32768, 8192)
+        );
+        assert!(cold.estimated);
+        i.context_limit = Some(200000);
+        i.source = "provider_catalog".into();
+        let large = resolve(&p, Some(&i), None).unwrap();
+        assert_eq!((large.context_limit, large.input_limit), (200000, 191808));
+        assert!(!large.estimated);
+    }
+    #[test]
+    fn smallest_shared_limit_and_independent_input_limit_are_respected() {
+        let mut p = preset();
+        p.options.limit_policy = Some(AiLimitPolicy::Auto);
+        let mut i = info();
+        // Runtime metadata must not override a smaller model maximum.
+        i.runtime_context_limit = Some(32768);
+        assert_eq!(resolve(&p, Some(&i), None).unwrap().context_limit, 16384);
+        i.context_limit = Some(100000);
+        i.runtime_context_limit = Some(90000);
+        i.input_limit = Some(80000);
+        let mixed = resolve(&p, Some(&i), None).unwrap();
+        assert_eq!((mixed.context_limit, mixed.input_limit), (90000, 80000));
+        i.runtime_context_limit = Some(4096);
+        let small = resolve(&p, Some(&i), None).unwrap();
+        assert_eq!(
+            (small.context_limit, small.input_limit, small.output_limit),
+            (4096, 3072, 1024)
+        );
+    }
+    #[test]
+    fn unknown_capacity_uses_saved_fallbacks_and_bounds_auto_output() {
+        let mut p = preset();
+        p.options.limit_policy = Some(AiLimitPolicy::Auto);
+        p.context_limit = 131072;
+        p.output_limit = 8192;
+        let unknown = resolve(&p, None, None).unwrap();
+        assert_eq!(
+            (
+                unknown.context_limit,
+                unknown.input_limit,
+                unknown.output_limit
+            ),
+            (131072, 122880, 8192)
+        );
+        assert!(unknown.estimated);
+        p.context_limit = 4096;
+        p.output_limit = 8192;
+        assert_eq!(resolve(&p, None, None).unwrap().output_limit, 1024);
+    }
+    #[test]
+    fn explicit_limits_preserve_values_but_respect_both_capacity_constraints() {
+        let mut p = preset();
+        p.options.limit_policy = Some(AiLimitPolicy::Explicit);
+        let mut i = info();
+        i.runtime_context_limit = Some(32768);
+        assert_eq!(resolve(&p, Some(&i), None).unwrap().context_limit, 16384);
+        p.context_limit = 8192;
+        assert_eq!(resolve(&p, Some(&i), None).unwrap().context_limit, 8192);
+        // Providers with independent windows may allow more output than input.
+        i.context_limit = None;
+        i.runtime_context_limit = None;
+        i.input_limit = Some(2048);
+        let separate = resolve(&p, Some(&i), None).unwrap();
+        assert_eq!((separate.input_limit, separate.output_limit), (2048, 4096));
     }
     #[test]
     fn selected_budget_uses_the_effective_output_allowance() {

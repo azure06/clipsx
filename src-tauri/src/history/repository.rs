@@ -88,6 +88,7 @@ pub struct HistoryRepository {
 
 #[derive(Default)]
 struct PreviewHydration {
+    reviews: Vec<crate::ai::privacy::DecisionReview>,
     ocr_text: Option<String>,
     file: (Option<String>, i64),
     facet: (Option<String>, Option<String>),
@@ -177,7 +178,17 @@ impl HistoryRepository {
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
     ) -> Result<(String, bool)> {
-        self.capture_inner(snapshot, settings, false).await
+        self.capture_with_progress(snapshot, settings, &|_| {})
+            .await
+    }
+    pub async fn capture_with_progress(
+        &self,
+        snapshot: CapturedSnapshot,
+        settings: &CaptureSettings,
+        progress: &(dyn Fn(&str) + Send + Sync),
+    ) -> Result<(String, bool)> {
+        self.capture_inner(snapshot, settings, false, progress)
+            .await
     }
     /// Promote a completed, clip-owned result and its provenance in one transaction.
     pub async fn promote_extension_result(&self, job_id: &str, request_id: &str) -> Result<String> {
@@ -266,6 +277,7 @@ impl HistoryRepository {
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
         force_new: bool,
+        progress: &(dyn Fn(&str) + Send + Sync),
     ) -> Result<(String, bool)> {
         let _platform_token = snapshot.token;
         if snapshot.representations.is_empty() {
@@ -282,7 +294,7 @@ impl HistoryRepository {
         }) {
             bail!("representation exceeds configured limit")
         }
-        let privacy = crate::ai::privacy::evaluate(self, &snapshot).await?;
+        let privacy = crate::ai::privacy::evaluate(self, &snapshot, progress).await?;
         let fingerprint = capture_fingerprint(&snapshot.representations);
         let now = now_ms();
         let mut tx = self.pool.begin().await?;
@@ -461,18 +473,20 @@ impl HistoryRepository {
             .filter(|row| matches!(row.get::<String, _>(10).as_str(), "text" | "html"))
             .filter_map(|row| row.get::<Option<String>, _>(14))
             .collect::<Vec<_>>();
-        let (mut tags, mut presentations, mut ocr, mut files, mut facets) = tokio::try_join!(
+        let (mut tags, mut presentations, mut ocr, mut files, mut facets, mut reviews) = tokio::try_join!(
             self.tags_for_many(&ids),
             self.compact_presentations_for_many(&ids),
             self.ocr_text_for_many(&ocr_clip_ids),
             self.leading_file_entries_for_many(&file_representation_ids),
-            self.leading_facets_for_many(&facet_representation_ids)
+            self.leading_facets_for_many(&facet_representation_ids),
+            self.decision_reviews_for_many(&ids)
         )?;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
             let id: String = row.get(0);
             let leading_representation_id: Option<String> = row.get(14);
             let preview = PreviewHydration {
+                reviews: reviews.remove(&id).unwrap_or_default(),
                 ocr_text: ocr.remove(&id),
                 file: leading_representation_id
                     .as_ref()
@@ -494,6 +508,34 @@ impl HistoryRepository {
             );
         }
         Ok(items)
+    }
+
+    async fn decision_reviews_for_many(
+        &self,
+        ids: &[String],
+    ) -> Result<HashMap<String, Vec<crate::ai::privacy::DecisionReview>>> {
+        let mut reviews = HashMap::<String, Vec<crate::ai::privacy::DecisionReview>>::new();
+        if ids.is_empty() {
+            return Ok(reviews);
+        }
+        let mut query = QueryBuilder::<Sqlite>::new("SELECT clip_id,stage,status,reason,evaluated_at FROM clip_decision_reviews WHERE clip_id IN (");
+        let mut separated = query.separated(",");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(") ORDER BY stage");
+        for row in query.build().fetch_all(&self.pool).await? {
+            reviews
+                .entry(row.get(0))
+                .or_default()
+                .push(crate::ai::privacy::DecisionReview {
+                    stage: row.get(1),
+                    status: row.get(2),
+                    reason: row.get(3),
+                    evaluated_at: row.get(4),
+                });
+        }
+        Ok(reviews)
     }
 
     pub async fn summaries(&self, ids: &[String]) -> Result<HashMap<String, ClipSummary>> {
@@ -530,6 +572,14 @@ impl HistoryRepository {
         preview_hydration: Option<PreviewHydration>,
     ) -> Result<ClipSummary> {
         let id: String = row.get(0);
+        let decision_reviews = if let Some(preview) = &preview_hydration {
+            preview.reviews.clone()
+        } else {
+            self.decision_reviews_for_many(std::slice::from_ref(&id))
+                .await?
+                .remove(&id)
+                .unwrap_or_default()
+        };
         let history_renderer_id = compact_presentation
             .as_ref()
             .map(|(renderer_id, _)| renderer_id.clone());
@@ -591,6 +641,7 @@ impl HistoryRepository {
         );
 
         Ok(ClipSummary {
+            decision_reviews,
             id,
             source_app_name: row.get(1),
             source_app_id: row.get(2),

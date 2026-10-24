@@ -47,6 +47,9 @@ type ClipboardState = {
   // A prepared query is waiting for the input controller's idle timer/IME.
   searchScheduled: boolean
   semanticPending: boolean
+  privacyChecksPending: number
+  decisionPhase: 'privacy' | 'organizing'
+  captureNotice: 'sizeLimit' | 'excluded' | 'notSaved' | null
   relatedClipIds: string[]
   error: string | null
   hasMore: boolean
@@ -94,6 +97,9 @@ const initialState: ClipboardState = {
   resultsStale: false,
   searchScheduled: false,
   semanticPending: false,
+  privacyChecksPending: 0,
+  decisionPhase: 'privacy',
+  captureNotice: null,
   relatedClipIds: [],
   error: null,
   hasMore: true,
@@ -129,6 +135,7 @@ const refreshVisibleClip = async (id: string) => {
   state.mergeClipUpdate(detail.clip)
 }
 type ClipFacetsUpdated = { clipId: string | null }
+type CapturePrivacyStatus = { pending: number }
 const ensureEvents = () => {
   if (eventListenerReady || typeof window === 'undefined') return
   eventListenerReady = true
@@ -152,6 +159,24 @@ const ensureEvents = () => {
     }),
     listen<ArtifactUpdate>('clip-artifacts-updated', event => {
       void refreshVisibleClip(event.payload.clipId).catch(() => undefined)
+    }),
+    listen<CapturePrivacyStatus>('capture-privacy-status', event => {
+      useClipboardStore.setState({
+        privacyChecksPending: Math.max(0, Number(event.payload.pending) || 0),
+      })
+    }),
+    listen<'privacy' | 'organizing'>('capture-decision-phase', event => {
+      useClipboardStore.setState({ decisionPhase: event.payload })
+    }),
+    listen<string>('capture-rejected', event => {
+      const reason = event.payload
+      useClipboardStore.setState({
+        captureNotice: reason.includes('configured limit')
+          ? 'sizeLimit'
+          : reason.includes('privacy_secret_not_saved') || reason.includes('privacy_rule_not_saved')
+            ? 'excluded'
+            : 'notSaved',
+      })
     }),
     listen<string>('clip-deleted', event =>
       useClipboardStore.setState(state => ({

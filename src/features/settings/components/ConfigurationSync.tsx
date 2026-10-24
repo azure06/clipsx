@@ -1,9 +1,13 @@
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../../i18n/index'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Button } from '../../../shared/components/ui'
-import { listSyncDevices, revokeSyncDevice } from '../../../shared/auth/supabaseAuth'
+import { Button, Input } from '../../../shared/components/ui'
+import {
+  listSyncDevices,
+  removeSyncDevice,
+  renameSyncDevice,
+} from '../../../shared/auth/supabaseAuth'
 import {
   clearCloudConfiguration,
   configurationSyncScheduler,
@@ -21,6 +25,8 @@ import {
   Cloud,
   Monitor,
   Pause,
+  Pencil,
+  Trash2,
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
@@ -51,6 +57,20 @@ export function ConfigurationSync({
   const [recovery, setRecovery] = useState<Recovery[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deviceAction, setDeviceAction] = useState<{
+    kind: 'rename' | 'remove'
+    device: Device
+  } | null>(null)
+  const [deviceName, setDeviceName] = useState('')
+  const deviceTrigger = useRef<HTMLButtonElement | null>(null)
+  const deviceList = useRef<HTMLDivElement>(null)
+  const deviceFocus = useRef<'trigger' | 'list' | null>(null)
+  useEffect(() => {
+    if (busy || deviceAction || !deviceFocus.current) return
+    if (deviceFocus.current === 'trigger') deviceTrigger.current?.focus()
+    else deviceList.current?.focus()
+    deviceFocus.current = null
+  }, [busy, deviceAction])
   const [confirm, setConfirm] = useState<'replace' | 'reset' | null>(null)
   const refresh = useCallback(async () => {
     const state = await getSyncStatus()
@@ -63,7 +83,19 @@ export function ConfigurationSync({
     setRecovery(await invoke<Recovery[]>('sync_recovery', { action: 'list', id: null }))
     if (state.enabled) {
       const data = await listSyncDevices()
-      if (Array.isArray(data)) setDevices(data as Device[])
+      if (Array.isArray(data)) {
+        const listed = data as Device[]
+        const current = listed.find(device => device.current)
+        if (
+          current?.displayName === 'This device' &&
+          state.deviceName &&
+          state.deviceName !== 'This device'
+        ) {
+          await renameSyncDevice(current.deviceId, state.deviceName)
+          current.displayName = state.deviceName
+        }
+        setDevices(listed)
+      }
     }
   }, [userId])
   useEffect(() => {
@@ -91,6 +123,43 @@ export function ConfigurationSync({
       setBusy(false)
       setConfirm(null)
     }
+  }
+  const deviceLabel = (device: Device) =>
+    device.displayName === 'This device'
+      ? device.current && status?.deviceName && status.deviceName !== 'This device'
+        ? status.deviceName
+        : i18n.t('desktopUi.syncDeviceFallback', { id: device.deviceId.slice(-8) })
+      : device.displayName
+  const closeDeviceAction = () => {
+    setDeviceAction(null)
+    deviceTrigger.current?.focus()
+  }
+  const saveDeviceAction = () => {
+    if (!deviceAction) return
+    const { kind, device } = deviceAction
+    void run(async () => {
+      if (kind === 'rename') {
+        const name = deviceName.trim()
+        await renameSyncDevice(device.deviceId, name)
+        if (device.current)
+          await invoke('set_sync_device_name', { deviceId: device.deviceId, name })
+        setDevices(previous =>
+          previous.map(row =>
+            row.deviceId === device.deviceId ? { ...row, displayName: name } : row
+          )
+        )
+      } else {
+        await removeSyncDevice(device.deviceId)
+        setDevices(previous =>
+          device.current ? [] : previous.filter(row => row.deviceId !== device.deviceId)
+        )
+        setDeviceAction(null)
+        deviceFocus.current = 'list'
+        if (device.current && userId) await setSyncEnabled(userId, false)
+      }
+      setDeviceAction(null)
+      deviceFocus.current = kind === 'rename' ? 'trigger' : 'list'
+    })
   }
   const accountStatus = userId && status?.activeUserId === userId ? status : null
   const enabled = accountStatus?.enabled
@@ -302,74 +371,164 @@ export function ConfigurationSync({
         title={i18n.t('desktopUi.devices')}
         description={i18n.t('desktopUi.manageAccessToYourSyncedSettings')}
       >
-        {devices.length === 0 ? (
-          <div className="flex items-center gap-3 py-1 text-slate-400">
-            <Monitor className="h-8 w-8 shrink-0" aria-hidden="true" />
-            <div>
-              <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                {!userId
-                  ? i18n.t('desktopUi.yourDevicesWillAppearHere')
-                  : enabled
-                    ? i18n.t('desktopUi.noDevicesToDisplay')
-                    : i18n.t('desktopUi.connectToSeeYourDevices')}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {!userId
-                  ? i18n.t('desktopUi.signInAndEnableSyncToGetStarted')
-                  : i18n.t('desktopUi.devicesAppearAfterConnectingToYourCloudProfile')}
-              </p>
+        <div ref={deviceList} tabIndex={-1} aria-label={i18n.t('desktopUi.devices')}>
+          {devices.length === 0 ? (
+            <div className="flex items-center gap-3 py-1 text-slate-400">
+              <Monitor className="h-8 w-8 shrink-0" aria-hidden="true" />
+              <div>
+                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                  {!userId
+                    ? i18n.t('desktopUi.yourDevicesWillAppearHere')
+                    : enabled
+                      ? i18n.t('desktopUi.noDevicesToDisplay')
+                      : i18n.t('desktopUi.connectToSeeYourDevices')}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {!userId
+                    ? i18n.t('desktopUi.signInAndEnableSyncToGetStarted')
+                    : i18n.t('desktopUi.devicesAppearAfterConnectingToYourCloudProfile')}
+                </p>
+              </div>
             </div>
-          </div>
-        ) : (
-          <ul className="divide-y divide-slate-200/70 dark:divide-white/10">
-            {devices.map(device => (
-              <li
-                key={device.deviceId}
-                className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <div className="rounded-lg bg-slate-500/5 p-2 text-slate-400">
-                    <Monitor className="h-4 w-4" aria-hidden="true" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="break-words text-sm font-medium text-slate-800 dark:text-slate-200">
-                        {device.displayName}
-                      </p>
-                      {device.current && (
-                        <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
-                          <Trans i18nKey="desktopUi.thisDevice" />
-                        </span>
-                      )}
+          ) : (
+            <ul className="divide-y divide-slate-200/70 dark:divide-white/10">
+              {devices.map(device => (
+                <li
+                  key={device.deviceId}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="flex min-w-0 flex-1 basis-48 items-center gap-3">
+                    <div className="rounded-lg bg-slate-500/5 p-2 text-slate-400">
+                      <Monitor className="h-4 w-4" aria-hidden="true" />
                     </div>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {device.revokedAt
-                        ? i18n.t('desktopUi.accessRevoked')
-                        : i18n.t('desktopUi.lastSeenDate', {
-                            date: new Date(device.lastSeenAt).toLocaleString(i18n.resolvedLanguage),
-                          })}
-                    </p>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="break-words text-sm font-medium text-slate-800 dark:text-slate-200">
+                          {deviceLabel(device)}
+                        </p>
+                        {device.current && (
+                          <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
+                            <Trans i18nKey="desktopUi.thisDevice" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {device.revokedAt
+                          ? i18n.t('desktopUi.accessRevoked')
+                          : i18n.t('desktopUi.lastSeenDate', {
+                              date: new Date(device.lastSeenAt).toLocaleString(
+                                i18n.resolvedLanguage
+                              ),
+                            })}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                {!device.revokedAt && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await revokeSyncDevice(device.deviceId)
-                        if (device.current && userId) await setSyncEnabled(userId, false)
-                      })
-                    }
-                  >
-                    <Trans i18nKey="desktopUi.revoke" />
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div className="flex shrink-0 gap-1">
+                    {!device.revokedAt && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        aria-label={i18n.t('desktopUi.renameSyncDeviceLabel', {
+                          name: deviceLabel(device),
+                        })}
+                        leftIcon={<Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
+                        onClick={event => {
+                          deviceTrigger.current = event.currentTarget
+                          setDeviceName(deviceLabel(device))
+                          setDeviceAction({ kind: 'rename', device })
+                        }}
+                      >
+                        <Trans i18nKey="desktopUi.syncRenameDevice" />
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      aria-label={i18n.t('desktopUi.removeSyncDeviceLabel', {
+                        name: deviceLabel(device),
+                      })}
+                      leftIcon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                      onClick={event => {
+                        deviceTrigger.current = event.currentTarget
+                        setDeviceAction({ kind: 'remove', device })
+                      }}
+                    >
+                      <Trans i18nKey="desktopUi.syncRemoveDevice" />
+                    </Button>
+                  </div>
+                  {deviceAction?.device.deviceId === device.deviceId && (
+                    <form
+                      className="basis-full space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"
+                      onSubmit={event => {
+                        event.preventDefault()
+                        saveDeviceAction()
+                      }}
+                      onKeyDown={event => {
+                        if (event.key === 'Escape' && !busy) {
+                          event.stopPropagation()
+                          closeDeviceAction()
+                        }
+                      }}
+                    >
+                      {deviceAction.kind === 'rename' ? (
+                        <Input
+                          label={i18n.t('desktopUi.syncDeviceName')}
+                          value={deviceName}
+                          onChange={setDeviceName}
+                          maxLength={120}
+                          required
+                          autoFocus
+                          disabled={busy}
+                        />
+                      ) : (
+                        <p
+                          className="text-xs leading-relaxed text-slate-600 dark:text-slate-300"
+                          role="alert"
+                        >
+                          {i18n.t(
+                            device.current
+                              ? 'desktopUi.removeCurrentSyncDeviceHelp'
+                              : 'desktopUi.removeSyncDeviceHelp',
+                            { name: deviceLabel(device) }
+                          )}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          variant={deviceAction.kind === 'remove' ? 'destructive' : 'primary'}
+                          disabled={
+                            busy ||
+                            (deviceAction.kind === 'rename' &&
+                              (!deviceName.trim() || /\p{Cc}/u.test(deviceName)))
+                          }
+                          isLoading={busy}
+                        >
+                          {i18n.t(
+                            deviceAction.kind === 'rename'
+                              ? 'desktopUi.syncSaveDeviceName'
+                              : 'desktopUi.confirmRemoveSyncDevice'
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={closeDeviceAction}
+                        >
+                          <Trans i18nKey="desktopUi.cancel" />
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </SettingsSection>
 
       {userId && (

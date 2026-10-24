@@ -1280,6 +1280,7 @@ export type Database = {
           device_id: string
           display_name: string
           last_seen_at: string
+          removed_at: string | null
           revoked_at: string | null
           session_id: string
           user_id: string
@@ -1289,6 +1290,7 @@ export type Database = {
           device_id: string
           display_name: string
           last_seen_at?: string
+          removed_at?: string | null
           revoked_at?: string | null
           session_id: string
           user_id: string
@@ -1298,6 +1300,7 @@ export type Database = {
           device_id?: string
           display_name?: string
           last_seen_at?: string
+          removed_at?: string | null
           revoked_at?: string | null
           session_id?: string
           user_id?: string
@@ -2389,6 +2392,11 @@ export type Database = {
         Returns: number
       }
       sync_reset_profile: { Args: { p_generation: number }; Returns: number }
+      sync_remove_device: { Args: { p_device_id: string }; Returns: undefined }
+      sync_rename_device: {
+        Args: { p_device_id: string; p_device_name: string }
+        Returns: undefined
+      }
       sync_revoke_device: { Args: { p_device_id: string }; Returns: undefined }
     }
     Enums: {

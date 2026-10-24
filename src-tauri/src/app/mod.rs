@@ -8,6 +8,7 @@ pub(crate) mod crash_reports;
 pub(crate) mod diagnostics;
 pub(crate) mod global_shortcut;
 pub(crate) mod host;
+pub(crate) mod preview_gestures;
 mod runtime_probe;
 pub(crate) mod settings;
 pub(crate) mod state;

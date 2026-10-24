@@ -99,15 +99,64 @@ pub async fn save(repo: &HistoryRepository, settings: PrivacySettings) -> Result
 pub(crate) struct CaptureDecision {
     secret: bool,
     private: bool,
-    unreviewed: bool,
+    reviews: Vec<DecisionReview>,
     tags: Vec<String>,
     favorite: bool,
     pinned: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionReview {
+    pub stage: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub evaluated_at: i64,
+}
+
+fn review(stage: &str, reason: Option<&str>) -> DecisionReview {
+    DecisionReview {
+        stage: stage.into(),
+        status: if reason.is_some() {
+            "not_checked"
+        } else {
+            "completed"
+        }
+        .into(),
+        reason: reason.map(str::to_owned),
+        evaluated_at: now_ms(),
+    }
+}
+
+fn failure_reason(error: &anyhow::Error) -> &'static str {
+    match error.to_string().as_str() {
+        "decision_input_limit" => "input_limit",
+        "decision_timeout" => "timeout",
+        "invalid_decision_response" => "invalid_response",
+        "missing_privacy_model"
+        | "missing_decision_preset"
+        | "decision_connection_unavailable"
+        | "missing_credential"
+        | "unsupported_decision_provider"
+        | "invalid_decision_endpoint" => "unavailable",
+        _ => match error.downcast_ref::<crate::providers::error::ProviderError>() {
+            Some(crate::providers::error::ProviderError::Timeout) => "timeout",
+            Some(crate::providers::error::ProviderError::InputLimit) => "input_limit",
+            Some(crate::providers::error::ProviderError::Rejected {
+                context_overflow: true,
+                ..
+            }) => "input_limit",
+            Some(crate::providers::error::ProviderError::InvalidOutput(_)) => "invalid_response",
+            Some(_) => "unavailable",
+            None => "other",
+        },
+    }
+}
+
 pub(crate) async fn evaluate(
     repo: &HistoryRepository,
     snapshot: &CapturedSnapshot,
+    progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<CaptureDecision> {
     let config = settings(repo).await?;
     let texts: Vec<_> = snapshot
@@ -147,6 +196,14 @@ pub(crate) async fn evaluate(
     } else {
         String::new()
     };
+    let has_privacy = document.selections.privacy_decision.is_some()
+        || enabled.iter().any(|r| !r.action.is_general());
+    let has_organization = enabled.iter().any(|r| r.action.is_general());
+    let mut stage = if has_privacy {
+        "privacy"
+    } else {
+        "organization"
+    };
     let run = async {
         if input_bytes > 64 * 1024 {
             bail!("decision_input_limit");
@@ -161,6 +218,7 @@ pub(crate) async fn evaluate(
             questions.insert(format!("rule_{index}"), rule.question.clone());
         }
         if !questions.is_empty() {
+            progress("privacy");
             let preset = document
                 .selections
                 .privacy_decision
@@ -180,6 +238,7 @@ pub(crate) async fn evaluate(
                     }
                 }
             }
+            result.reviews.push(review("privacy", None));
         }
         if result.secret && config.skip_secrets {
             bail!("privacy_secret_not_saved");
@@ -193,6 +252,8 @@ pub(crate) async fn evaluate(
         }
         let general_rules: Vec<_> = enabled.iter().filter(|r| r.action.is_general()).collect();
         if !general_rules.is_empty() {
+            stage = "organization";
+            progress("organizing");
             let preset = document
                 .selections
                 .default_decision
@@ -216,6 +277,7 @@ pub(crate) async fn evaluate(
                     }
                 }
             }
+            result.reviews.push(review("organization", None));
         }
         Ok::<(), anyhow::Error>(())
     }
@@ -227,16 +289,22 @@ pub(crate) async fn evaluate(
         ) {
             return Err(error);
         }
-        // An unavailable privacy check cannot authorize disclosure or a strict capture.
-        if config.skip_secrets || enabled.iter().any(|r| r.action == RuleAction::Skip) {
-            bail!("privacy_check_unavailable_not_saved");
+        result
+            .reviews
+            .push(review(stage, Some(failure_reason(&error))));
+        if stage == "privacy" && has_organization {
+            result
+                .reviews
+                .push(review("organization", Some("privacy_not_checked")));
         }
-        result.private = true;
-        result.unreviewed = true;
         result.tags.clear();
         result.favorite = false;
         result.pinned = false;
-        eprintln!("[privacy] capture retained privately: decision check unavailable");
+        progress(if error.to_string() == "decision_input_limit" {
+            "input_limit"
+        } else {
+            "unreviewed"
+        });
     }
     // Do not commit classifications made against superseded settings or model bindings.
     if serde_json::to_string(&settings(repo).await?)? != serde_json::to_string(&config)?
@@ -250,6 +318,14 @@ pub(crate) async fn evaluate(
 
 impl CaptureDecision {
     pub async fn persist(&self, tx: &mut sqlx::SqliteConnection, clip_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM clip_decision_reviews WHERE clip_id=?")
+            .bind(clip_id)
+            .execute(&mut *tx)
+            .await?;
+        for review in &self.reviews {
+            sqlx::query("INSERT INTO clip_decision_reviews(clip_id,stage,status,reason,evaluated_at) VALUES(?,?,?,?,?)")
+                .bind(clip_id).bind(&review.stage).bind(&review.status).bind(&review.reason).bind(review.evaluated_at).execute(&mut *tx).await?;
+        }
         // Retain earlier restrictions on a duplicate copy; ordinary redetection cannot clear these labels.
         for (facet, name, present) in [
             ("core.security.secret", "Secret", self.secret),
@@ -261,7 +337,7 @@ impl CaptureDecision {
             sqlx::query("INSERT INTO content_facet_definitions(id,owner_id,version,display_name) VALUES(?,?,'1',?) ON CONFLICT(id) DO NOTHING")
                 .bind(facet).bind(if facet == "core.security.secret" { "builtin" } else { "builtin.privacy" }).bind(name).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version,payload_json) SELECT clip_id,?,id,?,?,? FROM clip_representations WHERE clip_id=? ON CONFLICT DO UPDATE SET payload_json=excluded.payload_json")
-                .bind(facet).bind("builtin.privacy").bind("1").bind(serde_json::json!({"schemaVersion":2,"kind":if self.unreviewed {"unreviewed"} else {"privacy_check"},"warning":if self.unreviewed {"Privacy check unavailable"} else {"Restricted by privacy policy"}}).to_string()).bind(clip_id).execute(&mut *tx).await?;
+                .bind(facet).bind("builtin.privacy").bind("1").bind(serde_json::json!({"schemaVersion":2,"kind":"privacy_check","warning":"Restricted by privacy policy"}).to_string()).bind(clip_id).execute(&mut *tx).await?;
         }
         if self.favorite || self.pinned {
             sqlx::query("UPDATE clip_items SET is_favorite=MAX(is_favorite,?),is_pinned=MAX(is_pinned,?),updated_at=? WHERE id=?")

@@ -78,35 +78,80 @@ it('uses Auto for new chat presets and preserves saved numbers when toggled', as
   await user.click(screen.getByText('Advanced options'))
   const auto = screen.getByRole('switch', { name: 'Automatic model limits' })
   expect(auto).toBeChecked()
-  expect(screen.getByLabelText('Context limit (tokens)')).toBeDisabled()
+  expect(screen.getByLabelText('Context limit (tokens)')).toBeEnabled()
   await user.click(auto)
   expect(screen.getByLabelText('Context limit (tokens)')).toBeEnabled()
   expect(screen.getByLabelText('Context limit (tokens)')).toHaveValue(16384)
   expect(screen.getByLabelText('Output limit (tokens)')).toHaveValue(3072)
 })
 
-it('keeps unreported hosted model limits editable while Auto is on', async () => {
+it.each(['ollama', 'openai', 'anthropic', 'gemini', 'openrouter'] as const)(
+  'keeps unreported %s model fallbacks editable while Auto is on',
+  async provider => {
+    const user = userEvent.setup()
+    const connection = { ...emptyConnection(), provider }
+    const preset = emptyPreset(connection.id)
+    render(
+      <ModelEditor
+        initial={preset}
+        connection={connection}
+        busy={false}
+        error={null}
+        models={[]}
+        onDiscover={vi.fn()}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    )
+    await user.click(screen.getByText('Advanced options'))
+    expect(screen.getByRole('switch', { name: 'Automatic model limits' })).toBeChecked()
+    expect(screen.getByLabelText('Context limit (tokens)')).toBeEnabled()
+    expect(screen.getByLabelText('Context limit (tokens)')).toHaveValue(131072)
+    expect(screen.getByLabelText('Output limit (tokens)')).toBeEnabled()
+    expect(screen.getByLabelText('Output limit (tokens)')).toHaveValue(8192)
+  }
+)
+
+it('uses reported runtime limits in Auto and restores saved numbers in Explicit', async () => {
   const user = userEvent.setup()
-  const connection = { ...emptyConnection(), provider: 'openai' as const }
-  const preset = emptyPreset(connection.id)
+  const connection = emptyConnection()
+  const preset = { ...emptyPreset(connection.id), modelId: 'known' }
   render(
     <ModelEditor
       initial={preset}
       connection={connection}
       busy={false}
       error={null}
-      models={[]}
+      models={[
+        {
+          id: 'known',
+          purposes: ['chat'],
+          capabilities: preset.capabilities,
+          modelInformation: {
+            identity: 'known',
+            contextLimit: null,
+            runtimeContextLimit: 40960,
+            inputLimit: null,
+            outputLimit: null,
+            tools: true,
+            vision: false,
+            structuredOutput: null,
+            reasoningOutput: null,
+            source: 'provider_catalog',
+            observedAt: 0,
+          },
+        },
+      ]}
       onDiscover={vi.fn()}
       onSave={vi.fn()}
       onClose={vi.fn()}
     />
   )
   await user.click(screen.getByText('Advanced options'))
-  expect(screen.getByRole('switch', { name: 'Automatic model limits' })).toBeChecked()
+  expect(screen.getByLabelText('Context limit (tokens)')).toBeDisabled()
+  await user.click(screen.getByRole('switch', { name: 'Automatic model limits' }))
   expect(screen.getByLabelText('Context limit (tokens)')).toBeEnabled()
   expect(screen.getByLabelText('Context limit (tokens)')).toHaveValue(131072)
-  expect(screen.getByLabelText('Output limit (tokens)')).toBeEnabled()
-  expect(screen.getByLabelText('Output limit (tokens)')).toHaveValue(8192)
 })
 
 it.each(['decision', 'rerank'] as const)(

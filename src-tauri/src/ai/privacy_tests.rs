@@ -31,6 +31,45 @@ fn rule(action: RuleAction) -> DecisionRule {
 }
 
 #[tokio::test]
+async fn oversized_decision_input_is_saved_in_full_unchecked_even_with_strict_rules() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![rule(RuleAction::Skip)],
+        },
+    )
+    .await
+    .unwrap();
+    let text = "ordinary public text ".repeat(4000);
+    let phases = std::sync::Mutex::new(Vec::new());
+    let (id, _) = repo
+        .capture_with_progress(snapshot(&text), &CaptureSettings::default(), &|phase| {
+            phases.lock().unwrap().push(phase.to_owned());
+        })
+        .await
+        .unwrap();
+    assert!(!restricted(repo, &id).await.unwrap());
+    assert!(phases.lock().unwrap().contains(&"input_limit".to_owned()));
+    let saved: String = sqlx::query_scalar("SELECT t.text_value FROM clip_text_values t JOIN clip_representations r ON r.id=t.representation_id WHERE r.clip_id=?")
+        .bind(&id).fetch_one(&repo.pool).await.unwrap();
+    assert_eq!(saved, text);
+    let summary = repo.summary(&id).await.unwrap();
+    assert_eq!(summary.decision_reviews[0].stage, "privacy");
+    assert_eq!(
+        summary.decision_reviews[0].reason.as_deref(),
+        Some("input_limit")
+    );
+    assert!(
+        crate::search::semantic::eligibility::clip_is_eligible(repo, &id)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn heuristics_restrict_immediately_and_skip_happens_before_storage() {
     let (_root, service) = crate::recall::service_tests::repository().await;
     let repo = &service.history;
@@ -94,7 +133,7 @@ async fn heuristics_restrict_immediately_and_skip_happens_before_storage() {
 }
 
 #[tokio::test]
-async fn missing_models_retain_private_or_skip_without_partial_writes() {
+async fn missing_models_save_unchecked_without_partial_writes() {
     let (_root, service) = crate::recall::service_tests::repository().await;
     let repo = &service.history;
     let config = PrivacySettings {
@@ -109,14 +148,14 @@ async fn missing_models_retain_private_or_skip_without_partial_writes() {
         )
         .await
         .unwrap();
-    assert!(restricted(repo, &id).await.unwrap());
+    assert!(!restricted(repo, &id).await.unwrap());
     let cleanup: i64 =
         sqlx::query_scalar("SELECT count(*) FROM search_semantic_cleanup WHERE clip_id=?")
             .bind(&id)
             .fetch_one(&repo.pool)
             .await
             .unwrap();
-    assert_eq!(cleanup, 1);
+    assert_eq!(cleanup, 0);
     save(
         repo,
         PrivacySettings {
@@ -129,12 +168,222 @@ async fn missing_models_retain_private_or_skip_without_partial_writes() {
     assert!(repo
         .capture(snapshot("Another customer"), &CaptureSettings::default())
         .await
-        .is_err());
+        .is_ok());
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM clip_items")
         .fetch_one(&repo.pool)
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn review_records_follow_recapture_and_clip_lifecycle() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let text = "an ordinary public memo";
+    let (id, _) = repo
+        .capture(snapshot(text), &CaptureSettings::default())
+        .await
+        .unwrap();
+    assert!(repo.summary(&id).await.unwrap().decision_reviews.is_empty());
+    let mut tag = rule(RuleAction::Tag);
+    tag.tag = Some("memo".into());
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![tag],
+        },
+    )
+    .await
+    .unwrap();
+    let (duplicate, reused) = repo
+        .capture(snapshot(text), &CaptureSettings::default())
+        .await
+        .unwrap();
+    assert!(reused);
+    assert_eq!(duplicate, id);
+    let summary = repo.summary(&id).await.unwrap();
+    assert_eq!(summary.decision_reviews.len(), 1);
+    assert_eq!(summary.decision_reviews[0].stage, "organization");
+    assert_eq!(
+        summary.decision_reviews[0].reason.as_deref(),
+        Some("unavailable")
+    );
+    assert!(summary.tags.is_empty());
+    assert!(!restricted(repo, &id).await.unwrap());
+    let (_, _, path): (i64, String, String) = sqlx::query_as("PRAGMA database_list")
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    let reopened = crate::history::HistoryRepository::connect(
+        std::path::Path::new(&path),
+        repo.managed_root.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reopened.summary(&id).await.unwrap().decision_reviews.len(),
+        1
+    );
+    reopened.pool.close().await;
+    assert_eq!(
+        repo.summaries(std::slice::from_ref(&id)).await.unwrap()[&id]
+            .decision_reviews
+            .len(),
+        1
+    );
+    save(repo, PrivacySettings::default()).await.unwrap();
+    repo.capture(snapshot(text), &CaptureSettings::default())
+        .await
+        .unwrap();
+    assert!(repo.summary(&id).await.unwrap().decision_reviews.is_empty());
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![rule(RuleAction::MarkPrivate)],
+        },
+    )
+    .await
+    .unwrap();
+    repo.capture(snapshot(text), &CaptureSettings::default())
+        .await
+        .unwrap();
+    assert_eq!(repo.summary(&id).await.unwrap().decision_reviews.len(), 1);
+    repo.delete(&id).await.unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM clip_decision_reviews WHERE clip_id=?")
+            .bind(&id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn provider_failures_are_informational_and_stage_specific() {
+    use axum::{routing::post, Router};
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let connection = AiConnection {
+        id: new_id(),
+        name: "Fixture".into(),
+        provider: AiProviderKind::Ollama,
+        base_url: format!("http://{}", listener.local_addr().unwrap()),
+        enabled: true,
+        options: AiConnectionOptions {
+            organization: None,
+            project: None,
+        },
+    };
+    let preset = AiModelPreset {
+        id: new_id(),
+        name: "Privacy".into(),
+        connection_id: connection.id.clone(),
+        model_id: "fixture".into(),
+        purpose: AiModelPurpose::Decision,
+        context_limit: 32768,
+        output_limit: 4096,
+        options: configuration::default_options(),
+        capabilities: configuration::unknown_capabilities(),
+    };
+    configuration::import(
+        repo,
+        AiConfiguration {
+            version: 4,
+            connections: vec![connection],
+            presets: vec![preset.clone()],
+            selections: AiSelections {
+                privacy_decision: Some(preset.id.clone()),
+                default_decision: Some(preset.id),
+                ..Default::default()
+            },
+        },
+    )
+    .await
+    .unwrap();
+    let app = Router::new().route(
+        "/v1/systemone",
+        post(|bytes: axum::body::Bytes| async move {
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            if body["state"]["clipboard_text"]
+                .as_str()
+                .unwrap()
+                .contains("timeout fixture")
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(13)).await;
+            }
+            if body["questions"].get("secret").is_some()
+                && body["state"]["clipboard_text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("organization fixture")
+            {
+                return serde_json::json!({"answers":{"secret":{"type":"noul","noul":0.1}}})
+                    .to_string();
+            }
+            "{\"answers\":{}}".to_owned()
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    for (text, reason) in [
+        ("malformed fixture", "invalid_response"),
+        ("timeout fixture", "timeout"),
+    ] {
+        let (id, _) = repo
+            .capture(snapshot(text), &CaptureSettings::default())
+            .await
+            .unwrap();
+        let summary = repo.summary(&id).await.unwrap();
+        assert_eq!(summary.decision_reviews[0].reason.as_deref(), Some(reason));
+        assert!(!restricted(repo, &id).await.unwrap());
+        assert!(
+            crate::search::semantic::eligibility::clip_is_eligible(repo, &id)
+                .await
+                .unwrap()
+        );
+    }
+    let mut tag = rule(RuleAction::Tag);
+    tag.tag = Some("Should not appear".into());
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: false,
+            rules: vec![tag],
+        },
+    )
+    .await
+    .unwrap();
+    let (id, _) = repo
+        .capture(
+            snapshot("organization fixture"),
+            &CaptureSettings::default(),
+        )
+        .await
+        .unwrap();
+    let summary = repo.summary(&id).await.unwrap();
+    assert!(summary
+        .decision_reviews
+        .iter()
+        .any(|r| r.stage == "privacy" && r.status == "completed"));
+    assert!(summary
+        .decision_reviews
+        .iter()
+        .any(|r| r.stage == "organization" && r.reason.as_deref() == Some("invalid_response")));
+    assert!(summary.tags.is_empty());
+    assert!(!restricted(repo, &id).await.unwrap());
+    server.abort();
 }
 
 #[tokio::test]
