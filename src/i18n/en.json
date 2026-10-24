@@ -161,6 +161,21 @@
       "not_configured": "Not configured"
     }
   },
+  "decisionReview": {
+    "notChecked": "Not checked",
+    "privacy": "Privacy not checked.",
+    "organization": "Organization rules not applied.",
+    "privacyHelp": "Saved in full. A failed check does not block Recall, meaning search, or enabled extensions. Existing privacy restrictions still apply. Organization rules were skipped for this capture.",
+    "organizationHelp": "Saved in full without new tags, favorites, or pins from these rules.",
+    "reason": {
+      "input_limit": "The text exceeded the decision model’s input limit.",
+      "timeout": "The decision check timed out.",
+      "unavailable": "The model or its configuration was unavailable.",
+      "invalid_response": "The model returned an invalid response.",
+      "other": "The decision check could not finish.",
+      "privacy_not_checked": "Privacy evaluation did not complete."
+    }
+  },
   "clipboard": {
     "all": "All",
     "favorites": "Favorites",
@@ -172,11 +187,8 @@
     "privacyChecking": "Checking privacy…",
     "organizing": "Applying rules…",
     "captureNotice": {
-      "inputLimit": "Saved privately. This text exceeds the decision model’s input limit, so privacy and organization checks could not finish. Recall, meaning search, and automatic extensions cannot access it. The original text is kept in full.",
-      "unreviewed": "Saved privately because a decision check failed. Organization rules were not applied. Recall, meaning search, and automatic extensions cannot access it.",
       "sizeLimit": "This copy exceeded your capture size limit and was not fully saved. Check Clipboard settings. Your system clipboard is unchanged.",
       "excluded": "This copy was not saved because a privacy exclusion matched. Your system clipboard is unchanged.",
-      "checkFailed": "This copy was not saved because privacy checks failed and a Don’t save policy is enabled. Your system clipboard is unchanged.",
       "notSaved": "This copy could not be saved. Privacy checks may be busy or capture may have failed. Your system clipboard is unchanged."
     },
     "loadingHistory": "Loading clipboard history...",
@@ -1739,7 +1751,7 @@
     "skipSecrets": "Don’t save detected secrets",
     "skipHelp": "Checks run before saving. Recognized credentials are skipped immediately. With a privacy model, matching credentials are also skipped. The system clipboard is unchanged.",
     "providerNotice": "Choose Privacy checks and General decisions in Models. Text is sent to the selected provider. Local inference is recommended for privacy; a local Ollama server can also route cloud models. There is no automatic provider fallback.",
-    "failureHelp": "Text exceeding the decision input limit is saved in full privately, even with model exclusion rules enabled. Detected credentials still obey secret exclusion. Other model failures keep the clip private, or reject it when secret exclusion or a Don’t save rule is enabled. Private clips are excluded from Recall, meaning search, and automatic extensions.",
+    "failureHelp": "If a configured check fails or exceeds the model’s input limit, the full clip is saved with a Not checked notice. It remains available to Recall, meaning search, and enabled extensions. Organization rules are skipped when privacy evaluation fails. Successfully detected secrets and matching Don’t save rules still follow your exclusion settings.",
     "customRules": "Custom rules",
     "addRule": "Add rule",
     "empty": "No custom rules. Built-in secret detection remains active.",

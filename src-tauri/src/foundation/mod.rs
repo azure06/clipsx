@@ -15,7 +15,7 @@ use std::{
 use tauri::Manager;
 
 pub const SCHEMA_ID: &str = "clipsx-local-v3";
-pub const SCHEMA_VERSION: i64 = 30;
+pub const SCHEMA_VERSION: i64 = 31;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,6 +363,37 @@ fn clear_known_credentials(failures: &mut Vec<String>) {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    #[tokio::test]
+    async fn decision_review_migration_only_converts_failed_privacy_facets() {
+        let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        let mut prefix = migrations::canonical();
+        prefix.migrations =
+            std::borrow::Cow::Owned(prefix.iter().filter(|m| m.version < 31).cloned().collect());
+        prefix.run(&mut db).await.unwrap();
+        for (id, facet, kind) in [
+            ("failed", "core.security.private", "unreviewed"),
+            ("private", "core.security.private", "privacy_check"),
+            ("secret", "core.security.secret", "privacy_check"),
+        ] {
+            sqlx::query("INSERT INTO clip_items(id,captured_at,updated_at,lifecycle_state) VALUES(?,1,1,'ready')").bind(id).execute(&mut db).await.unwrap();
+            sqlx::query("INSERT INTO clip_representations(id,clip_id,format_key,capability_id,format_family,platform,storage_kind,ordinal,created_at,updated_at) VALUES(?,?, 'text/plain','core.text','text','windows','text',0,1,1)").bind(id).bind(id).execute(&mut db).await.unwrap();
+            sqlx::query("INSERT OR IGNORE INTO content_facet_definitions(id,owner_id,version,display_name) VALUES(?,'builtin.privacy','1',?)").bind(facet).bind(facet).execute(&mut db).await.unwrap();
+            sqlx::query("INSERT INTO content_clip_facets(clip_id,facet_id,source_representation_id,detector_id,detector_version,payload_json) VALUES(?,?,?,'builtin.privacy','1',?)").bind(id).bind(facet).bind(id).bind(serde_json::json!({"kind":kind}).to_string()).execute(&mut db).await.unwrap();
+        }
+        migrations::canonical().run(&mut db).await.unwrap();
+        let reviews: Vec<(String, String)> =
+            sqlx::query_as("SELECT clip_id,status FROM clip_decision_reviews")
+                .fetch_all(&mut db)
+                .await
+                .unwrap();
+        assert_eq!(reviews, vec![("failed".into(), "not_checked".into())]);
+        let remaining: Vec<String> =
+            sqlx::query_scalar("SELECT clip_id FROM content_clip_facets ORDER BY clip_id")
+                .fetch_all(&mut db)
+                .await
+                .unwrap();
+        assert_eq!(remaining, vec!["private", "secret"]);
+    }
     #[tokio::test]
     async fn conditional_automation_migration_preserves_existing_rules() {
         let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();

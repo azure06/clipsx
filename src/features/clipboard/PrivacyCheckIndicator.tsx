@@ -1,4 +1,4 @@
-import { Shield, Tags } from 'lucide-react'
+import { ShieldCheck, ListChecks } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,7 +34,7 @@ export const PrivacyCheckIndicator = ({
 
   if (!visible) return null
   const organizing = phase === 'organizing'
-  const Icon = organizing ? Tags : Shield
+  const Icon = organizing ? ListChecks : ShieldCheck
   const label = t(organizing ? 'clipboard.organizing' : 'clipboard.privacyChecking')
 
   return (
@@ -45,7 +45,15 @@ export const PrivacyCheckIndicator = ({
       title={label}
     >
       <span className="relative flex h-3.5 w-3.5 items-center justify-center" aria-hidden="true">
-        <Icon className="h-3.5 w-3.5 animate-pulse motion-reduce:animate-none" />
+        <Icon
+          className={`h-3.5 w-3.5 ${organizing ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+        />
+        {!organizing && (
+          <>
+            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 animate-ping rounded-full bg-violet-500 motion-reduce:animate-none" />
+            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-violet-500" />
+          </>
+        )}
       </span>
       <span className="truncate">{label}</span>
       {pending > 1 && <span className="tabular-nums opacity-70">{pending}</span>}

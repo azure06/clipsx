@@ -49,8 +49,7 @@ type ClipboardState = {
   semanticPending: boolean
   privacyChecksPending: number
   decisionPhase: 'privacy' | 'organizing'
-  captureNotice:
-    'inputLimit' | 'unreviewed' | 'sizeLimit' | 'excluded' | 'checkFailed' | 'notSaved' | null
+  captureNotice: 'sizeLimit' | 'excluded' | 'notSaved' | null
   relatedClipIds: string[]
   error: string | null
   hasMore: boolean
@@ -169,11 +168,6 @@ const ensureEvents = () => {
     listen<'privacy' | 'organizing'>('capture-decision-phase', event => {
       useClipboardStore.setState({ decisionPhase: event.payload })
     }),
-    listen<string>('capture-notice', event => {
-      useClipboardStore.setState({
-        captureNotice: event.payload === 'input_limit' ? 'inputLimit' : 'unreviewed',
-      })
-    }),
     listen<string>('capture-rejected', event => {
       const reason = event.payload
       useClipboardStore.setState({
@@ -181,9 +175,7 @@ const ensureEvents = () => {
           ? 'sizeLimit'
           : reason.includes('privacy_secret_not_saved') || reason.includes('privacy_rule_not_saved')
             ? 'excluded'
-            : reason.includes('privacy_check_unavailable_not_saved')
-              ? 'checkFailed'
-              : 'notSaved',
+            : 'notSaved',
       })
     }),
     listen<string>('clip-deleted', event =>

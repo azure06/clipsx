@@ -14,6 +14,7 @@ import {
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { PreviewLeadingVisual } from './PreviewLeadingVisual'
+import { DecisionReviewNotice } from '../DecisionReviewNotice'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -122,6 +123,7 @@ const ClipboardListItemComponent = ({
 
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
         <div className="flex items-center gap-2 shrink-0 ml-auto pl-2">
+          <DecisionReviewNotice reviews={clip.decisionReviews} compact />
           {preview.badge && (
             <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
               {preview.badge}

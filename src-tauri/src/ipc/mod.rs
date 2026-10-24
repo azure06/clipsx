@@ -3338,19 +3338,13 @@ pub(crate) fn run() {
                     let monitor_app = capture_app;
                     while let Some((snapshot, settings)) = capture_receiver.recv().await {
                         let _ = monitor_app.emit("capture-decision-phase", "privacy");
-                        let warning = std::sync::Mutex::new(None::<String>);
                         let progress = |phase: &str| {
-                            if matches!(phase, "input_limit" | "unreviewed") {
-                                *warning.lock().unwrap() = Some(phase.to_owned());
-                            } else {
+                            if matches!(phase, "privacy" | "organizing") {
                                 let _ = monitor_app.emit("capture-decision-phase", phase);
                             }
                         };
                         match monitor_history.capture_with_progress(snapshot, &settings, &progress).await {
                             Ok((id, duplicate)) => {
-                                if let Some(reason) = warning.lock().unwrap().as_deref() {
-                                    let _ = monitor_app.emit("capture-notice", reason);
-                                }
                                 crate::app::workers::wake_managed_files(
                                     &monitor_app,
                                     monitor_history.clone(),
