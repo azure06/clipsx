@@ -588,6 +588,18 @@
     "notInstalled": "Not installed"
   },
   "desktopUi": {
+    "syncRenameDevice": "Rename",
+    "syncRemoveDevice": "Remove",
+    "syncSaveDeviceName": "Save",
+
+    "syncDeviceFallback": "Device · {{id}}",
+    "renameSyncDeviceLabel": "Rename {{name}}",
+    "removeSyncDeviceLabel": "Remove {{name}}",
+    "syncDeviceName": "Device name",
+    "confirmRemoveSyncDevice": "Remove device",
+    "removeSyncDeviceHelp": "Remove {{name}}? This stops its sync access and removes it from this list. Local and cloud settings won’t be deleted.",
+    "removeCurrentSyncDeviceHelp": "Remove {{name}}? Sync will stop on this computer and it will disappear from the list. Local and cloud settings won’t be deleted. Sign in again to reconnect.",
+
     "unableToInspectClipsxStorage": "Unable to inspect ClipsX storage:",
     "searchClipsOrAskAQuestion": "Search clips or ask a question…",
     "storageRecovery": "Storage recovery",

@@ -2,6 +2,7 @@
 identifier = "main-app-commands"
 description = "Allows the primary ClipsX webview to invoke the registered application commands."
 permissions = [
+  "allow-set-sync-device-name",
   "allow-assistant-run-begin",
   "allow-assistant-model-options",
   "allow-ai-model-information",

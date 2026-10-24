@@ -791,6 +791,7 @@ dependencies = [
  "foreign-types",
  "fs2",
  "futures",
+ "hostname",
  "iana-time-zone",
  "image",
  "keyring",

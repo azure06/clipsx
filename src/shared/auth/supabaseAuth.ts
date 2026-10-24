@@ -263,6 +263,17 @@ export const revokeSyncDevice = async (deviceId: string) => {
   const { error } = await getClient().rpc('sync_revoke_device', { p_device_id: deviceId })
   if (error) throw new Error(error.message)
 }
+export const renameSyncDevice = async (deviceId: string, deviceName: string) => {
+  const { error } = await getClient().rpc('sync_rename_device', {
+    p_device_id: deviceId,
+    p_device_name: deviceName,
+  })
+  if (error) throw new Error(error.message)
+}
+export const removeSyncDevice = async (deviceId: string) => {
+  const { error } = await getClient().rpc('sync_remove_device', { p_device_id: deviceId })
+  if (error) throw new Error(error.message)
+}
 export const resetSyncProfile = async (generation: number) => {
   const { data, error } = await getClient().rpc('sync_reset_profile', { p_generation: generation })
   if (error) throw new Error(error.message)
