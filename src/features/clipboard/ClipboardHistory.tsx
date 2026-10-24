@@ -9,6 +9,7 @@ import { getDeleteShortcut, getPlatform } from '../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { copyClipboardOutput } from '../../shared/clipboardOutput'
+import { PrivacyCheckIndicator } from './PrivacyCheckIndicator'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -69,6 +70,9 @@ export const ClipboardHistory = memo(function ClipboardHistory({
   )
 
   const relatedClipIds = useClipboardStore(state => state.relatedClipIds)
+  const privacyChecksPending = useClipboardStore(state => state.privacyChecksPending)
+  const decisionPhase = useClipboardStore(state => state.decisionPhase)
+  const captureNotice = useClipboardStore(state => state.captureNotice)
   const activeTab = useClipboardStore(state => state.activeTab)
   const setActiveTab = useClipboardStore(state => state.setActiveTab)
   const settings = useSettingsStore(state => state.settings)
@@ -620,9 +624,26 @@ export const ClipboardHistory = memo(function ClipboardHistory({
             {t(`clipboard.${filter}`)}
           </button>
         ))}
+        <PrivacyCheckIndicator pending={privacyChecksPending} phase={decisionPhase} />
       </div>
       {/* Tag filter row — only visible when tags exist */}
       <TagFilter />
+      {captureNotice && (
+        <div
+          role="status"
+          className="flex shrink-0 items-start gap-2 border-b border-amber-200/40 bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/15 dark:bg-amber-500/10 dark:text-amber-200"
+        >
+          <span className="flex-1">{t(`clipboard.captureNotice.${captureNotice}`)}</span>
+          <button
+            type="button"
+            aria-label={t('common.close')}
+            className="rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+            onClick={() => useClipboardStore.setState({ captureNotice: null })}
+          >
+            ×
+          </button>
+        </div>
+      )}
       {(resultsStale || error) && (
         <div
           role="status"

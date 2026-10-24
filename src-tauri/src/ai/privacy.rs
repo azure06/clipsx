@@ -108,6 +108,7 @@ pub(crate) struct CaptureDecision {
 pub(crate) async fn evaluate(
     repo: &HistoryRepository,
     snapshot: &CapturedSnapshot,
+    progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<CaptureDecision> {
     let config = settings(repo).await?;
     let texts: Vec<_> = snapshot
@@ -161,6 +162,7 @@ pub(crate) async fn evaluate(
             questions.insert(format!("rule_{index}"), rule.question.clone());
         }
         if !questions.is_empty() {
+            progress("privacy");
             let preset = document
                 .selections
                 .privacy_decision
@@ -193,6 +195,7 @@ pub(crate) async fn evaluate(
         }
         let general_rules: Vec<_> = enabled.iter().filter(|r| r.action.is_general()).collect();
         if !general_rules.is_empty() {
+            progress("organizing");
             let preset = document
                 .selections
                 .default_decision
@@ -228,7 +231,9 @@ pub(crate) async fn evaluate(
             return Err(error);
         }
         // An unavailable privacy check cannot authorize disclosure or a strict capture.
-        if config.skip_secrets || enabled.iter().any(|r| r.action == RuleAction::Skip) {
+        if error.to_string() != "decision_input_limit"
+            && (config.skip_secrets || enabled.iter().any(|r| r.action == RuleAction::Skip))
+        {
             bail!("privacy_check_unavailable_not_saved");
         }
         result.private = true;
@@ -236,6 +241,11 @@ pub(crate) async fn evaluate(
         result.tags.clear();
         result.favorite = false;
         result.pinned = false;
+        progress(if error.to_string() == "decision_input_limit" {
+            "input_limit"
+        } else {
+            "unreviewed"
+        });
         eprintln!("[privacy] capture retained privately: decision check unavailable");
     }
     // Do not commit classifications made against superseded settings or model bindings.
