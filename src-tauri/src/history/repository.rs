@@ -177,7 +177,17 @@ impl HistoryRepository {
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
     ) -> Result<(String, bool)> {
-        self.capture_inner(snapshot, settings, false).await
+        self.capture_with_progress(snapshot, settings, &|_| {})
+            .await
+    }
+    pub async fn capture_with_progress(
+        &self,
+        snapshot: CapturedSnapshot,
+        settings: &CaptureSettings,
+        progress: &(dyn Fn(&str) + Send + Sync),
+    ) -> Result<(String, bool)> {
+        self.capture_inner(snapshot, settings, false, progress)
+            .await
     }
     /// Promote a completed, clip-owned result and its provenance in one transaction.
     pub async fn promote_extension_result(&self, job_id: &str, request_id: &str) -> Result<String> {
@@ -266,6 +276,7 @@ impl HistoryRepository {
         snapshot: CapturedSnapshot,
         settings: &CaptureSettings,
         force_new: bool,
+        progress: &(dyn Fn(&str) + Send + Sync),
     ) -> Result<(String, bool)> {
         let _platform_token = snapshot.token;
         if snapshot.representations.is_empty() {
@@ -282,7 +293,7 @@ impl HistoryRepository {
         }) {
             bail!("representation exceeds configured limit")
         }
-        let privacy = crate::ai::privacy::evaluate(self, &snapshot).await?;
+        let privacy = crate::ai::privacy::evaluate(self, &snapshot, progress).await?;
         let fingerprint = capture_fingerprint(&snapshot.representations);
         let now = now_ms();
         let mut tx = self.pool.begin().await?;

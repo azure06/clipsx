@@ -25,7 +25,13 @@ use anyhow::Context;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
@@ -47,6 +53,13 @@ fn emit_clip_facets_updated(app: &tauri::AppHandle, clip_id: Option<&str>) {
         ClipFacetsUpdated {
             clip_id: clip_id.map(str::to_string),
         },
+    );
+}
+
+fn emit_capture_privacy_status(app: &tauri::AppHandle, pending: usize) {
+    let _ = app.emit(
+        "capture-privacy-status",
+        serde_json::json!({ "pending": pending }),
     );
 }
 
@@ -3317,77 +3330,94 @@ pub(crate) fn run() {
                 let capture_history = history.clone();
                 let capture_extensions = extensions.clone();
                 let capture_app = app.handle().clone();
+                let capture_privacy_pending = Arc::new(AtomicUsize::new(0));
+                let worker_privacy_pending = capture_privacy_pending.clone();
                 tauri::async_runtime::spawn(async move {
                     let monitor_history = capture_history;
                     let monitor_extensions = capture_extensions;
                     let monitor_app = capture_app;
                     while let Some((snapshot, settings)) = capture_receiver.recv().await {
-                    match monitor_history.capture(snapshot, &settings).await {
-                        Ok((id, duplicate)) => {
-                            crate::app::workers::wake_managed_files(
-                                &monitor_app,
-                                monitor_history.clone(),
-                            );
-                            let _ = monitor_app.emit(
-                                if duplicate {
-                                    "clip-updated"
-                                } else {
-                                    "clip-captured"
-                                },
-                                &id,
-                            );
-                            let detection_history = monitor_history.clone();
-                            let detection_extensions = monitor_extensions.clone();
-                            let detection_app = monitor_app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                match detect_with_extensions(
-                                    &detection_history,
-                                    &detection_extensions,
-                                    &id,
-                                    false,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        emit_clip_facets_updated(
-                                            &detection_app,
-                                            Some(&id),
-                                        );
-                                    }
-                                    Err(error) => {
-                                        let _ = detection_app
-                                            .emit("detection-job-failed", error.to_string());
-                                    }
+                        let _ = monitor_app.emit("capture-decision-phase", "privacy");
+                        let warning = std::sync::Mutex::new(None::<String>);
+                        let progress = |phase: &str| {
+                            if matches!(phase, "input_limit" | "unreviewed") {
+                                *warning.lock().unwrap() = Some(phase.to_owned());
+                            } else {
+                                let _ = monitor_app.emit("capture-decision-phase", phase);
+                            }
+                        };
+                        match monitor_history.capture_with_progress(snapshot, &settings, &progress).await {
+                            Ok((id, duplicate)) => {
+                                if let Some(reason) = warning.lock().unwrap().as_deref() {
+                                    let _ = monitor_app.emit("capture-notice", reason);
                                 }
-                                let _ =
-                                    artifacts::produce_for_clip(&detection_history, &id).await;
-                                emit_clip_artifact_updates(
-                                    &detection_app,
-                                    &detection_history,
-                                    &id,
-                                )
-                                .await;
-                                if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
-                                    crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
-                                }
-                                let _ =
-                                    search::upsert_projection(&detection_history, &id).await;
-                                let _ = embeddings::enqueue_clip(&detection_history, &id).await;
-                                crate::app::workers::wake_ocr(
-                                    &detection_app,
-                                    detection_history.clone(),
+                                crate::app::workers::wake_managed_files(
+                                    &monitor_app,
+                                    monitor_history.clone(),
                                 );
-                                wake_embedding_worker(detection_app, detection_history);
-                            });
+                                let _ = monitor_app.emit(
+                                    if duplicate {
+                                        "clip-updated"
+                                    } else {
+                                        "clip-captured"
+                                    },
+                                    &id,
+                                );
+                                let detection_history = monitor_history.clone();
+                                let detection_extensions = monitor_extensions.clone();
+                                let detection_app = monitor_app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    match detect_with_extensions(
+                                        &detection_history,
+                                        &detection_extensions,
+                                        &id,
+                                        false,
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            emit_clip_facets_updated(
+                                                &detection_app,
+                                                Some(&id),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            let _ = detection_app
+                                                .emit("detection-job-failed", error.to_string());
+                                        }
+                                    }
+                                    let _ =
+                                        artifacts::produce_for_clip(&detection_history, &id).await;
+                                    emit_clip_artifact_updates(
+                                        &detection_app,
+                                        &detection_history,
+                                        &id,
+                                    )
+                                    .await;
+                                    if detection_extensions.enqueue_capture_automations(&detection_history, &id).await.unwrap_or(0) > 0 {
+                                        crate::app::workers::wake_extensions(&detection_app, detection_history.clone(), detection_extensions.clone());
+                                    }
+                                    let _ =
+                                        search::upsert_projection(&detection_history, &id).await;
+                                    let _ = embeddings::enqueue_clip(&detection_history, &id).await;
+                                    crate::app::workers::wake_ocr(
+                                        &detection_app,
+                                        detection_history.clone(),
+                                    );
+                                    wake_embedding_worker(detection_app, detection_history);
+                                });
+                            }
+                            Err(error) => {
+                                let _ = monitor_app.emit("capture-rejected", error.to_string());
+                            }
                         }
-                        Err(error) => {
-                            let _ = monitor_app.emit("capture-rejected", error.to_string());
-                        }
-                    }
+                        let pending = worker_privacy_pending.fetch_sub(1, Ordering::AcqRel) - 1;
+                        emit_capture_privacy_status(&monitor_app, pending);
                     }
                 });
                 let monitor_history = history.clone();
                 let monitor_app = app.handle().clone();
+                let monitor_privacy_pending = capture_privacy_pending;
                 tauri::async_runtime::spawn(async move {
                     let mut adapter = SystemClipboardAdapter::new();
                     let mut last_token = adapter.snapshot_token().unwrap_or_default();
@@ -3424,15 +3454,29 @@ pub(crate) fn run() {
                             continue;
                         }
                         apply_capture_filters(&mut snapshot, &app_settings.capture_filters);
+                        let representation_count = snapshot.representations.len();
                         apply_representation_size_limit(
                             &mut snapshot,
                             app_settings.capture.max_representation_bytes,
                         );
                         if snapshot.representations.is_empty() {
+                            let _ = monitor_app.emit("capture-rejected", "representation exceeds configured limit");
                             continue;
                         }
-                        if capture_sender.try_send((snapshot, app_settings.capture)).is_err() {
-                            let _ = monitor_app.emit("capture-rejected", "Privacy checks are busy; this snapshot was not saved");
+                        if snapshot.representations.len() < representation_count {
+                            let _ = monitor_app.emit("capture-rejected", "representation exceeds configured limit");
+                        }
+                        match capture_sender.try_reserve() {
+                            Ok(permit) => {
+                                let pending = monitor_privacy_pending
+                                    .fetch_add(1, Ordering::AcqRel)
+                                    + 1;
+                                emit_capture_privacy_status(&monitor_app, pending);
+                                permit.send((snapshot, app_settings.capture));
+                            }
+                            Err(_) => {
+                                let _ = monitor_app.emit("capture-rejected", "Privacy checks are busy; this snapshot was not saved");
+                            }
                         }
                     }
                 });

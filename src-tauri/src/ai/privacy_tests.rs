@@ -31,6 +31,39 @@ fn rule(action: RuleAction) -> DecisionRule {
 }
 
 #[tokio::test]
+async fn oversized_decision_input_is_saved_in_full_privately_even_with_strict_rules() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![rule(RuleAction::Skip)],
+        },
+    )
+    .await
+    .unwrap();
+    let text = "ordinary public text ".repeat(4000);
+    let phases = std::sync::Mutex::new(Vec::new());
+    let (id, _) = repo
+        .capture_with_progress(snapshot(&text), &CaptureSettings::default(), &|phase| {
+            phases.lock().unwrap().push(phase.to_owned());
+        })
+        .await
+        .unwrap();
+    assert!(restricted(repo, &id).await.unwrap());
+    assert!(phases.lock().unwrap().contains(&"input_limit".to_owned()));
+    let saved: String = sqlx::query_scalar("SELECT t.text_value FROM clip_text_values t JOIN clip_representations r ON r.id=t.representation_id WHERE r.clip_id=?")
+        .bind(&id).fetch_one(&repo.pool).await.unwrap();
+    assert_eq!(saved, text);
+    assert!(
+        !crate::search::semantic::eligibility::clip_is_eligible(repo, &id)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn heuristics_restrict_immediately_and_skip_happens_before_storage() {
     let (_root, service) = crate::recall::service_tests::repository().await;
     let repo = &service.history;
