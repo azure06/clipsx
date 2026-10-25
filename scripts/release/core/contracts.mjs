@@ -230,23 +230,14 @@ export function createManifests(candidate, signatures, notes, date) {
   }
 }
 
-export function certificationChecks(allPassed, macPassed) {
-  assert(allPassed === 'true', 'Explicit installed-platform and updater confirmation is required')
-  assert(
-    macPassed === 'true',
-    'Confirm installed extension installation, execution and restart on both Mac architectures'
-  )
-  return { installedPlatforms: 'confirmed', updaterUpgrades: 'confirmed', macExtensions: 'passed' }
-}
-
 export function assertCertified(candidate, certification, candidateBytes, inventory) {
-  if (candidate.version !== '0.1.0')
+  if (certification.schemaVersion === 2 && candidate.version !== '0.1.0')
     assert(
       certification.checks?.macExtensions === 'passed',
       'Installed Mac extension certification is missing'
     )
   assert(
-    certification.schemaVersion === 2 && certification.candidateId === candidate.id,
+    [2, 3].includes(certification.schemaVersion) && certification.candidateId === candidate.id,
     'Certification belongs to another candidate'
   )
   assert(
@@ -262,10 +253,27 @@ export function assertCertified(candidate, certification, candidateBytes, invent
     certification.inventorySha256 === digest(encode(inventory)),
     'Release assets changed after certification'
   )
-  assert(
-    certification.evidence && targets.every(target => certification.platforms.includes(target.id)),
-    'Missing installed-platform certification'
-  )
+  if (certification.schemaVersion === 2) {
+    assert(
+      certification.evidence &&
+        targets.every(target => certification.platforms?.includes(target.id)),
+      'Missing installed-platform certification'
+    )
+  } else {
+    const approval = certification.approval
+    assert(
+      approval?.environment === 'desktop-release' &&
+        Number.isSafeInteger(approval.environmentId) &&
+        approval.environmentId > 0 &&
+        /^\d+$/.test(approval.runId || '') &&
+        approval.runUrl === `https://github.com/${repository}/actions/runs/${approval.runId}` &&
+        typeof approval.actor === 'string' &&
+        approval.actor.length > 0 &&
+        Number.isFinite(Date.parse(approval.recordedAt)) &&
+        certification.actor === approval.actor,
+      'Missing human release approval'
+    )
+  }
 }
 
 export function assertManifests(candidate, signatures, notes, updater, downloads, checksums) {

@@ -1,82 +1,50 @@
 ---
 name: clipsx-release
-description: Operate ClipsX desktop releases from saved builds, retry packaging, sign Windows, certify installed artifacts and publish on merge. Excludes ordinary app fixes and extension publication.
+description: Prepare desktop release branches, hand builds to CI, run Windows signing when ready, and publish approved candidates. Excludes ordinary app fixes and extension publication.
 ---
 
-# ClipsX release workflow
+# Desktop release operator
 
-Read [release requirements](references/operations.md). Inspect the selected build,
-candidate draft and evidence; build success is not installed certification.
-An explicit request to publish authorizes signing, finalization, certification
-and merge/publication within this flow; preparation alone does not. Certification
-still requires evidence for the exact finalized files.
+Use `develop` → `release/<version>` → `main`. Read only the relevant section of
+[operations](references/operations.md) for the action at hand, not the entire manual.
 
-## Ordered operations
+1. **Prepare:** run `node scripts/release/pipeline.mjs prepare-version <version>`
+   on `develop`, review its mechanical version changes and commit-based notes once.
+   Run checks relevant to the changed code. Version/docs-only
+   preparation needs consistency/link checks, not another full application build.
+2. **Start CI:** push the release branch, open its PR and record the build link.
+   CI owns the complete release preflight and platform builds. Reproduce the full
+   preflight locally only when requested or needed to diagnose a failure.
+3. **Hand off:** check status once when action is requested. If a workflow is still
+   running, return its link and next action, then end the turn. Do not poll, sleep
+   through builds, repeatedly download metadata, or create an unsolicited monitor.
+4. **Sign Windows:** the release PR dashboard shows the exact
+   [signer](../../../scripts/release/sign-windows.ps1) command once its kit is
+   registered. Run it with SimplySign connected. It downloads, signs, uploads and
+   resumes the pipeline. If not ready, hand off; no manual EXE upload is needed.
+5. **Approve:** the maintainer tests final installers/updater and clicks
+   **Review deployments → Approve and deploy** once. The workflow records the
+   reviewer and exact hashes, merges through normal branch rules, and explicitly
+   dispatches publication. Do not collect evidence forms or repeated confirmations.
+   Approval authorizes release; never describe it as automatically executed tests.
+6. **Recover:** use the PR dashboard's **Release controls** link with its PR number
+   and `retry`, or Actions' **Re-run failed jobs**. Completed approval and successful
+   packages survive retries. Investigate actual failures; normal progression needs
+   no LLM supervision. `refresh` updates the panel; `prepare-latest` explicitly
+   selects a successful build after a source fix.
 
-1. **Build:** align npm/Cargo/Tauri versions and release notes. Changed app/build
-   inputs require local preflight before pushing release/<version>. Frontend
-   checks/build run once, native tests and optimized compilation once per target.
-   Record the successful build ID.
-2. **Prepare:** run Prepare release candidate from deployed trusted main with
-   explicit build_run_id. Empty candidate_id creates a candidate; an exact ID
-   resumes it. target=missing preserves completed outputs. Choose a platform
-   explicitly to replace it only before finalization. Corrected release tooling
-   may consume an older build; never recompile merely to retry signing.
-   pr_number selects the candidate; automatic preparation preserves an existing
-   selection. Optional notes_ref corrects notes before finalization without
-   changing packages; an omitted retry reference preserves existing notes.
-3. **Windows:** authenticate SimplySign and GitHub CLI. Use the root
-   sign-windows.ps1 helper with CandidateId and the documented certificate
-   thumbprint. It packages the saved executable, signs application/installer/
-   uninstaller, verifies executable identity, uploads and dispatches finalization.
-   Use a fresh signing workspace. Keep updater private keys exclusively in CI.
-4. **Finalize:** select the exact candidate on main. Require complete platform
-   inventory and native evidence. Verify signatures against the retained updater
-   key. Completed retries verify files rather than regenerate them.
-5. **Certify:** collect actual Windows, both Mac, AppImage/deb installed tests and
-   private updater-fixture evidence. Both Macs require cold-cache extension
-   installation, action and restart tests. Dispatch Certify candidate with exact
-   ID, release PR, HTTPS evidence and both required confirmations.
-6. **Publish:** merge the certified release PR. Publication checks merged app
-   inputs and promotes existing certified files. Retry Publish certified release
-   with the merged PR number; reject conflicting tags and reuse published files.
-   For read-only discovery/signature verification, use pipeline.mjs
-   verify-published <merged-release-pr>; it cannot publish or record deployments.
+## Recovery rules
 
-## Identity and navigation
+- Reuse the selected build/candidate; retry only the failed or missing stage.
+  Never rebuild the app to retry packaging, signing, upload or publication.
+- Use the pipeline's identity, hash and signature checks. Do not duplicate them
+  with manual file-by-file inspection after a successful verified stage.
+- App/build-input or public configuration changes need a new build. Finalized
+  assets and notes are immutable; never mix candidates or overwrite publications.
+- For tooling fixes, preserve app inputs, updater keys and unrelated work. Run
+  affected tooling checks and merge trusted tooling before using it on `main`.
+  Use fixtures; do not create a production release just to test infrastructure.
 
-The root pipeline is a dispatcher. Domains under scripts/release own core
-contracts/transfers/classification, build checks and immutable executables,
-candidate lifecycle, platform signing/runtime details, publication,
-observability, test feeds/fixtures and one-time public configuration setup.
-Tests live beside their domain; npm run test:release discovers them recursively.
-
-Compilation ends at the saved build. Preparation and later stages cannot build
-the app/frontend or run application tests. Compare the central tracked app-input
-inventory and public environment with release source. Docs/signing tooling may
-differ; changed app inputs or public production variables require a new build.
-For documentation-only corrections, follow the reference procedure for preserving
-an in-progress build and validating the exact PR head. Do not rebuild unchanged
-application inputs or treat tested source/dev builds as tested installers.
-Newer builds do not supersede selected candidates. Record build and release-tooling
-revisions separately and reject mixed, expired or tampered inputs.
-
-Finalized/certified assets and notes are immutable. Recheck descriptor/asset
-metadata before lifecycle writes and verify transfers at external boundaries.
-Never infer installed success from a build, signature or checkbox without evidence.
-Existing published descriptors and certifications remain verifiable.
-
-## Infrastructure changes
-
-Preserve app manifests, runtime source, migrations, updater key/routes and unrelated
-working-tree edits. Compare app-input inventories before/after. Run focused release
-tests on Windows/Linux, workflow lint, PowerShell syntax, standalone verifier
-tests/lint and skill validation. Keep CI and Release readiness protections.
-Merge infrastructure before using changed main-only dispatch actions; validate
-with fixtures and read-only verification without creating a production tag/release.
-
-Keep exact commands, credential setup and installed checklists in
-[operations reference](references/operations.md). Public DSN mapping is centralized; secret
-upload/deployment tokens remain separate. Loopback-only updater fixture settings
-must never enter production artifacts. Website and extension publication remain
-separate. Never certify missing tests or fabricate an evidence reference.
+Commands, credentials, recovery details and test requirements live in the
+[operations reference](references/operations.md). Keys stay in their designated
+signing/CI stores; private updater fixtures must never enter production artifacts.

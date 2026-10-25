@@ -8,7 +8,6 @@ import {
   assetName,
   createManifests,
   candidateDraftMetadata,
-  certificationChecks,
   digest,
   encode,
   publicationMode,
@@ -63,11 +62,6 @@ test('release identity requires matching stable versions', () => {
   )
 })
 
-test('new certifications cannot recreate historical waivers', () => {
-  nodeAssert.throws(() => certificationChecks('false', 'true'))
-  nodeAssert.throws(() => certificationChecks('true', 'false'))
-  nodeAssert.equal(certificationChecks('true', 'true').macExtensions, 'passed')
-})
 test('selected builds require successful repository-owned release workflow provenance', () => {
   const { candidate } = fixture()
   const origin = candidate.build.origin

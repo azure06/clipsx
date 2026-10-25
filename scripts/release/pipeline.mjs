@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { directory, output } from './core/context.mjs'
 import { fresh } from './core/candidate.mjs'
 import { clearAssetCache } from './core/github.mjs'
+import { assert } from './core/contracts.mjs'
 
 const commands = {
   initialize: ['./build/initialize.mjs', 'initialize', 0, 0],
@@ -18,6 +19,11 @@ const commands = {
   'download-windows': ['./platforms/windows/operations.mjs', 'downloadWindows', 1, 1],
   finalize: ['./candidate/finalize.mjs', 'finalize', 1, 2],
   certify: ['./candidate/approval.mjs', 'certify', 2, 2],
+  'approval-snapshot': ['./candidate/signoff.mjs', 'approvalSnapshot', 2, 2],
+  'complete-release': ['./candidate/signoff.mjs', 'completeRelease', 2, 2],
+  controls: ['./candidate/controls.mjs', 'controls', 0, 2],
+  'configure-approval': ['./setup/approval.mjs', 'configureApproval', 1, 1],
+  'prepare-version': ['./setup/version.mjs', 'prepareVersion', 1, 1],
   readiness: ['./candidate/approval.mjs', 'readiness', 0, 0],
   publish: ['./publication/publish.mjs', 'publish', 0, 0],
   'verify-published': ['./publication/publish.mjs', 'verifyPublishedCommand', 1, 1],
@@ -30,7 +36,15 @@ export async function main([operation, ...parameters]) {
   if (operation === 'finalization-state') {
     if (parameters.length !== 1) throw new Error('finalization-state requires a candidate ID')
     mkdirSync(directory, { recursive: true })
-    output('finalized', String(Boolean(fresh(parameters[0]).candidate.finalizedAt)))
+    const { candidate, release } = fresh(parameters[0])
+    if (!candidate.finalizedAt) {
+      const { finalizationReady } = await import('./candidate/controls.mjs')
+      assert(
+        finalizationReady(candidate, release),
+        'Waiting for all platform packages, native evidence and the Windows submission; use the PR dashboard to retry missing stages'
+      )
+    }
+    output('finalized', String(Boolean(candidate.finalizedAt)))
     return
   }
   const entry = commands[operation]

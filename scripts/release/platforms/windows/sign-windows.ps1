@@ -76,8 +76,17 @@ try {
     $evidencePath = Join-Path $work 'windows-evidence.json'
     $evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $evidencePath -Encoding utf8
     Push-Location $root
-    try { & node $pipeline submit-windows $candidate.id $installers[0].FullName $evidencePath; if ($LASTEXITCODE -ne 0) { throw 'Upload or finalization dispatch failed. Keep this workspace for recovery.' } } finally { Pop-Location }
-    Write-Host "Signed candidate $($candidate.id) uploaded. CI finalization has been requested. Workspace: $work"
+    try {
+        & node $pipeline submit-windows $candidate.id $installers[0].FullName $evidencePath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Retry submission without signing again (from the repository root):"
+            $retryInstaller = $installers[0].FullName.Replace("'", "''")
+            $retryEvidence = $evidencePath.Replace("'", "''")
+            Write-Host "node scripts/release/pipeline.mjs submit-windows $($candidate.id) '$retryInstaller' '$retryEvidence'"
+            throw 'Upload or pipeline dispatch failed. Keep this workspace for recovery.'
+        }
+    } finally { Pop-Location }
+    Write-Host "Signed candidate $($candidate.id) uploaded. The pipeline resumes when all platform packages are ready. Workspace: $work"
 } finally {
     $env:RELEASE_WORKDIR = $previousWork
     Remove-Item Env:CLIPSX_SIGNTOOL, Env:CLIPSX_CERT_THUMBPRINT, Env:CLIPSX_SIGNING_LOG -ErrorAction SilentlyContinue
