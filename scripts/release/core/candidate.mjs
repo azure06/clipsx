@@ -23,7 +23,7 @@ import { directory } from './context.mjs'
 
 export const metadataInventory = release =>
   release.assets
-    .filter(item => item.name !== 'certification.json')
+    .filter(item => !['certification.json', 'merge-readiness.json'].includes(item.name))
     .map(item => ({
       file: item.name,
       sha256: item.digest?.replace(/^sha256:/, ''),

@@ -1,5 +1,5 @@
-name: Certify candidate
-run-name: 'Approve candidate ${{ inputs.candidate_id }} for PR #${{ inputs.pr_number }}'
+name: Verify release for merge
+run-name: 'Verify candidate ${{ inputs.candidate_id }} for PR #${{ inputs.pr_number }} at ${{ inputs.head_revision }}'
 on:
   workflow_dispatch:
     inputs:
@@ -8,7 +8,11 @@ on:
         required: true
         type: string
       pr_number:
-        description: Release PR to certify
+        description: Release PR to verify before the maintainer merges it
+        required: true
+        type: string
+      head_revision:
+        description: Exact release PR head to verify
         required: true
         type: string
 env:
@@ -18,98 +22,33 @@ env:
   SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
 permissions:
   contents: write
-  actions: write
+  actions: read
   issues: write
   statuses: write
   pull-requests: write
 concurrency:
-  group: release-approval-${{ inputs.candidate_id }}
+  group: release-verification-${{ inputs.pr_number }}
   cancel-in-progress: false
 jobs:
-  snapshot:
+  verify:
+    name: Verify packages and enable maintainer merge
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    outputs:
-      approved: ${{ steps.snapshot.outputs.approved }}
-      candidate-url: ${{ steps.snapshot.outputs.candidate-url }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Map public release environment
-        run: node scripts/release/core/environment.mjs
-      - name: Bind the exact files before asking for approval
-        id: snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
-        run: node scripts/release/pipeline.mjs approval-snapshot "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"
-      - uses: actions/upload-artifact@v4
-        if: steps.snapshot.outputs.upload-snapshot == 'true'
-        with:
-          name: release-approval-${{ github.run_id }}
-          path: .release/approval-snapshot.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 90
-  approve:
-    name: Approve release
-    needs: snapshot
-    if: needs.snapshot.outputs.approved != 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: desktop-release
-      url: ${{ needs.snapshot.outputs.candidate-url }}
-    steps:
-      - run: echo 'Release approved. The next job records the reviewer and exact package hashes.'
-  certification:
-    needs: [snapshot, approve]
-    if: always() && needs.snapshot.result == 'success' && (needs.snapshot.outputs.approved == 'true' || needs.approve.result == 'success')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - name: Map public release environment
         run: node scripts/release/core/environment.mjs
       - uses: ./.github/actions/release-verifier
-      - uses: actions/download-artifact@v4
-        if: needs.snapshot.outputs.approved != 'true'
-        with:
-          name: release-approval-${{ github.run_id }}
-          path: .release
-      - name: Record approval and verify immutable release files
-        # Verification runs against final distributed bytes before recording approval.
+      - name: Bind verified files to this PR revision
         env:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
           RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
-        run: node scripts/release/pipeline.mjs certify "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"
-  merge-and-publish:
-    name: Merge approved release and start publication
-    needs: certification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Map public release environment
-        run: node scripts/release/core/environment.mjs
-      - name: Respect branch rules and explicitly dispatch publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
-          RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
-        run: node scripts/release/pipeline.mjs complete-release "$CANDIDATE_ID" "$RELEASE_PR_NUMBER"
+          RELEASE_HEAD: ${{ inputs.head_revision }}
+        run: node scripts/release/pipeline.mjs verify-for-merge "$CANDIDATE_ID" "$RELEASE_PR_NUMBER" "$RELEASE_HEAD"

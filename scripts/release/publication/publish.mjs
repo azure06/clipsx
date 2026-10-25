@@ -19,6 +19,7 @@ import {
   releaseById,
   repoApi,
 } from '../core/github.mjs'
+import { certifyMerged, assertMergeCertificate } from '../candidate/signoff.mjs'
 import { directory, output } from '../core/context.mjs'
 import {
   assertOrigin,
@@ -29,7 +30,7 @@ import {
 
 export function publicationContext() {
   const event = readJson(process.env.GITHUB_EVENT_PATH)
-  const pr = event.pull_request || repoApi(`pulls/${process.env.RELEASE_PR_NUMBER}`)
+  const pr = repoApi(`pulls/${event.pull_request?.number || process.env.RELEASE_PR_NUMBER}`)
   assert(
     pr.merged &&
       pr.base.ref === 'main' &&
@@ -74,8 +75,12 @@ export function publish() {
   }
   const id = selectedCandidate(pr.body)
   assert(id, 'Merged PR has no explicit candidate selection')
-  const release = releases.find(item => item.draft && item.tag_name === `candidate-${id}`)
+  let release = releases.find(item => item.draft && item.tag_name === `candidate-${id}`)
   assert(release, 'Selected candidate draft does not exist')
+  if (!release.assets.some(item => item.name === 'certification.json')) {
+    certifyMerged(id, pr.number)
+    release = releaseById(release.id)
+  }
   const { candidate, bytes } = loadCandidate(release, directory)
   assertOrigin(candidate)
   assertAppInputs(candidate, source(pr.merge_commit_sha))
@@ -87,6 +92,10 @@ export function publish() {
     'Certification selection mismatch'
   )
   assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
+  if (certification.schemaVersion === 4) {
+    const context = signoffContextForPublished(release, candidate, bytes, pr)
+    assertMergeCertificate(certification, pr, context)
+  }
   verifyFinalized(release, candidate)
   assertCertified(
     candidate,
@@ -148,6 +157,10 @@ export function verifyPublished(release, pr) {
     'Published certification selection mismatch'
   )
   assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
+  if (certification.schemaVersion === 4) {
+    const context = signoffContextForPublished(release, candidate, bytes, pr)
+    assertMergeCertificate(certification, pr, context)
+  }
   verifyFinalized(release, candidate)
   const manifests = {}
   const isLatest = repoApi('releases/latest').id === release.id
@@ -218,5 +231,21 @@ export function verifyPublished(release, pr) {
       ])
       verifySignature(path, `${path}.sig`, candidate.build.updaterPublicKey)
     }
+  }
+}
+
+function signoffContextForPublished(release, candidate, bytes, pr) {
+  return {
+    release,
+    candidate,
+    bytes,
+    pr,
+    binding: {
+      candidateId: candidate.id,
+      releasePrNumber: pr.number,
+      candidateSha256: digest(bytes),
+      inventorySha256: digest(encode(completeInventory(release, candidate))),
+      appInputsSha256: candidate.build.appInputsSha256,
+    },
   }
 }

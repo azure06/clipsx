@@ -42,7 +42,7 @@ export function panel(pr) {
   return { comment, state }
 }
 
-export function savePanel(pr, current, markdown) {
+export function savePanel(pr, current, markdown, overview) {
   current.markdown =
     markdown ||
     current.markdown ||
@@ -52,10 +52,32 @@ export function savePanel(pr, current, markdown) {
     'Updating release status…'
   const state = Buffer.from(JSON.stringify(current.state)).toString('base64')
   const body = `${dashboardMarker}\n${current.markdown}\n<!-- clipsx-release-state: ${state} -->`
-  if (body === current.comment?.body) return
-  current.comment = current.comment
-    ? repoApi(`issues/comments/${current.comment.id}`, 'PATCH', { body })
-    : repoApi(`issues/${pr.number}/comments`, 'POST', { body })
+  if (body !== current.comment?.body)
+    current.comment = current.comment
+      ? repoApi(`issues/comments/${current.comment.id}`, 'PATCH', { body })
+      : repoApi(`issues/${pr.number}/comments`, 'POST', { body })
+  if (overview !== undefined) {
+    const start = '<!-- clipsx-release-overview:start -->',
+      end = '<!-- clipsx-release-overview:end -->'
+    const link = current.comment.html_url || `${pr.html_url}#issuecomment-${current.comment.id}`
+    const block = `${start}\n${overview}\n\n[All stages, logs and retry controls](${link})\n${end}`
+    const latest = repoApi(`pulls/${pr.number}`)
+    assert(
+      selectedCandidate(latest.body) === selectedCandidate(pr.body),
+      'Release selection changed while updating its overview'
+    )
+    const previous = latest.body || ''
+    const next = previous.includes(start)
+      ? previous.replace(
+          /<!-- clipsx-release-overview:start -->[\s\S]*?<!-- clipsx-release-overview:end -->/,
+          block
+        )
+      : `${block}\n\n${previous}`
+    if (next !== previous) {
+      repoApi(`pulls/${pr.number}`, 'PATCH', { body: next })
+      pr.body = next
+    }
+  }
 }
 
 export function phaseRuns(file, title, branch = 'main') {
@@ -76,6 +98,7 @@ export function phaseRuns(file, title, branch = 'main') {
 export function requestPhase(pr, current, phase, file, title, inputs, { retry = false } = {}) {
   const runs = phaseRuns(file, title, phase === 'publish' ? null : 'main')
   const latest = runs[0]
+  if (current.state.requests[phase]?.title !== title) delete current.state.requests[phase]
   if (latest && current.state.requests[phase]) delete current.state.requests[phase].error
   if (latest && latest.status !== 'completed') return latest
   if (latest?.conclusion === 'success' && phase !== 'prepare') return latest
