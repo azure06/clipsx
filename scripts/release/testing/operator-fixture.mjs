@@ -36,6 +36,7 @@ export function operatorFixture() {
     comments: [],
     runs: {},
     artifacts: [],
+    statuses: [],
     reviews: [
       {
         state: 'approved',
@@ -48,6 +49,7 @@ export function operatorFixture() {
   const api = services.api,
     command = services.command
   services.api = (path, method = 'GET', body) => {
+    if (/\/commits\/[^/]+\/statuses\?/.test(path)) return structuredClone(state.statuses)
     if (path.includes('/actions/runs/100/attempts/1') || /\/releases\/1$|\/commits\//.test(path))
       return api(path, method, body)
     f.trace.push({ path, method, body })
@@ -56,7 +58,10 @@ export function operatorFixture() {
       pr.state = 'closed'
       return { merged: true }
     }
-    if (path.endsWith('/pulls/45')) return structuredClone(pr)
+    if (path.endsWith('/pulls/45')) {
+      if (method === 'PATCH') Object.assign(pr, body)
+      return structuredClone(pr)
+    }
     if (path.includes('/pulls?')) return [structuredClone(pr)]
     if (path.includes('/issues/45/comments')) {
       if (method === 'POST') {
@@ -84,6 +89,9 @@ export function operatorFixture() {
     if (path.endsWith('/actions/runs/999'))
       return {
         path: '.github/workflows/release-certify.yml',
+        display_title: `Verify candidate ${f.candidate.id} for PR #45 at ${pr.head.sha}`,
+        status: 'completed',
+        conclusion: 'success',
         event: 'workflow_dispatch',
         head_branch: 'main',
         head_sha: f.candidate.sourceRevision,
@@ -93,7 +101,16 @@ export function operatorFixture() {
     if (path.includes('/deployment-branch-policies'))
       return { branch_policies: [{ name: 'main', type: 'branch' }] }
     if (path.endsWith('/environments/desktop-release')) return environment
-    if (path.includes('/statuses/')) return {}
+    if (/\/commits\/[^/]+\/statuses\?/.test(path)) return structuredClone(state.statuses)
+    if (path.includes('/statuses/')) {
+      const status = {
+        ...body,
+        created_at: new Date().toISOString(),
+        creator: { login: 'github-actions[bot]' },
+      }
+      state.statuses.unshift(status)
+      return status
+    }
     if (path.includes('/releases?')) return [structuredClone(f.release)]
     throw new Error(`Unexpected API ${method} ${path}`)
   }

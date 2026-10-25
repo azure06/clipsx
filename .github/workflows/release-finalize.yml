@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,3 +108,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/release/pipeline.mjs finalize "$CANDIDATE_ID" .release/native-evidence-windows-x64.json
+      - name: Advance the release dashboard after finalization
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release-readiness.yml --repo "$GITHUB_REPOSITORY" --ref main

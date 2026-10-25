@@ -1,167 +1,214 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { operatorFixture } from '../testing/operator-fixture.mjs'
-import { services } from '../core/github.mjs'
-import { assertCertified, digest, encode } from '../core/contracts.mjs'
+import { assertCertified, digest } from '../core/contracts.mjs'
 import { completeInventory } from '../core/candidate.mjs'
+import { services } from '../core/github.mjs'
 import { finalize } from './finalize.mjs'
-import { approvalSnapshot, approvedReview, certify, completeRelease } from './signoff.mjs'
-import { assertApprovalEnvironment } from './operator.mjs'
+import {
+  verifyForMerge,
+  certifyMerged,
+  signoffContext,
+  loadReadiness,
+  assertMergeCertificate,
+} from './signoff.mjs'
 
-function finalized() {
+function ready() {
   const f = operatorFixture()
   finalize(f.candidate.id, f.windowsEvidence)
+  verifyForMerge(f.candidate.id, 45, f.pr.head.sha)
   return f
 }
+function merge(f) {
+  Object.assign(f.pr, {
+    state: 'closed',
+    merged: true,
+    merged_by: { type: 'User', login: 'maintainer' },
+    merged_at: new Date(Date.now() + 2000).toISOString(),
+    merge_commit_sha: f.pr.head.sha,
+  })
+}
+const certificate = f =>
+  JSON.parse(f.blobs.get(f.release.assets.find(a => a.name === 'certification.json').id))
 
-test('a real environment approval creates a hash-bound certification without inventing manual-test results', () => {
-  const f = finalized()
+test('verification enables a human merge without creating approval or changing distributed files', () => {
+  const f = operatorFixture()
   try {
-    approvalSnapshot(f.candidate.id, 45)
-    certify(f.candidate.id, 45)
-    const asset = f.release.assets.find(asset => asset.name === 'certification.json')
-    const certificate = JSON.parse(f.blobs.get(asset.id))
-    assert.equal(certificate.schemaVersion, 3)
-    assert.equal(certificate.approval.actor, 'maintainer')
-    assert.equal(certificate.approval.runId, '999')
-    assert.equal(certificate.checks, undefined)
-    assert.equal(certificate.evidence, undefined)
-    const candidateAsset = f.release.assets.find(asset => asset.name === 'candidate.json')
-    const bytes = f.blobs.get(candidateAsset.id)
-    assertCertified(
-      JSON.parse(bytes),
-      certificate,
-      bytes,
-      completeInventory(f.release, JSON.parse(bytes))
-    )
+    finalize(f.candidate.id, f.windowsEvidence)
+    const before = new Map(f.release.assets.map(a => [a.id, a.digest]))
+    verifyForMerge(f.candidate.id, 45, f.pr.head.sha)
+    for (const [id, hash] of before)
+      assert.equal(f.release.assets.find(a => a.id === id).digest, hash)
+    assert.match(f.state.statuses[0].description, /Ready to merge .*; proof [a-f0-9]{64}/)
+    assert.equal(f.state.statuses[0].state, 'success')
+    assert(!f.release.assets.some(a => a.name === 'certification.json'))
+    assert(!f.trace.some(t => t.path?.endsWith('/merge') || t.path?.includes('/deployments')))
     assert.equal(f.pr.draft, false)
-    f.state.reviews = []
-    certify(f.candidate.id, 45)
-    assert.deepEqual(JSON.parse(f.blobs.get(asset.id)), certificate)
+    const proof = loadReadiness(signoffContext(f.candidate.id, 45))
+    assert.equal(proof.proof.headRevision, f.pr.head.sha)
   } finally {
     f.restore()
   }
 })
 
-test('missing reviewers, admin bypass and missing human approval fail closed', () => {
-  const f = finalized()
+test('a human merge records exact hashes, merger and merge time without claiming manual tests ran automatically', () => {
+  const f = ready()
   try {
-    f.state.environment.can_admins_bypass = true
-    assert.throws(() => approvalSnapshot(f.candidate.id, 45), /administrator bypass/)
-    f.state.environment.can_admins_bypass = false
-    const reviewers = f.state.environment.protection_rules
-    f.state.environment.protection_rules = []
-    assert.throws(() => assertApprovalEnvironment(), /required reviewer/)
-    f.state.environment.protection_rules = reviewers
-    approvalSnapshot(f.candidate.id, 45)
-    f.state.reviews = []
-    assert.throws(() => certify(f.candidate.id, 45), /not been approved/)
-    f.state.reviews = [
-      {
-        state: 'approved',
-        environments: [{ id: 10, name: 'desktop-release' }],
-        user: { type: 'Bot', login: 'automation' },
-      },
-    ]
-    assert.throws(() => certify(f.candidate.id, 45), /human/)
-    assert(!f.release.assets.some(asset => asset.name === 'certification.json'))
+    merge(f)
+    certifyMerged(f.candidate.id, 45)
+    const cert = certificate(f),
+      context = signoffContext(f.candidate.id, 45)
+    assert.equal(cert.schemaVersion, 4)
+    assert.equal(cert.approval.kind, 'pull_request_merge')
+    assert.equal(cert.approval.actor, 'maintainer')
+    assert.equal(cert.approval.recordedAt, f.pr.merged_at)
+    assert.equal(cert.approval.mergeRevision, f.pr.merge_commit_sha)
+    assert.equal(cert.checks, undefined)
+    assert.equal(cert.evidence, undefined)
+    assertCertified(
+      context.candidate,
+      cert,
+      context.bytes,
+      completeInventory(f.release, context.candidate)
+    )
+    assertMergeCertificate(cert, f.pr, context)
+    const before = f.release.assets.find(a => a.name === 'certification.json').digest
+    certifyMerged(f.candidate.id, 45)
+    assert.equal(f.release.assets.find(a => a.name === 'certification.json').digest, before)
   } finally {
     f.restore()
   }
 })
 
-test('changed packages, metadata, approval runs and selections invalidate a pending approval', () => {
-  for (const change of ['inventory', 'descriptor', 'run', 'selection']) {
-    const f = finalized()
+test('an open PR or a bot merge cannot approve publication', () => {
+  const f = ready()
+  try {
+    assert.throws(() => certifyMerged(f.candidate.id, 45), /merged PR/)
+    merge(f)
+    f.pr.merged_by = { type: 'Bot', login: 'github-actions[bot]' }
+    assert.throws(() => certifyMerged(f.candidate.id, 45), /human/)
+    assert(!f.release.assets.some(a => a.name === 'certification.json'))
+  } finally {
+    f.restore()
+  }
+})
+
+test('later pending statuses, wrong actors and readiness after the merge fail closed', () => {
+  for (const kind of ['pending', 'actor', 'late']) {
+    const f = ready()
     try {
-      approvalSnapshot(f.candidate.id, 45)
-      if (change === 'inventory') f.put('unexpected-file.txt', 'changed')
-      if (change === 'descriptor') {
-        const asset = f.release.assets.find(asset => asset.name === 'candidate.json')
-        f.put('candidate.json', { ...JSON.parse(f.blobs.get(asset.id)), createdAt: 'changed' })
-      }
-      if (change === 'run') {
-        const path = join(f.work, 'approval-snapshot.json')
-        writeFileSync(path, encode({ ...JSON.parse(readFileSync(path)), runId: 'another-run' }))
-      }
-      if (change === 'selection') f.pr.body = '<!-- clipsx-release-candidate: 0.1.2-201-1 -->'
-      assert.throws(() => certify(f.candidate.id, 45), /changed|Wrong approval snapshot/)
-      assert(!f.release.assets.some(asset => asset.name === 'certification.json'))
+      merge(f)
+      if (kind === 'pending') f.state.statuses.unshift({ ...f.state.statuses[0], state: 'pending' })
+      if (kind === 'actor') f.state.statuses[0].creator = { login: 'someone' }
+      if (kind === 'late')
+        f.state.statuses[0].created_at = new Date(Date.parse(f.pr.merged_at) + 1000).toISOString()
+      assert.throws(() => certifyMerged(f.candidate.id, 45), /not ready before/)
+      assert(!f.release.assets.some(a => a.name === 'certification.json'))
     } finally {
       f.restore()
     }
   }
 })
 
-test('an untrusted workflow cannot supply release approval history', () => {
-  const f = finalized()
-  try {
-    const original = services.api
-    services.api = (path, method, body) =>
-      path.endsWith('/actions/runs/999')
-        ? { path: '.github/workflows/ci.yml', head_branch: 'feature' }
-        : original(path, method, body)
-    assert.throws(() => approvedReview('999', f.state.environment), /trusted main/)
-  } finally {
-    f.restore()
-  }
-})
-
-test('rerunning an approval workflow reuses its original immutable snapshot', () => {
-  const f = finalized()
-  try {
-    const original = approvalSnapshot(f.candidate.id, 45)
-    const contents = readFileSync(join(f.work, 'approval-snapshot.json'))
-    f.state.artifacts = [{ name: 'release-approval-999', id: 8, expired: false }]
-    services.artifact = (_artifact, directory) =>
-      writeFileSync(join(directory, 'approval-snapshot.json'), contents)
-    assert.deepEqual(approvalSnapshot(f.candidate.id, 45), original)
-    f.put('another-asset.txt', 'changed after snapshot')
-    assert.throws(() => approvalSnapshot(f.candidate.id, 45), /changed while waiting/)
-  } finally {
-    f.restore()
-  }
-})
-
-test('protected merge binds the PR head and explicitly dispatches publication when merge events are suppressed', () => {
-  const f = finalized()
-  try {
-    approvalSnapshot(f.candidate.id, 45)
-    certify(f.candidate.id, 45)
-    completeRelease(f.candidate.id, 45)
-    const merge = f.trace.find(item => item.path?.endsWith('/pulls/45/merge'))
-    assert.deepEqual(merge.body, { sha: f.pr.head.sha, merge_method: 'rebase' })
-    const publication = f.trace.find(item => item.path?.includes('/release-publish.yml/dispatches'))
-    assert.deepEqual(publication.body, { ref: 'main', inputs: { pr_number: '45' } })
-    assert(!f.trace.some(item => item.args?.includes('--admin')))
-    assert.equal(f.pr.merged, true)
-  } finally {
-    f.restore()
-  }
-})
-
-test('a merge failure retains approval for retry and never dispatches publication prematurely', () => {
-  const f = finalized()
-  try {
-    approvalSnapshot(f.candidate.id, 45)
-    certify(f.candidate.id, 45)
-    const original = services.api
-    services.api = (path, method, body) => {
-      if (path.endsWith('/pulls/45/merge')) throw new Error('Required check pending')
-      return original(path, method, body)
+test('changed packages, descriptor, head, selection or readiness proof cannot be approved by an old ready status', () => {
+  for (const kind of ['package', 'descriptor', 'head', 'selection', 'proof']) {
+    const f = ready()
+    try {
+      merge(f)
+      if (kind === 'package') f.put(f.candidate.artifacts[0].file, 'changed bytes')
+      if (kind === 'descriptor') {
+        const a = f.release.assets.find(a => a.name === 'candidate.json')
+        f.put('candidate.json', { ...JSON.parse(f.blobs.get(a.id)), extra: 'changed' })
+      }
+      if (kind === 'head') f.pr.head.sha = 'c'.repeat(40)
+      if (kind === 'selection') f.pr.body = '<!-- clipsx-release-candidate: 0.1.2-201-1 -->'
+      if (kind === 'proof') {
+        const a = f.release.assets.find(a => a.name === 'merge-readiness.json')
+        f.put('merge-readiness.json', {
+          ...JSON.parse(f.blobs.get(a.id)),
+          verifiedAt: new Date(0).toISOString(),
+        })
+      }
+      assert.throws(() => certifyMerged(f.candidate.id, 45))
+      assert(!f.release.assets.some(a => a.name === 'certification.json'))
+    } finally {
+      f.restore()
     }
-    assert.throws(() => completeRelease(f.candidate.id, 45), /Required check/)
-    assert(!f.trace.some(item => item.path?.includes('/release-publish.yml/dispatches')))
-    const certificate = f.release.assets.find(asset => asset.name === 'certification.json')
-    const before = digest(f.blobs.get(certificate.id))
-    services.api = original
-    f.state.reviews = []
-    certify(f.candidate.id, 45)
-    completeRelease(f.candidate.id, 45)
-    assert.equal(digest(f.blobs.get(certificate.id)), before)
+  }
+})
+
+test('a stale queued verification refuses another PR head and retrying unchanged readiness reuses its proof', () => {
+  const f = ready()
+  try {
+    assert.throws(() => verifyForMerge(f.candidate.id, 45, 'c'.repeat(40)), /head changed before/)
+    const asset = f.release.assets.find(a => a.name === 'merge-readiness.json')
+    const before = digest(f.blobs.get(asset.id))
+    verifyForMerge(f.candidate.id, 45, f.pr.head.sha)
+    assert.equal(digest(f.blobs.get(asset.id)), before)
   } finally {
     f.restore()
+  }
+})
+
+test('a changed merge identity cannot reuse an existing certification', () => {
+  const f = ready()
+  try {
+    merge(f)
+    certifyMerged(f.candidate.id, 45)
+    f.pr.merged_by.login = 'other'
+    assert.throws(() => certifyMerged(f.candidate.id, 45), /differs from the human/)
+  } finally {
+    f.restore()
+  }
+})
+
+test('readiness history is paginated and post-merge statuses cannot replace the pre-merge decision', () => {
+  const f = ready()
+  try {
+    merge(f)
+    const actual = f.state.statuses[0],
+      api = services.api
+    services.api = (path, method, body) => {
+      if (path.includes('/statuses?')) {
+        if (path.endsWith('page=1'))
+          return Array.from({ length: 100 }, () => ({ ...actual, context: 'CI' }))
+        return [actual]
+      }
+      return api(path, method, body)
+    }
+    certifyMerged(f.candidate.id, 45)
+    assert.equal(certificate(f).actor, 'maintainer')
+  } finally {
+    f.restore()
+  }
+})
+
+test('a missing or untrusted verification run cannot make packages merge-ready', () => {
+  for (const kind of ['path', 'branch', 'failed', 'running']) {
+    const f = ready()
+    try {
+      const api = services.api
+      services.api = (path, method, body) => {
+        const result = api(path, method, body)
+        if (path.endsWith('/actions/runs/999')) {
+          if (kind === 'path') result.path = '.github/workflows/ci.yml'
+          if (kind === 'branch') result.head_branch = 'feature'
+          if (kind === 'failed') result.conclusion = 'failure'
+          if (kind === 'running') {
+            result.status = 'in_progress'
+            result.conclusion = null
+          }
+        }
+        return result
+      }
+      if (kind === 'path' || kind === 'branch')
+        assert.throws(() => loadReadiness(signoffContext(f.candidate.id, 45)), /trusted/)
+      else assert.equal(loadReadiness(signoffContext(f.candidate.id, 45)).verified, false)
+      merge(f)
+      assert.throws(() => certifyMerged(f.candidate.id, 45))
+      assert(!f.release.assets.some(a => a.name === 'certification.json'))
+    } finally {
+      f.restore()
+    }
   }
 })

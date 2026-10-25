@@ -5,26 +5,18 @@ import { readFileSync } from 'node:fs'
 const workflow = name =>
   readFileSync(new URL(`../../../.github/workflows/${name}.yml`, import.meta.url), 'utf8')
 
-test('release approval is captured before a native environment gate and published through an explicit protected merge job', () => {
-  const approval = workflow('release-certify')
-  assert(approval.indexOf('approval-snapshot') < approval.indexOf('name: desktop-release'))
-  assert.match(approval, /needs: \[snapshot, approve\]/)
-  assert.match(approval, /needs: certification/)
-  assert.match(approval, /complete-release/)
-  assert.doesNotMatch(
-    approval,
-    /all_platforms_passed|mac_extensions_passed|CERTIFICATION_EVIDENCE|--admin/
-  )
-  assert.match(approval, /github.ref == 'refs\/heads\/main'/)
+test('the release is verified before a human PR merge, with no deployment gate or automatic merge', () => {
+  const verification = workflow('release-certify')
+  assert.match(verification, /verify-for-merge/)
+  assert.match(verification, /head_revision:/)
+  assert.match(verification, /github.ref == 'refs\/heads\/main'/)
+  assert.doesNotMatch(verification, /environment:|complete-release|approval-snapshot|--admin/)
+  assert.match(workflow('release-publish'), /types: \[closed\]/)
   const events = workflow('release-readiness')
-  assert.match(events, /Publish certified release/)
-  assert.match(events, /types: \[requested, in_progress, completed\]/)
-  assert.match(events, /pipeline.mjs controls/)
+  assert.match(events, /Verify release for merge/)
   assert.match(events, /group: desktop-release-controls/)
-  assert.match(workflow('release-controls'), /group: desktop-release-controls/)
-  // PR conversation comments require PR write permission, even through /issues.
-  assert.match(events, /pull-requests: write/)
   assert.match(workflow('release-controls'), /pull-requests: write/)
+  assert.match(workflow('release-finalize'), /gh workflow run release-readiness.yml/)
 })
 
 test('readiness links stay on the release PR instead of expiring draft URLs', () => {
