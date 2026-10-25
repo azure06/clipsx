@@ -13,7 +13,8 @@ on:
         default: retry
         options: [retry, refresh, prepare-latest]
 permissions:
-  contents: read
+  # GitHub only exposes draft releases to tokens with push access.
+  contents: write
   actions: write
   issues: write
   pull-requests: write
