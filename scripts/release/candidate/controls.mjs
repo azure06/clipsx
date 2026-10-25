@@ -256,15 +256,30 @@ export function controls(prNumber, action = 'refresh') {
   )
     return
   prNumber ||= event.pull_request?.number
+  let publicationPr
   if (
-    event.workflow_run?.path?.split('@')[0] === '.github/workflows/release-publish.yml' ||
-    event.workflow_run?.name === 'Publish certified release'
-  )
-    prNumber ||= event.workflow_run.display_title?.match(/^Publish release PR #(\d+)$/)?.[1]
-  const pulls = prNumber
-    ? [releasePr(prNumber)]
-    : repoApi('pulls?state=open&base=main&per_page=100').filter(
-        pr => pr.head.repo.full_name === repository && /^release\/\d+\.\d+\.\d+$/.test(pr.head.ref)
+    !prNumber &&
+    (event.workflow_run?.path?.split('@')[0] === '.github/workflows/release-publish.yml' ||
+      event.workflow_run?.name === 'Publish certified release')
+  ) {
+    const number = event.workflow_run.display_title?.match(/^Publish release PR #(\d+)$/)?.[1]
+    if (number) {
+      publicationPr = repoApi(`pulls/${number}`)
+      if (
+        publicationPr.base.ref !== 'main' ||
+        publicationPr.head.repo.full_name !== repository ||
+        !/^release\/\d+\.\d+\.\d+$/.test(publicationPr.head.ref)
       )
+        return
+    }
+  }
+  const pulls = publicationPr
+    ? [publicationPr]
+    : prNumber
+      ? [releasePr(prNumber)]
+      : repoApi('pulls?state=open&base=main&per_page=100').filter(
+          pr =>
+            pr.head.repo.full_name === repository && /^release\/\d+\.\d+\.\d+$/.test(pr.head.ref)
+        )
   for (const pr of pulls) updateRelease(pr, action)
 }

@@ -22,4 +22,7 @@ test('release approval is captured before a native environment gate and publishe
   assert.match(events, /pipeline.mjs controls/)
   assert.match(events, /group: desktop-release-controls/)
   assert.match(workflow('release-controls'), /group: desktop-release-controls/)
+  // PR conversation comments require PR write permission, even through /issues.
+  assert.match(events, /pull-requests: write/)
+  assert.match(workflow('release-controls'), /pull-requests: write/)
 })
