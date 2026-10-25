@@ -403,7 +403,7 @@ describe('preview chrome light theme styling', () => {
     await user.type(screen.getByPlaceholderText('tag name...'), 'u')
 
     const suggestion = await screen.findByRole('option', { name: /urgent/i })
-    expect(suggestion.parentElement).toHaveClass('bg-white/95')
+    expect(suggestion.closest('[role=dialog]')).toHaveClass('bg-white/95')
     expect(suggestion).toHaveClass('text-violet-700')
   })
 

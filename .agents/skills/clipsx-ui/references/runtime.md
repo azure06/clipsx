@@ -226,6 +226,21 @@ subtitle/badge, and accessibility label.
 | Hydration                | Batch by category: tags, compact previews, OCR, file info, facets                                      |
 | Refresh                  | Artifact completion, renderer preferences, extension lifecycle                                         |
 
+History shows up to two readable tag chips per row, with an overflow count.
+The searchable Tags picker sits beside All/Favorites/Pinned and combines one
+tag filter with the current scope and text search. Preview tags wrap below the
+toolbar; Add tag searches existing names or creates a tag. Removing a preview
+chip removes only that membership. Global tag deletion is available for the
+selected filter with confirmation; it clears an active deleted filter. An enabled
+decision rule can recreate its tag on a later capture.
+
+Capture and duplicate-capture updates merge their tags into the live catalogue,
+even outside the visible scope. Opening either picker refreshes the catalogue;
+in-flight reads preserve newly received tags and do not resurrect deletions.
+Catalogue errors keep cached tags available with retry and do not replace history
+errors. Tag popovers use the host-overlay lifecycle so native extension views
+cannot cover them; Escape closes the picker and restores trigger focus.
+
 Single-item reads use the same resolver. Rows are measured and virtualized with
 bounded overscan. Selection uses clip IDs, and keyboard selection scrolls
 unmounted rows into view. Each `End` keypress loads at most one older 50-item page.
