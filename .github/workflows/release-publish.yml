@@ -1,4 +1,5 @@
 name: Publish certified release
+run-name: 'Publish release PR #${{ inputs.pr_number || github.event.pull_request.number }}'
 on:
   pull_request:
     branches: [main]

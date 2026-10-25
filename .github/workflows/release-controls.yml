@@ -1,0 +1,48 @@
+name: Release controls
+run-name: 'Release controls for PR #${{ inputs.pr_number }} — ${{ inputs.action }}'
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Release PR number shown on its status panel
+        required: true
+        type: string
+      action:
+        description: Retry the failed stage, refresh status, or explicitly prepare/select a successful build
+        type: choice
+        default: retry
+        options: [retry, refresh, prepare-latest]
+permissions:
+  contents: read
+  actions: write
+  issues: write
+  pull-requests: read
+concurrency:
+  group: desktop-release-controls
+  cancel-in-progress: false
+env:
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
+  SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERT_THUMBPRINT }}
+jobs:
+  control:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Map public release environment
+        run: node scripts/release/core/environment.mjs
+      - name: Operate the selected release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ inputs.pr_number }}
+          RELEASE_ACTION: ${{ inputs.action }}
+        run: node scripts/release/pipeline.mjs controls "$RELEASE_PR_NUMBER" "$RELEASE_ACTION"

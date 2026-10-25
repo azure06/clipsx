@@ -114,6 +114,6 @@ export function finalize(id, windowsEvidencePath) {
   writeAsset(release, 'candidate.json', candidate, directory)
   repoApi(`releases/${release.id}`, 'PATCH', candidateDraftMetadata(candidate, release, notes))
   summarize(
-    `Candidate ${id}; build ${candidate.build.origin.runId}. Next action: perform installed tests and run Certify candidate. [Finalized draft](${release.html_url})`
+    `Candidate ${id}; build ${candidate.build.origin.runId}. [Download final packages](${release.html_url}), test them, then use Review deployments → Approve and deploy on the automatically started approval run. No evidence form is required.`
   )
 }

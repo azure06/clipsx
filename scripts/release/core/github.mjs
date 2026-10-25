@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { assert, repository, encode, readinessContext, digest } from './contracts.mjs'
+import { withTransientRetry } from './retry.mjs'
 
 const execute = (program, args, options = {}) =>
   execFileSync(
@@ -26,9 +27,12 @@ export function api(path, method = 'GET', body) {
   if (services.api) return services.api(path, method, body)
   const args = ['api', path, '--method', method]
   if (body !== undefined) args.push('--input', '-')
-  const output = command('gh', args, {
-    input: body === undefined ? undefined : JSON.stringify(body),
-  })
+  const request = () =>
+    command('gh', args, {
+      input: body === undefined ? undefined : JSON.stringify(body),
+    })
+  // Reads are safe to retry; dispatch/merge POSTs must never be repeated blindly.
+  const output = method === 'GET' ? withTransientRetry(request) : request()
   return output.trim() ? JSON.parse(output) : null
 }
 export const repoApi = (path, method, body) => api(`repos/${repository}/${path}`, method, body)
@@ -50,15 +54,17 @@ export function downloadAsset(release, name, directory) {
   const key = `${asset.id}:${asset.digest}`
   const bytes =
     assetCache.get(key) ||
-    command(
-      'gh',
-      [
-        'api',
-        `repos/${repository}/releases/assets/${asset.id}`,
-        '-H',
-        'Accept: application/octet-stream',
-      ],
-      { maxBuffer: 1024 * 1024 * 1024, encoding: null }
+    withTransientRetry(() =>
+      command(
+        'gh',
+        [
+          'api',
+          `repos/${repository}/releases/assets/${asset.id}`,
+          '-H',
+          'Accept: application/octet-stream',
+        ],
+        { maxBuffer: 1024 * 1024 * 1024, encoding: null }
+      )
     )
   if (asset.digest)
     assert(digest(bytes) === asset.digest.replace(/^sha256:/, ''), 'Release asset changed')
@@ -67,15 +73,17 @@ export function downloadAsset(release, name, directory) {
   return bytes
 }
 export function upload(release, paths) {
-  command('gh', [
-    'release',
-    'upload',
-    release.tag_name,
-    ...paths,
-    '--repo',
-    repository,
-    '--clobber',
-  ])
+  withTransientRetry(() =>
+    command('gh', [
+      'release',
+      'upload',
+      release.tag_name,
+      ...paths,
+      '--repo',
+      repository,
+      '--clobber',
+    ])
+  )
 }
 export function writeAsset(release, name, value, directory) {
   mkdirSync(directory, { recursive: true })

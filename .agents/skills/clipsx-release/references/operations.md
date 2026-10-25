@@ -1,8 +1,9 @@
 # Release and platform validation
 
-A release is ready when its exact artifacts pass automated checks and installed
-tests on every advertised platform. This checklist is not a record of a passed
-release. Record unresolved candidate blockers in its certification evidence.
+A release runs through automated checks, saved builds, packaging, local Windows
+signing, final verification and one maintainer approval. The maintainer tests the
+final installers/updater before approving publication. Approval records who
+authorized the exact files; it does not claim automated execution of manual tests.
 
 ```mermaid
 flowchart LR
@@ -14,7 +15,7 @@ flowchart LR
     Prepare --> Win[Local Windows SimplySign]
     Win --> Final[Finalize exact inventory]
     Final --> Test[Installed tests and certification]
-    Test --> Merge[Merge release PR]
+    Test --> Merge[Approve once and merge release PR]
     Merge --> Publish[Publish certified files]
     Publish --> Web[Website and updater discover release]
 ```
@@ -47,9 +48,10 @@ successful build ID; it never compiles the app/frontend or runs application test
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **Build release app**: `release/<version>` push affecting app/build inputs; manual dispatch on that branch | Frontend checks and production frontend once; native tests and optimized compilation once per target; immutable saved build |
 | **Prepare release candidate**: successful build completion; manual dispatch on `main`                      | Download selected build; package/sign/notarize missing platforms; preserve successful outputs                               |
-| Local Windows helper                                                                                       | Package CI executable without recompilation; sign app, NSIS installer and uninstaller; upload and dispatch finalization     |
+| Local Windows helper                                                                                       | Package CI executable without recompilation; sign app, installer and uninstaller; upload and resume the controller            |
 | **Finalize release candidate**: dispatch on `main`                                                         | Verify Windows installation and original executable; finalize complete inventory and updater signatures                     |
-| **Certify candidate**: dispatch on `main`                                                                  | Bind exact candidate, release PR, notes, inventory and real installed/upgrade evidence                                      |
+| **Certify candidate**: automatically dispatched on `main` after finalization                                 | Snapshot exact files, wait for one environment approval, record it, merge through branch rules and explicitly start publication |
+| **Release controls**: manual dispatch on `main` with PR number                                              | Refresh the PR panel, retry its failed stage or explicitly prepare/select a successful build                                  |
 | Release PR merge into `main`                                                                               | Publish the certified existing draft and tag the merged commit; no rebuild/re-sign                                          |
 | Ordinary merges or tag pushes                                                                              | No desktop release build/publication                                                                                        |
 
@@ -76,18 +78,34 @@ No packaging phase invokes app/frontend compilation or application tests.
 
 ### Ordered operation
 
-1. Build only when app/build-recipe inputs change; record the successful build ID.
-2. Prepare that explicit build on main; record candidate ID and next action.
-3. Complete missing native packages and local Windows signing. Retry missing
-   steps by default; choose a platform explicitly only to replace its output
-   before finalization.
-4. Finalize the complete inventory. Interrupted retries reuse signatures;
-   completed retries verify final files without rewriting them.
-5. Install and test all five targets, upgrades and both Mac extension runtimes.
-   Certify with an evidence URL and both required confirmations.
-6. Merge the selected release PR; publication promotes those certified files.
-   Retry publication with that merged PR number. Use verify-published for
-   verification without publication or Sentry deployment.
+1. On `develop`, run `node scripts/release/pipeline.mjs prepare-version <version>`.
+   It updates the five version/lock files and drafts notes from commits since the
+   latest merged production tag. Review the notes once; existing notes are preserved.
+   Run checks relevant to the changes, then create/push `release/<version>` and its PR.
+2. CI owns full release checks/builds. Preparation starts automatically after a
+   successful saved build. Duplicate preparation events reuse that exact build's
+   existing candidate, including finalized files.
+3. Open the release PR's single dashboard comment. It shows stage status/logs and
+   the copyable Windows signing command once the kit is registered. Connect
+   SimplySign and run it once; it downloads, signs, uploads and resumes the pipeline.
+4. Finalization starts only when all native packages, their evidence and the
+   Windows submission exist. Successful packages/signatures survive retries.
+5. Download/test the final installers and updater. Follow the approval-run link,
+   then **Review deployments → Approve and deploy** once. Branch checks still apply;
+   the workflow records approval, merges and explicitly dispatches publication.
+6. For failures, follow **Release controls → Run workflow → main** from the panel,
+   enter its PR number and choose `retry`. It retries the failed stage without
+   repeating completed approval/jobs. `refresh` updates the panel. `prepare-latest`
+   explicitly prepares/selects a successful build after a source fix. Source or
+   build-input changes require a new build; packaging/signing/publication do not.
+
+Actions also provides **Re-run failed jobs** on each linked run. Preparation retries
+use `target=missing` to preserve completed platforms. Transient transport failures
+retry at most twice with bounded backoff; credential, signature and identity
+failures remain hard errors. Workflow requests are recorded before dispatch;
+uncertain dispatch failures require explicit retry instead of event-driven duplication.
+No LLM polling, persistent signing runner, custom dashboard or manual file upload
+is required. Use `verify-published` for read-only public verification.
 
 ### Routing and identity
 
@@ -290,7 +308,8 @@ installer, uninstaller and application must all be signed. NSIS signs its
 generated uninstaller under a temporary filename; the wrapper verifies each
 operation with Windows Authenticode, and hosted CI inspects the actual installed
 uninstaller. Do not infer its role from a temporary basename. The helper uploads
-the installer and dispatches Finalize release candidate on main. It does not
+the installer and resumes Release eligibility on main. The controller dispatches
+finalization only after all packages are ready. It does not
 need the Tauri updater private key.
 
 Finalization independently installs the package on a disposable hosted Windows
@@ -333,18 +352,26 @@ needed after the capability's initial deployment.
 
 ### Installed certification and publication
 
-Download the final draft packages and perform the full applicable checklist
-below on Windows, both Mac architectures and Linux/X11 for AppImage and Debian.
-Record exact artifact hashes, environments, results and an HTTPS evidence link.
+Download final packages and use the applicable checklist below on Windows, both
+Mac architectures and Linux/X11 for AppImage and Debian, including updater tests.
+Then use the approval run's **Review deployments → Approve and deploy** action.
+There is no evidence URL form or separate platform confirmation.
 
-Run **Certify candidate** on main with the candidate ID, release PR number, evidence reference and
-both all_platforms_passed and mac_extensions_passed confirmations. Only set
-these after testing the finalized files; a generic approval or source/dev test
-is not installed certification. The HTTPS evidence must identify the candidate,
-package hashes, test environments and outcomes. Certification binds the candidate
-descriptor and complete draft inventory hashes. Merge the release PR only when
-`Release readiness` and all normal CI checks pass.
-Certification also marks an existing matching draft release PR ready for review.
+The trusted workflow captures candidate/complete inventory hashes before the
+gate. It preserves that snapshot on retries and rejects changes while waiting.
+After the gate, it verifies actual GitHub human review history and final signatures,
+then writes schema-3 `certification.json`: exact candidate, PR, source/inventory
+hashes, reviewer, approval workflow URL and recording time. It records authorization,
+not fabricated manual-test results. Replacing the candidate requires new approval.
+An unchanged valid certification skips the approval gate on recovery. Required
+reviewers, main-only environment access and disabled administrator bypass are
+checked before approval; missing configuration fails closed. The protected merge
+uses the expected PR head and no administrative bypass.
+
+The PR is marked ready after approval. The workflow merges only through existing
+branch rules and explicitly dispatches publication, because workflow-token merges
+do not reliably generate follow-up workflow events. Failed merge/publication jobs
+can retry with the recorded approval and existing packages.
 
 Publication verifies the merged app-input inventory, certified selection and
 final signatures. It assigns the production tag to the merged commit and
@@ -359,7 +386,8 @@ verified again rather than recreated. A conflicting tag/release or an older
 version cannot replace the latest release. A previously installed public build
 must also discover and install the published update.
 
-Historical descriptors and certifications remain readable. Newly created certifications require all current checks.
+Historical schema-2 certifications remain verifiable under their original
+contracts. New approvals use schema 3; neither format changes finalized packages.
 
 ### Private pre-publication upgrade test
 
@@ -392,6 +420,18 @@ updates and recovery as well as the successful path. Stop the feed after testing
 Use separate test user profiles/VMs to preserve real clipboard data.
 
 ### Infrastructure rollout
+
+Configure the approval environment once as a repository administrator:
+
+```sh
+node scripts/release/pipeline.mjs configure-approval <maintainer-login>
+```
+
+This selects a human required reviewer, allows self-review for a single-maintainer
+repository and restricts deployment to `main`. Administrator bypass must be off;
+if the API cannot apply it, disable **Allow administrators to bypass configured
+protection rules** in Settings → Environments → desktop-release. Setup verifies
+the resulting configuration and never starts a release or changes branch rules.
 
 1. Open an infrastructure-only PR to main. Compare tracked app-input inventories
    with its base; preserve manifests, lockfiles, runtime code and updater settings.
@@ -448,10 +488,17 @@ installed certification.
 
 ## Automated preflight
 
-Before committing and pushing release changes, run the same application preflight
-used by candidate CI on the final source and lockfiles. Use Node 24 or newer.
+Before committing app changes, run checks appropriate to the changed code using
+AGENTS.md. For version/release-note preparation, verify the version fields and
+notes; documentation-only changes need link/content validation. Do not repeat
+already-passed checks without a new change, failure or unresolved concern.
+
+Release CI owns the complete production preflight on the committed source and
+lockfiles. A second full local release preflight is not a prerequisite for
+pushing a release branch. Use it when explicitly requested, reproducing a CI
+failure or validating an affected build recipe. Use Node 24 or newer.
 `rust-toolchain.toml` and CI pin Rust 1.99.0, including Clippy and rustfmt; update
-them together when upgrading the compiler. Install the
+them together when upgrading the compiler. For local reproduction, install the
 audit, license and SBOM tools once:
 
 ```sh
@@ -465,9 +512,9 @@ The command checks production npm dependencies, current Rust security advisories
 and licenses before frontend checks and native compilation. It then runs frontend
 quality/tests/build, release invariants, strict all-target Rust lint, application,
 extension-tool tests, and generates the dependency SBOM.
-It stops at the first failure. A missing tool or failed gate blocks the release
-push; resolve it locally and rerun affected checks after edits. Do not ignore
-security advisories to get a candidate build through.
+It stops at the first failure. Failed CI gates block a usable release build and
+publication; diagnose the failure and rerun the affected stage after fixing it.
+Do not ignore security advisories to get a candidate build through.
 
 CI uses the same preflight phases on the committed revision: `frontend` runs
 policy, frontend checks and one build; `quality` runs Rust formatting, strict
@@ -651,8 +698,10 @@ path, then on the public release.
 
 ## Evidence and sign-off
 
-Store evidence with the candidate/release and link it here. No installed
-cross-platform sign-off is recorded by this checklist.
+CI retains automated evidence with the candidate. The approval workflow records
+the exact files and human authorization automatically. Keep additional test notes
+when useful for diagnosing failures; uploading a separate report is optional.
+This reference is a checklist, not a record of completed tests.
 
 | Field       | Record                                                             |
 | ----------- | ------------------------------------------------------------------ |
@@ -662,7 +711,7 @@ cross-platform sign-off is recorded by this checklist.
 | Evidence    | CI/test output, signing/notarization results, redacted diagnostics |
 | Decision    | Pass/fail, remaining blocker, evidence URL/path                    |
 
-Publish only when applicable checks pass and no unresolved release blocker or high-severity finding remains.
+Approve only when applicable checks pass and no unresolved release blocker or high-severity finding remains.
 Release notes state verified platforms/features, limitations, reset implications,
 and updater compatibility. Verify website download metadata after assets are public.
 
@@ -670,7 +719,7 @@ and updater compatibility. Verify website download metadata after assets are pub
 
 Production Mac entitlements include `com.apple.security.cs.allow-unsigned-executable-memory` for pinned Wasmtime's mprotect-based generated code. Developer ID, hardened runtime, notarization and stapling remain required. Packaging records the final entitlement plist and a successful cold-cache runtime probe on both architectures before retaining packages. The test fixture is generated during existing native tests, not rebuilt during packaging. Mac line-table debug information and packed dSYM files are retained with their exact compiled executables and archived with symlinks dereferenced and uploaded by **Upload Mac debug symbols** from trusted `main`. That workflow starts after a successful release build and accepts an explicit `build_run_id` for retries. It verifies the saved executable hash and matching dSYM UUID, without compiling or packaging. Symbol-service failures do not discard signed packages or finalize deployment records.
 
-Before certification, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. Record results alongside normal platform/updater checks and set `mac_extensions_passed=true`. A successful signature/notarization is not evidence of runtime behavior. Every newly created certification requires these confirmations.
+Before approving, install the final candidate on Apple Silicon and Intel, install a reviewed extension with an empty compilation cache, run an action and restart. These are part of the maintainer's test checklist, without an additional form or confirmation. A successful signature/notarization alone does not establish runtime behavior.
 
 For the reported Silicon/macOS 26 crash, obtain the original OS report before claiming the root cause is confirmed. In Console, open Crash Reports and locate ClipsX, or use Finder → Go → Go to Folder → `~/Library/Logs/DiagnosticReports`. Preserve the Exception Type, Termination Reason and matching executable UUID. A private copy of the existing app can validate the entitlement fix without recompiling; never replace published 0.1.0 assets. Compare Dock/Finder icons under the same macOS appearance setting: the published ICNS matches the source, while macOS 26 can apply its own icon background. The logo remains unchanged.
 

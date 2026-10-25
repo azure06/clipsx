@@ -148,7 +148,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         shell: bash
-        run: node node_modules/@tauri-apps/cli/tauri.js bundle --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config .release/bundle.conf.json
+        run: node .tooling/scripts/release/core/retry.mjs node node_modules/@tauri-apps/cli/tauri.js bundle --ci --target "$TARGET" --bundles "$BUNDLES" --config src-tauri/tauri.auth.csp.conf.json --config src-tauri/tauri.production-build.conf.json --config .release/bundle.conf.json
       - name: Verify native packages
         if: runner.os != 'Windows'
         env:
@@ -169,11 +169,12 @@ jobs:
             plutil -convert json -o .release/mac-entitlements.json .release/mac-entitlements.plist
             /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-unsigned-executable-memory' .release/mac-entitlements.plist | grep -qx true
             spctl --assess --verbose=4 --type execute "$bundle/macos/ClipsX.app"
+            node .tooling/scripts/release/core/retry.mjs xcrun stapler staple "$bundle/macos/ClipsX.app"
             xcrun stapler validate "$bundle/macos/ClipsX.app"
             for dmg in "$bundle"/dmg/*.dmg; do
               codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
-              xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --timeout 20m
-              xcrun stapler staple "$dmg"
+              node .tooling/scripts/release/core/retry.mjs xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --timeout 20m
+              node .tooling/scripts/release/core/retry.mjs xcrun stapler staple "$dmg"
               xcrun stapler validate "$dmg"
               codesign --verify --strict "$dmg"
               spctl --assess --verbose=4 --type open --context context:primary-signature "$dmg"
