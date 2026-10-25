@@ -281,5 +281,9 @@ export function controls(prNumber, action = 'refresh') {
           pr =>
             pr.head.repo.full_name === repository && /^release\/\d+\.\d+\.\d+$/.test(pr.head.ref)
         )
-  for (const pr of pulls) updateRelease(pr, action)
+  let failed = false
+  for (const pr of pulls) {
+    if (updateRelease(pr, action) === 'Failed') failed = true
+  }
+  assert(!failed, 'Release control failed; see the release PR dashboard for the failed stage')
 }

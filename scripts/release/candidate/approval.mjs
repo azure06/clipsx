@@ -33,7 +33,7 @@ export function selectForPr(candidate, release, prNumber) {
     repoApi(`pulls/${pr.number}`, 'PATCH', {
       body: `${body}\n<!-- clipsx-release-candidate: ${candidate.id} -->`,
     })
-    status(pr.head.sha, 'pending', `Awaiting Windows signing: ${candidate.id}`, release.html_url)
+    status(pr.head.sha, 'pending', `Awaiting Windows signing: ${candidate.id}`, pr.html_url)
   }
 }
 
@@ -87,7 +87,7 @@ export function readiness() {
           : release.assets.some(item => item.name === 'windows-submission.json')
             ? 'Awaiting Windows verification and finalization'
             : 'Awaiting local Windows signing'
-        status(pr.head.sha, 'pending', message, release.html_url)
+        status(pr.head.sha, 'pending', message, pr.html_url)
         continue
       }
       if (!release.assets.some(item => item.name === 'certification.json')) {
@@ -95,7 +95,7 @@ export function readiness() {
           pr.head.sha,
           'pending',
           'Waiting for release approval in GitHub Actions',
-          release.html_url
+          pr.html_url
         )
         continue
       }
@@ -106,7 +106,7 @@ export function readiness() {
         'Certification belongs to another release selection'
       )
       assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
-      status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
+      status(pr.head.sha, 'success', `Certified candidate ${id}`, pr.html_url)
     } catch (error) {
       repoApi(`statuses/${pr.head.sha}`, 'POST', {
         state: 'failure',

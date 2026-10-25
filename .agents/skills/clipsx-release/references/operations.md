@@ -99,6 +99,13 @@ No packaging phase invokes app/frontend compilation or application tests.
    explicitly prepares/selects a successful build after a source fix. Source or
    build-input changes require a new build; packaging/signing/publication do not.
 
+Controller workflows require `contents: write`: GitHub hides draft releases from
+tokens without push access.
+
+Readiness Details links lead to the release PR rather than GitHub's temporary
+draft URLs. A controller failure updates the PR panel and fails the Actions run
+so its recovery action is visible in both places.
+
 Actions also provides **Re-run failed jobs** on each linked run. Preparation retries
 use `target=missing` to preserve completed platforms. Transient transport failures
 retry at most twice with bounded backoff; credential, signature and identity
