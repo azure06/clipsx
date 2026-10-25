@@ -134,17 +134,7 @@ export function submitWindows(id, installer, evidencePath) {
   upload(release, [finalPath])
   writeAsset(release, 'windows-submission.json', descriptor, directory)
   assertCurrent(snapshot, true)
-  command('gh', [
-    'workflow',
-    'run',
-    'release-finalize.yml',
-    '--repo',
-    repository,
-    '--ref',
-    'main',
-    '-f',
-    `candidate_id=${id}`,
-  ])
+  command('gh', ['workflow', 'run', 'release-readiness.yml', '--repo', repository, '--ref', 'main'])
 }
 
 export function downloadWindows(id) {

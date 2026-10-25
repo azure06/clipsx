@@ -8,21 +8,28 @@ on:
         Prepare release candidate,
         Finalize release candidate,
         Certify candidate,
+        Publish certified release,
       ]
-    types: [completed]
+    types: [requested, in_progress, completed]
   workflow_dispatch:
   pull_request_target:
     branches: [main]
-    types: [opened, reopened, synchronize, ready_for_review, edited]
+    types: [opened, reopened, synchronize, ready_for_review, edited, closed]
 env:
   VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_NEXT_PUBLIC_SITE_URL: ${{ vars.VITE_NEXT_PUBLIC_SITE_URL }}
   SENTRY_DESKTOP_DSN: ${{ vars.SENTRY_DESKTOP_DSN }}
+  WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ vars.WINDOWS_SIGNING_CERT_THUMBPRINT }}
 permissions:
   contents: write
-  actions: read
+  actions: write
+  issues: write
+  pull-requests: read
   statuses: write
+concurrency:
+  group: desktop-release-controls
+  cancel-in-progress: false
 jobs:
   eligibility:
     name: Evaluate release eligibility
@@ -42,3 +49,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/pipeline.mjs readiness
+      - name: Update release dashboard and advance ready stages
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/pipeline.mjs controls

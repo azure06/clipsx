@@ -1,0 +1,25 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
+const workflow = name =>
+  readFileSync(new URL(`../../../.github/workflows/${name}.yml`, import.meta.url), 'utf8')
+
+test('release approval is captured before a native environment gate and published through an explicit protected merge job', () => {
+  const approval = workflow('release-certify')
+  assert(approval.indexOf('approval-snapshot') < approval.indexOf('name: desktop-release'))
+  assert.match(approval, /needs: \[snapshot, approve\]/)
+  assert.match(approval, /needs: certification/)
+  assert.match(approval, /complete-release/)
+  assert.doesNotMatch(
+    approval,
+    /all_platforms_passed|mac_extensions_passed|CERTIFICATION_EVIDENCE|--admin/
+  )
+  assert.match(approval, /github.ref == 'refs\/heads\/main'/)
+  const events = workflow('release-readiness')
+  assert.match(events, /Publish certified release/)
+  assert.match(events, /types: \[requested, in_progress, completed\]/)
+  assert.match(events, /pipeline.mjs controls/)
+  assert.match(events, /group: desktop-release-controls/)
+  assert.match(workflow('release-controls'), /group: desktop-release-controls/)
+})

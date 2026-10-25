@@ -29,6 +29,8 @@ import {
   repoApi,
   upload,
   writeAsset,
+  releases,
+  loadCandidate,
 } from '../core/github.mjs'
 import { directory, output, git, filesUnder, record, summarize } from '../core/context.mjs'
 import { fresh, assertCurrent } from '../core/candidate.mjs'
@@ -88,6 +90,22 @@ export function collect(platform, bundleDir) {
   )
 }
 
+export function existingPreparation(build) {
+  for (const release of releases().filter(
+    item =>
+      item.draft &&
+      item.tag_name.startsWith(`candidate-${build.version}-`) &&
+      item.assets.some(asset => asset.name === 'candidate.json')
+  )) {
+    const { candidate } = loadCandidate(release, directory)
+    if (
+      String(candidate.build?.origin.runId) === String(build.build.origin.runId) &&
+      Number(candidate.build.origin.attempt) === Number(build.build.origin.attempt)
+    )
+      return fresh(candidate.id)
+  }
+}
+
 export function prepare(runId, id, target = 'missing', prNumber, notesRef) {
   if (
     process.env.GITHUB_EVENT_NAME === 'workflow_run' &&
@@ -107,36 +125,54 @@ export function prepare(runId, id, target = 'missing', prNumber, notesRef) {
   let release, candidate
   if (id) ({ release, candidate } = fresh(id))
   else {
-    candidate = loadBuild(runId, join(directory, 'build'))
-    assertPublicEnvironment(candidate)
-    candidate.runId = process.env.GITHUB_RUN_ID
-    candidate.runAttempt = process.env.GITHUB_RUN_ATTEMPT
-    candidate.id = `${candidate.version}-${candidate.runId}-${candidate.runAttempt}`
-    candidate.stagingTag = `candidate-${candidate.id}`
-    candidate.createdAt = new Date().toISOString()
-    candidate.preparation = {}
-    source(candidate.sourceRevision)
-    const notes = captureNotes(candidate, notesRef, prNumber)
-    candidate.releaseNotesRevision = notes.revision
-    candidate.releaseNotesSha256 = notes.sha256
-    assertIdentity(candidate)
-    release = repoApi('releases', 'POST', {
-      tag_name: candidate.stagingTag,
-      target_commitish: git(['rev-parse', 'HEAD']),
-      name: `Candidate ${candidate.id}`,
-      body: `Build ${runId}; awaiting packaging and Windows signing.`,
-      draft: true,
-      prerelease: true,
-    })
-    writeAsset(release, 'release-notes.md', notes.text, directory)
-    writeAsset(release, 'candidate.json', candidate, directory)
+    const build = loadBuild(runId, join(directory, 'build'))
+    const saved = existingPreparation(build)
+    if (saved) {
+      ;({ release, candidate } = saved)
+      id = candidate.id
+    } else {
+      candidate = build
+      assertPublicEnvironment(candidate)
+      candidate.runId = process.env.GITHUB_RUN_ID
+      candidate.runAttempt = process.env.GITHUB_RUN_ATTEMPT
+      candidate.id = `${candidate.version}-${candidate.runId}-${candidate.runAttempt}`
+      candidate.stagingTag = `candidate-${candidate.id}`
+      candidate.createdAt = new Date().toISOString()
+      candidate.preparation = {}
+      source(candidate.sourceRevision)
+      const notes = captureNotes(candidate, notesRef, prNumber)
+      candidate.releaseNotesRevision = notes.revision
+      candidate.releaseNotesSha256 = notes.sha256
+      assertIdentity(candidate)
+      release = repoApi('releases', 'POST', {
+        tag_name: candidate.stagingTag,
+        target_commitish: git(['rev-parse', 'HEAD']),
+        name: `Candidate ${candidate.id}`,
+        body: `Build ${runId}; awaiting packaging and Windows signing.`,
+        draft: true,
+        prerelease: true,
+      })
+      writeAsset(release, 'release-notes.md', notes.text, directory)
+      writeAsset(release, 'candidate.json', candidate, directory)
+    }
   }
   assert(
     String(runId) === String(candidate.build.origin.runId),
     'Candidate belongs to another build'
   )
-  assertMutable(candidate, release)
   assertPublicEnvironment(candidate)
+  if (candidate.finalizedAt) {
+    assert(!notesRef, 'Finalized notes are immutable; prepare a different candidate to change them')
+    output('candidate-id', candidate.id)
+    output('work', 'false')
+    output('matrix', JSON.stringify({ include: [] }))
+    selectForPr(candidate, release, prNumber)
+    summarize(
+      `Existing finalized candidate ${candidate.id} reused; no packaging or signing repeated.`
+    )
+    return
+  }
+  assertMutable(candidate, release)
   if (id) loadBuild(runId, join(directory, 'build'), candidate)
   if (id && notesRef) updateNotes(release, candidate, notesRef)
   const matrix = preparationTargets(candidate, target)

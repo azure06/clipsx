@@ -3,17 +3,14 @@ import {
   assert,
   assertCertified,
   selectedCandidate,
-  certificationChecks,
-  digest,
-  encode,
   readJson,
   repository,
-  targets,
 } from '../core/contracts.mjs'
-import { command, source, downloadAsset, repoApi, status, writeAsset } from '../core/github.mjs'
-import { directory, git, summarize } from '../core/context.mjs'
-import { fresh, assertCurrent, verifyFinalized, completeInventory } from '../core/candidate.mjs'
+import { source, downloadAsset, repoApi, status } from '../core/github.mjs'
+import { directory } from '../core/context.mjs'
+import { fresh, completeInventory } from '../core/candidate.mjs'
 import { releaseCoverage } from './coverage.mjs'
+export { certify } from './signoff.mjs'
 
 export function selectForPr(candidate, release, prNumber) {
   const pulls = prNumber
@@ -22,6 +19,7 @@ export function selectForPr(candidate, release, prNumber) {
         `pulls?state=open&base=main&head=${encodeURIComponent(`azure06:${candidate.branch}`)}`
       )
   for (const pr of pulls) {
+    if (pr.state === 'closed') continue
     assert(
       pr.base.ref === 'main' &&
         pr.head.ref === candidate.branch &&
@@ -30,6 +28,7 @@ export function selectForPr(candidate, release, prNumber) {
     )
     // Automatic preparation does not replace a maintainer's existing selection.
     if (!prNumber && selectedCandidate(pr.body)) continue
+    assertAppInputs(candidate, source(pr.head.sha))
     const body = (pr.body || '').replace(/\n?<!-- clipsx-release-candidate: [^\n]* -->/g, '')
     repoApi(`pulls/${pr.number}`, 'PATCH', {
       body: `${body}\n<!-- clipsx-release-candidate: ${candidate.id} -->`,
@@ -38,81 +37,13 @@ export function selectForPr(candidate, release, prNumber) {
   }
 }
 
-export function certify(id, prNumber) {
-  assert(/^\d+$/.test(String(prNumber)), 'Select the release PR number')
-  const pr = repoApi(`pulls/${prNumber}`)
-  const snapshot = fresh(id)
-  const { release, candidate, bytes } = snapshot
-  assert(candidate.finalizedAt, 'Candidate must be finalized before certification')
-  assert(
-    pr.base.ref === 'main' &&
-      pr.head.ref === candidate.branch &&
-      pr.head.repo.full_name === repository &&
-      pr.state === 'open',
-    'Wrong release PR'
-  )
-  assertAppInputs(candidate, source(pr.head.sha))
-  assertPublicEnvironment(candidate)
-  const coverage = releaseCoverage(pr, candidate)
-  assert(coverage.state === 'success', coverage.description)
-  assert(
-    selectedCandidate(pr.body) === id,
-    'Select this candidate on the release PR before certifying'
-  )
-  const checks = certificationChecks(
-    process.env.CERTIFY_ALL_PLATFORMS,
-    process.env.CERTIFY_MAC_EXTENSIONS
-  )
-  const evidence = process.env.CERTIFICATION_EVIDENCE?.trim()
-  assert(
-    evidence && /^https:\/\//.test(evidence),
-    'Provide an HTTPS installed-test evidence reference'
-  )
-  verifyFinalized(release, candidate)
-  const inventory = completeInventory(release, candidate)
-  const current = assertCurrent(snapshot)
-  assert(
-    digest(encode(completeInventory(current, candidate))) === digest(encode(inventory)),
-    'Draft changed during certification'
-  )
-  if (release.assets.some(item => item.name === 'certification.json')) {
-    const existing = JSON.parse(downloadAsset(release, 'certification.json', directory))
-    assert(existing.releasePrNumber === Number(prNumber), 'Candidate was certified for another PR')
-    assertCertified(candidate, existing, bytes, inventory)
-    status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
-    if (pr.draft) command('gh', ['pr', 'ready', String(prNumber), '--repo', repository])
-    return
-  }
-  const certification = {
-    schemaVersion: 2,
-    releasePrNumber: Number(prNumber),
-    appInputsSha256: candidate.build.appInputsSha256,
-    candidateId: id,
-    sourceRevision: candidate.sourceRevision,
-    sourceTree: candidate.sourceTree,
-    candidateSha256: digest(bytes),
-    inventorySha256: digest(encode(inventory)),
-    evidence,
-    checks,
-    platforms: targets.map(item => item.id),
-    actor: process.env.GITHUB_ACTOR,
-    toolingRevision: git(['rev-parse', 'HEAD']),
-    certifiedAt: new Date().toISOString(),
-  }
-  writeAsset(release, 'certification.json', certification, directory)
-  status(pr.head.sha, 'success', `Certified candidate ${id}`, release.html_url)
-  if (pr.draft) command('gh', ['pr', 'ready', String(prNumber), '--repo', repository])
-  summarize(
-    `Candidate ${id}; build ${candidate.build.origin.runId}. Next action: merge [release PR #${prNumber}](${pr.html_url}) after required checks pass.`
-  )
-}
-
 export function readiness() {
   const event = readJson(process.env.GITHUB_EVENT_PATH)
   const pulls = event.pull_request
     ? [repoApi(`pulls/${event.pull_request.number}`)]
     : repoApi('pulls?state=open&base=main&per_page=100')
   for (const pr of pulls) {
+    if (pr.state === 'closed') continue
     if (!pr.head.ref.startsWith('release/')) {
       status(pr.head.sha, 'success', 'No desktop release is associated with this PR', pr.html_url)
       continue
@@ -163,7 +94,7 @@ export function readiness() {
         status(
           pr.head.sha,
           'pending',
-          'Awaiting installed-platform and updater certification',
+          'Waiting for release approval in GitHub Actions',
           release.html_url
         )
         continue

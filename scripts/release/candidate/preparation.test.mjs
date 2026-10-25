@@ -2,11 +2,40 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { prepare, stagePlatform } from './prepare.mjs'
+import { prepare, stagePlatform, existingPreparation } from './prepare.mjs'
 import { githubFixture } from '../testing/github-fixture.mjs'
 import { services } from '../core/github.mjs'
 import { digest, encode } from '../core/contracts.mjs'
 import { platforms } from '../build/builds.mjs'
+import { finalize } from './finalize.mjs'
+
+test('duplicate build completion reuses the exact prepared or finalized candidate without writes', () => {
+  const f = githubFixture()
+  try {
+    assert.equal(existingPreparation(f.candidate).candidate.id, f.candidate.id)
+    assert.equal(
+      existingPreparation({ ...f.candidate, build: { origin: { runId: '999', attempt: 1 } } }),
+      undefined
+    )
+    assert.equal(
+      existingPreparation({ ...f.candidate, build: { origin: { runId: '100', attempt: 2 } } }),
+      undefined
+    )
+    finalize(f.candidate.id, f.windowsEvidence)
+    const before = f.release.assets.map(asset => asset.digest)
+    f.trace.length = 0
+    assert(existingPreparation(f.candidate).candidate.finalizedAt)
+    assert.deepEqual(
+      f.release.assets.map(asset => asset.digest),
+      before
+    )
+    assert(
+      !f.trace.some(item => (item.method && item.method !== 'GET') || item.args?.includes('upload'))
+    )
+  } finally {
+    f.restore()
+  }
+})
 
 test('packaging-tool corrections consume an explicit older build and preserve successes', () => {
   const f = githubFixture(),
