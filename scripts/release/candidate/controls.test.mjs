@@ -217,3 +217,17 @@ test('publication workflow events for tooling PRs are ignored before release val
     }
   }
 })
+
+test('a missing draft fails the Actions job after publishing its diagnostic panel', () => {
+  const f = operatorFixture()
+  try {
+    const command = services.command
+    services.command = (program, args, options) =>
+      program === 'gh' && args[1]?.includes('/releases?') ? '[[]]' : command(program, args, options)
+    assert.throws(() => controls('45'), /Release control failed/)
+    assert.match(f.state.comments[0].body, /ClipsX release — Failed/)
+    assert.match(f.state.comments[0].body, /staging draft was not found/)
+  } finally {
+    f.restore()
+  }
+})

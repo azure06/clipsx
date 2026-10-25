@@ -26,3 +26,14 @@ test('release approval is captured before a native environment gate and publishe
   assert.match(events, /pull-requests: write/)
   assert.match(workflow('release-controls'), /pull-requests: write/)
 })
+
+test('readiness links stay on the release PR instead of expiring draft URLs', () => {
+  const readiness = readFileSync(new URL('./approval.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(readiness, /release\.html_url/)
+})
+
+test('release controllers have the push permission GitHub requires to read draft releases', () => {
+  for (const name of ['release-controls', 'release-readiness']) {
+    assert.match(workflow(name), /contents: write/)
+  }
+})
