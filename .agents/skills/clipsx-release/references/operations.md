@@ -1,7 +1,7 @@
 # Release and platform validation
 
 A release runs through automated checks, saved builds, packaging, local Windows
-signing, final verification and one maintainer approval. The maintainer tests the
+signing, final verification and one maintainer merge approval. The maintainer tests the
 final installers/updater before approving publication. Approval records who
 authorized the exact files; it does not claim automated execution of manual tests.
 
@@ -14,8 +14,8 @@ flowchart LR
     Save -.-> Symbols[Independent symbol upload]
     Prepare --> Win[Local Windows SimplySign]
     Win --> Final[Finalize exact inventory]
-    Final --> Test[Installed tests and certification]
-    Test --> Merge[Approve once and merge release PR]
+    Final --> Test[Verify hashes and test installers]
+    Test --> Merge[Maintainer merges release PR]
     Merge --> Publish[Publish certified files]
     Publish --> Web[Website and updater discover release]
 ```
@@ -50,7 +50,7 @@ successful build ID; it never compiles the app/frontend or runs application test
 | **Prepare release candidate**: successful build completion; manual dispatch on `main`                      | Download selected build; package/sign/notarize missing platforms; preserve successful outputs                               |
 | Local Windows helper                                                                                       | Package CI executable without recompilation; sign app, installer and uninstaller; upload and resume the controller            |
 | **Finalize release candidate**: dispatch on `main`                                                         | Verify Windows installation and original executable; finalize complete inventory and updater signatures                     |
-| **Certify candidate**: automatically dispatched on `main` after finalization                                 | Snapshot exact files, wait for one environment approval, record it, merge through branch rules and explicitly start publication |
+| **Verify release for merge**: finalized candidate and exact release PR head | Verify final signatures and files, save a hash-bound readiness proof, enable maintainer merge |
 | **Release controls**: manual dispatch on `main` with PR number                                              | Refresh the PR panel, retry its failed stage or explicitly prepare/select a successful build                                  |
 | Release PR merge into `main`                                                                               | Publish the certified existing draft and tag the merged commit; no rebuild/re-sign                                          |
 | Ordinary merges or tag pushes                                                                              | No desktop release build/publication                                                                                        |
@@ -90,9 +90,10 @@ No packaging phase invokes app/frontend compilation or application tests.
    SimplySign and run it once; it downloads, signs, uploads and resumes the pipeline.
 4. Finalization starts only when all native packages, their evidence and the
    Windows submission exist. Successful packages/signatures survive retries.
-5. Download/test the final installers and updater. Follow the approval-run link,
-   then **Review deployments → Approve and deploy** once. Branch checks still apply;
-   the workflow records approval, merges and explicitly dispatches publication.
+5. Download/test the final installers and updater. When **Release readiness** is
+   green, merge the release PR. The human merge authorizes publication of the exact
+   verified candidate. There is no separate deployment approval. The publisher
+   records the merger and hashes, then promotes the existing signed files.
 6. For failures, follow **Release controls → Run workflow → main** from the panel,
    enter its PR number and choose `retry`. It retries the failed stage without
    repeating completed approval/jobs. `refresh` updates the panel. `prepare-latest`
@@ -357,44 +358,45 @@ claimed. The website validates published metadata and refreshes it at request
 time with a 30-second cache; no per-release web deployment or refresh webhook is
 needed after the capability's initial deployment.
 
-### Installed certification and publication
+### Merge approval and publication
 
 Download final packages and use the applicable checklist below on Windows, both
 Mac architectures and Linux/X11 for AppImage and Debian, including updater tests.
-Then use the approval run's **Review deployments → Approve and deploy** action.
-There is no evidence URL form or separate platform confirmation.
+When Release readiness passes, merge the release PR to authorize publication.
+There is no deployment approval gate, evidence URL form or platform confirmation.
 
-The trusted workflow captures candidate/complete inventory hashes before the
-gate. It preserves that snapshot on retries and rejects changes while waiting.
-After the gate, it verifies actual GitHub human review history and final signatures,
-then writes schema-3 `certification.json`: exact candidate, PR, source/inventory
-hashes, reviewer, approval workflow URL and recording time. It records authorization,
-not fabricated manual-test results. Replacing the candidate requires new approval.
-An unchanged valid certification skips the approval gate on recovery. Required
-reviewers, main-only environment access and disabled administrator bypass are
-checked before approval; missing configuration fails closed. The protected merge
-uses the expected PR head and no administrative bypass.
+Before merge, Verify release for merge verifies final signatures and writes
+`merge-readiness.json`, binding candidate bytes, complete payload inventory,
+application inputs and exact PR head. The successful Release readiness status
+includes that proof's SHA-256. Only this lifecycle record and certification are
+excluded from the payload inventory to avoid self-referential hashes; ordinary
+extra files still invalidate the binding. The proof is reused for unchanged
+retries. Changing the PR head requires fresh verification; source or build-input
+changes still require a new build. The PR overview shows the next action,
+downloads and the exact signing command when its kit is ready; candidate IDs are
+filled from the selected candidate, never entered or guessed by the maintainer.
 
-The PR is marked ready after approval. The workflow merges only through existing
-branch rules and explicitly dispatches publication, because workflow-token merges
-do not reliably generate follow-up workflow events. Failed merge/publication jobs
-can retry with the recorded approval and existing packages.
+After a human merges through existing branch protections, publication fetches the
+authoritative PR and the latest readiness status at or before merge. It requires
+that status to be successful, authored by github-actions[bot], and bound to the
+same proof. Bot merges, later statuses, changed selections and changed packages
+cannot approve publication. Schema-4 certification records the exact hashes,
+PR head, merge revision, human merger and merge time. It records authorization,
+not automatically performed manual tests. Retry reuses that recorded merge and
+never requests another approval for unchanged files. Legacy schema-2 and schema-3
+certifications remain verifiable under their original contracts.
 
-Publication verifies the merged app-input inventory, certified selection and
-final signatures. It assigns the production tag to the merged commit and
-publishes the existing complete draft. No release artifact is rebuilt or
-re-signed after merge. Public manifests, file hashes and signatures are then
-checked. Sentry production deployment records are created only afterward, using
-the original candidate source revision embedded in its binaries.
+Publication verifies merged application inputs, final signatures and inventory,
+then tags the merged commit and promotes the existing draft. It never rebuilds or
+re-signs the application. Public manifests, hashes and signatures are checked
+before Sentry records the production deployment using the original binary source.
+Normal human merges trigger publication directly; the controller also explicitly
+dispatches a missing publication run, covering suppressed workflow-token events.
 
-If publication or public verification fails, run **Publish certified release**
-on main with the merged PR number. An already-published matching release is
-verified again rather than recreated. A conflicting tag/release or an older
-version cannot replace the latest release. A previously installed public build
-must also discover and install the published update.
-
-Historical schema-2 certifications remain verifiable under their original
-contracts. New approvals use schema 3; neither format changes finalized packages.
+For a failed publication, use Release controls with the merged PR number and
+`retry`, or rerun failed jobs in Publish certified release. An already-published
+matching release is verified rather than recreated. Conflicting tags/releases
+and older versions cannot replace the latest release.
 
 ### Private pre-publication upgrade test
 
@@ -428,17 +430,11 @@ Use separate test user profiles/VMs to preserve real clipboard data.
 
 ### Infrastructure rollout
 
-Configure the approval environment once as a repository administrator:
-
-```sh
-node scripts/release/pipeline.mjs configure-approval <maintainer-login>
-```
-
-This selects a human required reviewer, allows self-review for a single-maintainer
-repository and restricts deployment to `main`. Administrator bypass must be off;
-if the API cannot apply it, disable **Allow administrators to bypass configured
-protection rules** in Settings → Environments → desktop-release. Setup verifies
-the resulting configuration and never starts a release or changes branch rules.
+Keep the existing required CI and Release readiness branch rules. No deployment
+environment is needed: the maintainer's protected release-PR merge is approval.
+Finalization has actions: write to dispatch the dashboard handoff explicitly;
+controllers need contents: write to see private drafts. These permissions do not
+merge release PRs on behalf of the maintainer.
 
 1. Open an infrastructure-only PR to main. Compare tracked app-input inventories
    with its base; preserve manifests, lockfiles, runtime code and updater settings.

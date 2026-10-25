@@ -7,9 +7,10 @@ import {
   assetName,
   targets,
 } from '../core/contracts.mjs'
-import { repoApi, source, workflowArtifacts } from '../core/github.mjs'
+import { repoApi, source, workflowArtifacts, downloadAsset } from '../core/github.mjs'
+import { signoffContext, loadReadiness } from './signoff.mjs'
 import { fresh } from '../core/candidate.mjs'
-import { summarize } from '../core/context.mjs'
+import { summarize, directory } from '../core/context.mjs'
 import {
   actionsUrl,
   workflowUrl,
@@ -120,16 +121,15 @@ export function updateRelease(pr, action = 'refresh') {
         state = isFailed(publish) ? 'Failed' : 'Running'
         detail =
           'Publication promotes the approved files. Retry publication here without rebuilding or approving again.'
-        if (action === 'retry')
-          requestPhase(
-            pr,
-            current,
-            'publish',
-            'release-publish.yml',
-            `Publish release PR #${pr.number}`,
-            { pr_number: String(pr.number) },
-            { retry: true }
-          )
+        requestPhase(
+          pr,
+          current,
+          'publish',
+          'release-publish.yml',
+          `Publish release PR #${pr.number}`,
+          { pr_number: String(pr.number) },
+          { retry: true }
+        )
       }
       rows.push(`| Publish | ${link(label(publish), publish, 'release-publish.yml')} |`)
     } else {
@@ -141,9 +141,9 @@ export function updateRelease(pr, action = 'refresh') {
         `Prepare build ${candidate.build.origin.runId}`
       )[0]
       const finalize = phaseRuns('release-finalize.yml', `Finalize candidate ${id}`)[0]
-      const approve = phaseRuns(
+      const verify = phaseRuns(
         'release-certify.yml',
-        `Approve candidate ${id} for PR #${pr.number}`
+        `Verify candidate ${id} for PR #${pr.number} at ${pr.head.sha}`
       )[0]
       rows[0] = `| Checks and build | [Passed — build ${candidate.build.origin.runId}](${runUrl(candidate.build.origin.runId)}) |`
       rows.push(
@@ -152,30 +152,35 @@ export function updateRelease(pr, action = 'refresh') {
       rows.push(
         `| Verify final packages | ${link(candidate.finalizedAt ? 'Passed' : label(finalize), finalize, 'release-finalize.yml')} |`
       )
-      rows.push(
-        `| Approve, merge and publish | ${link(label(approve), approve, 'release-certify.yml')} |`
-      )
+      rows.push(`| Ready to merge | ${link(label(verify), verify, 'release-certify.yml')} |`)
       if (candidate.finalizedAt) {
         downloads = `[Download final installers and SHA256SUMS](${release.html_url}) · Candidate \`${id}\``
-        state = isFailed(approve)
-          ? 'Failed'
-          : release.assets.some(asset => asset.name === 'certification.json')
-            ? 'Running'
-            : 'Waiting for approval'
-        detail =
-          'Test the final installers and updater, then open the approval run: **Review deployments → Approve and deploy**. This authorizes merging and publishing these exact files. No separate evidence form.'
-        requestPhase(
-          pr,
-          current,
-          'approve',
-          'release-certify.yml',
-          `Approve candidate ${id} for PR #${pr.number}`,
-          { candidate_id: id, pr_number: String(pr.number) },
-          { retry: action === 'retry' }
-        )
-        if (isFailed(approve))
-          detail =
-            'The approval/merge workflow failed. Inspect its failed job, resolve the reported problem, then retry. A completed approval is retained when retrying failed jobs.'
+        let ready = false
+        if (release.assets.some(asset => asset.name === 'merge-readiness.json')) {
+          const proof = JSON.parse(downloadAsset(release, 'merge-readiness.json', directory))
+          if (proof.headRevision === pr.head.sha) {
+            ready = loadReadiness(signoffContext(id, pr.number)).verified
+          }
+        }
+        state = ready ? 'Ready to merge' : isFailed(verify) ? 'Failed' : 'Running'
+        detail = ready
+          ? 'Download and test the final installers and updater, then merge this PR to authorize publication of these exact files. No separate deployment approval.'
+          : isFailed(verify)
+            ? 'Package verification failed. Inspect the linked job and retry; existing packages are preserved.'
+            : 'Verifying the final packages before enabling Merge. No rebuild or re-signing is needed.'
+        if (ready)
+          rows[rows.length - 1] =
+            `| Ready to merge | [Passed — merge after testing](${pr.html_url}) |`
+        else
+          requestPhase(
+            pr,
+            current,
+            'verify',
+            'release-certify.yml',
+            `Verify candidate ${id} for PR #${pr.number} at ${pr.head.sha}`,
+            { candidate_id: id, pr_number: String(pr.number), head_revision: pr.head.sha },
+            { retry: action === 'retry' }
+          )
       } else if (finalizationReady(candidate, release)) {
         state = isFailed(finalize) ? 'Failed' : 'Running'
         detail =
@@ -242,7 +247,7 @@ export function updateRelease(pr, action = 'refresh') {
     detail = error.message
   }
   const markdown = `## ClipsX release — ${state}\n\n${detail}\n\n${downloads}\n\n| Stage | Status / logs |\n| --- | --- |\n${rows.join('\n')}\n${signing}\n### Recovery\n\n${controlsLink}. Choose **retry** for the failed stage or **refresh** to update this panel. **prepare-latest** explicitly selects a successful build after a source fix.\n\nActions also provides **Re-run failed jobs** on each run. Packaging/signing/publication retries reuse saved files. Source/build-input changes require a new build.\n\nNo LLM is needed to watch or advance this release. [All workflows](${actionsUrl}).`
-  savePanel(pr, current, markdown)
+  savePanel(pr, current, markdown, `## Release: ${state}\n\n${detail}\n\n${downloads}\n${signing}`)
   summarize(markdown)
   return state
 }

@@ -22,13 +22,14 @@ Use `develop` → `release/<version>` → `main`. Read only the relevant section
    [signer](../../../scripts/release/sign-windows.ps1) command once its kit is
    registered. Run it with SimplySign connected. It downloads, signs, uploads and
    resumes the pipeline. If not ready, hand off; no manual EXE upload is needed.
-5. **Approve:** the maintainer tests final installers/updater and clicks
-   **Review deployments → Approve and deploy** once. The workflow records the
-   reviewer and exact hashes, merges through normal branch rules, and explicitly
-   dispatches publication. Do not collect evidence forms or repeated confirmations.
-   Approval authorizes release; never describe it as automatically executed tests.
+5. **Approve by merging:** the maintainer tests final installers/updater, waits
+   for **Ready to merge**, then merges the release PR. Merge is the single release
+   approval. The publisher records the human merger, merge time and exact package
+   hashes and publishes those same files. Never merge a release on the user's
+   behalf unless they explicitly authorize publishing that candidate. There is no
+   separate deployment approval, evidence form or platform confirmation.
 6. **Recover:** use the PR dashboard's **Release controls** link with its PR number
-   and `retry`, or Actions' **Re-run failed jobs**. Completed approval and successful
+   and `retry`, or Actions' **Re-run failed jobs**. The recorded merge and successful
    packages survive retries. Investigate actual failures; normal progression needs
    no LLM supervision. `refresh` updates the panel; `prepare-latest` explicitly
    selects a successful build after a source fix.

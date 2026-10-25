@@ -5,6 +5,7 @@ import { operatorFixture } from '../testing/operator-fixture.mjs'
 import { services } from '../core/github.mjs'
 import { finalizationReady, updateRelease, controls } from './controls.mjs'
 import { finalize } from './finalize.mjs'
+import { verifyForMerge } from './signoff.mjs'
 import { panel, requestPhase, savePanel } from './operator.mjs'
 
 function packaged(f) {
@@ -57,20 +58,28 @@ test('the signing panel provides a complete command only after the kit is regist
   }
 })
 
-test('finalized packages automatically request one approval without rewriting assets', () => {
+test('finalized packages request verification once and show human merge instructions', () => {
   const f = operatorFixture()
   try {
     finalize(f.candidate.id, f.windowsEvidence)
     const before = f.release.assets.map(asset => asset.digest)
-    assert.equal(updateRelease(f.pr), 'Waiting for approval')
+    assert.equal(updateRelease(f.pr), 'Running')
     updateRelease(f.pr)
     assert.equal(requests(f).length, 1)
-    assert.deepEqual(requests(f)[0].body.inputs, { candidate_id: f.candidate.id, pr_number: '45' })
+    assert.deepEqual(requests(f)[0].body.inputs, {
+      candidate_id: f.candidate.id,
+      pr_number: '45',
+      head_revision: f.pr.head.sha,
+    })
     assert.deepEqual(
       f.release.assets.map(asset => asset.digest),
       before
     )
-    assert.match(f.state.comments[0].body, /Approve and deploy/)
+    verifyForMerge(f.candidate.id, 45)
+    assert.equal(updateRelease(f.pr), 'Ready to merge')
+    assert.match(f.state.comments[0].body, /merge this PR/)
+    assert.doesNotMatch(f.state.comments[0].body, /Approve and deploy/)
+    assert(!f.trace.some(item => item.path?.endsWith('/merge')))
     assert.match(f.state.comments[0].body, /Download final installers/)
   } finally {
     f.restore()
@@ -227,6 +236,26 @@ test('a missing draft fails the Actions job after publishing its diagnostic pane
     assert.throws(() => controls('45'), /Release control failed/)
     assert.match(f.state.comments[0].body, /ClipsX release — Failed/)
     assert.match(f.state.comments[0].body, /staging draft was not found/)
+  } finally {
+    f.restore()
+  }
+})
+
+test('the PR overview shows the exact signing command and preserves author text and selection', () => {
+  const f = operatorFixture()
+  try {
+    packaged(f)
+    f.release.assets = f.release.assets.filter(asset => asset.name !== 'windows-submission.json')
+    f.pr.body = `Author notes\n${f.pr.body}`
+    updateRelease(f.pr)
+    assert.match(f.pr.body, /clipsx-release-overview:start/)
+    assert.match(f.pr.body, /-CandidateId 0.1.2-200-1/)
+    assert.match(f.pr.body, /-CertificateThumbprint A{40}/)
+    assert.match(f.pr.body, /Author notes/)
+    assert.match(f.pr.body, /clipsx-release-candidate: 0.1.2-200-1/)
+    const body = f.pr.body
+    updateRelease(f.pr)
+    assert.equal(f.pr.body, body)
   } finally {
     f.restore()
   }

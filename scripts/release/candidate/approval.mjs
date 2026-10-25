@@ -1,16 +1,9 @@
 import { assertAppInputs, assertPublicEnvironment } from '../core/inputs.mjs'
-import {
-  assert,
-  assertCertified,
-  selectedCandidate,
-  readJson,
-  repository,
-} from '../core/contracts.mjs'
-import { source, downloadAsset, repoApi, status } from '../core/github.mjs'
-import { directory } from '../core/context.mjs'
-import { fresh, completeInventory } from '../core/candidate.mjs'
+import { assert, selectedCandidate, readJson, repository } from '../core/contracts.mjs'
+import { source, repoApi, status } from '../core/github.mjs'
+import { fresh } from '../core/candidate.mjs'
 import { releaseCoverage } from './coverage.mjs'
-export { certify } from './signoff.mjs'
+import { signoffContext, loadReadiness, readyDescription } from './signoff.mjs'
 
 export function selectForPr(candidate, release, prNumber) {
   const pulls = prNumber
@@ -63,7 +56,7 @@ export function readiness() {
         )
         continue
       }
-      const { release, candidate, bytes } = fresh(id)
+      const { release, candidate } = fresh(id)
       assertAppInputs(candidate, source(pr.head.sha))
       assertPublicEnvironment(candidate)
       // CI coverage belongs to the selected successful build, even after docs-only pushes.
@@ -90,23 +83,16 @@ export function readiness() {
         status(pr.head.sha, 'pending', message, pr.html_url)
         continue
       }
-      if (!release.assets.some(item => item.name === 'certification.json')) {
-        status(
-          pr.head.sha,
-          'pending',
-          'Waiting for release approval in GitHub Actions',
-          pr.html_url
-        )
+      if (!release.assets.some(item => item.name === 'merge-readiness.json')) {
+        status(pr.head.sha, 'pending', 'Verifying final packages before merge', pr.html_url)
         continue
       }
-      const certification = JSON.parse(downloadAsset(release, 'certification.json', directory))
-      assert(
-        certification.releasePrNumber === pr.number &&
-          certification.appInputsSha256 === candidate.build.appInputsSha256,
-        'Certification belongs to another release selection'
-      )
-      assertCertified(candidate, certification, bytes, completeInventory(release, candidate))
-      status(pr.head.sha, 'success', `Certified candidate ${id}`, pr.html_url)
+      const { hash, verified } = loadReadiness(signoffContext(id, pr.number))
+      if (!verified) {
+        status(pr.head.sha, 'pending', 'Final package verification is finishing', pr.html_url)
+        continue
+      }
+      status(pr.head.sha, 'success', readyDescription(id, hash), pr.html_url)
     } catch (error) {
       repoApi(`statuses/${pr.head.sha}`, 'POST', {
         state: 'failure',

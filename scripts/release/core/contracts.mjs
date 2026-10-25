@@ -237,7 +237,7 @@ export function assertCertified(candidate, certification, candidateBytes, invent
       'Installed Mac extension certification is missing'
     )
   assert(
-    [2, 3].includes(certification.schemaVersion) && certification.candidateId === candidate.id,
+    [2, 3, 4].includes(certification.schemaVersion) && certification.candidateId === candidate.id,
     'Certification belongs to another candidate'
   )
   assert(
@@ -258,6 +258,23 @@ export function assertCertified(candidate, certification, candidateBytes, invent
       certification.evidence &&
         targets.every(target => certification.platforms?.includes(target.id)),
       'Missing installed-platform certification'
+    )
+  } else if (certification.schemaVersion === 4) {
+    const approval = certification.approval
+    assert(
+      approval?.kind === 'pull_request_merge' &&
+        /^\d+$/.test(approval.verificationRunId || '') &&
+        approval.prNumber === certification.releasePrNumber &&
+        Number.isSafeInteger(approval.prNumber) &&
+        approval.prNumber > 0 &&
+        typeof approval.actor === 'string' &&
+        approval.actor.length > 0 &&
+        certification.actor === approval.actor &&
+        Number.isFinite(Date.parse(approval.recordedAt)) &&
+        /^[a-f0-9]{40}$/.test(approval.headRevision || '') &&
+        /^[a-f0-9]{40}$/.test(approval.mergeRevision || '') &&
+        /^[a-f0-9]{64}$/.test(approval.readinessSha256 || ''),
+      'Missing human PR merge approval'
     )
   } else {
     const approval = certification.approval

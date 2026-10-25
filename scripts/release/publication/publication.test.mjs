@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { operatorFixture } from '../testing/operator-fixture.mjs'
+import { verifyForMerge } from '../candidate/signoff.mjs'
+import { publish } from './publish.mjs'
 import { githubFixture } from '../testing/github-fixture.mjs'
 import { services } from '../core/github.mjs'
 import { completeInventory } from '../core/candidate.mjs'
@@ -73,6 +76,73 @@ test('published verification and retries are read-only and retain certification 
     f.put(candidate.artifacts[0].file, 'tampered certified bytes')
     assert.throws(() => verifyPublishedCommand('40'), /changed after certification/)
     assert(readFileSync(f.work + '/candidate.json').length > 0)
+  } finally {
+    f.restore()
+  }
+})
+
+test('merging a ready release publishes the same signed files and retries without another approval', () => {
+  const f = operatorFixture()
+  try {
+    finalize(f.candidate.id, f.windowsEvidence)
+    verifyForMerge(f.candidate.id, 45, f.pr.head.sha)
+    const before = new Map(
+      f.release.assets
+        .filter(a => f.candidate.artifacts.some(item => item.file === a.name))
+        .map(a => [a.name, a.digest])
+    )
+    Object.assign(f.pr, {
+      state: 'closed',
+      merged: true,
+      merged_by: { type: 'User', login: 'maintainer' },
+      merged_at: new Date(Date.now() + 2000).toISOString(),
+      merge_commit_sha: f.pr.head.sha,
+    })
+    process.env.GITHUB_EVENT_PATH = f.work + '/event.json'
+    writeFileSync(process.env.GITHUB_EVENT_PATH, JSON.stringify({ pull_request: { number: 45 } }))
+    const api = services.api,
+      command = services.command
+    services.api = (path, method, body) => {
+      if (path.includes('/git/matching-refs/')) return []
+      if (path.includes('/git/ref/tags/'))
+        return { object: { type: 'commit', sha: f.pr.merge_commit_sha } }
+      if (path.endsWith('/releases/latest')) return structuredClone(f.release)
+      return api(path, method, body)
+    }
+    services.command = (program, args, options) => {
+      if (program === 'curl') {
+        const name = args.at(-1).split('/').at(-1),
+          asset = f.release.assets.find(a => a.name === name),
+          bytes = f.blobs.get(asset.id)
+        if (args.includes('--output')) {
+          writeFileSync(args[args.indexOf('--output') + 1], bytes)
+          return ''
+        }
+        return bytes.toString()
+      }
+      return command(program, args, options)
+    }
+    const start = f.trace.length
+    publish()
+    assert.equal(f.release.draft, false)
+    assert.equal(f.release.tag_name, 'v0.1.2')
+    const certAsset = f.release.assets.find(a => a.name === 'certification.json')
+    const approvedHash = certAsset.digest
+    assert.equal(JSON.parse(f.blobs.get(certAsset.id)).schemaVersion, 4)
+    publish()
+    assert.equal(certAsset.digest, approvedHash)
+    for (const [name, hash] of before)
+      assert.equal(f.release.assets.find(a => a.name === name).digest, hash)
+    assert(
+      !f.trace
+        .slice(start)
+        .some(
+          t =>
+            t.program === 'cargo' ||
+            t.program === 'npm' ||
+            (t.program === 'node' && t.args?.[1] === 'signer')
+        )
+    )
   } finally {
     f.restore()
   }
