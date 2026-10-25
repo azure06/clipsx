@@ -1,20 +1,12 @@
 import i18n from '../../../i18n/index'
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
-import {
-  Command,
-  CornerDownLeft,
-  Hash,
-  MessageSquare,
-  Pin,
-  ScanText,
-  Sparkles,
-  Star,
-} from 'lucide-react'
+import { Command, CornerDownLeft, MessageSquare, Pin, ScanText, Sparkles, Star } from 'lucide-react'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { PreviewLeadingVisual } from './PreviewLeadingVisual'
 import { DecisionReviewNotice } from '../DecisionReviewNotice'
+import { TagBadge } from './TagBadge'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -99,7 +91,7 @@ const ClipboardListItemComponent = ({
         {/* Main content area - Horizontal Flow */}
         <div className="flex-1 min-w-0 flex items-center gap-3">
           {/* Preview text - Strictly 1 line */}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div
               className={`truncate text-xs ${isSelected ? 'font-medium text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-400'}`}
             >
@@ -107,6 +99,25 @@ const ClipboardListItemComponent = ({
             </div>
             {preview.subtitle && (
               <div className="truncate text-[10px] text-gray-400">{preview.subtitle}</div>
+            )}
+            {tags.length > 0 && (
+              <div className="mt-1.5 flex min-w-0 items-center gap-1 overflow-hidden">
+                {tags.slice(0, 2).map(tag => (
+                  <TagBadge key={tag.id} tag={tag} />
+                ))}
+                {tags.length > 2 && (
+                  <span
+                    className="shrink-0 text-[10px] text-slate-500 dark:text-slate-400"
+                    title={tags
+                      .slice(2)
+                      .map(tag => tag.name)
+                      .join(', ')}
+                    aria-label={t('clipboard.moreTags', { count: tags.length - 2 })}
+                  >
+                    +{tags.length - 2}
+                  </span>
+                )}
+              </div>
             )}
           </div>
           {semanticPercent !== null && (
@@ -136,7 +147,6 @@ const ClipboardListItemComponent = ({
               {isFavorite && (
                 <Star className="h-3 w-3 text-amber-500 fill-amber-500" strokeWidth={2.5} />
               )}
-              {tags.length > 0 && <Hash className="h-3 w-3 text-blue-400" strokeWidth={2.5} />}
               {clip.note && (
                 <MessageSquare className="h-3 w-3 text-emerald-400" strokeWidth={2.5} />
               )}

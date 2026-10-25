@@ -609,7 +609,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
   return (
     <div className={`flex h-full max-h-screen flex-col ${className}`}>
       {/* Quick Filters - always visible above the list */}
-      <div className="flex gap-2 px-3 pt-2 pb-2 shrink-0 relative z-20">
+      <div className="relative z-20 flex shrink-0 flex-wrap items-center gap-1 px-3 py-2">
         {(['all', 'favorites', 'pinned'] as const).map(filter => (
           <button
             key={filter}
@@ -624,10 +624,9 @@ export const ClipboardHistory = memo(function ClipboardHistory({
             {t(`clipboard.${filter}`)}
           </button>
         ))}
+        <TagFilter />
         <PrivacyCheckIndicator pending={privacyChecksPending} phase={decisionPhase} />
       </div>
-      {/* Tag filter row — only visible when tags exist */}
-      <TagFilter />
       {captureNotice && (
         <div
           role="status"

@@ -40,6 +40,8 @@ type V2SearchPage = V2Page<V2SearchResult> & {
 type ClipboardState = {
   clips: ClipSummary[]
   availableTags: V2Tag[]
+  tagsLoading: boolean
+  tagsError: string | null
   loading: boolean
   // Query/filter state describes the desired page; clips remain the last
   // committed page until a replacement succeeds.
@@ -93,6 +95,8 @@ type ClipboardStore = ClipboardState & ClipboardActions
 const initialState: ClipboardState = {
   clips: [],
   availableTags: [],
+  tagsLoading: false,
+  tagsError: null,
   loading: false,
   resultsStale: false,
   searchScheduled: false,
@@ -113,6 +117,20 @@ const initialState: ClipboardState = {
 let nextCursor: string | null | undefined
 let requestGeneration = 0
 let eventListenerReady = false
+let tagRequest: Promise<void> | undefined
+
+const mergeTags = (current: V2Tag[], incoming: V2Tag[]): V2Tag[] => {
+  const byId = new Map(current.map(tag => [tag.id, tag]))
+  let changed = false
+  for (const tag of incoming) {
+    const previous = byId.get(tag.id)
+    if (!previous || previous.name !== tag.name || previous.color !== tag.color) {
+      byId.set(tag.id, tag)
+      changed = true
+    }
+  }
+  return changed ? [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) : current
+}
 let semanticTimer: ReturnType<typeof setTimeout> | undefined
 const cancelSemantic = () => {
   clearTimeout(semanticTimer)
@@ -128,9 +146,9 @@ const matchesVisibleScope = (state: ClipboardState, clip: ClipSummary) => {
 }
 type ArtifactUpdate = { clipId: string; sourceId: string }
 
-const refreshVisibleClip = async (id: string) => {
+const refreshVisibleClip = async (id: string, includeOffscreen = false) => {
   const state = useClipboardStore.getState()
-  if (!state.clips.some(clip => clip.id === id)) return
+  if (!includeOffscreen && !state.clips.some(clip => clip.id === id)) return
   const detail = await invoke<V2Detail>('get_clip_detail', { clipId: id })
   state.mergeClipUpdate(detail.clip)
 }
@@ -147,7 +165,7 @@ const ensureEvents = () => {
         .catch(() => undefined)
     }),
     listen<string>('clip-updated', event => {
-      void refreshVisibleClip(event.payload).catch(() => undefined)
+      void refreshVisibleClip(event.payload, true).catch(() => undefined)
     }),
     listen<ClipFacetsUpdated>('clip-facets-updated', event => {
       if (event.payload.clipId) {
@@ -243,6 +261,10 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         )
         const incomingIds = new Set(clips.map(clip => clip.id))
         return {
+          availableTags: mergeTags(
+            current.availableTags,
+            clips.flatMap(clip => clip.tags ?? [])
+          ),
           clips: replace
             ? clips
             : [
@@ -345,6 +367,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   },
   addNewClip: clip =>
     set(state => ({
+      availableTags: mergeTags(state.availableTags, clip.tags ?? []),
       clips:
         !state.resultsStale && state.mode === 'browse' && matchesVisibleScope(state, clip)
           ? [clip, ...state.clips.filter(item => item.id !== clip.id)]
@@ -352,6 +375,7 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     })),
   mergeClipUpdate: clip =>
     set(state => ({
+      availableTags: mergeTags(state.availableTags, clip.tags ?? []),
       clips: state.clips
         .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
         .filter(item => state.resultsStale || matchesVisibleScope(state, item)),
@@ -428,11 +452,33 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     await useClipboardStore.getState().retryResults()
   },
   refreshAvailableTags: async () => {
-    try {
-      set({ availableTags: await invoke<V2Tag[]>('list_tags') })
-    } catch (error) {
-      set({ error: String(error) })
-    }
+    if (tagRequest) return tagRequest
+    const before = useClipboardStore.getState().availableTags
+    set({ tagsLoading: true, tagsError: null })
+    tagRequest = invoke<V2Tag[]>('list_tags')
+      .then(tags => {
+        set(state => {
+          // Keep tags received from capture events while this catalogue read was in flight.
+          // Likewise, do not resurrect a tag deleted after the read began.
+          const currentIds = new Set(state.availableTags.map(tag => tag.id))
+          const removedIds = new Set(
+            before.filter(tag => !currentIds.has(tag.id)).map(tag => tag.id)
+          )
+          const changed = state.availableTags.filter(tag => !before.includes(tag))
+          return {
+            availableTags: mergeTags(
+              tags.filter(tag => !removedIds.has(tag.id)),
+              changed
+            ),
+          }
+        })
+      })
+      .catch(error => set({ tagsError: String(error) }))
+      .finally(() => {
+        tagRequest = undefined
+        set({ tagsLoading: false })
+      })
+    return tagRequest
   },
   updateClipNote: async (clipId, note) => {
     await invoke('update_clip_note', { clipId, note: note?.trim() || null })
@@ -451,20 +497,23 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   createTagAndAttach: async (clipId, name) => {
     if (useClipboardStore.getState().resultsStale) return
     const result = await invoke<V2Tag>('create_tag', { name: name.trim(), color: '#3b82f6' })
-    set(state => ({ availableTags: [...state.availableTags, result] }))
+    set(state => ({ availableTags: mergeTags(state.availableTags, [result]) }))
     // Finish the operation already started, even if typing made results stale.
     await invoke('add_clip_tag', { clipId, tagId: result.id })
     await refreshVisibleClip(clipId)
   },
   deleteAvailableTag: async tagId => {
     await invoke('delete_tag', { tagId })
+    const wasActive = useClipboardStore.getState().tagFilter === tagId
     set(state => ({
+      tagFilter: state.tagFilter === tagId ? null : state.tagFilter,
       availableTags: state.availableTags.filter(tag => tag.id !== tagId),
       clips: state.clips.map(clip => ({
         ...clip,
         tags: clip.tags?.filter(tag => tag.id !== tagId),
       })),
     }))
+    if (wasActive) await useClipboardStore.getState().retryResults()
   },
   deleteClip: async id => {
     if (useClipboardStore.getState().resultsStale) return

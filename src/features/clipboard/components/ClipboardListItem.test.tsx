@@ -209,3 +209,22 @@ describe('ClipboardListItem', () => {
     expect(screen.queryByTestId('file-icon')).not.toBeInTheDocument()
   })
 })
+
+it('shows two readable tag names with an accessible overflow count', () => {
+  render(
+    <ClipboardListItem
+      clip={createTextClip({
+        tags: [
+          { id: 'work', name: 'work', color: null },
+          { id: 'design', name: 'design', color: null },
+          { id: 'later', name: 'later', color: null },
+        ],
+      })}
+      onCopy={vi.fn()}
+    />
+  )
+  expect(screen.getByText('work')).toBeInTheDocument()
+  expect(screen.getByText('design')).toBeInTheDocument()
+  expect(screen.getByLabelText('1 more tag')).toHaveTextContent('+1')
+  expect(screen.getByLabelText('1 more tag')).toHaveAttribute('title', 'later')
+})

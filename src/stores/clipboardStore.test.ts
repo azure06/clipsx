@@ -5,13 +5,21 @@ import { useSettingsStore } from './settingsStore'
 import type { ClipSummary, V2Tag } from '../shared/types/v2'
 import { DEFAULT_SETTINGS } from '../shared/types'
 
-const { mockInvoke, mockHide } = vi.hoisted(() => ({
+const { mockInvoke, mockHide, listeners } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockHide: vi.fn(),
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: mockInvoke,
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
+    listeners.set(name, handler)
+    return Promise.resolve(() => listeners.delete(name))
+  }),
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -688,5 +696,106 @@ describe('progressive History retrieval', () => {
       status: 'unavailable',
       diagnostic: null,
     })
+  })
+})
+
+describe('live tag catalogue', () => {
+  const automatic: V2Tag = { id: 'auto', name: 'research', color: null }
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useClipboardStore.setState({
+      availableTags: [workTag],
+      clips: [],
+      activeTab: 'all',
+      tagFilter: null,
+      mode: 'browse',
+      resultsStale: false,
+      searchScheduled: false,
+      tagsLoading: false,
+      tagsError: null,
+      error: null,
+    })
+    mockInvoke.mockResolvedValue(undefined)
+  })
+  it('adds previously unknown automatic tags to a populated catalogue without a refresh', () => {
+    const clip = makeClip({ tags: [automatic] })
+    useClipboardStore.getState().addNewClip(clip)
+    useClipboardStore.getState().mergeClipUpdate(clip)
+    expect(useClipboardStore.getState().availableTags).toEqual([automatic, workTag])
+    expect(useClipboardStore.getState().clips[0]?.tags).toEqual([automatic])
+  })
+  it('discovers tags even when the captured clip is excluded from the visible scope', () => {
+    useClipboardStore.setState({ activeTab: 'favorites' })
+    useClipboardStore.getState().addNewClip(makeClip({ tags: [automatic] }))
+    expect(useClipboardStore.getState().availableTags).toContainEqual(automatic)
+    expect(useClipboardStore.getState().clips).toEqual([])
+  })
+  it('refreshes tags on an offscreen duplicate capture event without injecting that clip', async () => {
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === 'get_clip_detail'
+          ? { clip: makeClip({ id: 'offscreen', tags: [automatic] }), representations: [] }
+          : { items: [], nextCursor: null }
+      )
+    )
+    await useClipboardStore.getState().retryResults()
+    listeners.get('clip-updated')?.({ payload: 'offscreen' })
+    await vi.waitFor(() =>
+      expect(useClipboardStore.getState().availableTags).toContainEqual(automatic)
+    )
+    expect(useClipboardStore.getState().clips).toEqual([])
+  })
+  it('preserves automatic tags received while an older catalogue read is in flight', async () => {
+    let finish!: (tags: V2Tag[]) => void
+    mockInvoke.mockImplementation(
+      () =>
+        new Promise<V2Tag[]>(resolve => {
+          finish = resolve
+        })
+    )
+    const pending = useClipboardStore.getState().refreshAvailableTags()
+    useClipboardStore.getState().addNewClip(makeClip({ tags: [automatic] }))
+    finish([workTag])
+    await pending
+    expect(useClipboardStore.getState().availableTags).toEqual([automatic, workTag])
+    expect(useClipboardStore.getState().tagsLoading).toBe(false)
+  })
+  it('does not resurrect a deleted tag when an older catalogue read finishes', async () => {
+    let finish!: (tags: V2Tag[]) => void
+    useClipboardStore.setState({ availableTags: [automatic, workTag] })
+    mockInvoke.mockImplementation(command =>
+      command === 'list_tags'
+        ? new Promise<V2Tag[]>(resolve => {
+            finish = resolve
+          })
+        : Promise.resolve()
+    )
+    const pending = useClipboardStore.getState().refreshAvailableTags()
+    await useClipboardStore.getState().deleteAvailableTag(automatic.id)
+    finish([automatic, workTag])
+    await pending
+    expect(useClipboardStore.getState().availableTags).toEqual([workTag])
+  })
+  it('clears a deleted active filter and reloads the current scope', async () => {
+    useClipboardStore.setState({ tagFilter: workTag.id, activeTab: 'favorites' })
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(command === 'list_clips' ? { items: [], nextCursor: null } : undefined)
+    )
+    await useClipboardStore.getState().deleteAvailableTag(workTag.id)
+    expect(useClipboardStore.getState().tagFilter).toBeNull()
+    expect(mockInvoke).toHaveBeenCalledWith('list_clips', {
+      request: { tagId: null, scope: 'favorites', limit: 50, cursor: null },
+    })
+  })
+  it('keeps catalogue failures separate from history errors and allows retry', async () => {
+    mockInvoke.mockRejectedValueOnce(new Error('offline'))
+    await useClipboardStore.getState().refreshAvailableTags()
+    expect(useClipboardStore.getState().tagsError).toContain('offline')
+    expect(useClipboardStore.getState().error).toBeNull()
+    expect(useClipboardStore.getState().availableTags).toEqual([workTag])
+    mockInvoke.mockResolvedValueOnce([workTag, automatic])
+    await useClipboardStore.getState().refreshAvailableTags()
+    expect(useClipboardStore.getState().tagsError).toBeNull()
+    expect(useClipboardStore.getState().availableTags).toContainEqual(automatic)
   })
 })

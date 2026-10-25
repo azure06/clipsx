@@ -140,7 +140,7 @@ flowchart LR
 
 | Table | Class | Purpose | Write authority | Lifecycle / ownership |
 | --- | --- | --- | --- | --- |
-| `catalog_tags` | Canonical | Defines reusable user-created tag identities and labels. | History repository on behalf of user tag actions | User-owned catalog data. Deleting a tag removes memberships but does not delete clips. |
+| `catalog_tags` | Canonical | Defines reusable tag identities and labels, created manually or by matching decision rules. | History repository on behalf of tag actions and capture decisions | User-owned catalog data. Deleting a tag removes memberships but does not delete clips; enabled decision rules can create it again on a later capture. |
 | `catalog_clip_tags` | Canonical | Joins clips to tags for organization, filtering, and search eligibility. | History repository on behalf of user membership actions | Relationship row owned by both referenced sides; cascades when either the clip or tag is deleted. |
 
 ## 4. Content understanding
