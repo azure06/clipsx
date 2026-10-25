@@ -16,7 +16,7 @@ permissions:
   contents: read
   actions: write
   issues: write
-  pull-requests: read
+  pull-requests: write
 concurrency:
   group: desktop-release-controls
   cancel-in-progress: false

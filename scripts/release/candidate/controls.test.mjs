@@ -191,3 +191,29 @@ test('ordinary PR events neither dispatch release work nor create a release dash
     f.restore()
   }
 })
+
+test('publication workflow events for tooling PRs are ignored before release validation', () => {
+  for (const status of ['queued', 'in_progress', 'completed']) {
+    const f = operatorFixture()
+    try {
+      f.pr.head.ref = 'codex/release-controls'
+      process.env.GITHUB_EVENT_PATH = `${f.work}/tooling-publication.json`
+      writeFileSync(
+        process.env.GITHUB_EVENT_PATH,
+        JSON.stringify({
+          workflow_run: {
+            name: 'Publish certified release',
+            display_title: 'Publish release PR #45',
+            status,
+            conclusion: status === 'completed' ? 'skipped' : null,
+          },
+        })
+      )
+      controls()
+      assert.equal(f.state.comments.length, 0)
+      assert.equal(requests(f).length, 0)
+    } finally {
+      f.restore()
+    }
+  }
+})
