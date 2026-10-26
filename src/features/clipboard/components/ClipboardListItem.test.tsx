@@ -10,6 +10,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Mock icons
 vi.mock('lucide-react', () => ({
+  ArrowUp: () => <div data-testid="up-icon" />,
+  ArrowDown: () => <div data-testid="down-icon" />,
   Pin: () => <div data-testid="pin-icon" />,
   Star: () => <div data-testid="star-icon" />,
   Sparkles: () => <div data-testid="sparkles-icon" />,
@@ -227,4 +229,32 @@ it('shows two readable tag names with an accessible overflow count', () => {
   expect(screen.getByText('design')).toBeInTheDocument()
   expect(screen.getByLabelText('1 more tag')).toHaveTextContent('+1')
   expect(screen.getByLabelText('1 more tag')).toHaveAttribute('title', 'later')
+})
+
+it('offers accessible pin movement without activating or copying the clip', () => {
+  const move = vi.fn(),
+    copy = vi.fn(),
+    select = vi.fn(),
+    activate = vi.fn()
+  const clip = createTextClip({ isPinned: true })
+  render(
+    <ClipboardListItem
+      clip={clip}
+      onCopy={copy}
+      onSelect={select}
+      onDoubleClick={activate}
+      pinOrdering={{ onMove: move, saving: false, canMoveUp: false, canMoveDown: true }}
+    />
+  )
+  const up = screen.getByRole('button', { name: `Move ${clip.historyPreview.title} up` })
+  expect(up).toHaveAttribute('aria-disabled', 'true')
+  fireEvent.click(up)
+  expect(move).not.toHaveBeenCalled()
+  const down = screen.getByRole('button', { name: `Move ${clip.historyPreview.title} down` })
+  fireEvent.click(down)
+  fireEvent.doubleClick(down)
+  expect(move).toHaveBeenCalledWith(clip.id, 'down')
+  expect(copy).not.toHaveBeenCalled()
+  expect(select).not.toHaveBeenCalled()
+  expect(activate).not.toHaveBeenCalled()
 })

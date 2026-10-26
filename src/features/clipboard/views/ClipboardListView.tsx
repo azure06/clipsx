@@ -15,6 +15,11 @@ type ClipboardListViewProps = {
   readonly infiniteScrollTrigger?: React.ReactNode
   readonly scrollContainerRef?: React.RefObject<HTMLDivElement | null>
   readonly selectedIndex?: number
+  readonly pinOrdering?: {
+    onMove: (id: string, direction: 'up' | 'down') => void
+    saving: boolean
+    hasMore: boolean
+  }
 }
 
 export const ClipboardListView = memo(function ClipboardListView({
@@ -28,6 +33,7 @@ export const ClipboardListView = memo(function ClipboardListView({
   scrollContainerRef,
   selectedIndex,
   relatedClipIds,
+  pinOrdering,
 }: ClipboardListViewProps) {
   const { t } = useTranslation()
   const relatedStart = relatedClipIds?.length
@@ -116,6 +122,15 @@ export const ClipboardListView = memo(function ClipboardListView({
                   {row.clipIndex === relatedStart && relatedHeading}
                   <ClipboardListItem
                     clip={clip}
+                    pinOrdering={
+                      pinOrdering
+                        ? {
+                            ...pinOrdering,
+                            canMoveUp: row.clipIndex !== 0,
+                            canMoveDown: row.clipIndex !== clips.length - 1 || pinOrdering.hasMore,
+                          }
+                        : undefined
+                    }
                     onCopy={onCopy}
                     onSelect={onSelect}
                     onDoubleClick={onDoubleClick}

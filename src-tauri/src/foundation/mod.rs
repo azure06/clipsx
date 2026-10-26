@@ -364,6 +364,72 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
     #[tokio::test]
+    async fn pin_order_migration_preserves_existing_pins_and_all_writer_paths() {
+        let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        let mut prefix = migrations::canonical();
+        prefix.migrations =
+            std::borrow::Cow::Owned(prefix.iter().filter(|m| m.version < 32).cloned().collect());
+        prefix.run(&mut db).await.unwrap();
+        for (id, pinned) in [("first", 1), ("second", 1), ("ordinary", 0)] {
+            sqlx::query("INSERT INTO clip_items(id,captured_at,updated_at,lifecycle_state,is_pinned) VALUES(?,1,1,'ready',?)").bind(id).bind(pinned).execute(&mut db).await.unwrap();
+        }
+        migrations::canonical().run(&mut db).await.unwrap();
+        let pins: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM clip_items WHERE is_pinned=1 ORDER BY pin_order,id")
+                .fetch_all(&mut db)
+                .await
+                .unwrap();
+        assert_eq!(pins, vec!["second", "first"]);
+        let no_rank: Option<i64> =
+            sqlx::query_scalar("SELECT pin_order FROM clip_items WHERE id='ordinary'")
+                .fetch_one(&mut db)
+                .await
+                .unwrap();
+        assert_eq!(no_rank, None);
+        // Decision rules and assistant edits write the same flag directly.
+        sqlx::query("UPDATE clip_items SET is_pinned=1 WHERE id='ordinary'")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        let top: String = sqlx::query_scalar(
+            "SELECT id FROM clip_items WHERE is_pinned=1 ORDER BY pin_order LIMIT 1",
+        )
+        .fetch_one(&mut db)
+        .await
+        .unwrap();
+        assert_eq!(top, "ordinary");
+        sqlx::query("INSERT INTO clip_items(id,captured_at,updated_at,lifecycle_state,is_pinned) VALUES('inserted',1,1,'ready',1)").execute(&mut db).await.unwrap();
+        let top: String = sqlx::query_scalar(
+            "SELECT id FROM clip_items WHERE is_pinned=1 ORDER BY pin_order LIMIT 1",
+        )
+        .fetch_one(&mut db)
+        .await
+        .unwrap();
+        assert_eq!(top, "inserted");
+        sqlx::query("UPDATE clip_items SET is_pinned=0 WHERE id='first'")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        let rank: Option<i64> =
+            sqlx::query_scalar("SELECT pin_order FROM clip_items WHERE id='first'")
+                .fetch_one(&mut db)
+                .await
+                .unwrap();
+        assert_eq!(rank, None);
+        sqlx::query("UPDATE clip_items SET is_pinned=1 WHERE id='first'")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        let top: String = sqlx::query_scalar(
+            "SELECT id FROM clip_items WHERE is_pinned=1 ORDER BY pin_order LIMIT 1",
+        )
+        .fetch_one(&mut db)
+        .await
+        .unwrap();
+        assert_eq!(top, "first");
+    }
+
+    #[tokio::test]
     async fn decision_review_migration_only_converts_failed_privacy_facets() {
         let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         let mut prefix = migrations::canonical();

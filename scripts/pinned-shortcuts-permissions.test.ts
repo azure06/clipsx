@@ -16,3 +16,9 @@ test('the main webview receives the pinned shortcut permission set', () => {
   assert.deepEqual(capability.webviews, ['main'])
   assert.ok(capability.permissions.includes('main-app-commands'))
 })
+
+test('moving pins has complete command and main webview permission wiring', () => {
+  assert.match(read('src/ipc/mod.rs'), /generate_handler![\s\S]*\bmove_pinned_clip,/)
+  assert.match(read('build.rs'), /"move_pinned_clip"/)
+  assert.match(read('permissions/main-app-commands.toml'), /"allow-move-pinned-clip"/)
+})

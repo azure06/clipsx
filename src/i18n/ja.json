@@ -177,6 +177,12 @@
     }
   },
   "clipboard": {
+    "pinOrderHint": "矢印でピン留めの順序を変更できます。先頭の3件が履歴の上に表示されます。",
+    "movePinUp": "「{{title}}」を上に移動",
+    "movePinDown": "「{{title}}」を下に移動",
+    "moveUp": "上に移動",
+    "moveDown": "下に移動",
+    "pinOrderError": "ピン留めの順序を変更できませんでした",
     "expandPinned": "ピン留めを展開",
     "collapsePinned": "ピン留めを折りたたむ",
     "viewAllPinned": "すべて見る",

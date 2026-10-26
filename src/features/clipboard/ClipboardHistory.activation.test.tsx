@@ -215,6 +215,8 @@ describe('ClipboardHistory activation modes', () => {
     render(<ClipboardHistory />)
     await screen.findByText('hello world')
     expect(screen.queryByRole('button', { name: 'Collapse pinned clips' })).not.toBeInTheDocument()
+    if (scope.activeTab !== 'pinned')
+      expect(screen.queryByRole('button', { name: /^Move .* (up|down)$/ })).not.toBeInTheDocument()
     expect(screen.queryByText('Pinned 0')).not.toBeInTheDocument()
     expect(screen.getByText('Pinned 1')).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Enter' })
@@ -233,5 +235,21 @@ describe('ClipboardHistory activation modes', () => {
     expect(performPrimaryActionMock).toHaveBeenLastCalledWith('Pinned 1', 'pin-1')
     fireEvent.keyDown(window, { key: '4', ctrlKey: true })
     expect(performPrimaryActionMock).toHaveBeenLastCalledWith('hello world', 'clip-1')
+  })
+  it('offers ordering only in the unfiltered Pinned collection', async () => {
+    const pins = pinnedClips(),
+      move = vi.fn().mockResolvedValue(undefined)
+    useClipboardStore.setState({
+      activeTab: 'pinned',
+      clips: pins,
+      pinnedPreview: pins,
+      movePinnedClip: move,
+      pinOrderSaving: false,
+    })
+    render(<ClipboardHistory />)
+    const down = await screen.findByRole('button', { name: 'Move Pinned 0 down' })
+    fireEvent.click(down)
+    expect(move).toHaveBeenCalledWith('pin-0', 'down')
+    expect(performPrimaryActionMock).not.toHaveBeenCalled()
   })
 })

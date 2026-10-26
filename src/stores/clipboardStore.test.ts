@@ -863,3 +863,85 @@ describe('pinned shortcuts cache', () => {
     expect(useClipboardStore.getState().pinnedPreview).toEqual([])
   })
 })
+
+describe('saved pin ordering', () => {
+  const pin = (id: string) => makeClip({ id, isPinned: true })
+  beforeEach(() => {
+    useClipboardStore.setState(useClipboardStore.getInitialState(), true)
+    useClipboardStore.getState().resetPagination()
+    useClipboardStore.setState({
+      activeTab: 'pinned',
+      clips: [pin('a'), pin('b'), pin('c')],
+      hasMore: false,
+      resultsStale: false,
+    })
+    mockInvoke.mockReset()
+  })
+  it('commits the native adjacent move and refreshes the compact section', async () => {
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(command === 'move_pinned_clip' ? 'a' : [pin('b'), pin('a'), pin('c')])
+    )
+    await useClipboardStore.getState().movePinnedClip('b', 'up')
+    expect(useClipboardStore.getState().clips.map(c => c.id)).toEqual(['b', 'a', 'c'])
+    expect(useClipboardStore.getState().pinnedPreview.map(c => c.id)).toEqual(['b', 'a', 'c'])
+    expect(mockInvoke).toHaveBeenCalledWith('move_pinned_clip', { clipId: 'b', direction: 'up' })
+    expect(useClipboardStore.getState().pinOrderSaving).toBe(false)
+  })
+  it('leaves order unchanged on failure and permits retry', async () => {
+    mockInvoke.mockRejectedValueOnce(new Error('write failed'))
+    await expect(useClipboardStore.getState().movePinnedClip('b', 'up')).rejects.toThrow(
+      'write failed'
+    )
+    expect(useClipboardStore.getState().clips.map(c => c.id)).toEqual(['a', 'b', 'c'])
+    expect(useClipboardStore.getState().pinOrderSaving).toBe(false)
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(command === 'move_pinned_clip' ? 'a' : [])
+    )
+    await useClipboardStore.getState().movePinnedClip('b', 'up')
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('b')
+  })
+  it('serializes rapid repeated moves', async () => {
+    let finish!: (value: string) => void
+    mockInvoke
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>(resolve => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValue([])
+    const first = useClipboardStore.getState().movePinnedClip('b', 'up')
+    await useClipboardStore.getState().movePinnedClip('b', 'up')
+    expect(mockInvoke).toHaveBeenCalledTimes(1)
+    finish('a')
+    await first
+    expect(useClipboardStore.getState().clips[0]?.id).toBe('b')
+  })
+  it('loads one older page before moving across the visible boundary', async () => {
+    useClipboardStore.setState({ hasMore: true })
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === 'list_clips'
+          ? { items: [pin('d')], nextCursor: null }
+          : command === 'move_pinned_clip'
+            ? 'd'
+            : []
+      )
+    )
+    await useClipboardStore.getState().movePinnedClip('c', 'down')
+    expect(useClipboardStore.getState().clips.map(c => c.id)).toEqual(['a', 'b', 'd', 'c'])
+    expect(mockInvoke.mock.calls.filter(([command]) => command === 'list_clips')).toHaveLength(1)
+  })
+  it.each([{ mode: 'search' as const }, { tagFilter: 'work' }, { activeTab: 'all' as const }])(
+    'does not reorder a filtered view: %j',
+    async scope => {
+      useClipboardStore.setState(scope)
+      await useClipboardStore.getState().movePinnedClip('b', 'up')
+      expect(mockInvoke).not.toHaveBeenCalled()
+    }
+  )
+  it('keeps duplicate captures in place in the ordered Pinned collection', () => {
+    useClipboardStore.getState().addNewClip({ ...pin('c'), capturedAt: 999 })
+    expect(useClipboardStore.getState().clips.map(c => c.id)).toEqual(['a', 'b', 'c'])
+  })
+})

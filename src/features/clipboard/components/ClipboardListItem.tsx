@@ -1,12 +1,23 @@
 import i18n from '../../../i18n/index'
 import { memo } from 'react'
 import type { ClipSummary } from '../../../shared/types/v2'
-import { Command, CornerDownLeft, MessageSquare, Pin, ScanText, Sparkles, Star } from 'lucide-react'
+import {
+  ArrowUp,
+  ArrowDown,
+  Command,
+  CornerDownLeft,
+  MessageSquare,
+  Pin,
+  ScanText,
+  Sparkles,
+  Star,
+} from 'lucide-react'
 import { getPlatform } from '../../../shared/keyboard/shortcuts'
 import { useTranslation } from 'react-i18next'
 import { PreviewLeadingVisual } from './PreviewLeadingVisual'
 import { DecisionReviewNotice } from '../DecisionReviewNotice'
 import { TagBadge } from './TagBadge'
+import { Button } from '../../../shared/components/ui'
 
 type ClipboardListItemProps = {
   readonly clip: ClipSummary
@@ -15,6 +26,12 @@ type ClipboardListItemProps = {
   readonly onDoubleClick?: (text: string, id: string) => void
   readonly isSelected?: boolean
   readonly index?: number
+  readonly pinOrdering?: {
+    onMove: (id: string, direction: 'up' | 'down') => void
+    saving: boolean
+    canMoveUp: boolean
+    canMoveDown: boolean
+  }
 }
 
 const ClipboardListItemComponent = ({
@@ -24,6 +41,7 @@ const ClipboardListItemComponent = ({
   onDoubleClick,
   isSelected = false,
   index,
+  pinOrdering,
 }: ClipboardListItemProps) => {
   const { t } = useTranslation()
   const platform = getPlatform()
@@ -163,6 +181,43 @@ const ClipboardListItemComponent = ({
             </div>
           )}
 
+          {pinOrdering && (
+            <div
+              data-history-controls
+              className="flex shrink-0 items-center gap-0.5"
+              onClick={event => event.stopPropagation()}
+              onDoubleClick={event => event.stopPropagation()}
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                className="px-1 py-1 aria-disabled:opacity-40 aria-disabled:cursor-default"
+                aria-disabled={pinOrdering.saving || !pinOrdering.canMoveUp}
+                aria-label={t('clipboard.movePinUp', { title: preview.title })}
+                title={t('clipboard.moveUp')}
+                onClick={() => {
+                  if (!pinOrdering.saving && pinOrdering.canMoveUp)
+                    pinOrdering.onMove(clip.id, 'up')
+                }}
+              >
+                <ArrowUp size={14} aria-hidden="true" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="px-1 py-1 aria-disabled:opacity-40 aria-disabled:cursor-default"
+                aria-disabled={pinOrdering.saving || !pinOrdering.canMoveDown}
+                aria-label={t('clipboard.movePinDown', { title: preview.title })}
+                title={t('clipboard.moveDown')}
+                onClick={() => {
+                  if (!pinOrdering.saving && pinOrdering.canMoveDown)
+                    pinOrdering.onMove(clip.id, 'down')
+                }}
+              >
+                <ArrowDown size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          )}
           {/* Shortcut / Action Hint */}
           {isSelected || (index !== undefined && index >= 0 && index < 9) ? (
             <div className="flex shrink-0 items-center justify-center h-5 min-w-5 px-1.5 rounded border border-gray-300/60 dark:border-gray-700/50 bg-slate-50/60 dark:bg-slate-800/50 text-[10px] font-medium text-gray-600 dark:text-gray-400 shadow-sm transition-opacity">
