@@ -1,9 +1,9 @@
 import { Trans, useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ChevronLeft, ChevronRight, ScanText, Sparkles, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ScanText, Sparkles, Eye, Layers } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { DecisionReviewNotice } from './DecisionReviewNotice'
@@ -13,17 +13,15 @@ import { NoteField } from './components/NoteField'
 import { V2ViewPanel, type ViewTabControls } from './V2ViewPanel'
 import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../../shared/components/ui'
+import { Tabs } from '../../shared/components/ui'
 import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import { useClipExtensionJobs } from './useClipExtensionJobs'
-import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
+import { PreviewViewMenu } from './PreviewViewMenu'
+import { PreviewResultsPicker } from './PreviewResultsPicker'
+import { QuickCopyMenu } from './QuickCopyMenu'
+import { ContextActionsMenu } from './ContextActionsMenu'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -120,8 +118,16 @@ export const ClipPreview = memo(function ClipPreview({
     }
   })
   const [enabledPackages, setEnabledPackages] = useState<Set<string>>(() => new Set())
+  const [workspace, setWorkspace] = useState('preview')
+  const interaction = useRef(0)
+  const currentClip = useRef(clip.id)
+  useLayoutEffect(() => {
+    currentClip.current = clip.id
+  }, [clip.id])
+  const runTicket = useRef(0)
+  const runIntent = useRef<{ clipId: string; revision: number; ticket: number } | null>(null)
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
-  const { jobs, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
+  const { jobs, error: jobsError, refresh: refreshJobs } = useClipExtensionJobs(clip.id)
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
   const [toolbarScroll, setToolbarScroll] = useState({
     canScrollLeft: false,
@@ -161,7 +167,35 @@ export const ClipPreview = memo(function ClipPreview({
     (controls: TransformControls | null) => setTransformControls(controls),
     []
   )
-  const selectedResult = jobs.find(job => job.jobId === selectedResultId) ?? null
+  const selectedResult = selectedResultId
+    ? (jobs.find(job => job.jobId === selectedResultId) ?? null)
+    : (jobs[0] ?? null)
+  const beginRun = () => {
+    const ticket = ++runTicket.current
+    runIntent.current = { clipId: clip.id, revision: interaction.current, ticket }
+    return ticket
+  }
+  const manualQueued = (jobId: string, ticket?: number) => {
+    if (clip.id !== currentClip.current) return
+    const intent = runIntent.current
+    if (intent && intent.clipId !== currentClip.current) return
+    if (
+      intent &&
+      intent.ticket === ticket &&
+      intent.clipId === currentClip.current &&
+      intent.revision === interaction.current
+    ) {
+      setSelectedResultId(jobId)
+      setWorkspace('results')
+      setToolsOpen(false)
+    }
+    void refreshJobs()
+  }
+  const navigate = (next: string) => {
+    interaction.current += 1
+    if (next === 'results' && !selectedResultId) setSelectedResultId(jobs[0]?.jobId ?? null)
+    setWorkspace(next)
+  }
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('clipsx-host-overlay', { detail: { open: toolsOpen } }))
     return () => {
@@ -218,6 +252,9 @@ export const ClipPreview = memo(function ClipPreview({
     })
   }, [])
   useEffect(() => {
+    interaction.current += 1
+    runIntent.current = null
+    setWorkspace('preview')
     setSelectedResultId(null)
     setToolsOpen(false)
   }, [clip.id])
@@ -248,7 +285,6 @@ export const ClipPreview = memo(function ClipPreview({
     [presentation]
   )
   const ocr = currentPresentation?.model.kind === 'image' ? currentPresentation.model.ocr : null
-  const visibleTabs = tabControls && tabControls.views.length + jobs.length > 1 ? tabControls : null
 
   return (
     <div
@@ -373,6 +409,19 @@ export const ClipPreview = memo(function ClipPreview({
                 >
                   <Sparkles className="h-4 w-4" />
                 </button>
+                <ContextActionsMenu controls={transformControls} />
+                <QuickCopyMenu
+                  clipId={clip.id}
+                  transformers={transformControls?.items ?? []}
+                  views={tabControls?.views}
+                  hasPlainText={currentPresentation?.hasPlainText}
+                  jobs={jobs}
+                  refreshJobs={refreshJobs}
+                  onViewResult={jobId => {
+                    setSelectedResultId(jobId)
+                    navigate('results')
+                  }}
+                />
                 <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
                 {currentPresentation && (
                   <div className="shrink-0">
@@ -396,182 +445,122 @@ export const ClipPreview = memo(function ClipPreview({
             )}
           </div>
         </div>
-
-        {/* Row 2: view tabs (only when multiple views exist) */}
-        {visibleTabs && (
-          <div className="flex gap-1 overflow-x-auto px-3 pb-1.5 no-scrollbar">
-            {visibleTabs.views.map(item => {
-              const isOcr = item.id === '__ocr__'
-              const ocrState =
-                isOcr && currentPresentation?.model.kind === 'image'
-                  ? currentPresentation.model.ocr.state
-                  : null
-              const dot =
-                ocrState === 'pending' || ocrState === 'running'
-                  ? 'bg-sky-400 animate-pulse'
-                  : ocrState === 'ready'
-                    ? 'bg-emerald-400'
-                    : ocrState === 'failed'
-                      ? 'bg-red-400'
-                      : null
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setSelectedResultId(null)
-                    setToolsOpen(false)
-                    visibleTabs.onTabChange(item.id)
-                  }}
-                  className={`flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${
-                    !selectedResultId && visibleTabs.activeId === item.id
-                      ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
-                      : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'
-                  }`}
-                >
-                  {dot && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />}
-                  <ViewTabIcon
-                    light={item.iconSvg}
-                    dark={item.iconSvgDark}
-                    scale={item.iconScale}
-                  />
-                  {item.label}
-                </button>
-              )
-            })}
-            {jobs.map(job => (
-              <div
-                key={job.jobId}
-                className={`flex shrink-0 items-center rounded-md text-xs ${selectedResultId === job.jobId ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300' : 'text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10'}`}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedResultId(job.jobId)
-                    setToolsOpen(false)
-                  }}
-                  className="flex max-w-56 items-center gap-1.5 px-2.5 py-1"
-                  title={`${job.displayLabel} · ${jobStatusLabel(job)}`}
-                >
-                  <ExtensionJobStatusIcon job={job} />
-                  <span className="truncate">
-                    {job.displayLabel}
-                    {job.status !== 'completed' ? ` · ${jobStatusLabel(job)}` : ''}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={i18n.t(
-                    ['completed', 'failed', 'cancelled'].includes(job.status)
-                      ? 'desktopUi.deleteNamedResult'
-                      : 'desktopUi.cancelNamedResult',
-                    { label: job.displayLabel }
-                  )}
-                  title={
-                    ['completed', 'failed', 'cancelled'].includes(job.status)
-                      ? i18n.t('desktopUi.deleteResult')
-                      : i18n.t('desktopUi.cancelJob')
-                  }
-                  className="rounded-r-md p-1 hover:bg-red-500/10 hover:text-red-600"
-                  onClick={() => {
-                    const terminal = ['completed', 'failed', 'cancelled'].includes(job.status)
-                    if (
-                      terminal &&
-                      !window.confirm(
-                        i18n.t('desktopUi.deleteNamedResultConfirm', { label: job.displayLabel })
-                      )
-                    )
-                      return
-                    void invoke(terminal ? 'delete_extension_result' : 'cancel_extension_job', {
-                      jobId: job.jobId,
-                    })
-                      .then(() => {
-                        if (selectedResultId === job.jobId && terminal) setSelectedResultId(null)
-                        void refreshJobs()
-                      })
-                      .catch(error =>
-                        window.dispatchEvent(
-                          new CustomEvent('clipsx-extension-action-notification', {
-                            detail: { level: 'error', message: String(error) },
-                          })
-                        )
-                      )
-                  }}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-            {visibleTabs.preferenceScopes.length > 0 &&
-              !selectedResultId &&
-              !visibleTabs.activeId.startsWith('__') && (
-                <DropdownMenu
-                  onOpenChange={open =>
-                    window.dispatchEvent(
-                      new CustomEvent('clipsx-host-overlay', { detail: { open } })
-                    )
-                  }
-                >
-                  <DropdownMenuTrigger asChild>
-                    <button className="ml-auto shrink-0 rounded-md px-2 py-1 text-[10px] text-gray-500 hover:bg-slate-100 dark:hover:bg-white/10">
-                      <Trans i18nKey="desktopUi.useByDefault" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={4} className="min-w-44 text-xs">
-                    {visibleTabs.preferenceScopes.map(scope => (
-                      <DropdownMenuItem
-                        key={scope}
-                        className="px-2 py-1.5 text-xs"
-                        onSelect={() => void visibleTabs.onPreferActive(scope)}
-                      >
-                        <Trans i18nKey="desktopUi.alwaysForThis" /> {scope}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-          </div>
-        )}
       </div>
 
       <div className="shrink-0 border-b border-slate-200/60 bg-slate-50/40 px-3 py-2 dark:border-white/5 dark:bg-white/[0.02]">
         <TagChips key={clip.id} clipId={clip.id} tags={clip.tags ?? []} />
       </div>
       <DecisionReviewNotice reviews={clip.decisionReviews} />
-      <div className="flex-1 overflow-hidden p-0 relative">
-        <div className={`h-full ${selectedResultId ? 'hidden' : ''}`}>
-          <V2ViewPanel
-            trackHistorySearch={trackHistorySearch}
-            key={clip.id}
-            clipId={clip.id}
-            visible={!selectedResultId}
-            onPresentation={handlePresentation}
-            onTabControls={handleTabControls}
-            onTransformControls={handleTransformControls}
-          />
-        </div>
-        {selectedResult && (
-          <ExtensionResultTab
-            key={selectedResult.jobId}
-            job={selectedResult}
-            presentation={currentPresentation}
-            canRegenerate={Boolean(
-              transformControls?.items.some(item => item.id === selectedResult.transformerId)
-            )}
-            onChanged={() => void refreshJobs()}
-            onQueued={jobId => {
-              setSelectedResultId(jobId)
-              void refreshJobs()
-            }}
-          />
-        )}
-        {selectedResultId && !selectedResult && (
-          <div className="flex h-full items-center justify-center text-xs text-slate-500">
-            <Trans i18nKey="desktopUi.loadingResult" />
-          </div>
-        )}
-      </div>
+      <Tabs
+        appearance="workspace"
+        activeTab={workspace}
+        onTabChange={navigate}
+        keepMounted
+        className="min-h-0 flex-1"
+        listClassName="mx-3 mt-2 self-start"
+        panelsClassName="relative min-h-0 flex-1"
+        panelClassName="clip-workspace-panel h-full min-h-0"
+        tabs={[
+          {
+            id: 'preview',
+            label: t('previewWorkspace.preview'),
+            icon: <Eye size={13} />,
+            content: (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center justify-end px-3 py-1">
+                  {tabControls && (
+                    <PreviewViewMenu
+                      controls={tabControls}
+                      onChoose={id => {
+                        navigate('preview')
+                        tabControls.onTabChange(id)
+                      }}
+                    />
+                  )}
+                </div>
+                <div className="relative min-h-0 flex-1">
+                  <V2ViewPanel
+                    trackHistorySearch={trackHistorySearch}
+                    key={clip.id}
+                    clipId={clip.id}
+                    visible={workspace === 'preview'}
+                    onPresentation={handlePresentation}
+                    onTabControls={handleTabControls}
+                    onTransformControls={handleTransformControls}
+                  />
+                </div>
+              </div>
+            ),
+          },
+          {
+            id: 'results',
+            label: t('previewWorkspace.results', { count: jobs.length }),
+            icon: (
+              <Layers
+                size={13}
+                className={
+                  jobs.some(job => ['pending', 'running', 'waiting_provider'].includes(job.status))
+                    ? 'motion-safe:animate-pulse'
+                    : ''
+                }
+              />
+            ),
+            content: (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center gap-2 border-b border-slate-200/60 px-3 py-2 dark:border-white/5">
+                  <PreviewResultsPicker
+                    jobs={jobs}
+                    selectedId={selectedResultId}
+                    onSelect={id => {
+                      interaction.current += 1
+                      setSelectedResultId(id)
+                    }}
+                    onChanged={() => void refreshJobs()}
+                  />
+                </div>
+                {jobsError ? (
+                  <div role="status" className="p-4 text-xs text-red-500">
+                    {t('previewWorkspace.resultsError')}{' '}
+                    <button type="button" onClick={() => void refreshJobs()}>
+                      {t('common.retry')}
+                    </button>
+                  </div>
+                ) : selectedResult ? (
+                  <div className="min-h-0 flex-1">
+                    <ExtensionResultTab
+                      key={selectedResult.jobId}
+                      job={selectedResult}
+                      presentation={currentPresentation}
+                      canRegenerate={Boolean(
+                        transformControls?.items.some(
+                          item => item.id === selectedResult.transformerId
+                        )
+                      )}
+                      onRunStarted={beginRun}
+                      onChanged={() => void refreshJobs()}
+                      onQueued={manualQueued}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-slate-500">
+                    {selectedResultId
+                      ? t('desktopUi.loadingResult')
+                      : t('previewWorkspace.noResults')}
+                  </div>
+                )}
+              </div>
+            ),
+          },
+        ]}
+      />
 
-      <Dialog.Root open={toolsOpen} onOpenChange={setToolsOpen}>
+      <Dialog.Root
+        open={toolsOpen}
+        onOpenChange={open => {
+          if (!open) interaction.current += 1
+          setToolsOpen(open)
+        }}
+      >
         <Dialog.Portal container={previewContainer}>
           <Dialog.Overlay className="absolute inset-0 z-40 bg-slate-950/30 backdrop-blur-[2px] dark:bg-black/55" />
           <Dialog.Content
@@ -598,12 +587,12 @@ export const ClipPreview = memo(function ClipPreview({
                 void transformControls?.runAction(id)
                 setToolsOpen(false)
               }}
-              onClose={() => setToolsOpen(false)}
-              onQueued={jobId => {
-                setSelectedResultId(jobId)
+              onClose={() => {
+                interaction.current += 1
                 setToolsOpen(false)
-                void refreshJobs()
               }}
+              onRunStarted={beginRun}
+              onQueued={manualQueued}
             />
           </Dialog.Content>
         </Dialog.Portal>

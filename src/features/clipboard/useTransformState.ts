@@ -31,6 +31,7 @@ export type Transformer = {
     displayName: string
     parameters: Record<string, unknown>
     defaultView?: 'result_only' | 'compare'
+    copyAs?: { intent: string; label: string; mimeType: string; outputId: string }
   }>
   defaultView: 'result_only' | 'compare'
   resultControls: Array<'copy' | 'paste' | 'save_as_clip' | 'regenerate'>

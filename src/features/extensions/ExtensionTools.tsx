@@ -43,6 +43,7 @@ export function ExtensionTools({
   runAction,
   onClose,
   onQueued,
+  onRunStarted,
   pinnedIds = [],
   onTogglePin,
   initialOperationId,
@@ -53,7 +54,8 @@ export function ExtensionTools({
   actions: ContextAction[]
   runAction: (id: string) => void
   onClose: () => void
-  onQueued: (id: string) => void
+  onQueued: (id: string, ticket?: number) => void
+  onRunStarted?: () => number
   pinnedIds?: string[]
   onTogglePin?: (operation: PinnedOperation) => void
   initialOperationId?: string | null
@@ -287,6 +289,7 @@ export function ExtensionTools({
     if (!transformer || !validate()) return
     setBusy(true)
     setError(null)
+    const ticket = onRunStarted?.()
     try {
       if (transformer.consentRequired) {
         if (
@@ -319,7 +322,8 @@ export function ExtensionTools({
           invocationToken: invocation?.token ?? null,
         },
       })
-      onQueued(result.jobId)
+      if (ticket === undefined) onQueued(result.jobId)
+      else onQueued(result.jobId, ticket)
     } catch (reason) {
       setError(failureMessage(reason))
     } finally {

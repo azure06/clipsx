@@ -187,16 +187,34 @@ Self-writes use a consumable native change token before readback; the snapshot
 fallback requires both matching token and fingerprint.
 
 Transforms use native MIME-aware host previews. Result bytes are durable artifacts
-with job provenance, and result tabs reload from SQLite. Raster results use an
-opaque, no-store artifact URL; results are not canonical data until promoted.
-The clip tab strip contains native views and extension jobs. Tools opens inside
-the preview card and is the single entry point for transformer built-in and
-saved setups; a setup stores parameters locally and produces a tab only when
-run. Pins are device-local operation preferences: uninstall removes them, while
-disablement hides them until the package is enabled again. A result adds one
-compact toolbar row for output selection, view selection, and explicit controls.
-The host owns typed previews, Original/Result comparison, retry, cancellation,
-and deletion.
+with job provenance and reload from SQLite. Raster results use an opaque, no-store
+artifact URL; results are not canonical data until promoted.
+
+Preview and Results are stable, connected tabs. View selects a display of a
+captured source; inspection entries distinguish HTML/RTF sources and expose all
+stored formats. Existing resolver preferences determine the default; friendly
+preference actions map to the most specific applicable internal scope. The app
+never deduplicates different stored formats by appearance or label, and ordinary
+Copy continues to use its original clipboard policy.
+
+Results uses a newest-run-first picker, followed by separate named-output and
+layout choices. Result-only is the initial layout; comparison is resizable when
+wide and stacked when narrow. Copy/paste select one output; promotion saves the
+run's outputs together. Manual runs select their pending result only if no clip,
+tab, result or dialog navigation superseded their intent. Background completion
+never steals selection or keyboard focus. Failed/cancelled results and deletion
+remain explicit. Tab/panel motion respects reduced-motion preferences; the native
+custom preview is hidden whenever Results is active.
+
+Tools groups operations by package and edits built-in/saved setups. Contextual
+actions are available without opening Tools. API 3.4 fixed local setups may opt
+into Copy as with explicit intent, MIME and named-output metadata. The host uses
+offline availability and the bound source, never a label heuristic. Conversion
+completion can copy only while that exact clip intent remains current; failures,
+clip changes, unmounts and timeout prevent delayed clipboard writes. The retained
+result is reachable explicitly and never creates another workspace tab. Pins
+remain device-local operation preferences: uninstall removes them; disablement
+hides them until enabled again.
 At clipboard write time, typed source text without a portable native format may
 gain an identical plain-text companion. Stored representations remain
 unchanged.

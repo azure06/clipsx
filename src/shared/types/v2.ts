@@ -4,6 +4,7 @@ export type ClipboardOutputSource =
   | { kind: 'original'; clipId: string }
   | { kind: 'plain_text'; clipId: string }
   | { kind: 'derived'; jobId: string }
+  | { kind: 'derived_output'; jobId: string; ordinal: number }
   | { kind: 'literal_text'; text: string; sourceClipId?: string }
 
 export type ClipboardOutputRequest = {

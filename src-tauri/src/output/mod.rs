@@ -32,6 +32,10 @@ pub enum ClipboardOutputSource {
     Derived {
         job_id: String,
     },
+    DerivedOutput {
+        job_id: String,
+        ordinal: u32,
+    },
     LiteralText {
         text: String,
         source_clip_id: Option<String>,
@@ -60,6 +64,15 @@ async fn resolve_source(
         ),
         ClipboardOutputSource::Derived { job_id } => (
             crate::extensions::jobs::output(history, job_id).await?,
+            sqlx::query_scalar(
+                "SELECT source_clip_id FROM extension_jobs WHERE id=? AND status='completed'",
+            )
+            .bind(job_id)
+            .fetch_optional(&history.pool)
+            .await?,
+        ),
+        ClipboardOutputSource::DerivedOutput { job_id, ordinal } => (
+            crate::extensions::jobs::output_at(history, job_id, *ordinal).await?,
             sqlx::query_scalar(
                 "SELECT source_clip_id FROM extension_jobs WHERE id=? AND status='completed'",
             )

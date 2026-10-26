@@ -2,10 +2,14 @@ import { invoke } from '@tauri-apps/api/core'
 
 import type { ClipboardOutputRequest, ClipboardOutputSource } from './types/v2'
 
+let outputRevision = 0
+export const clipboardOutputRevision = () => outputRevision
+
 export async function executeClipboardOutput(
   disposition: ClipboardOutputRequest['disposition'],
   source: ClipboardOutputSource
 ): Promise<void> {
+  outputRevision += 1
   await invoke('execute_clipboard_output', {
     request: { disposition, source } satisfies ClipboardOutputRequest,
   })

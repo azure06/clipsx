@@ -32,4 +32,28 @@ describe('persisted extension status refresh', () => {
     await vi.advanceTimersByTimeAsync(4000)
     expect(invoke).toHaveBeenCalledTimes(3)
   })
+  it('sorts by run creation rather than completion and rejects an old clip response', async () => {
+    let finishOld!: (value: unknown[]) => void
+    invoke
+      .mockImplementationOnce(
+        () =>
+          new Promise<unknown[]>(resolve => {
+            finishOld = resolve
+          })
+      )
+      .mockResolvedValueOnce([
+        { jobId: 'new-run', createdAt: 20, completedAt: 21 },
+        { jobId: 'old-run', createdAt: 10, completedAt: 30 },
+      ])
+    const mounted = renderHook(({ id }) => useClipExtensionJobs(id), {
+      initialProps: { id: 'old-clip' },
+    })
+    const oldRefresh = mounted.result.current.refresh
+    mounted.rerender({ id: 'new-clip' })
+    await act(async () => {})
+    expect(mounted.result.current.jobs.map(job => job.jobId)).toEqual(['new-run', 'old-run'])
+    await act(() => Promise.resolve(finishOld([{ jobId: 'stale', createdAt: 999 }])))
+    await act(() => oldRefresh())
+    expect(mounted.result.current.jobs.map(job => job.jobId)).toEqual(['new-run', 'old-run'])
+  })
 })

@@ -177,7 +177,7 @@ fn inspect(path: &Path) -> Result<()> {
             "packageId": manifest.package_id,
             "version": manifest.version,
             "apiVersion": manifest.api_version,
-            "compatible": manifest.api_version == "^3.2",
+            "compatible": api_version::supports(&manifest.api_version),
             "archiveSizeBytes": archive.len(),
             "sha256": hex_digest(&archive),
             "contributions": manifest.contributions.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
