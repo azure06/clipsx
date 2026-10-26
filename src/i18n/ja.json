@@ -177,6 +177,12 @@
     }
   },
   "clipboard": {
+    "expandPinned": "ピン留めを展開",
+    "collapsePinned": "ピン留めを折りたたむ",
+    "viewAllPinned": "すべて見る",
+    "pinnedLoadError": "ピン留めを更新できませんでした。",
+    "loadingPinned": "ピン留めを読み込み中…",
+    "recentClips": "最近のクリップ",
     "all": "すべて",
     "favorites": "お気に入り",
     "pinned": "ピン留め",

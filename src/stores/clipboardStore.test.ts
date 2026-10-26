@@ -799,3 +799,67 @@ describe('live tag catalogue', () => {
     expect(useClipboardStore.getState().availableTags).toContainEqual(automatic)
   })
 })
+
+describe('pinned shortcuts cache', () => {
+  beforeEach(() => {
+    useClipboardStore.setState(useClipboardStore.getInitialState(), true)
+    mockInvoke.mockReset()
+  })
+
+  it('loads pins independently of the active search or history page', async () => {
+    const pins = [makeClip({ id: 'older-pin', isPinned: true })]
+    useClipboardStore.setState({ activeTab: 'favorites', mode: 'search', clips: [makeClip()] })
+    mockInvoke.mockResolvedValueOnce(pins)
+    await useClipboardStore.getState().refreshPinnedPreview()
+    expect(mockInvoke).toHaveBeenCalledWith('list_pinned_shortcuts')
+    expect(useClipboardStore.getState().pinnedPreview).toEqual(pins)
+    expect(useClipboardStore.getState().clips.map(clip => clip.id)).toEqual(['clip-1'])
+  })
+
+  it('keeps cached pins on failure and can retry', async () => {
+    const pins = [makeClip({ isPinned: true })]
+    useClipboardStore.setState({ pinnedPreview: pins })
+    mockInvoke.mockRejectedValueOnce(new Error('offline'))
+    await useClipboardStore.getState().refreshPinnedPreview()
+    expect(useClipboardStore.getState().pinnedPreview).toEqual(pins)
+    expect(useClipboardStore.getState().pinnedPreviewError).toContain('offline')
+    mockInvoke.mockResolvedValueOnce([])
+    await useClipboardStore.getState().refreshPinnedPreview()
+    expect(useClipboardStore.getState().pinnedPreviewError).toBeNull()
+    expect(useClipboardStore.getState().pinnedPreview).toEqual([])
+  })
+
+  it('ignores an older read that completes after a newer pin refresh', async () => {
+    let finishOld!: (value: ClipSummary[]) => void
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise<ClipSummary[]>(resolve => {
+          finishOld = resolve
+        })
+    )
+    const old = useClipboardStore.getState().refreshPinnedPreview()
+    const newPin = makeClip({ id: 'new', isPinned: true })
+    mockInvoke.mockResolvedValueOnce([newPin])
+    await useClipboardStore.getState().refreshPinnedPreview()
+    finishOld([])
+    await old
+    expect(useClipboardStore.getState().pinnedPreview).toEqual([newPin])
+  })
+
+  it('allows an off-page pinned shortcut to be unpinned', async () => {
+    const pin = makeClip({ id: 'off-page', isPinned: true })
+    useClipboardStore.setState({ clips: [], pinnedPreview: [pin] })
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === 'get_clip_detail'
+          ? { clip: { ...pin, isPinned: false } }
+          : command === 'list_pinned_shortcuts'
+            ? []
+            : undefined
+      )
+    )
+    await useClipboardStore.getState().togglePin(pin.id)
+    expect(mockInvoke).toHaveBeenCalledWith('set_clip_pinned', { clipId: pin.id, value: false })
+    expect(useClipboardStore.getState().pinnedPreview).toEqual([])
+  })
+})

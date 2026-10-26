@@ -1,5 +1,5 @@
 import { matchCommandShortcut } from '../../shared/keyboard/commands'
-import { memo, useEffect, useRef, useState, useCallback } from 'react'
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useClipboardStore, useSettingsStore } from '../../stores'
 import { ClipboardListView } from './views'
@@ -10,6 +10,8 @@ import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { copyClipboardOutput } from '../../shared/clipboardOutput'
 import { PrivacyCheckIndicator } from './PrivacyCheckIndicator'
+import { PinnedSectionHeader } from './components/PinnedSectionHeader'
+import { historyDisplayClips, showsPinnedSection } from './pinnedHistory'
 
 // Re-export for backwards compatibility
 export { ClipboardListItem } from './components'
@@ -40,7 +42,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
 }: ClipboardHistoryProps) {
   const { t } = useTranslation()
   const {
-    clips,
+    clips: historyClips,
     loading,
     error,
     mode,
@@ -69,6 +71,12 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     }))
   )
 
+  const pinnedPreview = useClipboardStore(state => state.pinnedPreview)
+  const pinnedPreviewLoading = useClipboardStore(state => state.pinnedPreviewLoading)
+  const pinnedPreviewError = useClipboardStore(state => state.pinnedPreviewError)
+  const refreshPinnedPreview = useClipboardStore(state => state.refreshPinnedPreview)
+  const tagFilter = useClipboardStore(state => state.tagFilter)
+  const [pinsCollapsed, setPinsCollapsed] = useState(false)
   const relatedClipIds = useClipboardStore(state => state.relatedClipIds)
   const privacyChecksPending = useClipboardStore(state => state.privacyChecksPending)
   const decisionPhase = useClipboardStore(state => state.decisionPhase)
@@ -78,6 +86,18 @@ export const ClipboardHistory = memo(function ClipboardHistory({
   const settings = useSettingsStore(state => state.settings)
   const { toast } = useToast()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const showPins = showsPinnedSection({ mode, activeTab, tagFilter })
+  const clips = useMemo(
+    () =>
+      historyDisplayClips(
+        { clips: historyClips, pinnedPreview, mode, activeTab, tagFilter },
+        pinsCollapsed
+      ),
+    [historyClips, pinnedPreview, mode, activeTab, tagFilter, pinsCollapsed]
+  )
+  const pinnedCount = showPins && !pinsCollapsed ? Math.min(3, pinnedPreview.length) : 0
+  const hasPinnedSection =
+    showPins && (pinnedPreview.length > 0 || pinnedPreviewLoading || Boolean(pinnedPreviewError))
   const previousResultsStaleRef = useRef(resultsStale)
   // Derived index — used only for display highlighting and scroll anchoring.
   // Computing it each render is intentional: the ID is the stable identity;
@@ -135,6 +155,13 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     void loadMoreClips(50)
   }, [loadMoreClips])
 
+  useEffect(() => {
+    void refreshPinnedPreview()
+    const refresh = () => void refreshPinnedPreview()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [refreshPinnedPreview])
+
   // Local User Timing only: measure once the first nonempty page has painted.
   useEffect(() => {
     if (clips.length === 0 || performance.getEntriesByName('clipsx.first-history-paint').length > 0)
@@ -182,7 +209,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     observer.observe(trigger)
 
     return () => observer.disconnect()
-  }, [loadMoreClips, clips.length])
+  }, [loadMoreClips, historyClips.length])
 
   // Unified action handler for Click and Enter — delegates to centralized store
   const handleAction = useCallback(
@@ -289,7 +316,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
         }
       }
 
-      const boundaryClips = useClipboardStore.getState().clips
+      const boundaryClips = historyDisplayClips(useClipboardStore.getState(), pinsCollapsed)
       const boundaryIndex = boundary === 'newest' ? 0 : boundaryClips.length - 1
       if (boundaryIndex < 0) return
 
@@ -297,7 +324,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       if (boundaryClip) setSelectedId(boundaryClip.id)
       requestAnimationFrame(() => scrollSelectedIntoView(boundaryIndex))
     },
-    [scrollSelectedIntoView]
+    [scrollSelectedIntoView, pinsCollapsed]
   )
 
   // Keyboard navigation
@@ -313,6 +340,13 @@ export const ClipboardHistory = memo(function ClipboardHistory({
 
       // Skip if focus is inside any text input EXCEPT for the main search input
       const active = document.activeElement
+      if (
+        active instanceof HTMLElement &&
+        active.closest('[data-history-controls]') &&
+        !e.metaKey &&
+        !e.ctrlKey
+      )
+        return
       const isInput = active instanceof HTMLInputElement
       const platform = getPlatform()
 
@@ -528,7 +562,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
 
   // Render content area based on state
   const renderContent = () => {
-    if (loading && clips.length === 0) {
+    if (loading && clips.length === 0 && !hasPinnedSection) {
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
@@ -541,7 +575,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       )
     }
 
-    if (error && clips.length === 0) {
+    if (error && clips.length === 0 && !hasPinnedSection) {
       return (
         <div className="flex flex-1 items-center justify-center p-12">
           <div className="text-center">
@@ -569,7 +603,7 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       )
     }
 
-    if (clips.length === 0) {
+    if (clips.length === 0 && !hasPinnedSection) {
       return (
         <div className="flex flex-1 items-center justify-center p-12 relative overflow-hidden">
           <div className="text-center relative z-10 flex flex-col items-center">
@@ -595,6 +629,20 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       <>
         <ClipboardListView
           clips={clips}
+          pinnedCount={pinnedCount}
+          pinnedHeader={
+            hasPinnedSection ? (
+              <PinnedSectionHeader
+                collapsed={pinsCollapsed}
+                onToggle={() => setPinsCollapsed(value => !value)}
+                onViewAll={() => void setActiveTab('pinned')}
+                count={pinnedPreview.length}
+                loading={pinnedPreviewLoading}
+                failed={Boolean(pinnedPreviewError)}
+                onRetry={() => void refreshPinnedPreview()}
+              />
+            ) : undefined
+          }
           relatedClipIds={relatedClipIds}
           onSelect={onSelectHandler}
           onDoubleClick={onDoubleClickHandler}

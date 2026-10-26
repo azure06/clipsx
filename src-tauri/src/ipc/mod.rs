@@ -1006,6 +1006,21 @@ async fn list_clips(
     Ok(page)
 }
 #[tauri::command]
+async fn list_pinned_shortcuts(
+    state: State<'_, AppState>,
+) -> Result<Vec<history::ClipSummary>, String> {
+    let mut items = state
+        .history
+        .pinned_shortcuts()
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .extensions
+        .apply_history_extension_icons(&state.history, &mut items)
+        .await;
+    Ok(items)
+}
+#[tauri::command]
 async fn get_clip_detail(
     clip_id: String,
     state: State<'_, AppState>,
@@ -3612,6 +3627,7 @@ crate::recall::ipc::recall_snapshot_image,
             open_clip_text_in_editor,
             open_clip_image_externally,
             list_clips,
+            list_pinned_shortcuts,
             get_clip_detail,
             capture_clipboard,
             list_transformer_contributions,

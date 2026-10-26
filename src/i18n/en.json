@@ -177,6 +177,12 @@
     }
   },
   "clipboard": {
+    "expandPinned": "Expand pinned clips",
+    "collapsePinned": "Collapse pinned clips",
+    "viewAllPinned": "View all",
+    "pinnedLoadError": "Could not refresh pinned clips.",
+    "loadingPinned": "Loading pinned clips…",
+    "recentClips": "Recent clips",
     "all": "All",
     "favorites": "Favorites",
     "pinned": "Pinned",
