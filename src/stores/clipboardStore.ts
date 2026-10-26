@@ -55,7 +55,7 @@ type ClipboardState = {
   semanticPending: boolean
   privacyChecksPending: number
   decisionPhase: 'privacy' | 'organizing'
-  captureNotice: 'sizeLimit' | 'excluded' | 'notSaved' | null
+  captureNotice: 'sizeLimit' | 'excluded' | null
   relatedClipIds: string[]
   error: string | null
   hasMore: boolean
@@ -209,7 +209,7 @@ const ensureEvents = () => {
           ? 'sizeLimit'
           : reason.includes('privacy_secret_not_saved') || reason.includes('privacy_rule_not_saved')
             ? 'excluded'
-            : 'notSaved',
+            : null,
       })
     }),
     listen('pinned-order-changed', () => {
