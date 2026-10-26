@@ -689,7 +689,7 @@ export const V2ViewPanel = ({
       onTabControls?.(null)
       return
     }
-    const visible = viewSet.views.filter(item => item.placement !== 'advanced')
+    const visible = viewSet.views
     const ocrTab: ClipViewDescriptor | null =
       model?.kind === 'image' && model.ocr.state !== 'disabled' && model.ocr.state !== 'unsupported'
         ? {

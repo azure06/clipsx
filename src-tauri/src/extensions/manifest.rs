@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use super::API_VERSION;
-
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_SELECTOR_VALUES: usize = 32;
 const MAX_HTTP_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
@@ -80,12 +78,23 @@ pub enum ResultControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CopyAsIntent {
+    pub intent: String,
+    pub label: String,
+    pub mime_type: String,
+    pub output_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransformerSetup {
     pub id: String,
     pub display_name: String,
     #[serde(default = "empty_object")]
     pub parameters: Value,
     pub default_view: Option<ResultView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_as: Option<CopyAsIntent>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -405,10 +414,9 @@ impl ExtensionManifest {
         }
         valid_id(&self.package_id, "package")?;
         Version::parse(&self.version).context("extension version is not semantic version")?;
-        let requirement = VersionReq::parse(&self.api_version)
+        VersionReq::parse(&self.api_version)
             .context("extension API version requirement is invalid")?;
-        let host = Version::parse(API_VERSION)?;
-        if !requirement.matches(&host) {
+        if !super::api_version::supports(&self.api_version) {
             bail!("extension requires an incompatible ClipsX Extension API");
         }
         if self.display_name.trim().is_empty() || self.display_name.len() > 120 {
@@ -530,6 +538,29 @@ impl ExtensionManifest {
                     || !setup.parameters.is_object()
                 {
                     bail!("transformer setup is invalid");
+                }
+                if let Some(copy) = &setup.copy_as {
+                    if VersionReq::parse(&self.api_version)?.matches(&Version::parse("3.3.0")?) {
+                        bail!("copyAs metadata requires Extension API ^3.4 or newer");
+                    }
+                    valid_id(&copy.intent, "copy intent")?;
+                    valid_id(&copy.output_id, "copy output")?;
+                    if copy.label.trim().is_empty()
+                        || copy.label.len() > 80
+                        || copy.mime_type.len() > 120
+                        || !copy.mime_type.contains('/')
+                        || copy.mime_type.chars().any(char::is_whitespace)
+                        || contribution.execution != ExecutionClass::Local
+                        || !contribution.result_controls.contains(&ResultControl::Copy)
+                    {
+                        bail!("copyAs requires a bounded label, MIME type and a local copy-capable transformer");
+                    }
+                    // A quick copy must not need another configuration screen.
+                    super::parameters::normalize(
+                        &contribution.parameter_schema,
+                        &contribution.parameter_ui,
+                        &setup.parameters,
+                    )?;
                 }
                 let mut partial_schema = contribution.parameter_schema.clone();
                 if let Some(object) = partial_schema.as_object_mut() {
@@ -1458,6 +1489,24 @@ mod tests {
             .unwrap()
             .matches(&Version::parse("3.2.0").unwrap()));
         value.api_version = "^3.4".into();
+        assert!(value.validate().is_ok());
+        value.api_version = "^3.5".into();
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn copy_as_is_additive_explicit_local_and_fully_configured() {
+        let mut op = contribution(ContributionKind::Transformer);
+        op.result_controls = vec![ResultControl::Copy];
+        op.setups=vec![serde_json::from_value(serde_json::json!({"id":"csv","displayName":"CSV","parameters":{},"copyAs":{"intent":"csv","label":"CSV","mimeType":"text/csv","outputId":"converted"}})).unwrap()];
+        let mut value = manifest(op);
+        assert!(value.validate().is_err());
+        value.api_version = "^3.4".into();
+        assert!(value.validate().is_ok());
+        value.contributions[0].parameter_schema = serde_json::json!({"type":"object","properties":{"column":{"type":"string"}},"required":["column"]});
+        assert!(value.validate().is_err());
+        value.contributions[0].parameter_schema = serde_json::json!({});
+        value.contributions[0].execution = ExecutionClass::CapabilityBacked;
         assert!(value.validate().is_err());
     }
 

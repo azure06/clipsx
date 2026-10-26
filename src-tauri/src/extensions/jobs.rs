@@ -791,8 +791,22 @@ pub(crate) async fn output(
     repo: &HistoryRepository,
     job_id: &str,
 ) -> Result<Vec<CapturedRepresentation>> {
-    let rows=sqlx::query("SELECT o.format_key,o.mime_type,t.text_value,b.relative_path,b.sha256 FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id AND b.lifecycle_state='ready' JOIN extension_jobs j ON j.id=o.job_id WHERE o.job_id=? AND j.status='completed' ORDER BY o.ordinal")
-        .bind(job_id).fetch_all(&repo.pool).await?;
+    output_selection(repo, job_id, None).await
+}
+pub(crate) async fn output_at(
+    repo: &HistoryRepository,
+    job_id: &str,
+    ordinal: u32,
+) -> Result<Vec<CapturedRepresentation>> {
+    output_selection(repo, job_id, Some(i64::from(ordinal))).await
+}
+async fn output_selection(
+    repo: &HistoryRepository,
+    job_id: &str,
+    ordinal: Option<i64>,
+) -> Result<Vec<CapturedRepresentation>> {
+    let rows=sqlx::query("SELECT o.format_key,o.mime_type,t.text_value,b.relative_path,b.sha256 FROM extension_result_outputs o LEFT JOIN artifact_text_values t ON t.artifact_id=o.artifact_id LEFT JOIN artifact_binary_files b ON b.artifact_id=o.artifact_id AND b.lifecycle_state='ready' JOIN extension_jobs j ON j.id=o.job_id WHERE o.job_id=? AND j.status='completed' AND (? IS NULL OR o.ordinal=?) ORDER BY o.ordinal")
+        .bind(job_id).bind(ordinal).bind(ordinal).fetch_all(&repo.pool).await?;
     if rows.is_empty() {
         bail!("extension result is unavailable");
     }
@@ -1094,6 +1108,10 @@ mod tests {
         )
         .await
         .unwrap();
+        // An explicit output selection must not copy sibling outputs or accept unknown ordinals.
+        assert_eq!(output_at(&repo, &first.job_id, 0).await.unwrap().len(), 1);
+        assert!(output_at(&repo, &first.job_id, 99).await.is_err());
+        assert!(output_at(&repo, "missing-job", 0).await.is_err());
         let state: String = sqlx::query_scalar("SELECT value_json FROM extension_package_state WHERE package_id='example.rewrite' AND state_key='last_preset'")
             .fetch_one(&repo.pool).await.unwrap();
         assert_eq!(state, "\"business\"");
@@ -1126,15 +1144,25 @@ mod tests {
             &clip_id,
             &source_id,
             DurableExecution {
-                output_ids: vec!["image".into()],
-                outputs: vec![CapturedRepresentation {
-                    format_key: "mime:image/png".into(),
-                    canonical_mime_type: Some("image/png".into()),
-                    native_type: None,
-                    platform: "windows".into(),
-                    capture_priority: 10,
-                    payload: CapturedPayload::Binary(vec![137, 80, 78, 71]),
-                }],
+                output_ids: vec!["image".into(), "caption".into()],
+                outputs: vec![
+                    CapturedRepresentation {
+                        format_key: "mime:image/png".into(),
+                        canonical_mime_type: Some("image/png".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 10,
+                        payload: CapturedPayload::Binary(vec![137, 80, 78, 71]),
+                    },
+                    CapturedRepresentation {
+                        format_key: "mime:text/plain".into(),
+                        canonical_mime_type: Some("text/plain".into()),
+                        native_type: None,
+                        platform: "windows".into(),
+                        capture_priority: 20,
+                        payload: CapturedPayload::Text("image caption".into()),
+                    },
+                ],
                 state_writes: Default::default(),
                 view_json: None,
             },
@@ -1144,6 +1172,14 @@ mod tests {
         assert!(
             matches!(output(&repo, &binary.job_id).await.unwrap()[0].payload, CapturedPayload::Binary(ref bytes) if bytes == &[137, 80, 78, 71])
         );
+        assert!(
+            matches!(output_at(&repo,&binary.job_id,1).await.unwrap()[0].payload,CapturedPayload::Text(ref text) if text=="image caption")
+        );
+        assert!(matches!(
+            output_at(&repo, &binary.job_id, 0).await.unwrap()[0].payload,
+            CapturedPayload::Binary(_)
+        ));
+        assert_eq!(output_at(&repo, &binary.job_id, 1).await.unwrap().len(), 1);
         let binary_file_id: String = sqlx::query_scalar("SELECT b.id FROM artifact_binary_files b JOIN extension_result_outputs o ON o.artifact_id=b.artifact_id WHERE o.job_id=?")
             .bind(&binary.job_id)
             .fetch_one(&repo.pool)
@@ -1156,7 +1192,7 @@ mod tests {
         assert_eq!(served_mime, "image/png");
         let promoted_binary = promote(&repo, &binary.job_id, "save-binary").await.unwrap();
         let stored_kind: String =
-            sqlx::query_scalar("SELECT storage_kind FROM clip_representations WHERE clip_id=?")
+            sqlx::query_scalar("SELECT storage_kind FROM clip_representations WHERE clip_id=? AND storage_kind='binary_asset'")
                 .bind(&promoted_binary)
                 .fetch_one(&repo.pool)
                 .await

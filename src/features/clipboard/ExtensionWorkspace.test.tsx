@@ -1,3 +1,5 @@
+import { job as makePreviewJob } from './previewFixtures.test-utils'
+import userEvent from '@testing-library/user-event'
 import * as Dialog from '@radix-ui/react-dialog'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -381,7 +383,7 @@ describe('one durable transformation path', () => {
     expect(screen.queryByRole('button', { name: 'Save as new clip' })).not.toBeInTheDocument()
   })
 
-  it('uses the presentation declared on the completed job', () => {
+  it('offers extension layouts while starting with the output preview', async () => {
     const job: ExtensionJob = {
       jobId: 'job-2',
       clipId: 'clip-1',
@@ -425,12 +427,16 @@ describe('one durable transformation path', () => {
         onQueued={vi.fn()}
       />
     )
+    expect(screen.queryByText('Original')).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: 'Result layout' }))
+    await user.click(screen.getByRole('option', { name: 'Review' }))
     expect(screen.getByText('Original')).toBeInTheDocument()
     expect(screen.getByText('Result')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Compare' })).not.toBeInTheDocument()
   })
 
-  it('positions the divider exactly and keeps dragging after pointer capture', () => {
+  it('positions the divider exactly and keeps dragging after pointer capture', async () => {
     const job: ExtensionJob = {
       jobId: 'job-split',
       clipId: 'clip-1',
@@ -465,6 +471,9 @@ describe('one durable transformation path', () => {
         onQueued={vi.fn()}
       />
     )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: 'Result layout' }))
+    await user.click(screen.getByRole('option', { name: 'Compare' }))
     const container = screen.getByTestId('extension-result-split')
     const divider = screen.getByRole('separator', { name: 'Resize original and result' })
     Object.defineProperty(container, 'getBoundingClientRect', {
@@ -480,5 +489,46 @@ describe('one durable transformation path', () => {
     fireEvent.pointerUp(divider, { pointerId: 1 })
     fireEvent.keyDown(divider, { key: 'ArrowLeft' })
     expect(divider).toHaveAttribute('aria-valuenow', '58')
+  })
+  it('copies only the explicitly selected output', async () => {
+    const user = userEvent.setup(),
+      job = makePreviewJob({
+        outputs: [
+          {
+            ordinal: 0,
+            outputId: 'csv',
+            mimeType: 'text/csv',
+            byteLength: 3,
+            hasRenderedView: false,
+          },
+          {
+            ordinal: 1,
+            outputId: 'json',
+            mimeType: 'application/json',
+            byteLength: 2,
+            hasRenderedView: false,
+          },
+        ],
+      })
+    render(
+      <ExtensionResultTab
+        job={job}
+        presentation={null}
+        canRegenerate={false}
+        onChanged={vi.fn()}
+        onQueued={vi.fn()}
+      />
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Result outputs' }))
+    await user.click(screen.getByRole('option', { name: 'json · JSON' }))
+    await user.click(screen.getByRole('button', { name: 'Copy result' }))
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('execute_clipboard_output', {
+        request: {
+          disposition: 'copy',
+          source: { kind: 'derived_output', jobId: job.jobId, ordinal: 1 },
+        },
+      })
+    )
   })
 })

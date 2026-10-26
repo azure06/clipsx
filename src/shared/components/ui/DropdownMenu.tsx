@@ -65,3 +65,29 @@ export const DropdownMenuSeparator = forwardRef<
   />
 ))
 DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName
+
+export const DropdownMenuSub = DropdownMenuPrimitive.Sub
+export const DropdownMenuSubTrigger = forwardRef<
+  ElementRef<typeof DropdownMenuPrimitive.SubTrigger>,
+  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubTrigger>
+>(({ className, ...props }, ref) => (
+  <DropdownMenuPrimitive.SubTrigger
+    ref={ref}
+    className={cn(dropdownItemClass, 'flex items-center gap-2 px-2 py-2 text-xs', className)}
+    {...props}
+  />
+))
+DropdownMenuSubTrigger.displayName = 'DropdownMenuSubTrigger'
+export const DropdownMenuSubContent = forwardRef<
+  ElementRef<typeof DropdownMenuPrimitive.SubContent>,
+  ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
+>(({ className, ...props }, ref) => (
+  <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.SubContent
+      ref={ref}
+      className={cn(dropdownSurfaceClass, 'z-100 min-w-48 p-1', className)}
+      {...props}
+    />
+  </DropdownMenuPrimitive.Portal>
+))
+DropdownMenuSubContent.displayName = 'DropdownMenuSubContent'

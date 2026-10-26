@@ -1,9 +1,9 @@
-# Extension API v3.3
+# Extension API v3.4
 
 ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
-`schemaVersion = 3`, `contractRevision = 3`, host API `3.3.0`, and
-WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability does not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. A fresh
+`schemaVersion = 3`, `contractRevision = 3`, host API `3.4.0`, and
+WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability and API 3.4 Copy as metadata do not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. A fresh
 local database at schema version 15 is required; ClipsX asks for an explicit
 reset and never silently converts an older database.
 
@@ -134,9 +134,9 @@ Built-in setups are named fixed parameter fragments declared by the package.
 ClipsX renders the remaining parameter fields from the bounded schema and
 validates the complete value before a run. Users may also save their own named
 setups locally. Saved setups store a label, parameters, and preferred view,
-not generated output. Editing a setup never changes existing result tabs.
+not generated output. Editing a setup never changes existing results.
 Incompatible setups are shown as unavailable after an update; uninstall
-removes saved setups, but retained result tabs remain readable.
+removes saved setups, but retained results remain readable.
 
 The manifest also supports detectors, source renderers, non-transform actions,
 capture activations, package settings, and declared package state. A non-
@@ -145,6 +145,39 @@ declared dialog. Transformer preset actions, action output dispositions,
 `resultLifetime`, and `exposeInMenu` are not part of v3.2.
 
 ## Parameter presentation and Tools
+
+The preview has two stable workspaces: Preview and Results. View selects a
+presentation of a captured source; Inspect exposes stored formats and their
+technical identity. All captured representations remain available, and switching
+views never changes the ordinary original-copy policy. Results uses a newest-run-
+first picker; named outputs, layouts and source display are separate choices.
+Manual runs select their pending result only while the original navigation intent
+is still current. Background jobs and late completions never select a tab or move
+keyboard focus. Result-only is the initial layout, with optional comparison and
+extension-declared layouts. Copy/paste target the selected named output. Save as
+new clip retains the run's outputs together using the existing promotion contract.
+
+A fixed local setup may declare API 3.4 metadata:
+
+```toml
+copyAs = { intent = "csv", label = "CSV", mimeType = "text/csv", outputId = "converted" }
+```
+
+`intent` groups equivalent user outcomes across providers; it is not inferred
+from labels. `outputId` and `mimeType` must match a completed output before Rust
+writes it. The setup must be complete, locally executable, copy-capable and ready
+under its offline assessment. The host binds that assessed source and uses the
+existing durable job path. Multiple candidate sources remain explicit; a provider
+preference can collapse choices only when the source is unambiguous. Capability-
+backed or configurable operations remain in Tools. Copy as never selects Results;
+View result is explicit. A newer clipboard request/capture, leaving the clip, unmounting or timing out cancels the
+pending automatic copy, not the durable conversion. Conversion failures and mismatched outputs never write the clipboard; native
+write failures are reported without choosing another output. Older setups without metadata keep working in Tools.
+
+Packages using `copyAs` must require `apiVersion = "^3.4"`. The shared legacy
+registry currently accepts only `^3.2` entries; API 3.4 packages are local-test
+candidates until an API-aware registry rollout can preserve older-client access.
+Do not publish a 3.4 entry into that legacy feed.
 
 Tools opens inside the preview card and groups operations by package. A package
 appears once; its operations and built-in/user setups are selected inside its

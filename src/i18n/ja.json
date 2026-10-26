@@ -200,8 +200,7 @@
     "organizing": "ルールを適用中…",
     "captureNotice": {
       "sizeLimit": "コピーが保存サイズの上限を超えたため、すべてを保存できませんでした。クリップボード設定を確認してください。システムのクリップボードは変更されません。",
-      "excluded": "プライバシー除外ルールに一致したため保存しませんでした。システムのクリップボードは変更されません。",
-      "notSaved": "コピーを保存できませんでした。判定が混雑しているか、取得に失敗した可能性があります。システムのクリップボードは変更されません。"
+      "excluded": "プライバシー除外ルールに一致したため保存しませんでした。システムのクリップボードは変更されません。"
     },
     "loadingHistory": "クリップボード履歴を読み込み中...",
     "loadError": "クリップボード履歴を読み込めませんでした。",
@@ -613,6 +612,37 @@
     "installed": "インストール済み",
     "downloadingStatus": "ダウンロード中",
     "notInstalled": "未インストール"
+  },
+  "previewWorkspace": {
+    "saveRun": "すべての出力を新しいクリップとして保存",
+    "preview": "プレビュー",
+    "results": "結果 · {{count}}",
+    "resultsError": "結果を読み込めませんでした。",
+    "noResults": "ツールを実行すると結果が表示されます。元のクリップは変更されません。",
+    "chooseResult": "結果を選択",
+    "chooseView": "クリップの表示方法を選択",
+    "view": "表示",
+    "formatted": "HTMLプレビュー",
+    "formattedText": "書式付きテキスト",
+    "plainText": "プレーンテキスト",
+    "source": "ソース",
+    "table": "表",
+    "image": "画像",
+    "storedSources": "保存されたソースを確認",
+    "display": "表示方法",
+    "preferenceSaved": "優先する表示方法を保存しました",
+    "preferView": "{{type}}のクリップでこの表示を使用",
+    "inspectFormats": "保存された形式を確認…",
+    "resultLayout": "結果のレイアウト",
+    "copyAs": "形式を選んでコピー…",
+    "copying": "変換中…",
+    "copiedAs": "{{format}}をコピーしました",
+    "copyFailed": "変換した内容をコピーできませんでした",
+    "copyOutputMismatch": "指定した出力がありません。結果を確認してからコピーしてください。",
+    "copyStillRunning": "変換中です。結果を開いて進行状況を確認できます。",
+    "otherProviders": "ほかの変換ツール",
+    "viewResult": "結果を見る",
+    "actions": "操作"
   },
   "desktopUi": {
     "syncRenameDevice": "名前を変更",

@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useLayoutEffect } from 'react'
 
 export type ExtensionJob = {
+  createdAt?: number
+  completedAt?: number | null
   jobId: string
   clipId: string
   sourceId: string
@@ -43,18 +45,27 @@ export type ExtensionJob = {
 export function useClipExtensionJobs(clipId: string) {
   const [jobs, setJobs] = useState<ExtensionJob[]>([])
   const [error, setError] = useState<string | null>(null)
+  const activeClip = useRef(clipId)
+  useLayoutEffect(() => {
+    activeClip.current = clipId
+  }, [clipId])
   const sequence = useRef(0)
   const inFlight = useRef(false)
   const refresh = useCallback(async () => {
+    if (activeClip.current !== clipId) return
     const current = ++sequence.current
     try {
       const next = await invoke<ExtensionJob[]>('list_clip_extension_results', { clipId })
-      if (current === sequence.current) {
-        setJobs(next)
+      if (current === sequence.current && activeClip.current === clipId) {
+        setJobs(
+          [...next].sort(
+            (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || b.jobId.localeCompare(a.jobId)
+          )
+        )
         setError(null)
       }
     } catch (reason) {
-      if (current === sequence.current) setError(String(reason))
+      if (current === sequence.current && activeClip.current === clipId) setError(String(reason))
     }
   }, [clipId])
 
