@@ -138,6 +138,7 @@ fn main() {
             "delete_clip",
             "clear_history",
             "set_clip_pinned",
+            "move_pinned_clip",
             "set_clip_favorite",
             "update_clip_note",
             "list_tags",

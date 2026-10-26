@@ -77,7 +77,7 @@ async fn enqueue_capture_intents(
 
 pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
 
-const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
+const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform,c.pin_order FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
 
 #[derive(Clone)]
 pub struct HistoryRepository {
@@ -408,6 +408,7 @@ impl HistoryRepository {
         let started = Instant::now();
         let limit = request.limit.unwrap_or(50).clamp(1, 100) as i64;
         let scope = request.scope.unwrap_or_else(|| "all".into());
+        let ordered_pins = scope == "pinned" && request.tag_id.is_none();
         let mut query = format!("{SUMMARY_SELECT} WHERE c.lifecycle_state='ready'");
         if scope == "favorites" {
             query.push_str(" AND c.is_favorite=1")
@@ -419,9 +420,17 @@ impl HistoryRepository {
             query.push_str(" AND EXISTS(SELECT 1 FROM catalog_clip_tags ct WHERE ct.clip_id=c.id AND ct.tag_id=?)")
         }
         if request.cursor.is_some() {
-            query.push_str(" AND (c.captured_at < ? OR (c.captured_at = ? AND c.id < ?))")
+            query.push_str(if ordered_pins {
+                " AND (c.pin_order > ? OR (c.pin_order = ? AND c.id > ?))"
+            } else {
+                " AND (c.captured_at < ? OR (c.captured_at = ? AND c.id < ?))"
+            })
         }
-        query.push_str(" ORDER BY c.captured_at DESC,c.id DESC LIMIT ?");
+        query.push_str(if ordered_pins {
+            " ORDER BY c.pin_order ASC,c.id ASC LIMIT ?"
+        } else {
+            " ORDER BY c.captured_at DESC,c.id DESC LIMIT ?"
+        });
         // This statement is assembled only from fixed clauses below; all user data remains bound.
         let mut q = sqlx::query(AssertSqlSafe(query));
         if let Some(tag) = &request.tag_id {
@@ -429,15 +438,35 @@ impl HistoryRepository {
         }
         if let Some(cursor) = &request.cursor {
             let (time, id) = cursor.split_once('|').context("invalid cursor")?;
-            let time: i64 = time.parse()?;
+            let time: i64 = if ordered_pins {
+                time.strip_prefix("pin:").context("invalid pinned cursor")?
+            } else {
+                time
+            }
+            .parse()?;
             q = q.bind(time).bind(time).bind(id);
         }
         let rows = q.bind(limit + 1).fetch_all(&self.pool).await?;
         let has_more = rows.len() as i64 > limit;
         let rows = rows.into_iter().take(limit as usize).collect::<Vec<_>>();
+        let ordered_cursor = if ordered_pins {
+            rows.last().map(|row| {
+                format!(
+                    "pin:{}|{}",
+                    row.get::<i64, _>("pin_order"),
+                    row.get::<String, _>("id")
+                )
+            })
+        } else {
+            None
+        };
         let items = self.hydrate_summary_rows(rows).await?;
         let next_cursor = if has_more {
-            items.last().map(|x| format!("{}|{}", x.captured_at, x.id))
+            if ordered_pins {
+                ordered_cursor
+            } else {
+                items.last().map(|x| format!("{}|{}", x.captured_at, x.id))
+            }
         } else {
             None
         };
@@ -447,11 +476,50 @@ impl HistoryRepository {
 
     /// A bounded, stable shortcut order independent of duplicate-capture recency.
     pub async fn pinned_shortcuts(&self) -> Result<Vec<ClipSummary>> {
-        let query = format!("{SUMMARY_SELECT} WHERE c.lifecycle_state='ready' AND c.is_pinned=1 ORDER BY c.rowid DESC LIMIT 4");
+        let query = format!("{SUMMARY_SELECT} WHERE c.lifecycle_state='ready' AND c.is_pinned=1 ORDER BY c.pin_order ASC,c.id ASC LIMIT 4");
         let rows = sqlx::query(AssertSqlSafe(query))
             .fetch_all(&self.pool)
             .await?;
         self.hydrate_summary_rows(rows).await
+    }
+
+    /// Swap adjacent pins under the SQLite writer lock; never accept a client-supplied rank.
+    pub async fn move_pinned_clip(&self, id: &str, direction: &str) -> Result<Option<String>> {
+        if !matches!(direction, "up" | "down") {
+            bail!("invalid pin direction");
+        }
+        let mut tx = self.pool.begin().await?;
+        let changed = sqlx::query("UPDATE clip_items SET pin_order=pin_order WHERE id=? AND is_pinned=1 AND lifecycle_state='ready'").bind(id).execute(&mut *tx).await?.rows_affected();
+        if changed == 0 {
+            bail!("clip is no longer pinned");
+        }
+        let rank: i64 = sqlx::query_scalar("SELECT pin_order FROM clip_items WHERE id=?")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let neighbor: Option<(String, i64)> = if direction == "up" {
+            sqlx::query_as("SELECT id,pin_order FROM clip_items WHERE is_pinned=1 AND lifecycle_state='ready' AND (pin_order < ? OR (pin_order = ? AND id < ?)) ORDER BY pin_order DESC,id DESC LIMIT 1")
+                .bind(rank).bind(rank).bind(id).fetch_optional(&mut *tx).await?
+        } else {
+            sqlx::query_as("SELECT id,pin_order FROM clip_items WHERE is_pinned=1 AND lifecycle_state='ready' AND (pin_order > ? OR (pin_order = ? AND id > ?)) ORDER BY pin_order ASC,id ASC LIMIT 1")
+                .bind(rank).bind(rank).bind(id).fetch_optional(&mut *tx).await?
+        };
+        let Some((neighbor_id, neighbor_rank)) = neighbor else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        sqlx::query(
+            "UPDATE clip_items SET pin_order=CASE WHEN id=? THEN ? ELSE ? END WHERE id IN (?,?)",
+        )
+        .bind(id)
+        .bind(neighbor_rank)
+        .bind(rank)
+        .bind(id)
+        .bind(&neighbor_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(neighbor_id))
     }
 
     async fn hydrate_summary_rows(
@@ -1974,16 +2042,73 @@ mod tests {
             items.iter().map(|clip| clip.id.clone()).collect::<Vec<_>>(),
             expected
         );
+        assert_eq!(
+            repo.move_pinned_clip(&expected[1], "up").await.unwrap(),
+            Some(expected[0].clone())
+        );
+        let moved = repo.pinned_shortcuts().await.unwrap();
+        assert_eq!(moved[0].id, expected[1]);
+        assert!(repo
+            .move_pinned_clip(&expected[1], "up")
+            .await
+            .unwrap()
+            .is_none());
+        let first_page = repo
+            .list(ListRequest {
+                scope: Some("pinned".into()),
+                tag_id: None,
+                limit: Some(2),
+                cursor: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            first_page
+                .items
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>(),
+            vec![expected[1].clone(), expected[0].clone()]
+        );
+        let second_page = repo
+            .list(ListRequest {
+                scope: Some("pinned".into()),
+                tag_id: None,
+                limit: Some(2),
+                cursor: first_page.next_cursor,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            second_page
+                .items
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>(),
+            vec![expected[2].clone(), expected[3].clone()]
+        );
+        assert_eq!(
+            repo.move_pinned_clip(&expected[1], "down").await.unwrap(),
+            Some(expected[0].clone())
+        );
+        assert!(repo
+            .move_pinned_clip(&expected[0], "sideways")
+            .await
+            .is_err());
+        assert!(repo.move_pinned_clip("missing", "down").await.is_err());
         // Duplicate capture changes captured_at but must not shuffle shortcuts.
         sqlx::query("UPDATE clip_items SET captured_at=9999999999999 WHERE id=?")
             .bind(&ids[0])
             .execute(&repo.pool)
             .await
             .unwrap();
+        repo.move_pinned_clip(&expected[1], "up").await.unwrap();
         repo.pool.close().await;
         let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
             .await
             .unwrap();
+        let mut expected = expected;
+        expected.swap(0, 1);
         assert_eq!(
             repo.pinned_shortcuts()
                 .await
@@ -2008,6 +2133,40 @@ mod tests {
             .unwrap()
             .iter()
             .any(|clip| clip.id == expected[1]));
+        let remaining = repo.pinned_shortcuts().await.unwrap();
+        let (a, b) = tokio::join!(
+            repo.move_pinned_clip(&remaining[1].id, "up"),
+            repo.move_pinned_clip(&remaining[2].id, "up")
+        );
+        a.unwrap();
+        b.unwrap();
+        let (total, unique): (i64, i64) = sqlx::query_as(
+            "SELECT count(*),count(DISTINCT pin_order) FROM clip_items WHERE is_pinned=1",
+        )
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+        assert_eq!(total, unique);
+        repo.set_flag(&ids[0], "is_pinned", false).await.unwrap();
+        repo.set_flag(&ids[0], "is_pinned", true).await.unwrap();
+        assert_eq!(repo.pinned_shortcuts().await.unwrap()[0].id, ids[0]);
+        let before: Vec<_> = repo
+            .pinned_shortcuts()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|clip| clip.id)
+            .collect();
+        repo.set_flag(&ids[0], "is_pinned", true).await.unwrap();
+        assert_eq!(
+            repo.pinned_shortcuts()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|clip| clip.id)
+                .collect::<Vec<_>>(),
+            before
+        );
     }
 
     #[tokio::test]

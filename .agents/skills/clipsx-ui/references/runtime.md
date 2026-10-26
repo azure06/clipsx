@@ -228,14 +228,17 @@ subtitle/badge, and accessibility label.
 
 Unfiltered All history starts with a collapsible section showing up to three
 pinned shortcuts and View all, which opens the existing Pinned collection. A
-3+ badge means additional pins are available there. Shortcuts use stable saved
-clip creation order, independent of duplicate-capture recency. They are queried
+3+ badge means additional pins are available there. Shortcuts and the unfiltered Pinned collection share a saved device-local
+order. Move up/down controls in the Pinned collection update that order; newly
+pinned clips appear first. Copying a pin never changes its position. They are queried
 separately from history, so older pins remain accessible. Pinned clips do not
 also appear in recent history. Section headings and clips share one measured,
 virtualized scroll surface; collapse lasts while history remains mounted.
 Search, tag filters, Favorites and the Pinned collection show one ordinary
 results list in its existing ranking/order, with pin indicators retained.
-Keyboard navigation and quick slots follow visible clip order. Pin refresh
+Ordering controls are hidden during search and tag filtering, and retain
+keyboard focus while a save is pending. Failed moves leave the order unchanged
+and show a retryable error toast. Keyboard navigation and quick slots follow visible clip order. Pin refresh
 failures retain cached shortcuts with retry; refreshing on window focus catches
 changes while the app was hidden.
 

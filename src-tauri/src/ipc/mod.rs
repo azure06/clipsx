@@ -1990,6 +1990,23 @@ async fn set_clip_pinned(
     Ok(())
 }
 #[tauri::command]
+async fn move_pinned_clip(
+    app: tauri::AppHandle,
+    clip_id: String,
+    direction: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let neighbor = state
+        .history
+        .move_pinned_clip(&clip_id, &direction)
+        .await
+        .map_err(|e| e.to_string())?;
+    if neighbor.is_some() {
+        let _ = app.emit("pinned-order-changed", ());
+    }
+    Ok(neighbor)
+}
+#[tauri::command]
 async fn set_clip_favorite(
     app: tauri::AppHandle,
     clip_id: String,
@@ -3668,6 +3685,7 @@ crate::recall::ipc::recall_snapshot_image,
             delete_clip,
             clear_history,
             set_clip_pinned,
+            move_pinned_clip,
             set_clip_favorite,
             update_clip_note,
             list_tags,

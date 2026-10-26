@@ -40,6 +40,7 @@ type V2SearchPage = V2Page<V2SearchResult> & {
 type ClipboardState = {
   clips: ClipSummary[]
   pinnedPreview: ClipSummary[]
+  pinOrderSaving: boolean
   pinnedPreviewLoading: boolean
   pinnedPreviewError: string | null
   availableTags: V2Tag[]
@@ -76,6 +77,7 @@ type ClipboardActions = {
   exitSearchMode: () => void
   setActiveTab: (tab: 'all' | 'favorites' | 'pinned') => Promise<void>
   setTagFilter: (tagId: string | null) => Promise<void>
+  movePinnedClip: (clipId: string, direction: 'up' | 'down') => Promise<void>
   refreshPinnedPreview: () => Promise<void>
   refreshAvailableTags: () => Promise<void>
   updateClipNote: (clipId: string, note: string | null) => Promise<void>
@@ -99,6 +101,7 @@ type ClipboardStore = ClipboardState & ClipboardActions
 const initialState: ClipboardState = {
   clips: [],
   pinnedPreview: [],
+  pinOrderSaving: false,
   pinnedPreviewLoading: false,
   pinnedPreviewError: null,
   availableTags: [],
@@ -208,6 +211,17 @@ const ensureEvents = () => {
             ? 'excluded'
             : 'notSaved',
       })
+    }),
+    listen('pinned-order-changed', () => {
+      const state = useClipboardStore.getState()
+      void state.refreshPinnedPreview()
+      if (
+        !state.pinOrderSaving &&
+        state.mode === 'browse' &&
+        state.activeTab === 'pinned' &&
+        state.tagFilter === null
+      )
+        void state.retryResults()
     }),
     listen<string>('clip-deleted', event => {
       useClipboardStore.setState(state => ({
@@ -381,14 +395,21 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     }
   },
   addNewClip: clip => {
+    const before = useClipboardStore.getState()
+    const orderedPins =
+      before.mode === 'browse' && before.activeTab === 'pinned' && before.tagFilter === null
     if (clip.isPinned) void useClipboardStore.getState().refreshPinnedPreview()
     set(state => ({
       availableTags: mergeTags(state.availableTags, clip.tags ?? []),
       clips:
         !state.resultsStale && state.mode === 'browse' && matchesVisibleScope(state, clip)
-          ? [clip, ...state.clips.filter(item => item.id !== clip.id)]
+          ? orderedPins
+            ? state.clips.map(item => (item.id === clip.id ? clip : item))
+            : [clip, ...state.clips.filter(item => item.id !== clip.id)]
           : state.clips,
     }))
+    if (orderedPins && clip.isPinned && !before.clips.some(item => item.id === clip.id))
+      void before.retryResults()
   },
   mergeClipUpdate: clip => {
     const state = useClipboardStore.getState()
@@ -404,6 +425,14 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
         .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
         .filter(item => state.resultsStale || matchesVisibleScope(state, item)),
     }))
+    if (
+      clip.isPinned &&
+      state.mode === 'browse' &&
+      state.activeTab === 'pinned' &&
+      state.tagFilter === null &&
+      !state.clips.some(item => item.id === clip.id)
+    )
+      void state.retryResults()
   },
   cancelSearch: () => {
     requestGeneration += 1
@@ -475,6 +504,51 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     if (useClipboardStore.getState().tagFilter === tagFilter) return
     set({ tagFilter })
     await useClipboardStore.getState().retryResults()
+  },
+  movePinnedClip: async (clipId, direction) => {
+    const before = useClipboardStore.getState()
+    if (
+      before.loading ||
+      before.pinOrderSaving ||
+      before.resultsStale ||
+      before.mode !== 'browse' ||
+      before.activeTab !== 'pinned' ||
+      before.tagFilter !== null
+    )
+      return
+    const generation = requestGeneration
+    set({ pinOrderSaving: true })
+    try {
+      // Load one bounded page before moving the last visible row past its boundary.
+      if (direction === 'down' && before.clips.at(-1)?.id === clipId && before.hasMore) {
+        await before.loadMoreClips(50)
+        if (useClipboardStore.getState().error) throw new Error(useClipboardStore.getState().error!)
+      }
+      const current = useClipboardStore.getState()
+      if (
+        generation !== requestGeneration ||
+        current.resultsStale ||
+        current.mode !== 'browse' ||
+        current.activeTab !== 'pinned' ||
+        current.tagFilter !== null
+      )
+        return
+      const neighbor = await invoke<string | null>('move_pinned_clip', { clipId, direction })
+      if (generation === requestGeneration && neighbor) {
+        const clips = [...useClipboardStore.getState().clips]
+        const from = clips.findIndex(clip => clip.id === clipId)
+        const to = clips.findIndex(clip => clip.id === neighbor)
+        if (from >= 0 && to >= 0) {
+          const clip = clips[from]!
+          clips[from] = clips[to]!
+          clips[to] = clip
+          set({ clips })
+        } else await useClipboardStore.getState().retryResults()
+      }
+      await useClipboardStore.getState().refreshPinnedPreview()
+    } finally {
+      set({ pinOrderSaving: false })
+    }
   },
   refreshPinnedPreview: async () => {
     const generation = ++pinnedRequestGeneration

@@ -94,7 +94,7 @@ permissions = [
   "allow-open-extension-custom-view", "allow-close-extension-custom-view",
   "allow-sync-extension-custom-view",
   "allow-set-extension-action-shortcut", "allow-execute-clipboard-output", "allow-share-clip", "allow-delete-clip",
-  "allow-clear-history", "allow-set-clip-pinned", "allow-set-clip-favorite", "allow-update-clip-note",
+  "allow-clear-history", "allow-set-clip-pinned", "allow-move-pinned-clip", "allow-set-clip-favorite", "allow-update-clip-note",
   "allow-list-tags", "allow-create-tag", "allow-delete-tag", "allow-add-clip-tag", "allow-remove-clip-tag",
   "allow-get-capture-settings", "allow-get-app-settings", "allow-get-history-split-ratio",
   "allow-set-history-split-ratio", "allow-update-app-settings",

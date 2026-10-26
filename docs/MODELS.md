@@ -121,6 +121,20 @@ Renderer choice is deliberately absent: it is UI policy, not persisted clip stat
 
 `assistant_index_intents` records pending FTS and semantic projection work in the same transaction as assistant mutations or newly persisted OCR. The Rust indexing worker drains it even when semantic indexing is disabled or Recall is unmounted; conditional acknowledgement preserves newer work. Deletion uses the existing semantic cleanup and managed-file queues. Identical canonical payloads may belong to distinct saved clips; capture still performs its ordinary fingerprint lookup, while request IDs govern assistant creation retries.
 
+### Pinned clip order
+
+`clip_items.pin_order` stores device-local ordering for pinned clips. It is null
+for unpinned clips. New pins receive the first position; repinning also puts a
+clip first, while duplicate capture and ordinary metadata edits preserve order.
+Existing pins retain their prior stable order during migration. Flag triggers
+apply the same behavior to manual actions, decision rules and assistant edits.
+Adjacent moves are serialized and committed atomically by the repository.
+The unfiltered Pinned collection and compact shortcuts read the same order;
+ordered pagination uses rank and clip identity, independent of capture time.
+Search ranking and tag-filtered browsing keep their ordinary ordering.
+Pin order travels with the local clip database, is absent from settings sync and
+portable settings exports, and is removed when its clip is deleted.
+
 ### File lists versus managed binary payloads
 
 The two file-related tables represent different clipboard concepts:

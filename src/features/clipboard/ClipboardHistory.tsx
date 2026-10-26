@@ -71,6 +71,9 @@ export const ClipboardHistory = memo(function ClipboardHistory({
     }))
   )
 
+  const movePinnedClip = useClipboardStore(state => state.movePinnedClip)
+  const pinOrderSaving = useClipboardStore(state => state.pinOrderSaving)
+  const hasMore = useClipboardStore(state => state.hasMore)
   const pinnedPreview = useClipboardStore(state => state.pinnedPreview)
   const pinnedPreviewLoading = useClipboardStore(state => state.pinnedPreviewLoading)
   const pinnedPreviewError = useClipboardStore(state => state.pinnedPreviewError)
@@ -221,6 +224,15 @@ export const ClipboardHistory = memo(function ClipboardHistory({
       }
     },
     [performPrimaryAction, settings?.show_copy_toast, t, toast]
+  )
+
+  const onMovePin = useCallback(
+    (id: string, direction: 'up' | 'down') => {
+      void movePinnedClip(id, direction).catch(error => {
+        toast({ title: t('clipboard.pinOrderError'), description: String(error), type: 'error' })
+      })
+    },
+    [movePinnedClip, toast, t]
   )
 
   // Explicit Copy handler (copy icon) — delegates to centralized store
@@ -650,6 +662,11 @@ export const ClipboardHistory = memo(function ClipboardHistory({
           infiniteScrollTrigger={infiniteScrollTrigger}
           scrollContainerRef={scrollContainerRef}
           selectedIndex={selectedIndex}
+          pinOrdering={
+            activeTab === 'pinned' && mode === 'browse' && tagFilter === null
+              ? { onMove: onMovePin, saving: pinOrderSaving || loading, hasMore }
+              : undefined
+          }
         />
       </>
     )
@@ -675,6 +692,11 @@ export const ClipboardHistory = memo(function ClipboardHistory({
         <TagFilter />
         <PrivacyCheckIndicator pending={privacyChecksPending} phase={decisionPhase} />
       </div>
+      {activeTab === 'pinned' && mode === 'browse' && tagFilter === null && (
+        <p className="shrink-0 px-4 pb-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+          {t('clipboard.pinOrderHint')}
+        </p>
+      )}
       {captureNotice && (
         <div
           role="status"
