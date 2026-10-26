@@ -34,6 +34,7 @@ import type {
 } from '../../shared/types/v2'
 import { Button, Select, Switch } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
+import { createCoalescedRefresh } from '../app/coalescedRefresh'
 
 const phaseLabel = (phase: TextEmbeddingStatus['phase'] | undefined) =>
   phase === 'checking'
@@ -182,6 +183,7 @@ export const IntelligencePage = ({
   const overviewNavigation = useRef<HTMLElement>(null)
   const { toast } = useToast()
   const lastFailureToastRef = useRef<string | null>(null)
+  const statusRequestRef = useRef(0)
 
   const isConfigured = Boolean(status?.model && status.phase !== 'not_configured')
 
@@ -190,6 +192,7 @@ export const IntelligencePage = ({
   }, [status?.minimumSimilarityPercent])
 
   const loadStatus = useCallback(async (): Promise<TextEmbeddingStatus | null> => {
+    const request = ++statusRequestRef.current
     try {
       const [s, sources, settings, jobs, ocr] = await Promise.all([
         invoke<TextEmbeddingStatus>('get_text_embedding_status'),
@@ -198,6 +201,7 @@ export const IntelligencePage = ({
         invoke<FailedTextEmbeddingJob[]>('list_failed_text_embedding_jobs'),
         invoke<OcrRuntimeStatus>('get_ocr_runtime_status'),
       ])
+      if (request !== statusRequestRef.current) return s
       setStatus(s)
       setSearchSources(sources)
       setSearchSettings(settings)
@@ -206,6 +210,7 @@ export const IntelligencePage = ({
       if (s.phase === 'ready') lastFailureToastRef.current = null
       return s
     } catch (e) {
+      if (request !== statusRequestRef.current) return null
       toast({
         title: i18n.t('desktopUi.couldNotRefreshIntelligenceStatus'),
         description: toErrorMessage(e),
@@ -213,21 +218,21 @@ export const IntelligencePage = ({
       })
       return null
     } finally {
-      setLoadingStatus(false)
+      if (request === statusRequestRef.current) setLoadingStatus(false)
     }
   }, [toast])
 
   useEffect(() => {
-    void loadStatus()
-  }, [loadStatus])
-
-  useEffect(() => {
-    const u1 = listen('embedding-provider-status-changed', () => void loadStatus())
-    const u2 = listen('embedding-space-changed', () => void loadStatus())
-    const u3 = listen('search-source-status-changed', () => void loadStatus())
-    const u4 = listen('search-index-progress', () => void loadStatus())
+    const refresh = createCoalescedRefresh(async () => {
+      await loadStatus()
+    })
+    const requestRefresh = () => refresh.request()
+    const u1 = listen('embedding-provider-status-changed', requestRefresh)
+    const u2 = listen('embedding-space-changed', requestRefresh)
+    const u3 = listen('search-source-status-changed', requestRefresh)
+    const u4 = listen('search-index-progress', requestRefresh)
     const u5 = listen<string>('embedding-index-failed', event => {
-      void loadStatus()
+      requestRefresh()
       const message = event.payload
       if (lastFailureToastRef.current !== message) {
         lastFailureToastRef.current = message
@@ -238,25 +243,27 @@ export const IntelligencePage = ({
         })
       }
     })
-    const u6 = listen('ocr-status-changed', () => void loadStatus())
-    const u8 = listen('ai-configuration-changed', () => void loadStatus())
+    const u6 = listen('ocr-status-changed', requestRefresh)
+    const u8 = listen('ai-configuration-changed', requestRefresh)
     const u7 = listen<string>('ocr-worker-failed', event => {
-      void loadStatus()
+      requestRefresh()
       toast({
         title: i18n.t('desktopUi.textRecognitionNeedsAttention'),
         description: event.payload,
         type: 'error',
       })
     })
+    const subscriptions = [u1, u2, u3, u4, u5, u6, u7, u8]
+    // Subscribe before reading: a worker can finish during startup registration.
+    void Promise.all(subscriptions).then(requestRefresh, requestRefresh)
+    window.addEventListener('focus', requestRefresh)
     return () => {
-      void u1.then(f => f())
-      void u2.then(f => f())
-      void u3.then(f => f())
-      void u4.then(f => f())
-      void u5.then(f => f())
-      void u6.then(f => f())
-      void u7.then(f => f())
-      void u8.then(f => f())
+      refresh.dispose()
+      statusRequestRef.current += 1
+      window.removeEventListener('focus', requestRefresh)
+      for (const subscription of subscriptions) {
+        void subscription.then(dispose => dispose()).catch(() => undefined)
+      }
     }
   }, [loadStatus, toast])
 

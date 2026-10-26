@@ -6,6 +6,7 @@ use super::{
 use crate::{
     failure::FailureCode,
     history::{new_id, now_ms, sha256},
+    search::enqueue_index_intent as intent,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -406,10 +407,6 @@ async fn organization(
         pinned: row.get(2),
         tags,
     })
-}
-async fn intent(connection: &mut SqliteConnection, clip_id: &str) -> Result<()> {
-    sqlx::query("INSERT INTO assistant_index_intents VALUES(?,?,?) ON CONFLICT(clip_id) DO UPDATE SET token=excluded.token,requested_at=excluded.requested_at").bind(clip_id).bind(new_id()).bind(now_ms()).execute(connection).await?;
-    Ok(())
 }
 fn action(operation: &str, clips: Vec<ClipRevision>, now: i64) -> ClipboardActionResult {
     ClipboardActionResult {
