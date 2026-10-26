@@ -136,3 +136,21 @@ describe('preview/results navigation intent', () => {
   })
 })
 
+it('places collapsed decision details after the preview content', async () => {
+  const sample = {
+    ...clip(),
+    decisionReviews: [
+      {
+        stage: 'privacy' as const,
+        status: 'not_checked' as const,
+        reason: 'unavailable' as const,
+        evaluatedAt: 1,
+      },
+    ],
+  }
+  render(<ClipPreview clip={sample} />)
+  const content = await screen.findByText('Original clip content')
+  const label = screen.getByText('Privacy not checked.')
+  expect(content.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(label.closest('details')).not.toHaveAttribute('open')
+})

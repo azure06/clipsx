@@ -450,7 +450,6 @@ export const ClipPreview = memo(function ClipPreview({
       <div className="shrink-0 border-b border-slate-200/60 bg-slate-50/40 px-3 py-2 dark:border-white/5 dark:bg-white/[0.02]">
         <TagChips key={clip.id} clipId={clip.id} tags={clip.tags ?? []} />
       </div>
-      <DecisionReviewNotice reviews={clip.decisionReviews} />
       <Tabs
         appearance="workspace"
         activeTab={workspace}
@@ -632,6 +631,7 @@ export const ClipPreview = memo(function ClipPreview({
           </span>
         )}
       </div>
+      <DecisionReviewNotice key={clip.id} reviews={clip.decisionReviews} />
     </div>
   )
 })

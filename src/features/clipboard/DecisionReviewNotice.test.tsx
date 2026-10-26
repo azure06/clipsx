@@ -1,5 +1,6 @@
 import { render, screen, cleanup } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { DecisionReviewNotice } from './DecisionReviewNotice'
 import type { DecisionReview } from '../../shared/types/v2'
 
@@ -20,7 +21,7 @@ it('shows no warning for historical or completed checks', () => {
   expect(view.container).toBeEmptyDOMElement()
 })
 
-it('explains privacy failure while leaving the clip content visible', () => {
+it('keeps privacy details collapsed until requested while leaving the clip visible', async () => {
   render(
     <>
       <DecisionReviewNotice
@@ -32,7 +33,11 @@ it('explains privacy failure while leaving the clip content visible', () => {
       <pre>Full original content</pre>
     </>
   )
-  expect(screen.getByText(/text exceeded/)).toHaveTextContent(/does not block Recall/)
+  const details = screen.getByText(/text exceeded/)
+  expect(details).not.toBeVisible()
+  await userEvent.click(screen.getByText('Privacy not checked.'))
+  expect(details).toBeVisible()
+  expect(details).toHaveTextContent(/does not block Recall/)
   expect(screen.getByText('Full original content')).toBeVisible()
   expect(screen.queryByText(/Organization rules not applied/)).not.toBeInTheDocument()
 })

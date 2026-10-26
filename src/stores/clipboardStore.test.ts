@@ -945,3 +945,18 @@ describe('saved pin ordering', () => {
     expect(useClipboardStore.getState().clips.map(c => c.id)).toEqual(['a', 'b', 'c'])
   })
 })
+
+describe('capture rejection notices', () => {
+  it('keeps actionable notices and suppresses generic capture failure banners', async () => {
+    mockInvoke.mockResolvedValue({ items: [], nextCursor: null })
+    await useClipboardStore.getState().retryResults()
+    const reject = listeners.get('capture-rejected')!
+    expect(reject).toBeDefined()
+    reject({ payload: 'snapshot exceeded configured limit' })
+    expect(useClipboardStore.getState().captureNotice).toBe('sizeLimit')
+    reject({ payload: 'privacy_rule_not_saved' })
+    expect(useClipboardStore.getState().captureNotice).toBe('excluded')
+    reject({ payload: 'capture failed' })
+    expect(useClipboardStore.getState().captureNotice).toBeNull()
+  })
+})

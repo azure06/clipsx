@@ -200,8 +200,7 @@
     "organizing": "Applying rules…",
     "captureNotice": {
       "sizeLimit": "This copy exceeded your capture size limit and was not fully saved. Check Clipboard settings. Your system clipboard is unchanged.",
-      "excluded": "This copy was not saved because a privacy exclusion matched. Your system clipboard is unchanged.",
-      "notSaved": "This copy could not be saved. Privacy checks may be busy or capture may have failed. Your system clipboard is unchanged."
+      "excluded": "This copy was not saved because a privacy exclusion matched. Your system clipboard is unchanged."
     },
     "loadingHistory": "Loading clipboard history...",
     "loadError": "Clipboard history could not be loaded.",
