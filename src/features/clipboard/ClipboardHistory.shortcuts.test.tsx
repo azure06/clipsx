@@ -92,6 +92,10 @@ describe('ClipboardHistory keyboard shortcuts', () => {
 
     useClipboardStore.setState({
       clips: [makeClip()],
+      pinnedPreview: [],
+      pinnedPreviewLoading: false,
+      pinnedPreviewError: null,
+      refreshPinnedPreview: vi.fn().mockResolvedValue(undefined),
       loading: false,
       resultsStale: false,
       searchScheduled: false,

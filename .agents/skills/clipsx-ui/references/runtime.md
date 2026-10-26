@@ -226,6 +226,19 @@ subtitle/badge, and accessibility label.
 | Hydration                | Batch by category: tags, compact previews, OCR, file info, facets                                      |
 | Refresh                  | Artifact completion, renderer preferences, extension lifecycle                                         |
 
+Unfiltered All history starts with a collapsible section showing up to three
+pinned shortcuts and View all, which opens the existing Pinned collection. A
+3+ badge means additional pins are available there. Shortcuts use stable saved
+clip creation order, independent of duplicate-capture recency. They are queried
+separately from history, so older pins remain accessible. Pinned clips do not
+also appear in recent history. Section headings and clips share one measured,
+virtualized scroll surface; collapse lasts while history remains mounted.
+Search, tag filters, Favorites and the Pinned collection show one ordinary
+results list in its existing ranking/order, with pin indicators retained.
+Keyboard navigation and quick slots follow visible clip order. Pin refresh
+failures retain cached shortcuts with retry; refreshing on window focus catches
+changes while the app was hidden.
+
 History shows up to two readable tag chips per row, with an overflow count.
 The searchable Tags picker sits beside All/Favorites/Pinned and combines one
 tag filter with the current scope and text search. Preview tags wrap below the

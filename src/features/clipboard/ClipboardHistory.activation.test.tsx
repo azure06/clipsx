@@ -63,6 +63,10 @@ describe('ClipboardHistory activation modes', () => {
 
     useClipboardStore.setState({
       clips: [makeClip()],
+      pinnedPreview: [],
+      pinnedPreviewLoading: false,
+      pinnedPreviewError: null,
+      refreshPinnedPreview: vi.fn().mockResolvedValue(undefined),
       availableTags: [],
       loading: false,
       resultsStale: false,
@@ -153,5 +157,81 @@ describe('ClipboardHistory activation modes', () => {
       expect(performPrimaryActionMock).toHaveBeenCalledWith('hello world', 'clip-1')
       expect(performCopyMock).not.toHaveBeenCalled()
     })
+  })
+  const pinnedClips = () =>
+    Array.from({ length: 4 }, (_, index) => ({
+      ...makeClip(),
+      id: `pin-${index}`,
+      isPinned: true,
+      historyPreview: {
+        ...makeClip().historyPreview,
+        title: `Pinned ${index}`,
+        accessibilityLabel: `Pinned ${index}`,
+      },
+    }))
+
+  it('shows three older pins once above recent history and supports collapse and view all', async () => {
+    const pins = pinnedClips()
+    const setTab = vi.fn()
+    useClipboardStore.setState({
+      pinnedPreview: pins,
+      clips: [makeClip(), pins[0]!],
+      setActiveTab: setTab,
+    })
+    const { container } = render(<ClipboardHistory />)
+    await screen.findByText('Recent clips')
+    expect(screen.getAllByText('Pinned 0')).toHaveLength(1)
+    expect(screen.getByText('Pinned 2')).toBeInTheDocument()
+    expect(screen.queryByText('Pinned 3')).not.toBeInTheDocument()
+    expect(
+      [...container.querySelectorAll('[data-clip-index]')].map(el =>
+        el.getAttribute('data-clip-index')
+      )
+    ).toEqual(['0', '1', '2', '3'])
+    const collapse = screen.getByRole('button', { name: 'Collapse pinned clips' })
+    collapse.focus()
+    // Native keyboard activation must remain available on section controls.
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    collapse.dispatchEvent(enter)
+    expect(enter.defaultPrevented).toBe(false)
+    expect(performPrimaryActionMock).not.toHaveBeenCalled()
+    fireEvent.click(collapse)
+    expect(screen.queryByText('Pinned 0')).not.toBeInTheDocument()
+    expect(screen.getByText('hello world')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'View all' }))
+    expect(setTab).toHaveBeenCalledWith('pinned')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand pinned clips' }))
+    expect(screen.getByText('Pinned 0')).toBeInTheDocument()
+  })
+
+  it.each([
+    { mode: 'search' as const, tagFilter: null, activeTab: 'all' as const },
+    { mode: 'browse' as const, tagFilter: 'work', activeTab: 'all' as const },
+    { mode: 'browse' as const, tagFilter: null, activeTab: 'pinned' as const },
+    { mode: 'browse' as const, tagFilter: null, activeTab: 'favorites' as const },
+  ])('keeps filtered results in their original order without a pinned section: %j', async scope => {
+    const pins = pinnedClips()
+    useClipboardStore.setState({ ...scope, clips: [makeClip(), pins[1]!], pinnedPreview: pins })
+    render(<ClipboardHistory />)
+    await screen.findByText('hello world')
+    expect(screen.queryByRole('button', { name: 'Collapse pinned clips' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Pinned 0')).not.toBeInTheDocument()
+    expect(screen.getByText('Pinned 1')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(performPrimaryActionMock).toHaveBeenCalledWith('hello world', 'clip-1')
+  })
+
+  it('quick-copy and arrow navigation follow the visible pinned then recent order', async () => {
+    const pins = pinnedClips()
+    useClipboardStore.setState({ pinnedPreview: pins, clips: [makeClip()] })
+    render(<ClipboardHistory />)
+    await screen.findByText('Pinned 0')
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(performPrimaryActionMock).toHaveBeenLastCalledWith('Pinned 0', 'pin-0')
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(performPrimaryActionMock).toHaveBeenLastCalledWith('Pinned 1', 'pin-1')
+    fireEvent.keyDown(window, { key: '4', ctrlKey: true })
+    expect(performPrimaryActionMock).toHaveBeenLastCalledWith('hello world', 'clip-1')
   })
 })

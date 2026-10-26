@@ -39,6 +39,9 @@ type V2SearchPage = V2Page<V2SearchResult> & {
 
 type ClipboardState = {
   clips: ClipSummary[]
+  pinnedPreview: ClipSummary[]
+  pinnedPreviewLoading: boolean
+  pinnedPreviewError: string | null
   availableTags: V2Tag[]
   tagsLoading: boolean
   tagsError: string | null
@@ -73,6 +76,7 @@ type ClipboardActions = {
   exitSearchMode: () => void
   setActiveTab: (tab: 'all' | 'favorites' | 'pinned') => Promise<void>
   setTagFilter: (tagId: string | null) => Promise<void>
+  refreshPinnedPreview: () => Promise<void>
   refreshAvailableTags: () => Promise<void>
   updateClipNote: (clipId: string, note: string | null) => Promise<void>
   addClipTag: (clipId: string, tag: V2Tag) => Promise<void>
@@ -94,6 +98,9 @@ type ClipboardStore = ClipboardState & ClipboardActions
 
 const initialState: ClipboardState = {
   clips: [],
+  pinnedPreview: [],
+  pinnedPreviewLoading: false,
+  pinnedPreviewError: null,
   availableTags: [],
   tagsLoading: false,
   tagsError: null,
@@ -118,6 +125,7 @@ let nextCursor: string | null | undefined
 let requestGeneration = 0
 let eventListenerReady = false
 let tagRequest: Promise<void> | undefined
+let pinnedRequestGeneration = 0
 
 const mergeTags = (current: V2Tag[], incoming: V2Tag[]): V2Tag[] => {
   const byId = new Map(current.map(tag => [tag.id, tag]))
@@ -148,7 +156,12 @@ type ArtifactUpdate = { clipId: string; sourceId: string }
 
 const refreshVisibleClip = async (id: string, includeOffscreen = false) => {
   const state = useClipboardStore.getState()
-  if (!includeOffscreen && !state.clips.some(clip => clip.id === id)) return
+  if (
+    !includeOffscreen &&
+    !state.clips.some(clip => clip.id === id) &&
+    !state.pinnedPreview.some(clip => clip.id === id)
+  )
+    return
   const detail = await invoke<V2Detail>('get_clip_detail', { clipId: id })
   state.mergeClipUpdate(detail.clip)
 }
@@ -196,11 +209,13 @@ const ensureEvents = () => {
             : 'notSaved',
       })
     }),
-    listen<string>('clip-deleted', event =>
+    listen<string>('clip-deleted', event => {
       useClipboardStore.setState(state => ({
         clips: state.clips.filter(clip => clip.id !== event.payload),
+        pinnedPreview: state.pinnedPreview.filter(clip => clip.id !== event.payload),
       }))
-    ),
+      void useClipboardStore.getState().refreshPinnedPreview()
+    }),
   ]).catch(() => {
     eventListenerReady = false
   })
@@ -365,21 +380,31 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       set({ loading: false, error: String(error) })
     }
   },
-  addNewClip: clip =>
+  addNewClip: clip => {
+    if (clip.isPinned) void useClipboardStore.getState().refreshPinnedPreview()
     set(state => ({
       availableTags: mergeTags(state.availableTags, clip.tags ?? []),
       clips:
         !state.resultsStale && state.mode === 'browse' && matchesVisibleScope(state, clip)
           ? [clip, ...state.clips.filter(item => item.id !== clip.id)]
           : state.clips,
-    })),
-  mergeClipUpdate: clip =>
+    }))
+  },
+  mergeClipUpdate: clip => {
+    const state = useClipboardStore.getState()
+    if (clip.isPinned || state.pinnedPreview.some(item => item.id === clip.id)) {
+      void state.refreshPinnedPreview()
+    }
     set(state => ({
+      pinnedPreview: state.pinnedPreview
+        .map(item => (item.id === clip.id ? clip : item))
+        .filter(item => item.isPinned),
       availableTags: mergeTags(state.availableTags, clip.tags ?? []),
       clips: state.clips
         .map(item => (item.id === clip.id ? { ...item, ...clip } : item))
         .filter(item => state.resultsStale || matchesVisibleScope(state, item)),
-    })),
+    }))
+  },
   cancelSearch: () => {
     requestGeneration += 1
     cancelSemantic()
@@ -451,6 +476,20 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     set({ tagFilter })
     await useClipboardStore.getState().retryResults()
   },
+  refreshPinnedPreview: async () => {
+    const generation = ++pinnedRequestGeneration
+    set({ pinnedPreviewLoading: true, pinnedPreviewError: null })
+    try {
+      // One extra item tells the compact section whether more pins exist.
+      const items = await invoke<ClipSummary[]>('list_pinned_shortcuts')
+      if (!Array.isArray(items)) throw new Error('Invalid pinned shortcuts response')
+      if (generation !== pinnedRequestGeneration) return
+      set({ pinnedPreview: items, pinnedPreviewLoading: false })
+    } catch (error) {
+      if (generation !== pinnedRequestGeneration) return
+      set({ pinnedPreviewLoading: false, pinnedPreviewError: String(error) })
+    }
+  },
   refreshAvailableTags: async () => {
     if (tagRequest) return tagRequest
     const before = useClipboardStore.getState().availableTags
@@ -518,16 +557,24 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
   deleteClip: async id => {
     if (useClipboardStore.getState().resultsStale) return
     await invoke('delete_clip', { clipId: id })
-    set(state => ({ clips: state.clips.filter(clip => clip.id !== id) }))
+    set(state => ({
+      clips: state.clips.filter(clip => clip.id !== id),
+      pinnedPreview: state.pinnedPreview.filter(clip => clip.id !== id),
+    }))
+    await useClipboardStore.getState().refreshPinnedPreview()
   },
   toggleFavorite: async id => {
     if (useClipboardStore.getState().resultsStale) return
     const generation = requestGeneration
     const before = useClipboardStore.getState()
-    const clip = before.clips.find(item => item.id === id)
+    const clip =
+      before.clips.find(item => item.id === id) ?? before.pinnedPreview.find(item => item.id === id)
     if (!clip) return
     const value = !clip.isFavorite
     set(state => ({
+      pinnedPreview: state.pinnedPreview.map(item =>
+        item.id === id ? { ...item, isFavorite: value } : item
+      ),
       clips: state.clips
         .map(item => (item.id === id ? { ...item, isFavorite: value } : item))
         .filter(item => matchesVisibleScope(state, item)),
@@ -540,7 +587,8 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
       await invoke('set_clip_favorite', { clipId: id, value })
       await refreshVisibleClip(id)
     } catch (error) {
-      if (generation === requestGeneration) set({ clips: before.clips, error: String(error) })
+      if (generation === requestGeneration)
+        set({ clips: before.clips, pinnedPreview: before.pinnedPreview, error: String(error) })
       throw error
     }
   },
@@ -548,7 +596,8 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     if (useClipboardStore.getState().resultsStale) return
     const generation = requestGeneration
     const before = useClipboardStore.getState()
-    const clip = before.clips.find(item => item.id === id)
+    const clip =
+      before.clips.find(item => item.id === id) ?? before.pinnedPreview.find(item => item.id === id)
     if (!clip) return
     const value = !clip.isPinned
     set(state => ({
@@ -563,18 +612,24 @@ export const useClipboardStore = create<ClipboardStore>(set => ({
     try {
       await invoke('set_clip_pinned', { clipId: id, value })
       await refreshVisibleClip(id)
+      await useClipboardStore.getState().refreshPinnedPreview()
     } catch (error) {
-      if (generation === requestGeneration) set({ clips: before.clips, error: String(error) })
+      if (generation === requestGeneration)
+        set({ clips: before.clips, pinnedPreview: before.pinnedPreview, error: String(error) })
       throw error
     }
   },
   clearAllClips: async () => {
     await invoke('clear_history')
+    pinnedRequestGeneration += 1
     requestGeneration += 1
     cancelSemantic()
     nextCursor = undefined
     set({
       clips: [],
+      pinnedPreview: [],
+      pinnedPreviewLoading: false,
+      pinnedPreviewError: null,
       relatedClipIds: [],
       semanticPending: false,
       currentOffset: 0,

@@ -445,6 +445,15 @@ impl HistoryRepository {
         Ok(ClipPage { items, next_cursor })
     }
 
+    /// A bounded, stable shortcut order independent of duplicate-capture recency.
+    pub async fn pinned_shortcuts(&self) -> Result<Vec<ClipSummary>> {
+        let query = format!("{SUMMARY_SELECT} WHERE c.lifecycle_state='ready' AND c.is_pinned=1 ORDER BY c.rowid DESC LIMIT 4");
+        let rows = sqlx::query(AssertSqlSafe(query))
+            .fetch_all(&self.pool)
+            .await?;
+        self.hydrate_summary_rows(rows).await
+    }
+
     async fn hydrate_summary_rows(
         &self,
         rows: Vec<sqlx::sqlite::SqliteRow>,
@@ -1917,6 +1926,88 @@ mod tests {
         #[cfg(target_os = "windows")]
         assert!(!safe_relative("C:\\x"));
         assert!(safe_relative("managed/a/file"));
+    }
+
+    #[tokio::test]
+    async fn pinned_shortcuts_are_bounded_stable_and_survive_restart() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let roots = crate::foundation::AppRoots {
+            data: temp.path().join("data"),
+            config: temp.path().join("config"),
+        };
+        crate::foundation::prepare(&roots).await.unwrap();
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for index in 0..6 {
+            let (id, _) = repo
+                .capture(
+                    CapturedSnapshot {
+                        token: index,
+                        source_app_name: None,
+                        source_app_id: None,
+                        format_observations: Vec::new(),
+                        representations: vec![CapturedRepresentation {
+                            format_key: "text/plain".into(),
+                            canonical_mime_type: Some("text/plain".into()),
+                            native_type: None,
+                            platform: "windows".into(),
+                            capture_priority: 1,
+                            payload: CapturedPayload::Text(format!("pinned shortcut {index}")),
+                        }],
+                    },
+                    &CaptureSettings::default(),
+                )
+                .await
+                .unwrap();
+            sqlx::query("UPDATE clip_items SET is_pinned=1 WHERE id=?")
+                .bind(&id)
+                .execute(&repo.pool)
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let expected: Vec<_> = ids.iter().rev().take(4).cloned().collect();
+        let items = repo.pinned_shortcuts().await.unwrap();
+        assert_eq!(
+            items.iter().map(|clip| clip.id.clone()).collect::<Vec<_>>(),
+            expected
+        );
+        // Duplicate capture changes captured_at but must not shuffle shortcuts.
+        sqlx::query("UPDATE clip_items SET captured_at=9999999999999 WHERE id=?")
+            .bind(&ids[0])
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        repo.pool.close().await;
+        let repo = HistoryRepository::connect(&roots.database(), roots.clipboard_data())
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.pinned_shortcuts()
+                .await
+                .unwrap()
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        sqlx::query("UPDATE clip_items SET is_pinned=0 WHERE id=?")
+            .bind(&expected[0])
+            .execute(&repo.pool)
+            .await
+            .unwrap();
+        let unpinned = repo.pinned_shortcuts().await.unwrap();
+        assert_eq!(unpinned.len(), 4);
+        assert!(!unpinned.iter().any(|clip| clip.id == expected[0]));
+        repo.delete(&expected[1]).await.unwrap();
+        assert!(!repo
+            .pinned_shortcuts()
+            .await
+            .unwrap()
+            .iter()
+            .any(|clip| clip.id == expected[1]));
     }
 
     #[tokio::test]

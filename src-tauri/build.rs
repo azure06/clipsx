@@ -95,6 +95,7 @@ fn main() {
             "open_clip_text_in_editor",
             "open_clip_image_externally",
             "list_clips",
+            "list_pinned_shortcuts",
             "get_clip_detail",
             "get_clip_file_preview",
             "capture_clipboard",
