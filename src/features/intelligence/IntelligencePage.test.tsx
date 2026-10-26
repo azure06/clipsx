@@ -250,6 +250,72 @@ describe('IntelligencePage indexing actions', () => {
     expect(button).toBeEnabled()
   })
 
+  it('keeps the completed status when an older progress refresh finishes last', async () => {
+    render(<IntelligencePage initialSection="indexing" />)
+    await screen.findByText('Ready')
+
+    const invokeNormally = invokeMock.getMockImplementation()!
+    let finishOldRefresh!: (value: TextEmbeddingStatus) => void
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<TextEmbeddingStatus>(resolve => {
+          finishOldRefresh = resolve
+        })
+    )
+    act(() => {
+      for (const handler of eventHandlers.get('search-index-progress') ?? []) {
+        handler({ payload: 'builtin.search.semantic_text' })
+      }
+    })
+    await waitFor(() => expect(finishOldRefresh).toBeTypeOf('function'))
+    invokeMock.mockImplementation(invokeNormally)
+
+    act(() => {
+      for (const handler of eventHandlers.get('embedding-space-changed') ?? []) {
+        handler({ payload: null })
+      }
+    })
+    await act(async () => {})
+    await act(() =>
+      Promise.resolve(finishOldRefresh(readyStatus({ phase: 'indexing', pendingJobs: 28 })))
+    )
+
+    await waitFor(() => expect(screen.queryByText('28 clips pending')).not.toBeInTheDocument())
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+  })
+
+  it('refreshes after startup event subscriptions are registered', async () => {
+    currentStatus = readyStatus({ phase: 'indexing', pendingJobs: 28 })
+    let finishRegistration!: (dispose: () => void) => void
+    listenMock.mockImplementationOnce(
+      () =>
+        new Promise<() => void>(resolve => {
+          finishRegistration = resolve
+        })
+    )
+    render(<IntelligencePage initialSection="indexing" />)
+    await act(async () => {})
+
+    // The worker finishes before the native listener has been installed.
+    currentStatus = readyStatus()
+    await act(() => Promise.resolve(finishRegistration(vi.fn())))
+
+    await waitFor(() => expect(screen.getByText('Ready')).toBeInTheDocument())
+    expect(screen.queryByText('28 clips pending')).not.toBeInTheDocument()
+  })
+
+  it('refreshes a stale pending count when the app regains focus', async () => {
+    currentStatus = readyStatus({ phase: 'indexing', pendingJobs: 28 })
+    render(<IntelligencePage initialSection="indexing" />)
+    await screen.findByText('28 clips pending')
+
+    currentStatus = readyStatus()
+    fireEvent(window, new Event('focus'))
+
+    await screen.findByText('Ready')
+    expect(screen.queryByText('28 clips pending')).not.toBeInTheDocument()
+  })
+
   it('clears loading and reports command and status-refresh failures', async () => {
     render(<IntelligencePage initialSection="models" />)
     fireEvent.click(await screen.findByRole('tab', { name: 'Indexing' }))

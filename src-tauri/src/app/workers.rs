@@ -308,8 +308,8 @@ impl SingleWorker {
                                 source_id: work.representation_id,
                             },
                         );
-                        let _ = search::upsert_projection(&history, &work.clip_id).await;
-                        let _ = embeddings::enqueue_clip(&history, &work.clip_id).await;
+                        // Fresh OCR commits a durable index intent with its text.
+                        // Cached/failed work only updates the recognition status.
                         wake_text_index(&app, history.clone());
                         let _ = app.emit("ocr-status-changed", ());
                     }

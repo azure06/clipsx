@@ -57,6 +57,13 @@ Inputs: notes, tags, every ready text representation, and completed OCR.
 Equivalent visible text is embedded once, preferring the richest safely parsed
 source; distinct representations remain searchable.
 
+OCR startup recovery resumes interrupted jobs and queues missing results for the
+current provider and resolved language. Existing results, including empty text,
+do not create new recognition or indexing work. Failed attempts with unchanged
+parameters remain available for explicit retry. New OCR results commit a durable
+search-refresh intent in the same transaction; cached results and failed attempts
+do not requeue semantic indexing.
+
 Semantic indexing excludes secret- and private-faceted clips for every provider, including
 local Ollama. Before chunking or provider access, the host also scans complete
 text inputs (including notes and existing OCR) with its deterministic secret
@@ -413,9 +420,11 @@ History schedules keyword retrieval after 75 ms of inactivity. When Meaning Sear
 
 Only pages from the current request may append. Selection survives by ID where
 possible and clears on empty results. Input remains editable; operations already
-started, including note saves, may finish. Status events are coalesced to one
-start per 500 ms, one active refresh, and one trailing refresh; unmounted
-consumers ignore late responses.
+started, including note saves, may finish. History and Intelligence status events
+are coalesced to one start per 500 ms, one active refresh, and one trailing
+refresh; unmounted consumers ignore late responses. Intelligence subscribes
+before its first status read and refreshes when the window regains focus.
+Older reads cannot overwrite newer status.
 
 Models is the default Intelligence section; its shared configuration workspace is described under Recall above. Bounded Ollama model inspection derives `embedding` /
 `completion` capabilities. Indexing owns progress, failures, retry, reindex,

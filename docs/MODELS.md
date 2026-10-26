@@ -119,7 +119,7 @@ Renderer choice is deliberately absent: it is UI policy, not persisted clip stat
 
 `clip_items.assistant_revision` advances for changes relevant to assistant access or editing. Assistant revision tokens also cover canonical representation fingerprints and organization metadata. Access counts and UI recency touches do not invalidate an operation.
 
-`assistant_index_intents` records pending FTS and semantic projection work in the mutation transaction. The Rust indexing worker drains it even when semantic indexing is disabled or Recall is unmounted; conditional acknowledgement preserves newer work. Deletion uses the existing semantic cleanup and managed-file queues. Identical canonical payloads may belong to distinct saved clips; capture still performs its ordinary fingerprint lookup, while request IDs govern assistant creation retries.
+`assistant_index_intents` records pending FTS and semantic projection work in the same transaction as assistant mutations or newly persisted OCR. The Rust indexing worker drains it even when semantic indexing is disabled or Recall is unmounted; conditional acknowledgement preserves newer work. Deletion uses the existing semantic cleanup and managed-file queues. Identical canonical payloads may belong to distinct saved clips; capture still performs its ordinary fingerprint lookup, while request IDs govern assistant creation retries.
 
 ### File lists versus managed binary payloads
 

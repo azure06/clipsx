@@ -225,13 +225,20 @@ pub async fn update_ocr_settings(repo: &HistoryRepository, settings: &OcrSetting
 }
 
 pub async fn recover_ocr_queue(repo: &HistoryRepository) -> Result<()> {
+    recover_ocr_queue_with_provider(repo, &NativeOcrProvider::new()).await
+}
+
+async fn recover_ocr_queue_with_provider(
+    repo: &HistoryRepository,
+    provider: &dyn OcrProvider,
+) -> Result<()> {
     sqlx::query("UPDATE artifact_jobs SET status='pending',started_at=NULL,updated_at=?,last_error='Recovered after ClipsX restarted' WHERE artifact_kind='ocr' AND producer_id=? AND status='running'")
         .bind(now_ms())
         .bind(OCR_PRODUCER_ID)
         .execute(&repo.pool)
         .await?;
     if ocr_settings(repo).await?.enabled {
-        enqueue_all_ocr(repo).await?;
+        enqueue_all_ocr_with_provider(repo, provider).await?;
     }
     Ok(())
 }
@@ -598,13 +605,61 @@ async fn enqueue_ocr(repo: &HistoryRepository, representation_id: &str) -> Resul
 }
 
 async fn enqueue_all_ocr(repo: &HistoryRepository) -> Result<()> {
-    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM clip_representations WHERE lifecycle_state='ready' AND storage_kind='binary_asset' AND canonical_mime_type LIKE 'image/%'")
-        .fetch_all(&repo.pool)
-        .await?;
+    enqueue_all_ocr_with_provider(repo, &NativeOcrProvider::new()).await
+}
+
+async fn enqueue_all_ocr_with_provider(
+    repo: &HistoryRepository,
+    provider: &dyn OcrProvider,
+) -> Result<()> {
+    // Resolve once for the whole sweep, rather than inspecting the OS per image.
+    let settings = ocr_settings(repo).await?;
+    let parameters = match provider.diagnostics().await {
+        Ok(diagnostics) if diagnostics.available => resolve_language(
+            &settings.language,
+            &app_language(repo).await?,
+            &diagnostics.languages,
+        )
+        .map(|language| ocr_parameter_sha(&diagnostics.provider_version, &language)),
+        _ => None,
+    };
+    let attempted_parameters = parameters.clone().unwrap_or_else(|| {
+        sha256(format!("{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}:pending").as_bytes())
+    });
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT r.id FROM clip_representations r
+         WHERE r.lifecycle_state='ready' AND r.storage_kind='binary_asset'
+         AND r.canonical_mime_type LIKE 'image/%'
+         AND NOT EXISTS(
+           SELECT 1 FROM artifact_records ar JOIN artifact_inputs ai ON ai.artifact_id=ar.id
+           WHERE ai.representation_id=r.id AND ar.producer_id=? AND ar.producer_version=?
+           AND ar.lifecycle_state='ready' AND (? IS NULL OR ar.parameter_sha256=?))
+         AND COALESCE((
+           SELECT j.status IN ('failed','unsupported') AND j.parameter_sha256=?
+           FROM artifact_jobs j WHERE j.target_representation_id=r.id
+           AND j.producer_id=? AND j.producer_version=?
+           ORDER BY j.requested_at DESC,j.rowid DESC LIMIT 1),0)=0",
+    )
+    .bind(OCR_PRODUCER_ID)
+    .bind(OCR_PRODUCER_VERSION)
+    .bind(parameters.as_deref())
+    .bind(parameters.as_deref())
+    .bind(&attempted_parameters)
+    .bind(OCR_PRODUCER_ID)
+    .bind(OCR_PRODUCER_VERSION)
+    .fetch_all(&repo.pool)
+    .await?;
     for id in ids {
         enqueue_ocr(repo, &id).await?;
     }
     Ok(())
+}
+
+fn ocr_parameter_sha(provider_version: &str, language: &str) -> String {
+    sha256(
+        format!("{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}:{provider_version}:{language}")
+            .as_bytes(),
+    )
 }
 
 pub async fn run_next_ocr(repo: &HistoryRepository) -> Result<Option<CompletedOcrWork>> {
@@ -677,13 +732,7 @@ async fn run_next_ocr_with_provider(
         .await?;
         return Ok(Some(completed));
     };
-    let parameter_sha = sha256(
-        format!(
-            "{OCR_PRODUCER_ID}:{OCR_PRODUCER_VERSION}:{}:{}",
-            diagnostics.provider_version, language
-        )
-        .as_bytes(),
-    );
+    let parameter_sha = ocr_parameter_sha(&diagnostics.provider_version, &language);
     sqlx::query("UPDATE artifact_jobs SET parameter_sha256=?,updated_at=? WHERE id=?")
         .bind(&parameter_sha)
         .bind(now_ms())
@@ -830,6 +879,7 @@ async fn persist_ocr_result(repo: &HistoryRepository, result: OcrPersistence<'_>
         .await?;
     sqlx::query("UPDATE artifact_jobs SET status='completed',produced_artifact_id=?,updated_at=?,completed_at=? WHERE id=? AND status='running'")
         .bind(&artifact_id).bind(now).bind(now).bind(job_id).execute(&mut *transaction).await?;
+    crate::search::enqueue_index_intent(&mut transaction, clip_id).await?;
     transaction.commit().await?;
     Ok(true)
 }
@@ -1157,6 +1207,208 @@ mod tests {
             },
             result,
         }
+    }
+
+    #[tokio::test]
+    async fn ocr_restart_preserves_completed_results_and_durable_search_updates() {
+        for text in ["recognized text", ""] {
+            let (_temp, repo, representation_id) = image_fixture().await;
+            let provider = fake_provider(Ok(text.into()));
+            enqueue_ocr(&repo, &representation_id).await.unwrap();
+            run_next_ocr_with_provider(&repo, &provider)
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Restart after OCR committed, before the search worker handled its output.
+            let database = repo.pool.connect_options().get_filename().to_path_buf();
+            let managed_root = repo.managed_root.clone();
+            repo.pool.close().await;
+            let repo = HistoryRepository::connect(&database, managed_root)
+                .await
+                .unwrap();
+            recover_ocr_queue_with_provider(&repo, &provider)
+                .await
+                .unwrap();
+            assert!(
+                run_next_ocr_with_provider(&repo, &provider)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "completed OCR must not become new work after restart"
+            );
+            let jobs: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM artifact_jobs WHERE artifact_kind='ocr'")
+                    .fetch_one(&repo.pool)
+                    .await
+                    .unwrap();
+            assert_eq!(jobs, 1);
+            assert_eq!(
+                crate::recall::mutations::process_index_intents(&repo)
+                    .await
+                    .unwrap(),
+                1
+            );
+            let projected: String =
+                sqlx::query_scalar("SELECT search_text FROM search_documents LIMIT 1")
+                    .fetch_one(&repo.pool)
+                    .await
+                    .unwrap();
+            assert!(projected.contains(text));
+
+            recover_ocr_queue_with_provider(&repo, &provider)
+                .await
+                .unwrap();
+            assert!(run_next_ocr_with_provider(&repo, &provider)
+                .await
+                .unwrap()
+                .is_none());
+            assert_eq!(
+                crate::recall::mutations::process_index_intents(&repo)
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ocr_restart_retries_changed_parameters_and_interrupted_work() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let mut provider = fake_provider(Ok("first result".into()));
+        enqueue_ocr(&repo, &representation_id).await.unwrap();
+        sqlx::query(
+            "UPDATE artifact_jobs SET status='running',started_at=? WHERE artifact_kind='ocr'",
+        )
+        .bind(now_ms())
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+        recover_ocr_queue_with_provider(&repo, &provider)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        crate::recall::mutations::process_index_intents(&repo)
+            .await
+            .unwrap();
+
+        provider.diagnostics.provider_version = "test-engine-2".into();
+        provider.result = Ok("updated provider result".into());
+        recover_ocr_queue_with_provider(&repo, &provider)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Ready {
+                text: "updated provider result".into()
+            }
+        );
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            1
+        );
+
+        provider.diagnostics.languages = vec![crate::providers::contracts::ocr::OcrLanguage {
+            id: "ja-JP".into(),
+            label: "Japanese".into(),
+        }];
+        provider.result = Ok("updated language result".into());
+        recover_ocr_queue_with_provider(&repo, &provider)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn ocr_restart_preserves_failures_until_retry_or_configuration_change() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let mut provider = fake_provider(Err(
+            crate::providers::error::ProviderError::InvalidOutput("fixture failure".into()),
+        ));
+        enqueue_ocr(&repo, &representation_id).await.unwrap();
+        let work = run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            0
+        );
+        recover_ocr_queue_with_provider(&repo, &provider)
+            .await
+            .unwrap();
+        assert!(run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .is_none());
+
+        provider.result = Ok("recovered".into());
+        retry_ocr(&repo, &work.clip_id, &representation_id)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            1
+        );
+
+        // Reusing the same ready artifact during an explicit retry is unchanged data.
+        retry_ocr(&repo, &work.clip_id, &representation_id)
+            .await
+            .unwrap();
+        run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            0
+        );
+
+        // A historical failure must not block rebuilding a later invalidated result.
+        let mut transaction = repo.pool.begin().await.unwrap();
+        invalidate_ocr_settings(&mut transaction).await.unwrap();
+        transaction.commit().await.unwrap();
+        recover_ocr_queue_with_provider(&repo, &provider)
+            .await
+            .unwrap();
+        assert!(run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            1
+        );
     }
 
     #[tokio::test]

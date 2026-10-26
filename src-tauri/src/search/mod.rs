@@ -1,12 +1,12 @@
 //! Search projection, FTS queries, and hybrid ranking.
 pub mod semantic;
-use crate::history::{now_ms, ClipSummary, HistoryRepository};
+use crate::history::{new_id, now_ms, ClipSummary, HistoryRepository};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{
     collections::{HashMap, HashSet},
     time::Instant,
@@ -183,6 +183,23 @@ pub async fn rebuild_stale_projections(repo: &HistoryRepository) -> Result<u64> 
         tokio::task::yield_now().await;
     }
     Ok(rebuilt)
+}
+
+/// Commit with the source change so interrupted workers can refresh both indexes.
+pub(crate) async fn enqueue_index_intent(
+    connection: &mut SqliteConnection,
+    clip_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO assistant_index_intents(clip_id,token,requested_at) VALUES(?,?,?)
+         ON CONFLICT(clip_id) DO UPDATE SET token=excluded.token,requested_at=excluded.requested_at",
+    )
+    .bind(clip_id)
+    .bind(new_id())
+    .bind(now_ms())
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 /// Rebuild the search document for a single clip.
