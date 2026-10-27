@@ -639,6 +639,10 @@
     "outputCount_other": "{{count}} outputs"
   },
   "previewTransform": {
+    "runNow": "Run now",
+    "runNowHelp": "One click opens a transformation result.",
+    "configureTitle": "Configure",
+    "unavailableTitle": "Unavailable",
     "title": "Transform",
     "custom": "Custom transformation",
     "configure": "Choose options before running",
