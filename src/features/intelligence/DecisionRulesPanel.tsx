@@ -144,7 +144,19 @@ export function DecisionRulesPanel() {
             label={t('decisionRules.skipSecrets')}
             checked={draft.skipSecrets}
             disabled={busy}
-            onChange={skipSecrets => change({ ...draft, skipSecrets })}
+            onChange={skipSecrets =>
+              void perform(async () => {
+                // Save this independent switch with the last saved rules, not unfinished edits.
+                const next: PrivacySettings = {
+                  ...(JSON.parse(saved) as PrivacySettings),
+                  skipSecrets,
+                }
+                await invoke('privacy_save_settings', { settings: next })
+                setSaved(JSON.stringify(next))
+                setDraft(current => (current ? { ...current, skipSecrets } : current))
+                setFeedback(t('decisionRules.saved'))
+              })
+            }
           />
           <p className={`mt-2 ${muted}`}>{t('decisionRules.skipHelp')}</p>
         </div>

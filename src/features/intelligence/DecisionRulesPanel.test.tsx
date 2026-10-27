@@ -176,3 +176,36 @@ it.each([
     })
   }
 )
+
+it('persists the secret exclusion switch independently of unfinished rules', async () => {
+  const user = userEvent.setup()
+  const view = render(<DecisionRulesPanel />)
+  await screen.findByRole('switch', { name: 'Don’t save detected secrets' })
+  await user.click(screen.getByRole('button', { name: 'Add rule' }))
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  await user.click(screen.getByRole('switch', { name: 'Don’t save detected secrets' }))
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith('privacy_save_settings', {
+      settings: { skipSecrets: true, rules: [] },
+    })
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('switch', { name: 'Don’t save detected secrets' })).toBeChecked()
+  )
+  settings.skipSecrets = true
+  view.unmount()
+  render(<DecisionRulesPanel />)
+  expect(await screen.findByRole('switch', { name: 'Don’t save detected secrets' })).toBeChecked()
+})
+it('keeps the saved switch value and reports a failed save', async () => {
+  const user = userEvent.setup()
+  render(<DecisionRulesPanel />)
+  const toggle = await screen.findByRole('switch', { name: 'Don’t save detected secrets' })
+  mocks.invoke.mockImplementation((command: string) =>
+    command === 'privacy_save_settings' ? Promise.reject(new Error('failed')) : Promise.resolve()
+  )
+  await user.click(toggle)
+  await screen.findByRole('alert')
+  expect(toggle).not.toBeChecked()
+  expect(toggle).not.toBeDisabled()
+})
