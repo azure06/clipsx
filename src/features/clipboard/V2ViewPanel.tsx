@@ -574,6 +574,7 @@ export const V2ViewPanel = ({
     () => (isSyntheticTab ? null : (viewSet?.views.find(item => item.id === active) ?? null)),
     [active, isSyntheticTab, viewSet]
   )
+  const renderView = view ?? (isSyntheticTab ? lastRealView : null)
   useEffect(() => {
     if (view) setLastRealView(view)
   }, [view])
@@ -598,12 +599,12 @@ export const V2ViewPanel = ({
 
   useEffect(() => {
     let alive = true
-    if (!view || isSyntheticTab) return
+    if (!renderView) return
     void invoke<RenderModel>('render_clip_view', {
       clipId,
-      rendererId: view.rendererId,
-      sourceId: view.sourceId,
-      facetId: view.facetId,
+      rendererId: renderView.rendererId,
+      sourceId: renderView.sourceId,
+      facetId: renderView.facetId,
     })
       .then(next => {
         if (alive) {
@@ -615,11 +616,11 @@ export const V2ViewPanel = ({
         if (!alive) return
         const fallback = viewSet?.views.find(
           candidate =>
-            candidate.id !== view.id &&
+            candidate.id !== renderView.id &&
             candidate.rendererId.startsWith('builtin.') &&
             candidate.placement !== 'advanced'
         )
-        if (!view.rendererId.startsWith('builtin.') && fallback) {
+        if (!renderView.rendererId.startsWith('builtin.') && fallback) {
           setActive(fallback.id)
           return
         }
@@ -628,7 +629,7 @@ export const V2ViewPanel = ({
     return () => {
       alive = false
     }
-  }, [clipId, isSyntheticTab, renderRevision, view, viewSet])
+  }, [clipId, renderRevision, renderView, viewSet])
 
   const effectiveView = view ?? (isSyntheticTab ? lastRealView : null)
   const presentation = useMemo<ClipPresentation | null>(
@@ -642,10 +643,10 @@ export const V2ViewPanel = ({
 
   const handleTabChange = useCallback(
     (id: string) => {
-      if (id !== active && id !== OCR_TAB_ID) setModel(null)
+      if (id !== active && id !== OCR_TAB_ID && id !== renderView?.id) setModel(null)
       setActive(id)
     },
-    [active]
+    [active, renderView?.id]
   )
 
   const handleShowInspector = useCallback(() => setInspecting(true), [])
@@ -702,8 +703,8 @@ export const V2ViewPanel = ({
         ? {
             id: OCR_TAB_ID,
             rendererId: '',
-            label: i18n.t('desktopUi.text'),
-            sourceId: '',
+            label: i18n.t('previewWorkspace.ocrText'),
+            sourceId: view?.sourceId ?? lastRealView?.sourceId ?? '',
             mimeType: null,
             capabilityId: 'builtin.ocr',
             facetId: null,
@@ -742,6 +743,7 @@ export const V2ViewPanel = ({
     handleShowInspector,
     handlePreferActive,
     view,
+    lastRealView?.sourceId,
   ])
 
   // Clear controls when unmounted

@@ -329,6 +329,7 @@
     "noFileMetadata": "ファイル情報がありません",
     "noImageSource": "画像ソースがありません",
     "imagePreview": "クリップのプレビュー",
+    "ocrText": "OCRテキスト",
     "running": "実行中…",
     "queued": "待機中",
     "ocrProcessing": "文字認識を実行しています。",
@@ -694,6 +695,7 @@
     "changeHint": "既定表示を変更するには、該当するクリップで表示を選び「既定の表示にする」を選択します。リセットはそのルールを削除します。他の一致するルールは引き続き適用されます。"
   },
   "previewWorkspace": {
+    "ocrText": "OCRテキスト",
     "saveRun": "すべての出力を新しいクリップとして保存",
     "preview": "プレビュー",
     "results": "結果 · {{count}}",
