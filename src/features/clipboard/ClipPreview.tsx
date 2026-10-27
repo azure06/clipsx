@@ -1,3 +1,4 @@
+import { ResultViewToggle } from './ResultViewToggle'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
@@ -15,7 +16,11 @@ import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { Tabs } from '../../shared/components/ui'
 import { ClipDetails } from './ClipDetails'
-import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
+import {
+  ExtensionResultTab,
+  ExtensionTools,
+  type ResultDisplayControls,
+} from './ExtensionWorkspace'
 import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import { useClipExtensionJobs } from './useClipExtensionJobs'
@@ -119,6 +124,11 @@ export const ClipPreview = memo(function ClipPreview({
   })
   const [enabledPackages, setEnabledPackages] = useState<Set<string>>(() => new Set())
   const [workspace, setWorkspace] = useState('preview')
+  const [resultDisplay, setResultDisplay] = useState<ResultDisplayControls | null>(null)
+  const handleResultDisplay = useCallback(
+    (controls: ResultDisplayControls | null) => setResultDisplay(controls),
+    []
+  )
   const interaction = useRef(0)
   const currentClip = useRef(clip.id)
   useLayoutEffect(() => {
@@ -465,6 +475,8 @@ export const ClipPreview = memo(function ClipPreview({
                 }}
               />
             </div>
+          ) : workspace === 'results' && resultDisplay ? (
+            <ResultViewToggle mode={resultDisplay.mode} onChange={resultDisplay.onChange} />
           ) : null
         }
         panelsClassName="relative min-h-0 flex-1"
@@ -505,17 +517,6 @@ export const ClipPreview = memo(function ClipPreview({
             ),
             content: (
               <div className="flex h-full min-h-0 flex-col">
-                <div className="flex shrink-0 items-center gap-2 border-b border-slate-200/60 px-3 py-2 dark:border-white/5">
-                  <PreviewResultsPicker
-                    jobs={jobs}
-                    selectedId={selectedResultId}
-                    onSelect={id => {
-                      interaction.current += 1
-                      setSelectedResultId(id)
-                    }}
-                    onChanged={() => void refreshJobs()}
-                  />
-                </div>
                 {jobsError ? (
                   <div role="status" className="p-4 text-xs text-red-500">
                     {t('previewWorkspace.resultsError')}{' '}
@@ -528,6 +529,33 @@ export const ClipPreview = memo(function ClipPreview({
                     <ExtensionResultTab
                       key={selectedResult.jobId}
                       job={selectedResult}
+                      onDisplayControls={handleResultDisplay}
+                      runPicker={
+                        <PreviewResultsPicker
+                          jobs={jobs}
+                          selectedId={selectedResultId}
+                          onSelect={id => {
+                            const revision = ++interaction.current
+                            setSelectedResultId(id)
+                            window.requestAnimationFrame(() => {
+                              if (
+                                currentClip.current === clip.id &&
+                                interaction.current === revision
+                              )
+                                previewContainer
+                                  ?.querySelector<HTMLButtonElement>(
+                                    '[data-result-run-picker] [role="combobox"]'
+                                  )
+                                  ?.focus()
+                            })
+                          }}
+                        />
+                      }
+                      onDeleted={() => {
+                        setSelectedResultId(
+                          jobs.find(item => item.jobId !== selectedResult.jobId)?.jobId ?? null
+                        )
+                      }}
                       presentation={currentPresentation}
                       canRegenerate={Boolean(
                         transformControls?.items.some(

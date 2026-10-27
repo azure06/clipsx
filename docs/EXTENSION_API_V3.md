@@ -149,8 +149,7 @@ declared dialog. Transformer preset actions, action output dispositions,
 The preview has two stable workspaces: Preview and Results. View selects a
 presentation of a captured source; Inspect exposes stored formats and their
 technical identity. All captured representations remain available, and switching
-views never changes the ordinary original-copy policy. Results uses a newest-run-
-first picker; named outputs, layouts and source display are separate choices.
+views never changes the ordinary original-copy policy. Results places its searchable newest-run-first picker and Copy on one row. Preview/Compare sits beside the workspace tabs: Preview shows the selected output; Compare adds the original. The options menu groups selected-output choices (output, formatted/source display, layout and Paste) separately from run actions (Run again, promotion, details and confirmed deletion). Choices appear only when applicable; extension-declared layouts remain available. Copy/Paste target the selected output.
 Manual runs select their pending result only while the original navigation intent
 is still current. Background jobs and late completions never select a tab or move
 keyboard focus. Result-only is the initial layout, with optional comparison and

@@ -15,6 +15,7 @@ export function SearchableSelect({
   disabled = false,
   compact = false,
   leading,
+  matchTriggerWidth = false,
 }: {
   label: string
   value: string
@@ -26,6 +27,7 @@ export function SearchableSelect({
   disabled?: boolean
   compact?: boolean
   leading?: ReactNode
+  matchTriggerWidth?: boolean
 }) {
   const id = useId()
   const input = useRef<HTMLInputElement>(null)
@@ -83,7 +85,7 @@ export function SearchableSelect({
             sideOffset={4}
             collisionPadding={8}
             align="start"
-            className={`${dropdownSurfaceClass} z-[80] flex max-h-[min(320px,var(--radix-popover-content-available-height))] ${compact ? 'w-80' : 'w-[var(--radix-popover-trigger-width)]'} max-w-[calc(100vw-1rem)] flex-col`}
+            className={`${dropdownSurfaceClass} z-[80] flex max-h-[min(320px,var(--radix-popover-content-available-height))] ${compact && !matchTriggerWidth ? 'w-80' : 'w-[var(--radix-popover-trigger-width)]'} max-w-[calc(100vw-1rem)] flex-col`}
             onOpenAutoFocus={event => {
               event.preventDefault()
               input.current?.focus()

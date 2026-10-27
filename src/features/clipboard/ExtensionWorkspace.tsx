@@ -1,16 +1,39 @@
+import { ResultViewToggle } from './ResultViewToggle'
 import { Trans, useTranslation } from 'react-i18next'
 import i18n from '../../i18n/index'
 import { ExtensionJobStatusIcon, jobStatusLabel } from './ExtensionJobStatus'
-import { describeFailure, failureMessage } from '../extensions/failures'
+import { failureMessage } from '../extensions/failures'
 import { FailureNotice } from '../extensions/FailureNotice'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, ClipboardPaste, Copy, Database, GripVertical, RotateCcw } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Check,
+  ClipboardPaste,
+  Copy,
+  Database,
+  GripVertical,
+  RotateCcw,
+  MoreHorizontal,
+  ChevronRight,
+  Trash2,
+  Info,
+  X,
+} from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from 'react'
 import { copyClipboardOutput, pasteClipboardOutput } from '../../shared/clipboardOutput'
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { useTheme } from '../../shared/hooks/useTheme'
 import { RenderModelView } from './RenderModelView'
-import { Select } from '../../shared/components/ui'
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from '../../shared/components/ui'
 import type { ExtensionJob } from './useClipExtensionJobs'
 
 export type SavedTransformSetup = {
@@ -90,6 +113,11 @@ function ResultSplitDivider({
   )
 }
 
+export type ResultDisplayControls = {
+  mode: 'preview' | 'compare'
+  onChange: (mode: 'preview' | 'compare') => void
+}
+
 export function ExtensionResultTab({
   job,
   presentation,
@@ -97,6 +125,9 @@ export function ExtensionResultTab({
   onChanged,
   onQueued,
   onRunStarted,
+  runPicker,
+  onDeleted,
+  onDisplayControls,
 }: {
   job: ExtensionJob
   presentation: ClipPresentation | null
@@ -104,12 +135,16 @@ export function ExtensionResultTab({
   onChanged: () => void
   onQueued: (jobId: string, ticket?: number) => void
   onRunStarted?: () => number
+  runPicker?: ReactNode
+  onDeleted?: () => void
+  onDisplayControls?: (controls: ResultDisplayControls | null) => void
 }) {
   useTranslation()
 
   const { appliedTheme } = useTheme()
   const [ordinal, setOrdinal] = useState(0)
   const [raw, setRaw] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const { t } = useTranslation()
   const presentations = useMemo(() => {
     const views = job.view?.tabs.length
@@ -144,11 +179,11 @@ export function ExtensionResultTab({
     if (job.view?.tabs.length)
       views.push({
         id: 'host-result',
-        displayName: t('desktopUi.outputPreview'),
+        displayName: t('resultWorkspace.preview'),
         layout: 'single',
         panels: [{ source: 'output', ordinal }],
       })
-    if (!views.some(view => view.panels.some(panel => panel.source === 'input')))
+    if (job.view?.tabs.length)
       views.push({
         id: 'host-compare',
         displayName: t('desktopUi.compare'),
@@ -165,6 +200,23 @@ export function ExtensionResultTab({
   const [viewId, setViewId] = useState(initialView)
   const view = presentations.find(item => item.id === viewId) ?? presentations[0]!
   const needsInput = view.panels.some(panel => panel.source === 'input')
+  const changeMode = useCallback(
+    (mode: 'preview' | 'compare') =>
+      setViewId(
+        mode === 'compare'
+          ? job.view?.tabs.length
+            ? 'host-compare'
+            : 'compare'
+          : job.view?.tabs.length
+            ? 'host-result'
+            : 'result'
+      ),
+    [job.view?.tabs.length]
+  )
+  useEffect(() => {
+    onDisplayControls?.({ mode: needsInput ? 'compare' : 'preview', onChange: changeMode })
+  }, [needsInput, changeMode, onDisplayControls])
+  useEffect(() => () => onDisplayControls?.(null), [onDisplayControls])
   const [ratio, setRatio] = useState(() => {
     const stored = Number(localStorage.getItem('clipsx.transformCompareRatio'))
     return Number.isFinite(stored) && stored >= 25 && stored <= 75 ? stored : 50
@@ -309,154 +361,287 @@ export function ExtensionResultTab({
       className="clip-result-workspace flex h-full min-h-0 flex-col bg-white/35 dark:bg-transparent"
       aria-label={i18n.t('desktopUi.resultLabel', { label: job.displayLabel })}
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-slate-200/70 bg-white/55 px-2 py-1 text-xs dark:border-white/10 dark:bg-white/[.025]">
-        {job.status !== 'completed' && (
+      <div className="shrink-0 border-b border-slate-200/70 bg-slate-50/50 px-3 py-2 dark:border-white/5 dark:bg-white/[0.02]">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1 max-w-md">
+            {runPicker ?? (
+              <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                {job.displayLabel}
+              </p>
+            )}
+          </div>
           <span
             role="status"
-            title={job.reasonCode ? describeFailure(job.reasonCode).message : undefined}
-            className="mr-auto flex shrink-0 items-center gap-1.5 px-1 text-[11px] font-medium text-slate-500"
+            title={jobStatusLabel(job)}
+            className={`mr-auto flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium ${job.status === 'completed' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-slate-200/50 text-slate-500 dark:bg-white/5 dark:text-slate-400'}`}
           >
             <ExtensionJobStatusIcon job={job} />
-            {jobStatusLabel(job)}
+            <span className="hidden sm:inline">{jobStatusLabel(job)}</span>
+            <span className="sr-only sm:hidden">{jobStatusLabel(job)}</span>
           </span>
-        )}
-        {job.status === 'completed' && (
-          <>
-            {job.outputs.length > 1 && (
-              <Select
-                ariaLabel={t('desktopUi.resultOutputs')}
-                value={String(selectedOrdinal ?? 0)}
-                onChange={value => {
-                  setOrdinal(Number(value))
-                  setRaw(false)
-                }}
-                options={job.outputs.map(item => ({
-                  value: String(item.ordinal),
-                  label: `${item.outputId} · ${viewLabel(item.mimeType)}`,
-                }))}
-                className="h-8 min-w-28 max-w-52 text-xs"
-              />
-            )}
-            {presentations.length > 1 && (
-              <Select
-                ariaLabel={t('previewWorkspace.resultLayout')}
-                value={view.id}
-                onChange={setViewId}
-                options={presentations.map(item => ({ value: item.id, label: item.displayName }))}
-                className="h-8 min-w-28 max-w-44 text-xs"
-              />
-            )}
-            {selectedOutput?.hasRenderedView && (
-              <button
-                type="button"
-                onClick={() => setRaw(value => !value)}
-                aria-pressed={raw}
-                className="shrink-0 rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-violet-500/10"
+          {['pending', 'running', 'waiting_provider', 'waiting_write_review'].includes(
+            job.status
+          ) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() =>
+                void operation(() => invoke('cancel_extension_job', { jobId: job.jobId }))
+              }
+            >
+              {t('desktopUi.cancel')}
+            </Button>
+          )}
+          {job.status === 'failed' && job.completedWrites === 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || !canRegenerate}
+              onClick={() => void operation(regenerate)}
+            >
+              {t('desktopUi.retry')}
+            </Button>
+          )}
+          {!onDisplayControls && job.status === 'completed' && job.outputs.length > 0 && (
+            <ResultViewToggle mode={needsInput ? 'compare' : 'preview'} onChange={changeMode} />
+          )}
+          {job.status === 'completed' && job.outputs.length > 0 && (
+            <>
+              {job.resultControls.includes('copy') && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy || selectedOrdinal === undefined}
+                  aria-label={t('desktopUi.copyResult')}
+                  leftIcon={<Copy size={13} />}
+                  className="gap-1.5 px-3 text-xs"
+                  onClick={() =>
+                    void operation(() =>
+                      copyClipboardOutput({
+                        kind: 'derived_output',
+                        jobId: job.jobId,
+                        ordinal: selectedOrdinal ?? 0,
+                      })
+                    )
+                  }
+                >
+                  {t('common.copy')}
+                </Button>
+              )}
+            </>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 px-1.5 text-slate-500 dark:text-slate-400"
+                aria-label={t('resultWorkspace.manageRun')}
               >
-                {t('desktopUi.raw')}
-              </button>
-            )}
-            <div className="min-w-2 flex-1" />
-            {job.resultControls.includes('copy') && (
-              <button
-                type="button"
-                title={i18n.t('desktopUi.copyResult')}
-                aria-label={i18n.t('desktopUi.copyResult')}
-                disabled={busy}
-                onClick={() =>
-                  void operation(() =>
-                    copyClipboardOutput({
-                      kind: 'derived_output',
-                      jobId: job.jobId,
-                      ordinal: selectedOrdinal ?? 0,
-                    })
-                  )
-                }
-                className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"
+                <MoreHorizontal size={16} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-52">
+              {job.status === 'completed' && job.outputs.length > 0 && (
+                <>
+                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                    {t('resultWorkspace.selectedOutput')}
+                  </p>
+                  {job.outputs.length > 1 && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="text-xs">
+                        {t('desktopUi.resultOutputs')}
+                        <ChevronRight aria-hidden="true" size={12} className="ml-auto" />
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {job.outputs.map(item => (
+                          <DropdownMenuItem
+                            key={item.ordinal}
+                            aria-current={item.ordinal === selectedOrdinal ? 'true' : undefined}
+                            className="gap-2 text-xs"
+                            onSelect={() => {
+                              setOrdinal(item.ordinal)
+                              setRaw(false)
+                              if (job.view?.tabs.length)
+                                setViewId(needsInput ? 'host-compare' : 'host-result')
+                            }}
+                          >
+                            <span className="w-3">
+                              {item.ordinal === selectedOrdinal && <Check size={12} />}
+                            </span>
+                            {viewLabel(item.mimeType)} · {item.outputId}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {selectedOutput?.hasRenderedView && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="text-xs">
+                        {t('resultWorkspace.display')}
+                        <ChevronRight aria-hidden="true" size={12} className="ml-auto" />
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {[false, true].map(source => (
+                          <DropdownMenuItem
+                            key={String(source)}
+                            aria-current={raw === source ? 'true' : undefined}
+                            className="gap-2 text-xs"
+                            onSelect={() => setRaw(source)}
+                          >
+                            <span className="w-3">{raw === source && <Check size={12} />}</span>
+                            {t(source ? 'resultWorkspace.source' : 'resultWorkspace.rendered')}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {!!job.view?.tabs.length && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="text-xs">
+                        {t('previewWorkspace.resultLayout')}
+                        <ChevronRight aria-hidden="true" size={12} className="ml-auto" />
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {presentations
+                          .filter(item => item.id !== 'host-compare')
+                          .map(item => (
+                            <DropdownMenuItem
+                              key={item.id}
+                              className="gap-2 text-xs"
+                              onSelect={() => setViewId(item.id)}
+                            >
+                              <span className="w-3">
+                                {view.id === item.id && <Check size={12} />}
+                              </span>
+                              {item.id === 'host-result'
+                                ? t('resultWorkspace.preview')
+                                : item.displayName}
+                            </DropdownMenuItem>
+                          ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                  {job.resultControls.includes('paste') && (
+                    <DropdownMenuItem
+                      disabled={busy || selectedOrdinal === undefined}
+                      className="gap-2 text-xs"
+                      onSelect={() =>
+                        void operation(() =>
+                          pasteClipboardOutput({
+                            kind: 'derived_output',
+                            jobId: job.jobId,
+                            ordinal: selectedOrdinal ?? 0,
+                          })
+                        )
+                      }
+                    >
+                      <ClipboardPaste size={13} />
+                      {t('desktopUi.pasteResult')}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                {t('resultWorkspace.run')}
+              </p>
+              {job.resultControls.includes('regenerate') && (
+                <DropdownMenuItem
+                  disabled={busy || !canRegenerate}
+                  title={
+                    !canRegenerate ? t('desktopUi.installThisTransformerToRegenerate') : undefined
+                  }
+                  className="gap-2 text-xs"
+                  onSelect={() => void operation(regenerate)}
+                >
+                  <RotateCcw size={13} />
+                  {t('resultWorkspace.runAgain')}
+                </DropdownMenuItem>
+              )}
+              {job.status === 'completed' && job.resultControls.includes('save_as_clip') && (
+                <DropdownMenuItem
+                  disabled={busy}
+                  className="gap-2 text-xs"
+                  onSelect={() =>
+                    void operation(() =>
+                      invoke('promote_extension_result', {
+                        jobId: job.jobId,
+                        requestId: crypto.randomUUID(),
+                      })
+                    )
+                  }
+                >
+                  <Database size={13} />
+                  {t(
+                    job.outputs.length > 1 ? 'previewWorkspace.saveRun' : 'desktopUi.saveAsNewClip'
+                  )}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                className="gap-2 text-xs"
+                onSelect={() => setDetailsOpen(value => !value)}
               >
-                <Copy className="h-4 w-4" />
-              </button>
-            )}
-            {job.resultControls.includes('paste') && (
-              <button
-                type="button"
-                title={i18n.t('desktopUi.pasteResult')}
-                aria-label={i18n.t('desktopUi.pasteResult')}
-                disabled={busy}
-                onClick={() =>
-                  void operation(() =>
-                    pasteClipboardOutput({
-                      kind: 'derived_output',
-                      jobId: job.jobId,
-                      ordinal: selectedOrdinal ?? 0,
-                    })
-                  )
-                }
-                className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"
+                <Info size={13} />
+                {t('resultWorkspace.runDetails')}
+              </DropdownMenuItem>
+              {['completed', 'failed', 'cancelled'].includes(job.status) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={busy}
+                    className="gap-2 text-xs text-red-600 dark:text-red-400"
+                    onSelect={() => {
+                      if (
+                        window.confirm(
+                          t('resultWorkspace.deleteConfirm', { name: job.displayLabel })
+                        )
+                      )
+                        void operation(async () => {
+                          await invoke('delete_extension_result', { jobId: job.jobId })
+                          onDeleted?.()
+                        })
+                    }}
+                  >
+                    <Trash2 size={13} />
+                    {t('resultWorkspace.deleteRun')}
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {detailsOpen && (
+          <div className="mt-3 rounded-xl border border-slate-200/70 bg-white/60 p-3 dark:border-white/10 dark:bg-white/[0.02]">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold">{t('resultWorkspace.runDetails')}</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={t('common.close')}
+                onClick={() => setDetailsOpen(false)}
               >
-                <ClipboardPaste className="h-4 w-4" />
-              </button>
-            )}
-            {job.resultControls.includes('save_as_clip') && (
-              <button
-                type="button"
-                title={t(
-                  job.outputs.length > 1 ? 'previewWorkspace.saveRun' : 'desktopUi.saveAsNewClip'
-                )}
-                aria-label={t(
-                  job.outputs.length > 1 ? 'previewWorkspace.saveRun' : 'desktopUi.saveAsNewClip'
-                )}
-                disabled={busy}
-                onClick={() =>
-                  void operation(() =>
-                    invoke('promote_extension_result', {
-                      jobId: job.jobId,
-                      requestId: crypto.randomUUID(),
-                    })
-                  )
-                }
-                className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"
-              >
-                <Database className="h-4 w-4" />
-              </button>
-            )}
-            {job.resultControls.includes('regenerate') && (
-              <button
-                type="button"
-                title={
-                  canRegenerate
-                    ? i18n.t('desktopUi.regenerateResult')
-                    : i18n.t('desktopUi.installThisTransformerToRegenerate')
-                }
-                aria-label={i18n.t('desktopUi.regenerateResult')}
-                disabled={busy || !canRegenerate}
-                onClick={() => void operation(regenerate)}
-                className="rounded-lg p-2 text-slate-500 hover:bg-violet-500/10 hover:text-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:opacity-40"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </button>
-            )}
-          </>
-        )}
-        {job.status === 'failed' && job.completedWrites === 0 && (
-          <button
-            type="button"
-            disabled={busy || !canRegenerate}
-            onClick={() => void operation(regenerate)}
-          >
-            <Trans i18nKey="desktopUi.retry" />
-          </button>
-        )}
-        {['pending', 'running', 'waiting_provider'].includes(job.status) && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void operation(() => invoke('cancel_extension_job', { jobId: job.jobId }))
-            }
-          >
-            <Trans i18nKey="desktopUi.cancel" />
-          </button>
+                <X size={12} />
+              </Button>
+            </div>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-[11px]">
+              {job.createdAt !== undefined && (
+                <>
+                  <dt className="text-slate-400">{t('resultWorkspace.created')}</dt>
+                  <dd>{new Date(job.createdAt).toLocaleString(i18n.resolvedLanguage)}</dd>
+                </>
+              )}
+              <dt className="text-slate-400">{t('desktopUi.resultOutputs')}</dt>
+              <dd>{job.outputs.length}</dd>
+              <dt className="text-slate-400">{t('resultWorkspace.extension')}</dt>
+              <dd className="break-all text-slate-600 dark:text-slate-300">{job.packageId}</dd>
+              <dt className="text-slate-400">{t('resultWorkspace.version')}</dt>
+              <dd>{job.transformerVersion}</dd>
+              <dt className="text-slate-400">{t('resultWorkspace.operation')}</dt>
+              <dd className="break-all">{job.transformerId}</dd>
+            </dl>
+          </div>
         )}
       </div>
       {job.status === 'completed' && job.outputs.length === 0 ? (

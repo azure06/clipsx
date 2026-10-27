@@ -203,3 +203,20 @@ body,
     display: flex;
   }
 }
+
+.result-view-toggle {
+  container-type: inline-size;
+  container-name: result-mode;
+  display: flex;
+  justify-content: flex-end;
+  width: 160px;
+  max-width: 100%;
+}
+.result-mode-label {
+  display: none;
+}
+@container result-mode (min-width: 150px) {
+  .result-mode-label {
+    display: inline;
+  }
+}

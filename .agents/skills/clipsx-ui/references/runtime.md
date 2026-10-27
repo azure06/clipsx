@@ -197,8 +197,7 @@ preference actions map to the most specific applicable internal scope. The app
 never deduplicates different stored formats by appearance or label, and ordinary
 Copy continues to use its original clipboard policy.
 
-Results uses a newest-run-first picker, followed by separate named-output and
-layout choices. Result-only is the initial layout; comparison is resizable when
+Results keeps one compact row for its searchable newest-run-first picker, status, Copy and options menu. The picker dropdown follows its trigger width; its trigger is capped at 28rem. Preview/Compare uses two icon-and-label buttons beside the main Preview/Results tabs, with a visible active state and icon-only fallback when space is limited. Preview shows the selected output alone; Compare adds the original. Output selection, formatted/source display, extension layouts and Paste live in the options menu, separated from run management. Run again, save and delete apply to the run; deletion confirms removal of the run and all outputs. Creation time, output count and technical identity live under Run details. Cancel and Retry remain visible in their relevant states. Result-only is the initial layout; comparison is resizable when
 wide and stacked when narrow. Copy/paste select one output; promotion saves the
 run's outputs together. Manual runs select their pending result only if no clip,
 tab, result or dialog navigation superseded their intent. Background completion
