@@ -462,11 +462,16 @@ async fn privacy_precedes_general_model_and_negative_models_cannot_override_heur
     )
     .await
     .unwrap();
+    let private_capture = with_format(
+        snapshot("Customer Alice has a confidential contract"),
+        "text/html",
+        &format!(
+            "<p>Customer Alice has a confidential contract</p><!-- {} -->",
+            "formatting ".repeat(7000)
+        ),
+    );
     let (id, _) = repo
-        .capture(
-            snapshot("Customer Alice has a confidential contract"),
-            &CaptureSettings::default(),
-        )
+        .capture(private_capture.clone(), &CaptureSettings::default())
         .await
         .unwrap();
     assert!(restricted(repo, &id).await.unwrap());
@@ -517,10 +522,7 @@ async fn privacy_precedes_general_model_and_negative_models_cannot_override_heur
     // A changed policy cannot disclose a previously private duplicate to the general model.
     let before = requests.lock().unwrap().len();
     let (private_duplicate, reused) = repo
-        .capture(
-            snapshot("Customer Alice has a confidential contract"),
-            &CaptureSettings::default(),
-        )
+        .capture(private_capture, &CaptureSettings::default())
         .await
         .unwrap();
     assert!(reused);
@@ -699,4 +701,81 @@ async fn clearing_secret_removes_only_classification_without_override_storage() 
     assert_eq!(overrides, 0);
     crate::contributions::detect_clip(repo, &id).await.unwrap();
     assert!(clip_secret_status(repo, &id).await.unwrap().secret);
+}
+
+fn with_format(mut capture: CapturedSnapshot, mime: &str, text: &str) -> CapturedSnapshot {
+    let mut rep = capture.representations[0].clone();
+    rep.format_key = mime.into();
+    rep.canonical_mime_type = Some(mime.into());
+    rep.payload = CapturedPayload::Text(text.into());
+    capture.representations.push(rep);
+    capture
+}
+
+#[test]
+fn decision_input_prefers_plain_text_without_duplicate_markup_or_false_input_limit() {
+    let capture = with_format(
+        snapshot("Readable memo"),
+        "text/html",
+        &format!("<p>{}</p>", "markup ".repeat(12000)),
+    );
+    assert_eq!(decision_text(&capture), "Readable memo");
+    let mut preferred = capture.clone();
+    preferred.representations[1].capture_priority = 0;
+    assert_eq!(decision_text(&preferred), "Readable memo");
+}
+
+#[test]
+fn decision_input_extracts_html_and_rtf_when_plain_text_is_missing_or_empty() {
+    let html = with_format(
+        snapshot("  "),
+        "text/html",
+        "<style>p { color:red }</style><p>Hello <b>world</b></p><script>ignored()</script>",
+    );
+    assert_eq!(decision_text(&html), "Hello world");
+    let rtf = with_format(
+        snapshot(""),
+        "application/rtf",
+        r"{\rtf1\ansi Hello \b world}",
+    );
+    assert_eq!(decision_text(&rtf), "Hello world");
+    let unsafe_rtf = with_format(snapshot(""), "text/rtf", r"{\rtf1\object\objdata unsafe}");
+    assert!(decision_text(&unsafe_rtf).is_empty());
+}
+
+#[test]
+fn decision_input_preserves_plain_source_and_skips_binary_images() {
+    let mut capture = snapshot(" ");
+    capture.representations[0].payload = CapturedPayload::Binary(vec![1, 2, 3]);
+    capture.representations[0].canonical_mime_type = Some("image/png".into());
+    assert!(decision_text(&capture).is_empty());
+    let json = with_format(capture, "application/json", r#"{"message":"hello"}"#);
+    assert_eq!(decision_text(&json), r#"{"message":"hello"}"#);
+}
+
+#[tokio::test]
+async fn plain_model_input_does_not_bypass_secret_heuristics_in_html() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    save(
+        repo,
+        PrivacySettings {
+            skip_secrets: true,
+            rules: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let html = format!(
+        "<p>Public memo</p><!-- API_KEY={} -->",
+        "abcdef0123456789".repeat(2)
+    );
+    let capture = with_format(snapshot("Public memo"), "text/html", &html);
+    assert_eq!(decision_text(&capture), "Public memo");
+    assert!(repo
+        .capture(capture, &CaptureSettings::default())
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("privacy_secret_not_saved"));
 }

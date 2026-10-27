@@ -153,6 +153,47 @@ fn failure_reason(error: &anyhow::Error) -> &'static str {
     }
 }
 
+// Choose one readable representation; markup and duplicate clipboard formats are not model input.
+pub(super) fn decision_text(snapshot: &CapturedSnapshot) -> String {
+    let mut sources: Vec<_> = snapshot
+        .representations
+        .iter()
+        .filter_map(|rep| match &rep.payload {
+            CapturedPayload::Text(text) if !text.trim().is_empty() => Some((rep, text)),
+            _ => None,
+        })
+        .collect();
+    sources.sort_by_key(|(rep, _)| rep.capture_priority);
+    for kind in 0..4 {
+        for (rep, text) in &sources {
+            let mime = rep
+                .canonical_mime_type
+                .as_deref()
+                .unwrap_or(&rep.format_key);
+            let rank = match mime {
+                "text/plain" => 0,
+                "text/html" => 1,
+                "text/rtf" | "application/rtf" => 2,
+                _ => 3,
+            };
+            if rank != kind {
+                continue;
+            }
+            let readable = match mime {
+                "text/html" => crate::text::html_visible_text(text),
+                "text/rtf" | "application/rtf" => {
+                    crate::text::rtf_visible_text(text).unwrap_or_default()
+                }
+                _ => (*text).clone(),
+            };
+            if !readable.trim().is_empty() {
+                return readable;
+            }
+        }
+    }
+    String::new()
+}
+
 pub(crate) async fn evaluate(
     repo: &HistoryRepository,
     snapshot: &CapturedSnapshot,
@@ -189,13 +230,11 @@ pub(crate) async fn evaluate(
     if document.selections.privacy_decision.is_none() && enabled.is_empty() {
         return Ok(result);
     }
-    let input_bytes =
-        texts.iter().map(|text| text.len()).sum::<usize>() + texts.len().saturating_sub(1) * 2;
-    let text = if input_bytes <= 64 * 1024 {
-        texts.join("\n\n")
-    } else {
-        String::new()
-    };
+    let text = decision_text(snapshot);
+    if text.trim().is_empty() {
+        return Ok(result);
+    }
+    let input_bytes = text.len();
     let has_privacy = document.selections.privacy_decision.is_some()
         || enabled.iter().any(|r| !r.action.is_general());
     let has_organization = enabled.iter().any(|r| r.action.is_general());
