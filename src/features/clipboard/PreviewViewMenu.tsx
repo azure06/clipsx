@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Eye, Database, PanelsTopLeft } from 'lucide-react'
+import { Check, ChevronDown, Eye, Database, PanelsTopLeft, ScanText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   Button,
@@ -46,7 +46,9 @@ export function PreviewViewMenu({
           variant="ghost"
           aria-label={t('previewWorkspace.chooseView')}
           className="min-w-0 max-w-full gap-1.5 px-2 text-slate-500"
-          leftIcon={<Eye size={13} />}
+          leftIcon={
+            active?.capabilityId === 'builtin.ocr' ? <ScanText size={13} /> : <Eye size={13} />
+          }
           rightIcon={<ChevronDown size={12} />}
         >
           <span className="truncate">{active ? label(active) : t('previewWorkspace.view')}</span>

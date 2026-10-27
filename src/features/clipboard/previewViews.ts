@@ -18,10 +18,12 @@ export function viewChoiceLabel(
   labels: Record<string, string>
 ) {
   const baseLabel = (item: ClipViewDescriptor) =>
-    item.purpose === 'source'
-      ? `${sourceLabel(item)} · ${labels['source']}`
-      : ((item.rendererId.startsWith('builtin.') ? labels[item.presentationKind] : undefined) ??
-        item.label)
+    item.capabilityId === 'builtin.ocr'
+      ? item.label
+      : item.purpose === 'source'
+        ? `${sourceLabel(item)} · ${labels['source']}`
+        : ((item.rendererId.startsWith('builtin.') ? labels[item.presentationKind] : undefined) ??
+          item.label)
   const label = baseLabel(view)
   const similar = all.filter(other => baseLabel(other) === label)
   const sources = [...new Set(similar.map(other => other.sourceId))]

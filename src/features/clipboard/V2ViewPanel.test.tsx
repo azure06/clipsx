@@ -1,3 +1,5 @@
+import type { OcrPresentation } from '../../shared/types/v2'
+import type { ViewTabControls } from './V2ViewPanel'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipboardStore } from '../../stores/clipboardStore'
@@ -181,6 +183,73 @@ describe('V2ViewPanel resolver boundary', () => {
 
     act(() => facetListener?.({ payload: { clipId: null } }))
     await waitFor(() => expect(detailCalls()).toBeGreaterThan(matchingCalls))
+  })
+
+  it('refreshes completed OCR while its extracted-text view is selected', async () => {
+    let ocr: OcrPresentation = { state: 'pending' }
+    let controls: ViewTabControls | null = null
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'get_clip_detail')
+        return Promise.resolve({ clip: summary, representations: [], formatObservations: [] })
+      if (command === 'get_clip_views')
+        return Promise.resolve({
+          clipId: 'clip-1',
+          primaryViewId: 'image',
+          presentationKind: 'image',
+          facets: [],
+          views: [
+            {
+              id: 'image',
+              rendererId: 'builtin.image',
+              label: 'PNG',
+              sourceId: 'image-source',
+              mimeType: 'image/png',
+              capabilityId: 'core.image',
+              facetId: null,
+              isOriginal: false,
+              presentationKind: 'image',
+              placement: 'primary',
+              purpose: 'faithful',
+              matchSpecificity: 200,
+              iconSvg: null,
+              iconSvgDark: null,
+              iconScale: 1,
+            },
+          ],
+        })
+      if (command === 'render_clip_view')
+        return Promise.resolve({
+          kind: 'image',
+          source: { kind: 'managed', assetId: 'image-asset' },
+          ocr,
+        })
+      return Promise.resolve(null)
+    })
+    render(
+      <V2ViewPanel
+        clipId="clip-1"
+        onTabControls={value => {
+          controls = value
+        }}
+      />
+    )
+    await waitFor(() => expect(controls?.views.some(view => view.label === 'OCR text')).toBe(true))
+    act(() => controls?.onTabChange('__ocr__'))
+    expect(await screen.findByText('Text recognition is queued…')).toBeInTheDocument()
+    ocr = { state: 'ready', text: 'Recognized screenshot text' }
+    act(() => artifactListener?.({ payload: { clipId: 'clip-1', sourceId: 'image-source' } }))
+    expect(await screen.findByText('Recognized screenshot text')).toBeVisible()
+    expect(screen.queryByText('Loading preview…')).not.toBeInTheDocument()
+    const callsBeforeReturn = invokeMock.mock.calls.filter(
+      ([command]) => command === 'render_clip_view'
+    ).length
+    act(() => controls?.onTabChange('image'))
+    expect(await screen.findByRole('img')).toBeInTheDocument()
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === 'render_clip_view')
+    ).toHaveLength(callsBeforeReturn)
+    act(() => controls?.onTabChange('__ocr__'))
+    expect(await screen.findByText('Recognized screenshot text')).toBeVisible()
   })
 
   it('refreshes automatic selection after saved defaults change', async () => {

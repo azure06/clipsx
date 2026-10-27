@@ -33,6 +33,8 @@ caching. The epoch timer continues to enforce execution deadlines.
 
 The footer exposes secret classification with an explicit Not a secret action. The native command checks the capture fingerprint and removes the current secret facet and its cached presentation, without storing an override. Private classifications and incomplete privacy-check notices remain independent. Later checks may classify the clip again; normal raw-text protection remains in force.
 
+Images expose extracted text as OCR text in the View menu. OCR completion refreshes the image-backed presentation even while the extracted-text view is selected. Image/OCR switching reuses that shared model; changing to a different renderer still reloads its model. Queue, failure/retry and empty-text states remain visible in that view; switching views does not replace canonical clipboard output.
+
 ## Desktop appearance
 
 The main webview's theme provider applies the saved Light/Dark choice to the

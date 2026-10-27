@@ -318,6 +318,7 @@
     "noFileMetadata": "No file metadata available",
     "noImageSource": "No image source found",
     "imagePreview": "Clip Preview",
+    "ocrText": "OCR Text",
     "running": "running…",
     "queued": "queued",
     "ocrProcessing": "Text recognition is in progress.",
@@ -694,6 +695,7 @@
     "changeHint": "To change a default, open a matching clip, choose its display view, then select “Use as default view”. Reset removes the saved rule; other matching rules may still apply."
   },
   "previewWorkspace": {
+    "ocrText": "OCR text",
     "saveRun": "Save all outputs as a new clip",
     "preview": "Preview",
     "results": "Results · {{count}}",
