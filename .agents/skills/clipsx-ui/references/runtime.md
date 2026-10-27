@@ -1,6 +1,6 @@
 # Desktop interaction and diagnostics contracts
 
-Rust owns every clipboard write; the webview never uses the browser clipboard. Keep host text in both English and Japanese catalogs with live language switching and interpolation. Do not translate command IDs, confirmation tokens, examples or user/package content.
+Rust owns every clipboard write; the webview never uses the browser clipboard. Selected text copied from the host preview or its same-origin HTML/rich-text frames uses native plain-text output, without HTML. Empty selections keep their normal behavior. Explicit Copy actions retain their format policy; separate extension webviews own their selection handling. Keep host text in both English and Japanese catalogs with live language switching and interpolation. Do not translate command IDs, confirmation tokens, examples or user/package content.
 
 ## Desktop startup
 

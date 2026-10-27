@@ -716,7 +716,8 @@
     "preferView": "既定の表示にする",
     "preferScope": "{{type}}の内容に適用",
     "inspectFormats": "保存された形式を確認…",
-    "resultLayout": "結果のレイアウト"
+    "resultLayout": "結果のレイアウト",
+    "selectionCopyFailed": "選択したテキストをコピーできませんでした。もう一度お試しください。"
   },
   "desktopUi": {
     "syncRenameDevice": "名前を変更",
