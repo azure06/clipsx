@@ -1,14 +1,31 @@
 import { job as makePreviewJob } from './previewFixtures.test-utils'
 import userEvent from '@testing-library/user-event'
 import * as Dialog from '@radix-ui/react-dialog'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import type { PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
 import type { ExtensionJob } from './useClipExtensionJobs'
 import type { ContextAction, Transformer } from './useTransformState'
 import { useUIStore } from '../../stores/uiStore'
+
+afterEach(() => vi.unstubAllGlobals())
+
+const chooseResultOption = async (
+  user: ReturnType<typeof userEvent.setup>,
+  group: string,
+  option: string
+) => {
+  await user.click(screen.getByRole('button', { name: 'Manage this run' }))
+  await user.click(screen.getByRole('menuitem', { name: group }))
+  const item = screen.getByRole('menuitem', { name: option })
+  act(() => item.focus())
+  await user.keyboard('{Enter}')
+}
+const chooseComparison = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole('button', { name: 'Compare' }))
+}
 
 const invokeMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
@@ -350,7 +367,7 @@ describe('one durable transformation path', () => {
     useUIStore.getState().setActiveView('clipsx')
   })
 
-  it('shows only controls declared by the transformer for a completed result', () => {
+  it('shows only controls declared by the transformer for a completed result', async () => {
     const job: ExtensionJob = {
       jobId: 'job-1',
       clipId: 'clip-1',
@@ -364,7 +381,15 @@ describe('one durable transformation path', () => {
       reasonCode: null,
       parameters: { preset: 'business' },
       resultControls: ['copy', 'regenerate'],
-      outputs: [],
+      outputs: [
+        {
+          ordinal: 0,
+          outputId: 'result',
+          mimeType: 'text/plain',
+          byteLength: 4,
+          hasRenderedView: false,
+        },
+      ],
       view: null,
       completedWrites: 0,
     }
@@ -378,9 +403,148 @@ describe('one durable transformation path', () => {
       />
     )
     expect(screen.getByRole('button', { name: 'Copy result' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Regenerate result' })).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Manage this run' }))
+    expect(screen.getByRole('menuitem', { name: 'Run again' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Paste result' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Save as new clip' })).not.toBeInTheDocument()
+  })
+
+  it('keeps destructive run actions separate and confirms deletion of all outputs', async () => {
+    const user = userEvent.setup(),
+      onDeleted = vi.fn(),
+      confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const job = makePreviewJob({
+      resultControls: ['copy', 'save_as_clip', 'regenerate'],
+      outputs: [
+        {
+          ordinal: 0,
+          outputId: 'a',
+          mimeType: 'text/plain',
+          byteLength: 1,
+          hasRenderedView: false,
+        },
+        {
+          ordinal: 1,
+          outputId: 'b',
+          mimeType: 'application/json',
+          byteLength: 2,
+          hasRenderedView: false,
+        },
+      ],
+    })
+    render(
+      <ExtensionResultTab
+        job={job}
+        presentation={null}
+        canRegenerate
+        onChanged={vi.fn()}
+        onQueued={vi.fn()}
+        onDeleted={onDeleted}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage this run' }))
+    expect(screen.getByRole('menuitem', { name: 'Run again' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: 'Save all outputs as a new clip' })).toBeVisible()
+    await user.click(screen.getByRole('menuitem', { name: 'Delete run and outputs…' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('all its outputs'))
+    expect(invokeMock.mock.calls.some(([command]) => command === 'delete_extension_result')).toBe(
+      false
+    )
+    confirm.mockReturnValue(true)
+    await user.click(screen.getByRole('button', { name: 'Manage this run' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Delete run and outputs…' }))
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce())
+    expect(invokeMock).toHaveBeenCalledWith('delete_extension_result', { jobId: job.jobId })
+    vi.unstubAllGlobals()
+  })
+
+  it('shows source display choices separately from comparison', async () => {
+    const user = userEvent.setup(),
+      job = makePreviewJob({
+        outputs: [
+          {
+            ordinal: 0,
+            outputId: 'converted',
+            mimeType: 'application/json',
+            byteLength: 2,
+            hasRenderedView: true,
+          },
+        ],
+      })
+    render(
+      <ExtensionResultTab
+        job={job}
+        presentation={null}
+        canRegenerate={false}
+        onChanged={vi.fn()}
+        onQueued={vi.fn()}
+      />
+    )
+    await chooseResultOption(user, 'Output display', 'Source')
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('render_extension_result_output', {
+        jobId: job.jobId,
+        ordinal: 0,
+        raw: true,
+      })
+    )
+    expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true')
+    await chooseComparison(user)
+    expect(screen.getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('switches from a fixed extension layout when selecting a different output', async () => {
+    const user = userEvent.setup(),
+      job = makePreviewJob({
+        outputs: [
+          {
+            ordinal: 0,
+            outputId: 'first',
+            mimeType: 'text/plain',
+            byteLength: 1,
+            hasRenderedView: false,
+          },
+          {
+            ordinal: 1,
+            outputId: 'second',
+            mimeType: 'application/json',
+            byteLength: 2,
+            hasRenderedView: false,
+          },
+        ],
+        view: {
+          tabs: [
+            {
+              id: 'fixed',
+              label: 'First output only',
+              layout: 'single',
+              panels: [{ source: 'output', outputId: 'first' }],
+            },
+          ],
+        },
+      })
+    render(
+      <ExtensionResultTab
+        job={job}
+        presentation={null}
+        canRegenerate={false}
+        onChanged={vi.fn()}
+        onQueued={vi.fn()}
+      />
+    )
+    await chooseResultOption(user, 'Result layout', 'First output only')
+    await chooseResultOption(user, 'Result outputs', 'JSON · second')
+    expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith('render_extension_result_output', {
+        jobId: job.jobId,
+        ordinal: 1,
+        raw: false,
+      })
+    )
   })
 
   it('offers extension layouts while starting with the output preview', async () => {
@@ -429,11 +593,10 @@ describe('one durable transformation path', () => {
     )
     expect(screen.queryByText('Original')).not.toBeInTheDocument()
     const user = userEvent.setup()
-    await user.click(screen.getByRole('combobox', { name: 'Result layout' }))
-    await user.click(screen.getByRole('option', { name: 'Review' }))
+    await chooseResultOption(user, 'Result layout', 'Review')
     expect(screen.getByText('Original')).toBeInTheDocument()
     expect(screen.getByText('Result')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Compare' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('positions the divider exactly and keeps dragging after pointer capture', async () => {
@@ -472,8 +635,7 @@ describe('one durable transformation path', () => {
       />
     )
     const user = userEvent.setup()
-    await user.click(screen.getByRole('combobox', { name: 'Result layout' }))
-    await user.click(screen.getByRole('option', { name: 'Compare' }))
+    await chooseComparison(user)
     const container = screen.getByTestId('extension-result-split')
     const divider = screen.getByRole('separator', { name: 'Resize original and result' })
     Object.defineProperty(container, 'getBoundingClientRect', {
@@ -519,8 +681,7 @@ describe('one durable transformation path', () => {
         onQueued={vi.fn()}
       />
     )
-    await user.click(screen.getByRole('combobox', { name: 'Result outputs' }))
-    await user.click(screen.getByRole('option', { name: 'json · JSON' }))
+    await chooseResultOption(user, 'Result outputs', 'JSON · json')
     await user.click(screen.getByRole('button', { name: 'Copy result' }))
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith('execute_clipboard_output', {
