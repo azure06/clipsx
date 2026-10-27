@@ -661,3 +661,42 @@ fn invalid_rules_are_rejected_before_saving() {
     config.rules.push(config.rules[0].clone());
     assert!(config.validate().is_err());
 }
+
+#[tokio::test]
+async fn clearing_secret_removes_only_classification_without_override_storage() {
+    let (_root, service) = crate::recall::service_tests::repository().await;
+    let repo = &service.history;
+    let text = format!("API_KEY={}", "abcdef0123456789".repeat(2));
+    let (id, _) = repo
+        .capture(snapshot(&text), &CaptureSettings::default())
+        .await
+        .unwrap();
+    let status = clip_secret_status(repo, &id).await.unwrap();
+    assert!(status.secret);
+    assert!(clear_secret(repo, &id, "stale-capture").await.is_err());
+    assert!(clip_secret_status(repo, &id).await.unwrap().secret);
+    let representations: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM clip_representations WHERE clip_id=?")
+            .bind(&id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    let cleared = clear_secret(repo, &id, &status.capture_hash).await.unwrap();
+    assert!(!cleared.secret);
+    assert_eq!(cleared.private, status.private);
+    let after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM clip_representations WHERE clip_id=?")
+            .bind(&id)
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(after, representations);
+    let overrides: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='clip_secret_overrides'")
+            .fetch_one(&repo.pool)
+            .await
+            .unwrap();
+    assert_eq!(overrides, 0);
+    crate::contributions::detect_clip(repo, &id).await.unwrap();
+    assert!(clip_secret_status(repo, &id).await.unwrap().secret);
+}

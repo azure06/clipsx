@@ -2634,6 +2634,38 @@ async fn render_clip_view(
 }
 
 #[tauri::command]
+async fn get_clip_secret_status(
+    clip_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::ai::privacy::ClipSecretStatus, String> {
+    crate::ai::privacy::clip_secret_status(&state.history, &clip_id)
+        .await
+        .map_err(|_| "privacy_status_unavailable".into())
+}
+#[tauri::command]
+async fn clear_clip_secret(
+    app: tauri::AppHandle,
+    clip_id: String,
+    capture_hash: String,
+    state: State<'_, AppState>,
+) -> Result<crate::ai::privacy::ClipSecretStatus, String> {
+    let result = crate::ai::privacy::clear_secret(&state.history, &clip_id, &capture_hash)
+        .await
+        .map_err(|_| "privacy_clear_failed".to_string())?;
+    // Classification is already cleared; derived refresh failures are reported separately.
+    if let Err(error) = search::upsert_projection(&state.history, &clip_id).await {
+        crate::app::diagnostics::operational_error("privacy.clear.projection_failed", &error)
+    }
+    if let Err(error) = embeddings::enqueue_clip(&state.history, &clip_id).await {
+        crate::app::diagnostics::operational_error("privacy.clear.index_failed", &error)
+    }
+    emit_clip_facets_updated(&app, Some(&clip_id));
+    let _ = app.emit("clip-updated", &clip_id);
+    wake_embedding_worker(app, state.history.clone());
+    Ok(result)
+}
+
+#[tauri::command]
 async fn retry_clip_ocr(
     app: tauri::AppHandle,
     clip_id: String,
@@ -3729,6 +3761,8 @@ crate::recall::ipc::recall_snapshot_image,
             update_capture_settings,
             get_clip_views,
             render_clip_view,
+            get_clip_secret_status,
+            clear_clip_secret,
             retry_clip_ocr,
             get_ocr_runtime_status,
             update_ocr_settings,
@@ -4042,6 +4076,8 @@ mod tests {
             .unwrap()
             .contains(&serde_json::json!("main-app-commands")));
         let main_permissions = include_str!("../../permissions/main-app-commands.toml");
+        assert!(main_permissions.contains("\"allow-get-clip-secret-status\""));
+        assert!(main_permissions.contains("\"allow-clear-clip-secret\""));
         assert!(main_permissions.contains("\"allow-get-ocr-runtime-status\""));
         assert!(main_permissions.contains("\"allow-update-ocr-settings\""));
         assert!(main_permissions.contains("\"allow-update-text-embedding-threshold\""));

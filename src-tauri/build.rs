@@ -37,6 +37,8 @@ fn main() {
             "ai_configuration_retry_cleanup",
             "ai_configuration_preview",
             "ai_test_decision",
+            "get_clip_secret_status",
+            "clear_clip_secret",
             "privacy_settings",
             "privacy_save_settings",
             "privacy_test_rule",

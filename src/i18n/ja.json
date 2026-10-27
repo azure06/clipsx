@@ -329,7 +329,6 @@
     "noFileMetadata": "ファイル情報がありません",
     "noImageSource": "画像ソースがありません",
     "imagePreview": "クリップのプレビュー",
-    "ocrText": "OCRテキスト",
     "running": "実行中…",
     "queued": "待機中",
     "ocrProcessing": "文字認識を実行しています。",
@@ -615,6 +614,16 @@
     "downloadingStatus": "ダウンロード中",
     "notInstalled": "未インストール"
   },
+  "secretOverride": {
+    "secret": "機密情報",
+    "review": "機密情報の判定を確認",
+    "action": "機密情報ではない…",
+    "help": "このクリップの「機密」分類を解除します。後のチェックで再び分類されることがあります。",
+    "privateRemains": "別のプライベート判定は引き続き適用されます。",
+    "confirm": "「機密」分類を解除しますか？非公開の制限は維持されます。後のチェックで再び機密として分類されることがあります。",
+    "cleared": "機密分類を解除しました",
+    "failed": "機密情報の判定を変更できませんでした。再試行してください。"
+  },
   "resultWorkspace": {
     "created": "実行日時",
     "selectedOutput": "選択中の出力",
@@ -711,7 +720,6 @@
     "syncRenameDevice": "名前を変更",
     "syncRemoveDevice": "削除",
     "syncSaveDeviceName": "保存",
-
     "syncDeviceFallback": "デバイス · {{id}}",
     "renameSyncDeviceLabel": "{{name}} の名前を変更",
     "removeSyncDeviceLabel": "{{name}} を削除",
@@ -719,7 +727,6 @@
     "confirmRemoveSyncDevice": "デバイスを削除",
     "removeSyncDeviceHelp": "{{name}} を削除しますか？同期アクセスを停止し、この一覧から削除します。ローカルとクラウドの設定は削除されません。",
     "removeCurrentSyncDeviceHelp": "{{name}} を削除しますか？このパソコンの同期を停止し、一覧から削除します。ローカルとクラウドの設定は削除されません。再接続するには、もう一度サインインしてください。",
-
     "unableToInspectClipsxStorage": "ClipsXの保存領域を確認できません：",
     "searchClipsOrAskAQuestion": "クリップを検索、または質問…",
     "storageRecovery": "保存領域の復旧",
