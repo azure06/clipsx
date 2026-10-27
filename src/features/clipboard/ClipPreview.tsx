@@ -1,3 +1,5 @@
+import { guardPreviewSelectionCopy } from '../../shared/previewSelectionCopy'
+import { useToast } from '../../shared/contexts/ToastContext'
 import { ClipSecretControl } from './ClipSecretControl'
 import { ResultViewToggle } from './ResultViewToggle'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +85,14 @@ export const ClipPreview = memo(function ClipPreview({
 }) {
   const { t, i18n } = useTranslation()
   const [previewContainer, setPreviewContainer] = useState<HTMLDivElement | null>(null)
+  const { toast } = useToast()
+  useEffect(() => {
+    if (!previewContainer) return
+    return guardPreviewSelectionCopy(previewContainer, clip.id, () =>
+      toast({ title: t('previewWorkspace.selectionCopyFailed'), type: 'error' })
+    )
+  }, [previewContainer, clip.id, t, toast])
+
   const [toolsOpen, setToolsOpen] = useState(false)
   const toolsTriggerRef = useRef<HTMLButtonElement>(null)
   const [requestedOperationId, setRequestedOperationId] = useState<string | null>(null)

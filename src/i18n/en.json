@@ -716,7 +716,8 @@
     "preferView": "Use as default view",
     "preferScope": "For {{type}} content",
     "inspectFormats": "Inspect captured formats…",
-    "resultLayout": "Result layout"
+    "resultLayout": "Result layout",
+    "selectionCopyFailed": "Could not copy the selected text. Try again."
   },
   "desktopUi": {
     "syncRenameDevice": "Rename",
