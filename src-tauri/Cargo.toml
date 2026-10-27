@@ -136,3 +136,7 @@ custom-protocol = ["tauri/custom-protocol"]
 release-tools = []
 extension-tools = []
 recall-runtime-probe = []
+
+# Keep Wasmtime pinned while backporting its cache's patched compression dependency.
+[patch.crates-io]
+wasmtime-internal-cache = { path = "vendor/wasmtime-internal-cache" }
