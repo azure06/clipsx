@@ -190,7 +190,7 @@ Transforms use native MIME-aware host previews. Result bytes are durable artifac
 with job provenance and reload from SQLite. Raster results use an opaque, no-store
 artifact URL; results are not canonical data until promoted.
 
-Preview and Results are stable, connected tabs. View selects a display of a
+Preview and Results are stable, connected tabs. The display picker shares their header row. Default-view actions name both the view and a precise recognized content type. Generic text/capability defaults are not offered; facet defaults use the matching source’s display name. View selects a display of a
 captured source; inspection entries distinguish HTML/RTF sources and expose all
 stored formats. Existing resolver preferences determine the default; friendly
 preference actions map to the most specific applicable internal scope. The app
@@ -262,9 +262,7 @@ changes while the app was hidden.
 
 History shows up to two readable tag chips per row, with an overflow count.
 The searchable Tags picker sits beside All/Favorites/Pinned and combines one
-tag filter with the current scope and text search. Preview tags wrap below the
-toolbar; Add tag searches existing names or creates a tag. Removing a preview
-chip removes only that membership. Global tag deletion is available for the
+tag filter with the current scope and text search. Preview tags share a fixed-height bottom metadata bar (with or without tags): up to two compact chips and an overflow count open one searchable picker. Add tag searches existing names or creates a tag; the picker also lists every attached tag for removal. Removing a tag removes only that membership. Clip statistics and source information live in the adjacent Details popover, with labeled metadata rows and a title/subtitle. Global tag deletion is available for the
 selected filter with confirmation; it clears an active deleted filter. An enabled
 decision rule can recreate its tag on a later capture.
 

@@ -1,5 +1,5 @@
 import * as Popover from '@radix-ui/react-popover'
-import { Check, Plus, Search, Tags, Trash2 } from 'lucide-react'
+import { Check, Plus, Search, Tags, Trash2, X } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, dropdownSurfaceClass, suggestionItemClass } from '../../../shared/components/ui'
@@ -12,9 +12,19 @@ type Props = {
   selectedIds: string[]
   onChoose: (tag: V2Tag | null) => Promise<void>
   onCreate?: (name: string) => Promise<void>
+  onRemove?: (id: string) => Promise<void>
+  attachedTags?: V2Tag[]
   onDelete?: (id: string) => Promise<void>
 }
-export function TagPicker({ trigger, selectedIds, onChoose, onCreate, onDelete }: Props) {
+export function TagPicker({
+  trigger,
+  selectedIds,
+  onChoose,
+  onCreate,
+  onDelete,
+  onRemove,
+  attachedTags = [],
+}: Props) {
   const { t } = useTranslation()
   const id = useId()
   const input = useRef<HTMLInputElement>(null)
@@ -150,6 +160,23 @@ export function TagPicker({ trigger, selectedIds, onChoose, onCreate, onDelete }
               }}
             />
           </div>
+          {onRemove && attachedTags.length > 0 && (
+            <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto border-b border-slate-200/70 p-3 dark:border-white/10">
+              {attachedTags.map(tag => (
+                <button
+                  key={tag.id}
+                  type="button"
+                  disabled={busy}
+                  aria-label={t('clipboard.removeTag', { name: tag.name })}
+                  onClick={() => void run(() => onRemove(tag.id))}
+                  className="flex max-w-full items-center gap-1.5 rounded-md bg-violet-500/10 px-2 py-1 text-[11px] text-violet-700 transition-colors hover:bg-violet-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:opacity-50 dark:text-violet-200"
+                >
+                  <span className="truncate">{tag.name}</span>
+                  <X aria-hidden="true" className="h-3 w-3 shrink-0" />
+                </button>
+              ))}
+            </div>
+          )}
           {loading && (
             <p role="status" className="px-3 py-2 text-xs text-slate-500">
               {t('clipboard.loadingTags')}

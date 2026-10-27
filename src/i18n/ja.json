@@ -177,6 +177,8 @@
     }
   },
   "clipboard": {
+    "manageTags": "タグを管理",
+    "clipDetails": "詳細",
     "pinOrderHint": "矢印でピン留めの順序を変更できます。先頭の3件が履歴の上に表示されます。",
     "movePinUp": "「{{title}}」を上に移動",
     "movePinDown": "「{{title}}」を下に移動",
@@ -613,6 +615,37 @@
     "downloadingStatus": "ダウンロード中",
     "notInstalled": "未インストール"
   },
+  "clipDetails": {
+    "title": "クリップの詳細",
+    "subtitle": "コピー元・取得日時・プレビュー情報",
+    "captured": "取得日時",
+    "characters": "文字数",
+    "lines": "行数",
+    "language": "言語",
+    "ocr": "テキスト認識",
+    "ocrState": {
+      "pending": "待機中",
+      "running": "テキストを認識中…",
+      "ready": "完了",
+      "failed": "テキストを認識できませんでした",
+      "disabled": "無効",
+      "unsupported": "未対応"
+    }
+  },
+  "previewDefaults": {
+    "title": "プレビューの既定表示",
+    "description": "最初のプレビューを選ぶ保存済みルールを確認します。",
+    "priority": "認識した内容、クリップボード形式、保存形式の順に優先されます。一致するルールがなければ自動で選択します。",
+    "error": "既定表示を読み込み、または保存できませんでした。",
+    "byFacetId": "認識した内容・最優先",
+    "byCapabilityId": "クリップボード形式・第2優先",
+    "byMimeType": "保存形式・第3優先",
+    "reset": "リセット",
+    "resetRule": "{{name}}の既定表示をリセット",
+    "resetAll": "すべて自動に戻す",
+    "automatic": "保存済みの指定はありません。自動で表示を選択します。",
+    "changeHint": "既定表示を変更するには、該当するクリップで表示を選び「既定の表示にする」を選択します。リセットはそのルールを削除します。他の一致するルールは引き続き適用されます。"
+  },
   "previewWorkspace": {
     "saveRun": "すべての出力を新しいクリップとして保存",
     "preview": "プレビュー",
@@ -631,7 +664,8 @@
     "storedSources": "保存されたソースを確認",
     "display": "表示方法",
     "preferenceSaved": "優先する表示方法を保存しました",
-    "preferView": "{{type}}のクリップでこの表示を使用",
+    "preferView": "既定の表示にする",
+    "preferScope": "{{type}}の内容に適用",
     "inspectFormats": "保存された形式を確認…",
     "resultLayout": "結果のレイアウト",
     "copyAs": "形式を選んでコピー…",

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, X, Tags } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { V2Tag } from '../../../shared/types/v2'
 import { useClipboardStore } from '../../../stores/clipboardStore'
@@ -7,7 +7,15 @@ import { Button } from '../../../shared/components/ui'
 import { TagBadge } from './TagBadge'
 import { TagPicker } from './TagPicker'
 
-export const TagChips = ({ clipId, tags }: { clipId: string; tags: V2Tag[] }) => {
+export const TagChips = ({
+  clipId,
+  tags,
+  compact = false,
+}: {
+  clipId: string
+  tags: V2Tag[]
+  compact?: boolean
+}) => {
   const { t } = useTranslation()
   const [removing, setRemoving] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
@@ -25,6 +33,52 @@ export const TagChips = ({ clipId, tags }: { clipId: string; tags: V2Tag[] }) =>
       setRemoving(null)
     }
   }
+  if (compact)
+    return (
+      <TagPicker
+        key={clipId}
+        selectedIds={tags.map(tag => tag.id)}
+        attachedTags={tags}
+        onRemove={id => removeTag(clipId, id)}
+        onChoose={tag => (tag ? addTag(clipId, tag) : Promise.resolve())}
+        onCreate={name => createTag(clipId, name)}
+        trigger={
+          <button
+            type="button"
+            aria-label={t(tags.length ? 'clipboard.manageTags' : 'clipboard.addTag')}
+            className="group flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-slate-500 transition-colors hover:bg-violet-500/5 hover:text-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:text-slate-400 dark:hover:text-violet-200"
+          >
+            <Tags aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-violet-500/80" />
+            {tags.length ? (
+              <>
+                {tags.slice(0, 2).map(tag => (
+                  <span
+                    key={tag.id}
+                    className="max-w-24 truncate rounded-md border border-violet-500/10 bg-violet-500/[0.07] px-1.5 py-0.5 text-violet-700 dark:text-violet-200"
+                  >
+                    {tag.name}
+                  </span>
+                ))}
+                {tags.length > 2 && (
+                  <span
+                    aria-label={t('clipboard.moreTags', { count: tags.length - 2 })}
+                    className="shrink-0 rounded-md bg-slate-200/50 px-1.5 py-0.5 tabular-nums dark:bg-white/5"
+                  >
+                    +{tags.length - 2}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span>{t('clipboard.addTag')}</span>
+            )}
+            <Plus
+              aria-hidden="true"
+              className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100"
+            />
+          </button>
+        }
+      />
+    )
   return (
     <div className="space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">

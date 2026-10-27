@@ -1,4 +1,4 @@
-import type { ClipViewDescriptor } from '../../shared/types/v2'
+import type { ClipViewDescriptor, FacetDescriptor } from '../../shared/types/v2'
 
 export const isInspectionView = (view: ClipViewDescriptor) =>
   view.purpose === 'source' || view.purpose === 'diagnostic'
@@ -33,10 +33,26 @@ export function viewChoiceLabel(
       : ''
   return `${label} (${sourceLabel(view)}${sourceNumber})`
 }
-export function defaultPreferenceScope(view: ClipViewDescriptor) {
-  return view.facetId
-    ? ('facet' as const)
-    : view.mimeType
-      ? ('mime' as const)
-      : ('capability' as const)
+export function viewPreferenceTarget(view: ClipViewDescriptor, facets: FacetDescriptor[] = []) {
+  if (isInspectionView(view) || view.id.startsWith('__')) return null
+  if (view.facetId) {
+    const facet = facets.find(
+      item => item.id === view.facetId && item.sourceRepresentationId === view.sourceId
+    )
+    const name = facet?.displayName.trim()
+    if (!name || /^(plain\s+|rich\s+)?text$/i.test(name)) return null
+    return { scope: 'facet' as const, name }
+  }
+  const name = {
+    'text/html': 'HTML',
+    'application/json': 'JSON',
+    'text/csv': 'CSV',
+    'text/tab-separated-values': 'TSV',
+    'text/markdown': 'Markdown',
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/svg+xml': 'SVG',
+    'application/pdf': 'PDF',
+  }[view.mimeType ?? '']
+  return name ? { scope: 'mime' as const, name } : null
 }
