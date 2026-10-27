@@ -176,7 +176,17 @@ pub async fn prepare(roots: &AppRoots) -> Result<SchemaState> {
     let migrator = migrations::canonical();
     migrations::repair_line_endings(&mut connection, &database, &migrator).await?;
     match migrator.run(&mut connection).await {
-        Ok(()) => Ok(SchemaState::Ready),
+        Ok(()) => {
+            // The validated migration ledger owns schema identity. Synchronize the
+            // display/downgrade guard only after every known migration succeeds.
+            sqlx::query("UPDATE system_schema_meta SET schema_version=? WHERE schema_id=? AND schema_version<?")
+                .bind(SCHEMA_VERSION)
+                .bind(SCHEMA_ID)
+                .bind(SCHEMA_VERSION)
+                .execute(&mut connection)
+                .await?;
+            Ok(SchemaState::Ready)
+        }
         Err(sqlx::migrate::MigrateError::Dirty(version)) => {
             Ok(SchemaState::IncompleteMigration(version))
         }

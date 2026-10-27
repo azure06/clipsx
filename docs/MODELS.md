@@ -2,7 +2,7 @@
 
 ClipsX stores metadata and text in one local SQLite database. Canonical and derived binary bytes live below the app-managed clipboard directory; SQLite stores hashes and safe relative paths. The executable definition is [`src-tauri/migrations`](../src-tauri/migrations).
 
-Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 32. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
+Table prefixes are logical domains, not separate SQLite schemas. Foreign keys are enabled on every connection. The baseline is `clipsx-local-v3`; the current schema version is 32. Development and production use the same database; build mode and release version do not affect compatibility. Schema changes use appended forward migrations, including upgrades from intermediate development schemas. Applied SQL migrations are immutable. Startup synchronizes the schema version label only after validating and completing the migration ledger. Supported upgrades preserve clips, configuration, conversations, and managed-file references; resetting the database is not an upgrade step. Older binaries block newer schemas without suggesting a reset.
 
 ## Data flow
 
