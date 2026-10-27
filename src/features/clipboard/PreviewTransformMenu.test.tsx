@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { PreviewTransformMenu } from './PreviewTransformMenu'
@@ -167,4 +167,16 @@ it('routes incomplete fixed setups to configuration rather than enqueueing inval
   expect(previewTransforms([item], []).find(entry => entry.id.endsWith(':csv'))?.configure).toBe(
     true
   )
+})
+
+it('separates ready runs from choices that need configuration', async () => {
+  const user = userEvent.setup(),
+    p = props()
+  render(<PreviewTransformMenu {...p} />)
+  await user.click(screen.getByRole('button', { name: 'Transform' }))
+  const ready = screen.getByRole('group', { name: 'Run now' }),
+    configure = screen.getByRole('group', { name: 'Configure' })
+  expect(within(ready).getByRole('menuitem', { name: /Table to CSV/ })).toBeVisible()
+  expect(within(configure).getByRole('menuitem', { name: /Custom transformation/ })).toBeVisible()
+  expect(ready.compareDocumentPosition(configure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })

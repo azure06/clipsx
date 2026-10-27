@@ -205,8 +205,7 @@ never steals selection or keyboard focus. Failed/cancelled results and deletion
 remain explicit. Tab/panel motion respects reduced-motion preferences; the native
 custom preview is hidden whenever Results is active.
 
-The preview's Transform menu lists compatible built-in and saved setups, grouped
-by operation and package. Complete, ready setups run directly against their
+The preview's Transform menu separates Run now, Configure and unavailable choices. Within each section, compatible built-in and saved setups are grouped by operation and package; action labels take visual priority over source and extension metadata. Complete, ready setups run directly against their
 assessed source. Capability-backed runs use the existing native invocation token;
 missing consent or parameters opens the selected setup in Tools. Hidden setups
 are omitted; disabled setups retain their reason. Explicit runs select the pending

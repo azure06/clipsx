@@ -639,6 +639,10 @@
     "outputCount_other": "{{count}}個の出力"
   },
   "previewTransform": {
+    "runNow": "今すぐ実行",
+    "runNowHelp": "ワンクリックで変換結果を開きます。",
+    "configureTitle": "設定して実行",
+    "unavailableTitle": "利用できない変換",
     "title": "変換",
     "custom": "変換をカスタマイズ",
     "configure": "実行前に設定を選択",

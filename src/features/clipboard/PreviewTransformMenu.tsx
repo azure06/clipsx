@@ -1,7 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
-import { WandSparkles, ChevronDown, Play, SlidersHorizontal, LoaderCircle } from 'lucide-react'
+import {
+  WandSparkles,
+  ChevronDown,
+  ChevronRight,
+  Play,
+  SlidersHorizontal,
+  LoaderCircle,
+} from 'lucide-react'
 import {
   Button,
   DropdownMenu,
@@ -136,56 +143,116 @@ export function PreviewTransformMenu({
         align="end"
         className="max-h-[min(65vh,460px)] w-72 max-w-[calc(100vw-1.5rem)] overflow-y-auto"
       >
-        {transformers.map(transformer => {
-          const options = entries.filter(entry => entry.transformer.id === transformer.id)
-          return options.length ? (
-            <div key={transformer.id}>
-              <div className="px-2 pb-1 pt-2">
-                <p className="text-[11px] font-semibold text-slate-500">{transformer.label}</p>
-                <p className="text-[10px] text-slate-400">
-                  {transformer.packageLabel ?? transformer.packageId}
-                </p>
+        {[
+          {
+            id: 'run',
+            title: t('previewTransform.runNow'),
+            description: t('previewTransform.runNowHelp'),
+            items: entries.filter(entry => !entry.disabled && !entry.configure),
+          },
+          {
+            id: 'configure',
+            title: t('previewTransform.configureTitle'),
+            description: t('previewTransform.configure'),
+            items: entries.filter(entry => !entry.disabled && entry.configure),
+          },
+          {
+            id: 'unavailable',
+            title: t('previewTransform.unavailableTitle'),
+            description: null,
+            items: entries.filter(entry => entry.disabled),
+          },
+        ]
+          .filter(section => section.items.length > 0)
+          .map((section, index) => (
+            <div
+              key={section.id}
+              role="group"
+              aria-label={section.title}
+              className={index ? 'mt-2 border-t border-slate-200/70 pt-2 dark:border-white/10' : ''}
+            >
+              <div className="px-2.5 pb-2 pt-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                    {section.title}
+                  </p>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400 dark:bg-white/5">
+                    {section.items.length}
+                  </span>
+                </div>
+                {section.description && (
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    {section.description}
+                  </p>
+                )}
               </div>
-              {options.map(entry => {
-                const input = views.find(view => view.sourceId === entry.sourceId)
+              {transformers.map(transformer => {
+                const options = section.items.filter(
+                  entry => entry.transformer.id === transformer.id
+                )
+                if (!options.length) return null
                 return (
-                  <DropdownMenuItem
-                    key={entry.id}
-                    disabled={entry.disabled || busy}
-                    title={entry.reason ? failureMessage(entry.reason) : undefined}
-                    className="items-start gap-2 px-2 py-2 text-xs"
-                    onSelect={() => void run(entry)}
-                  >
-                    {entry.configure ? (
-                      <SlidersHorizontal aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
-                    ) : (
-                      <Play aria-hidden="true" size={13} className="mt-0.5 shrink-0" />
-                    )}
-                    <span className="min-w-0">
-                      <span className="block break-words">
-                        {entry.id.startsWith('custom:') && transformer.setups.length
-                          ? t('previewTransform.custom')
-                          : entry.label}
-                        {entry.configure ? '…' : ''}
-                      </span>
-                      <span className="mt-0.5 block text-[10px] text-slate-400">
-                        {entry.disabled
-                          ? entry.reason
-                            ? failureMessage(entry.reason)
-                            : t('previewTransform.unavailable')
-                          : entry.configure
-                            ? t('previewTransform.configure')
-                            : input
-                              ? t('previewTransform.input', { source: sourceLabel(input) })
-                              : t('previewTransform.run')}
-                      </span>
-                    </span>
-                  </DropdownMenuItem>
+                  <div key={transformer.id} className="mb-1 last:mb-0">
+                    <p className="px-2.5 pb-1 pt-1 text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                      {transformer.packageLabel ?? transformer.packageId}{' '}
+                      <span aria-hidden="true" className="px-0.5 opacity-50">
+                        /
+                      </span>{' '}
+                      {transformer.label}
+                    </p>
+                    {options.map(entry => {
+                      const input = views.find(view => view.sourceId === entry.sourceId)
+                      return (
+                        <DropdownMenuItem
+                          key={entry.id}
+                          disabled={entry.disabled || busy}
+                          title={entry.reason ? failureMessage(entry.reason) : undefined}
+                          className="items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-xs"
+                          onSelect={() => void run(entry)}
+                        >
+                          <span
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${entry.configure || entry.disabled ? 'bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-300'}`}
+                          >
+                            {entry.configure ? (
+                              <SlidersHorizontal aria-hidden="true" size={13} />
+                            ) : (
+                              <Play aria-hidden="true" size={13} />
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block break-words font-medium text-slate-800 dark:text-slate-100">
+                              {entry.id.startsWith('custom:') && transformer.setups.length
+                                ? t('previewTransform.custom')
+                                : entry.label}
+                              {entry.configure ? '…' : ''}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                              {entry.disabled
+                                ? entry.reason
+                                  ? failureMessage(entry.reason)
+                                  : t('previewTransform.unavailable')
+                                : input
+                                  ? t('previewTransform.input', { source: sourceLabel(input) })
+                                  : entry.configure
+                                    ? t('previewTransform.configure')
+                                    : t('previewTransform.run')}
+                            </span>
+                          </span>
+                          {entry.configure && (
+                            <ChevronRight
+                              aria-hidden="true"
+                              size={13}
+                              className="shrink-0 text-slate-400"
+                            />
+                          )}
+                        </DropdownMenuItem>
+                      )
+                    })}
+                  </div>
                 )
               })}
             </div>
-          ) : null
-        })}
+          ))}
         {!entries.length && (
           <p className="px-3 py-4 text-xs text-slate-500">{t('previewTransform.empty')}</p>
         )}
