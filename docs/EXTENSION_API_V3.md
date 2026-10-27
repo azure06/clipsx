@@ -289,7 +289,9 @@ Discovery reads package metadata without compiling components. Guest execution
 prepares only an eligible package; installation validation and guest availability
 checks remain required. Preparation uses the host's shared engine, in-memory cache,
 and Wasmtime's persistent cache, with a successful fallback when disk caching is
-unavailable.
+unavailable. The pinned cache component uses a [documented compression dependency
+backport](../src-tauri/vendor/wasmtime-internal-cache/CLIPSX-PATCH.md); its upstream
+source and license are retained, without changing the guest contract.
 
 Detection recovery tracks detector/representation pairs and detector versions.
 Completed results, including empty facet lists, and unsupported outcomes are
