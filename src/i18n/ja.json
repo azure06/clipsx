@@ -615,6 +615,17 @@
     "downloadingStatus": "ダウンロード中",
     "notInstalled": "未インストール"
   },
+  "previewTransform": {
+    "title": "変換",
+    "custom": "変換をカスタマイズ",
+    "configure": "実行前に設定を選択",
+    "run": "このクリップを変換",
+    "input": "入力: {{source}}",
+    "failed": "変換を開始できませんでした",
+    "unavailable": "現在利用できません",
+    "empty": "このクリップに対応する変換はありません。",
+    "savedError": "保存済み設定を読み込めませんでした。メニューを開き直して再試行してください。"
+  },
   "clipDetails": {
     "title": "クリップの詳細",
     "subtitle": "コピー元・取得日時・プレビュー情報",
@@ -667,16 +678,7 @@
     "preferView": "既定の表示にする",
     "preferScope": "{{type}}の内容に適用",
     "inspectFormats": "保存された形式を確認…",
-    "resultLayout": "結果のレイアウト",
-    "copyAs": "形式を選んでコピー…",
-    "copying": "変換中…",
-    "copiedAs": "{{format}}をコピーしました",
-    "copyFailed": "変換した内容をコピーできませんでした",
-    "copyOutputMismatch": "指定した出力がありません。結果を確認してからコピーしてください。",
-    "copyStillRunning": "変換中です。結果を開いて進行状況を確認できます。",
-    "otherProviders": "ほかの変換ツール",
-    "viewResult": "結果を見る",
-    "actions": "操作"
+    "resultLayout": "結果のレイアウト"
   },
   "desktopUi": {
     "syncRenameDevice": "名前を変更",

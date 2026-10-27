@@ -21,8 +21,7 @@ import { retainInstalledPins } from './extensionPins'
 import { useClipExtensionJobs } from './useClipExtensionJobs'
 import { PreviewViewMenu } from './PreviewViewMenu'
 import { PreviewResultsPicker } from './PreviewResultsPicker'
-import { QuickCopyMenu } from './QuickCopyMenu'
-import { ContextActionsMenu } from './ContextActionsMenu'
+import { PreviewTransformMenu } from './PreviewTransformMenu'
 
 const KIND_COLOR: Record<string, string> = {
   url: 'bg-green-500',
@@ -410,19 +409,6 @@ export const ClipPreview = memo(function ClipPreview({
                 >
                   <Sparkles className="h-4 w-4" />
                 </button>
-                <ContextActionsMenu controls={transformControls} />
-                <QuickCopyMenu
-                  clipId={clip.id}
-                  transformers={transformControls?.items ?? []}
-                  views={tabControls?.views}
-                  hasPlainText={currentPresentation?.hasPlainText}
-                  jobs={jobs}
-                  refreshJobs={refreshJobs}
-                  onViewResult={jobId => {
-                    setSelectedResultId(jobId)
-                    navigate('results')
-                  }}
-                />
                 <div className="mx-0.5 h-3.5 w-px shrink-0 bg-slate-300/60 dark:bg-white/10" />
                 {currentPresentation && (
                   <div className="shrink-0">
@@ -458,13 +444,27 @@ export const ClipPreview = memo(function ClipPreview({
         headerClassName="px-3 py-2"
         headerActions={
           workspace === 'preview' && tabControls ? (
-            <PreviewViewMenu
-              controls={tabControls}
-              onChoose={id => {
-                navigate('preview')
-                tabControls.onTabChange(id)
-              }}
-            />
+            <div className="flex min-w-0 items-center gap-1">
+              <PreviewViewMenu
+                controls={tabControls}
+                onChoose={id => {
+                  navigate('preview')
+                  tabControls.onTabChange(id)
+                }}
+              />
+              <PreviewTransformMenu
+                key={clip.id}
+                clipId={clip.id}
+                transformers={transformControls?.items ?? []}
+                views={tabControls.views}
+                onRunStarted={beginRun}
+                onQueued={manualQueued}
+                onConfigure={id => {
+                  setRequestedOperationId(id)
+                  setToolsOpen(true)
+                }}
+              />
+            </div>
           ) : null
         }
         panelsClassName="relative min-h-0 flex-1"

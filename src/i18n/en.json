@@ -615,6 +615,17 @@
     "downloadingStatus": "Downloading",
     "notInstalled": "Not installed"
   },
+  "previewTransform": {
+    "title": "Transform",
+    "custom": "Custom transformation",
+    "configure": "Choose options before running",
+    "run": "Run on this clip",
+    "input": "Input: {{source}}",
+    "failed": "Could not start transformation",
+    "unavailable": "Currently unavailable",
+    "empty": "No matching transformations for this clip.",
+    "savedError": "Saved setups could not be loaded. Reopen this menu to retry."
+  },
   "clipDetails": {
     "title": "Clip details",
     "subtitle": "Source, capture time and preview information",
@@ -667,16 +678,7 @@
     "preferView": "Use as default view",
     "preferScope": "For {{type}} content",
     "inspectFormats": "Inspect captured formats…",
-    "resultLayout": "Result layout",
-    "copyAs": "Copy as…",
-    "copying": "Converting…",
-    "copiedAs": "{{format}} copied",
-    "copyFailed": "Could not copy converted content",
-    "copyOutputMismatch": "The tool did not produce the requested output. Inspect its result before copying.",
-    "copyStillRunning": "Conversion is still running. Open its result to check progress.",
-    "otherProviders": "Other converters",
-    "viewResult": "View result",
-    "actions": "Actions"
+    "resultLayout": "Result layout"
   },
   "desktopUi": {
     "syncRenameDevice": "Rename",
