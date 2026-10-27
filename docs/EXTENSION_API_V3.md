@@ -157,27 +157,22 @@ keyboard focus. Result-only is the initial layout, with optional comparison and
 extension-declared layouts. Copy/paste target the selected named output. Save as
 new clip retains the run's outputs together using the existing promotion contract.
 
-A fixed local setup may declare API 3.4 metadata:
+The contextual Transform menu uses ordinary setup availability, not special
+quick-action metadata. Complete built-in and saved setups can run directly;
+parameter entry or missing consent opens that exact setup in Tools. Capability-
+backed execution still requires a native invocation token. Input source identity,
+privacy and live permission checks remain host-owned. Hidden setups are omitted;
+unavailable setups remain disabled. Explicit runs open Results only while their
+navigation intent is current, and never copy automatically. Ordinary result copy
+and paste continue to target the selected output. Actions are reached through
+Tools or pinned shortcuts, without a separate Actions menu.
 
-```toml
-copyAs = { intent = "csv", label = "CSV", mimeType = "text/csv", outputId = "converted" }
-```
-
-`intent` groups equivalent user outcomes across providers; it is not inferred
-from labels. `outputId` and `mimeType` must match a completed output before Rust
-writes it. The setup must be complete, locally executable, copy-capable and ready
-under its offline assessment. The host binds that assessed source and uses the
-existing durable job path. Multiple candidate sources remain explicit; a provider
-preference can collapse choices only when the source is unambiguous. Capability-
-backed or configurable operations remain in Tools. Copy as never selects Results;
-View result is explicit. A newer clipboard request/capture, leaving the clip, unmounting or timing out cancels the
-pending automatic copy, not the durable conversion. Conversion failures and mismatched outputs never write the clipboard; native
-write failures are reported without choosing another output. Older setups without metadata keep working in Tools.
-
-Packages using `copyAs` must require `apiVersion = "^3.4"`. The shared legacy
-registry currently accepts only `^3.2` entries; API 3.4 packages are local-test
-candidates until an API-aware registry rollout can preserve older-client access.
-Do not publish a 3.4 entry into that legacy feed.
+Optional API 3.4 `copyAs` metadata (`intent`, `label`, `mimeType`, `outputId`)
+remains accepted for package compatibility; the Transform menu does not require or
+use it. Packages declaring it must require `apiVersion = "^3.4"`. Existing setups
+without it work in the Transform menu. The shared legacy registry currently
+accepts only `^3.2` entries; do not publish 3.4 packages into that feed without an
+API-aware rollout that preserves older-client access.
 
 Tools opens inside the preview card and groups operations by package. A package
 appears once; its operations and built-in/user setups are selected inside its

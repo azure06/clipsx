@@ -206,15 +206,17 @@ never steals selection or keyboard focus. Failed/cancelled results and deletion
 remain explicit. Tab/panel motion respects reduced-motion preferences; the native
 custom preview is hidden whenever Results is active.
 
+The preview's Transform menu lists compatible built-in and saved setups, grouped
+by operation and package. Complete, ready setups run directly against their
+assessed source. Capability-backed runs use the existing native invocation token;
+missing consent or parameters opens the selected setup in Tools. Hidden setups
+are omitted; disabled setups retain their reason. Explicit runs select the pending
+result only while their original navigation intent is current. They never write
+the clipboard automatically. Copying a selected result remains a separate action.
 Tools groups operations by package and edits built-in/saved setups. Contextual
-actions are available without opening Tools. API 3.4 fixed local setups may opt
-into Copy as with explicit intent, MIME and named-output metadata. The host uses
-offline availability and the bound source, never a label heuristic. Conversion
-completion can copy only while that exact clip intent remains current; failures,
-clip changes, unmounts and timeout prevent delayed clipboard writes. The retained
-result is reachable explicitly and never creates another workspace tab. Pins
-remain device-local operation preferences: uninstall removes them; disablement
-hides them until enabled again.
+actions remain accessible through Tools and user-pinned shortcuts; the preview
+has no separate Actions or Copy as menus. Pins remain device-local operation
+preferences: uninstall removes them; disablement hides them until enabled again.
 At clipboard write time, typed source text without a portable native format may
 gain an identical plain-text companion. Stored representations remain
 unchanged.
