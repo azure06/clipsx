@@ -3,9 +3,7 @@
 ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
 `schemaVersion = 3`, `contractRevision = 3`, host API `3.4.0`, and
-WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability and API 3.4 Copy as metadata do not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. A fresh
-local database at schema version 15 is required; ClipsX asks for an explicit
-reset and never silently converts an older database.
+WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability and API 3.4 Copy as metadata do not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. The current local schema is 32. Supported v3 databases upgrade through forward migrations; unsupported legacy storage uses explicit recovery rather than silent conversion.
 
 Custom detail/dialog views share the main native window. The system-wide
 show/hide shortcut remains available while a custom view is open or focused;

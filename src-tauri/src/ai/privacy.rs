@@ -382,3 +382,54 @@ pub async fn test_rule(repo: &HistoryRepository, rule: DecisionRule, text: Strin
     )
     .await?["match"])
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipSecretStatus {
+    pub capture_hash: String,
+    pub secret: bool,
+    pub private: bool,
+}
+pub async fn clip_secret_status(
+    repo: &HistoryRepository,
+    clip_id: &str,
+) -> Result<ClipSecretStatus> {
+    use sqlx::Row;
+    let row=sqlx::query("SELECT c.capture_sha256,EXISTS(SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret'),EXISTS(SELECT 1 FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.private') FROM clip_items c WHERE c.id=? AND c.lifecycle_state='ready'").bind(clip_id).fetch_optional(&repo.pool).await?.context("privacy_clip_unavailable")?;
+    Ok(ClipSecretStatus {
+        capture_hash: row.try_get(0)?,
+        secret: row.get(1),
+        private: row.get(2),
+    })
+}
+pub async fn clear_secret(
+    repo: &HistoryRepository,
+    clip_id: &str,
+    expected_hash: &str,
+) -> Result<ClipSecretStatus> {
+    let mut tx = repo.pool.begin().await?;
+    let hash: String = sqlx::query_scalar(
+        "SELECT capture_sha256 FROM clip_items WHERE id=? AND lifecycle_state='ready'",
+    )
+    .bind(clip_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .context("privacy_clip_unavailable")?;
+    if hash != expected_hash {
+        bail!("privacy_clip_changed")
+    }
+    sqlx::query(
+        "DELETE FROM content_clip_facets WHERE clip_id=? AND facet_id='core.security.secret'",
+    )
+    .bind(clip_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM content_compact_presentations WHERE clip_id=? AND facet_id='core.security.secret'").bind(clip_id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE clip_items SET updated_at=? WHERE id=?")
+        .bind(now_ms())
+        .bind(clip_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    clip_secret_status(repo, clip_id).await
+}

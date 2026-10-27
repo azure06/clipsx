@@ -29,6 +29,10 @@ persistent cache uses the app-local cache directory and owns invalidation and
 cleanup; unavailable caching emits a bounded diagnostic and runs without disk
 caching. The epoch timer continues to enforce execution deadlines.
 
+## Clip privacy and OCR
+
+The footer exposes secret classification with an explicit Not a secret action. The native command checks the capture fingerprint and removes the current secret facet and its cached presentation, without storing an override. Private classifications and incomplete privacy-check notices remain independent. Later checks may classify the clip again; normal raw-text protection remains in force.
+
 ## Desktop appearance
 
 The main webview's theme provider applies the saved Light/Dark choice to the

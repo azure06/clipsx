@@ -1,3 +1,4 @@
+import { ClipSecretControl } from './ClipSecretControl'
 import { ResultViewToggle } from './ResultViewToggle'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -635,6 +636,7 @@ export const ClipPreview = memo(function ClipPreview({
         <div className="min-w-0 flex-1">
           <TagChips key={clip.id} clipId={clip.id} tags={clip.tags ?? []} compact />
         </div>
+        <ClipSecretControl key={`secret:${clip.id}`} clipId={clip.id} />
         <ClipDetails
           key={clip.id}
           capturedAt={clip.capturedAt}

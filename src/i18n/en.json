@@ -318,7 +318,6 @@
     "noFileMetadata": "No file metadata available",
     "noImageSource": "No image source found",
     "imagePreview": "Clip Preview",
-    "ocrText": "OCR Text",
     "running": "running…",
     "queued": "queued",
     "ocrProcessing": "Text recognition is in progress.",
@@ -615,6 +614,16 @@
     "downloadingStatus": "Downloading",
     "notInstalled": "Not installed"
   },
+  "secretOverride": {
+    "secret": "Secret",
+    "review": "Review secret classification",
+    "action": "Not a secret…",
+    "help": "Remove the Secret classification from this clip. Later checks may classify it again.",
+    "privateRemains": "A separate Private classification still applies.",
+    "confirm": "Remove the Secret classification? Private restrictions remain. Later checks may mark this clip as secret again.",
+    "cleared": "Secret classification removed",
+    "failed": "Could not change secret classification. Try again."
+  },
   "resultWorkspace": {
     "created": "Created",
     "selectedOutput": "Selected output",
@@ -711,7 +720,6 @@
     "syncRenameDevice": "Rename",
     "syncRemoveDevice": "Remove",
     "syncSaveDeviceName": "Save",
-
     "syncDeviceFallback": "Device · {{id}}",
     "renameSyncDeviceLabel": "Rename {{name}}",
     "removeSyncDeviceLabel": "Remove {{name}}",
@@ -719,7 +727,6 @@
     "confirmRemoveSyncDevice": "Remove device",
     "removeSyncDeviceHelp": "Remove {{name}}? This stops its sync access and removes it from this list. Local and cloud settings won’t be deleted.",
     "removeCurrentSyncDeviceHelp": "Remove {{name}}? Sync will stop on this computer and it will disappear from the list. Local and cloud settings won’t be deleted. Sign in again to reconnect.",
-
     "unableToInspectClipsxStorage": "Unable to inspect ClipsX storage:",
     "searchClipsOrAskAQuestion": "Search clips or ask a question…",
     "storageRecovery": "Storage recovery",
