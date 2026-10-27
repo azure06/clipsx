@@ -149,3 +149,32 @@ describe('preview tags', () => {
     window.removeEventListener('clipsx-host-overlay', listener)
   })
 })
+
+describe('compact preview tags', () => {
+  it('shows two chips and opens all attached tags for removal and search', async () => {
+    const extra = { id: 'extra', name: 'personal', color: null }
+    const user = userEvent.setup()
+    render(<TagChips clipId="clip" tags={[work, research, extra]} compact />)
+    expect(screen.getByText('+1')).toBeVisible()
+    expect(screen.queryByText('personal')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage tags' }))
+    expect(screen.getByRole('button', { name: 'Remove personal tag' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Remove work tag' }))
+    expect(state.removeClipTag).toHaveBeenCalledWith('clip', work.id)
+    expect(screen.getByRole('combobox')).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Manage tags' })).toHaveFocus()
+  })
+  it('keeps an empty clip accessible and removal failures retryable', async () => {
+    const user = userEvent.setup()
+    const view = render(<TagChips clipId="clip" tags={[]} compact />)
+    expect(screen.getByRole('button', { name: 'Add tag' })).toBeVisible()
+    view.rerender(<TagChips clipId="clip" tags={[work]} compact />)
+    state.removeClipTag.mockRejectedValueOnce(new Error('offline'))
+    await user.click(screen.getByRole('button', { name: 'Manage tags' }))
+    await user.click(screen.getByRole('button', { name: 'Remove work tag' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t update this tag.')
+    await user.click(screen.getByRole('button', { name: 'Remove work tag' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})

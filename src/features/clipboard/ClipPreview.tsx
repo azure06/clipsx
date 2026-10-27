@@ -1,9 +1,9 @@
-import { Trans, useTranslation } from 'react-i18next'
+import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ChevronLeft, ChevronRight, ScanText, Sparkles, Eye, Layers } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Sparkles, Eye, Layers } from 'lucide-react'
 import type { ClipPresentation, ClipSummary } from '../../shared/types/v2'
 import { ClipActionsToolbar } from './ClipActionsToolbar'
 import { DecisionReviewNotice } from './DecisionReviewNotice'
@@ -14,6 +14,7 @@ import { V2ViewPanel, type ViewTabControls } from './V2ViewPanel'
 import type { TransformControls } from './useTransformState'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { Tabs } from '../../shared/components/ui'
+import { ClipDetails } from './ClipDetails'
 import { ExtensionResultTab, ExtensionTools } from './ExtensionWorkspace'
 import { ExtensionOperationIcon, type PinnedOperation } from './ExtensionOperationIcon'
 import { retainInstalledPins } from './extensionPins'
@@ -447,16 +448,25 @@ export const ClipPreview = memo(function ClipPreview({
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-slate-200/60 bg-slate-50/40 px-3 py-2 dark:border-white/5 dark:bg-white/[0.02]">
-        <TagChips key={clip.id} clipId={clip.id} tags={clip.tags ?? []} />
-      </div>
       <Tabs
         appearance="workspace"
         activeTab={workspace}
         onTabChange={navigate}
         keepMounted
         className="min-h-0 flex-1"
-        listClassName="mx-3 mt-2 self-start"
+        listClassName="shrink-0"
+        headerClassName="px-3 py-2"
+        headerActions={
+          workspace === 'preview' && tabControls ? (
+            <PreviewViewMenu
+              controls={tabControls}
+              onChoose={id => {
+                navigate('preview')
+                tabControls.onTabChange(id)
+              }}
+            />
+          ) : null
+        }
         panelsClassName="relative min-h-0 flex-1"
         panelClassName="clip-workspace-panel h-full min-h-0"
         tabs={[
@@ -466,17 +476,6 @@ export const ClipPreview = memo(function ClipPreview({
             icon: <Eye size={13} />,
             content: (
               <div className="flex h-full min-h-0 flex-col">
-                <div className="flex shrink-0 items-center justify-end px-3 py-1">
-                  {tabControls && (
-                    <PreviewViewMenu
-                      controls={tabControls}
-                      onChoose={id => {
-                        navigate('preview')
-                        tabControls.onTabChange(id)
-                      }}
-                    />
-                  )}
-                </div>
                 <div className="relative min-h-0 flex-1">
                   <V2ViewPanel
                     trackHistorySearch={trackHistorySearch}
@@ -601,35 +600,20 @@ export const ClipPreview = memo(function ClipPreview({
         <NoteField clipId={clip.id} />
       </div>
 
-      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-100/60 dark:bg-black/20 border-t border-slate-200/70 dark:border-slate-100/5 text-[10px] text-gray-600 dark:text-gray-500 font-mono">
-        <div className="flex items-center gap-4">
-          <span className="tabular-nums">
-            {new Date(clip.capturedAt).toLocaleString(i18n.resolvedLanguage)}
-          </span>
-          {stats && <span>{t('clipboard.characters', { count: stats.characters })}</span>}
-          {stats && <span>{t('clipboard.lines', { count: stats.lines })}</span>}
-          {stats?.language && <span>{stats.language}</span>}
-          {(ocr?.state === 'pending' || ocr?.state === 'running') && (
-            <span className="flex items-center gap-1 text-sky-500">
-              <ScanText className="h-3 w-3 animate-pulse" />
-              OCR {ocr.state}…
-            </span>
-          )}
-          {ocr?.state === 'failed' && (
-            <span className="text-red-500">
-              <Trans i18nKey="desktopUi.ocrFailed" />
-            </span>
-          )}
-          {ocr?.state === 'ready' && ocr.text.trim() && (
-            <span className="text-emerald-600 dark:text-emerald-400">OCR</span>
-          )}
+      <div
+        data-testid="clip-metadata-bar"
+        className="flex h-10 shrink-0 items-center justify-between gap-2 border-t border-slate-200/70 bg-slate-100/45 px-2 py-1 dark:border-white/5 dark:bg-black/10"
+      >
+        <div className="min-w-0 flex-1">
+          <TagChips key={clip.id} clipId={clip.id} tags={clip.tags ?? []} compact />
         </div>
-        {sourceLabel && (
-          <span>
-            <span className="opacity-60 mr-1">{t('clipboard.source')}</span>
-            {sourceLabel}
-          </span>
-        )}
+        <ClipDetails
+          key={clip.id}
+          capturedAt={clip.capturedAt}
+          source={sourceLabel}
+          stats={stats}
+          ocr={ocr}
+        />
       </div>
       <DecisionReviewNotice key={clip.id} reviews={clip.decisionReviews} />
     </div>

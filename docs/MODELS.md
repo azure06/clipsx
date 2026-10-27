@@ -600,3 +600,13 @@ named output does not rewrite the job. Explicit output copying uses a completed
 job ID and ordinal validated by Rust; omitted selection retains the legacy bundle
 copy behavior. Layout, provider and tab choices remain presentation state and
 never grant input access or execution permissions.
+
+Preview defaults are saved under `renderer.preferences` in `config_profile_values`.
+For each candidate view, the first applicable scope is recognized content (facet),
+clipboard capability, then MIME. Matching content defaults rank ahead of matching
+capability defaults, which rank ahead of matching MIME defaults; normal resolver
+ranking breaks ties within a scope. Preference updates refresh the active preview.
+Settings > Clipboard > Preview defaults lists saved overrides with individual and
+all-rule resets. Reset removes an override; other matching overrides still apply.
+Changing a default is performed on a matching clip so only compatible views are
+selected. Missing or unavailable preferred renderers fall back to automatic views.

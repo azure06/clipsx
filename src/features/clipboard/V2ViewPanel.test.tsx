@@ -183,6 +183,24 @@ describe('V2ViewPanel resolver boundary', () => {
     await waitFor(() => expect(detailCalls()).toBeGreaterThan(matchingCalls))
   })
 
+  it('refreshes automatic selection after saved defaults change', async () => {
+    render(<V2ViewPanel clipId="clip-1" />)
+    await screen.findByText('canonical text')
+    const before = invokeMock.mock.calls.filter(([command]) => command === 'get_clip_views').length
+    const callback = listenMock.mock.calls.find(
+      ([event]) => event === 'renderer-preferences-updated'
+    )?.[1] as (() => void) | undefined
+    expect(callback).toBeDefined()
+    act(() => {
+      callback?.()
+    })
+    await waitFor(() =>
+      expect(
+        invokeMock.mock.calls.filter(([command]) => command === 'get_clip_views').length
+      ).toBeGreaterThan(before)
+    )
+  })
+
   it('ignores a stale render response after the selected clip changes', async () => {
     let resolveOldRender: ((model: { kind: 'text'; text: string }) => void) | undefined
     invokeMock.mockImplementation(

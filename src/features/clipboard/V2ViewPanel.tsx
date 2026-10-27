@@ -338,6 +338,7 @@ type ArtifactUpdate = { clipId: string; sourceId: string }
 
 export type ViewTabControls = {
   views: ClipViewDescriptor[]
+  facets?: import('../../shared/types/v2').FacetDescriptor[]
   activeId: string
   onTabChange: (id: string) => void
   onShowInspector: () => void
@@ -526,14 +527,20 @@ export const V2ViewPanel = ({
   useEffect(() => {
     let disposed = false
     let stop: (() => void) | undefined
-    void listen<{ clipId: string | null }>('clip-facets-updated', event => {
-      if (event.payload.clipId !== null && event.payload.clipId !== clipId) return
+    const refresh = () => {
       setDetail(null)
       setViewSet(null)
       setActive(null)
       setModel(null)
       setRetry(value => value + 1)
-    }).then(unlisten => {
+    }
+    void Promise.all([
+      listen<{ clipId: string | null }>('clip-facets-updated', event => {
+        if (event.payload.clipId === null || event.payload.clipId === clipId) refresh()
+      }),
+      listen('renderer-preferences-updated', refresh),
+    ]).then(listeners => {
+      const unlisten = () => listeners.forEach(stop => stop())
       if (disposed) unlisten()
       else stop = unlisten
     })
@@ -713,6 +720,7 @@ export const V2ViewPanel = ({
     const views = [...visible, ...(ocrTab ? [ocrTab] : [])]
     onTabControls?.({
       views,
+      facets: viewSet?.facets ?? [],
       activeId: active,
       onTabChange: handleTabChange,
       onShowInspector: handleShowInspector,

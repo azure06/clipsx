@@ -177,6 +177,8 @@
     }
   },
   "clipboard": {
+    "manageTags": "Manage tags",
+    "clipDetails": "Details",
     "pinOrderHint": "Use the arrows to arrange your pins. The first three appear above recent history.",
     "movePinUp": "Move {{title}} up",
     "movePinDown": "Move {{title}} down",
@@ -613,6 +615,37 @@
     "downloadingStatus": "Downloading",
     "notInstalled": "Not installed"
   },
+  "clipDetails": {
+    "title": "Clip details",
+    "subtitle": "Source, capture time and preview information",
+    "captured": "Captured",
+    "characters": "Characters",
+    "lines": "Lines",
+    "language": "Language",
+    "ocr": "Text recognition",
+    "ocrState": {
+      "pending": "Waiting",
+      "running": "Recognizing text…",
+      "ready": "Complete",
+      "failed": "Could not recognize text",
+      "disabled": "Disabled",
+      "unsupported": "Not supported"
+    }
+  },
+  "previewDefaults": {
+    "title": "Preview defaults",
+    "description": "See which saved rules choose your initial preview.",
+    "priority": "Recognized content overrides clipboard-format preferences, which override stored-format preferences. Without a matching rule, ClipsX chooses automatically.",
+    "error": "Could not load or save preview defaults.",
+    "byFacetId": "Recognized content · highest priority",
+    "byCapabilityId": "Clipboard format · second priority",
+    "byMimeType": "Stored format · third priority",
+    "reset": "Reset",
+    "resetRule": "Reset default for {{name}}",
+    "resetAll": "Reset all to automatic",
+    "automatic": "No saved overrides. ClipsX chooses views automatically.",
+    "changeHint": "To change a default, open a matching clip, choose its display view, then select “Use as default view”. Reset removes the saved rule; other matching rules may still apply."
+  },
   "previewWorkspace": {
     "saveRun": "Save all outputs as a new clip",
     "preview": "Preview",
@@ -631,7 +664,8 @@
     "storedSources": "Inspect stored sources",
     "display": "Display",
     "preferenceSaved": "Preferred view saved",
-    "preferView": "Use this view for {{type}} clips",
+    "preferView": "Use as default view",
+    "preferScope": "For {{type}} content",
     "inspectFormats": "Inspect captured formats…",
     "resultLayout": "Result layout",
     "copyAs": "Copy as…",

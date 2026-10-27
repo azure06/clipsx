@@ -1,3 +1,4 @@
+import { PreviewDefaults } from './PreviewDefaults'
 import { AboutAppInfo } from './AboutAppInfo'
 import { DiagnosticsActions } from './DiagnosticsActions'
 import { diagnostic } from '../../shared/diagnostics'
@@ -863,6 +864,7 @@ export const Settings = ({ initialTab = 'general' }: SettingsProps) => {
                   )}
                 </div>
               </SettingsSection>
+              <PreviewDefaults />
             </>
           )}
 

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Eye, Database } from 'lucide-react'
+import { Check, ChevronDown, Eye, Database, PanelsTopLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   Button,
@@ -10,12 +10,7 @@ import {
 } from '../../shared/components/ui'
 import { useToast } from '../../shared/contexts/ToastContext'
 import type { ViewTabControls } from './V2ViewPanel'
-import {
-  defaultPreferenceScope,
-  isInspectionView,
-  sourceLabel,
-  viewChoiceLabel,
-} from './previewViews'
+import { viewPreferenceTarget, isInspectionView, viewChoiceLabel } from './previewViews'
 
 export function PreviewViewMenu({
   controls,
@@ -36,6 +31,7 @@ export function PreviewViewMenu({
     image: t('previewWorkspace.image'),
   }
   const active = controls.views.find(view => view.id === controls.activeId)
+  const preference = active ? viewPreferenceTarget(active, controls.facets) : null
   const label = (view: (typeof controls.views)[number]) =>
     viewChoiceLabel(view, controls.views, labels)
   return (
@@ -49,7 +45,7 @@ export function PreviewViewMenu({
           size="sm"
           variant="ghost"
           aria-label={t('previewWorkspace.chooseView')}
-          className="max-w-full gap-1.5 text-slate-500"
+          className="min-w-0 max-w-full gap-1.5 px-2 text-slate-500"
           leftIcon={<Eye size={13} />}
           rightIcon={<ChevronDown size={12} />}
         >
@@ -84,12 +80,12 @@ export function PreviewViewMenu({
           </div>
         ))}
         <DropdownMenuSeparator />
-        {active && !isInspectionView(active) && !active.id.startsWith('__') && (
+        {active && preference && controls.preferenceScopes.includes(preference.scope) && (
           <DropdownMenuItem
-            className="px-2 py-2 text-xs"
+            className="items-start gap-2 px-2 py-2 text-xs"
             onSelect={() => {
               void controls
-                .onPreferActive(defaultPreferenceScope(active))
+                .onPreferActive(preference.scope)
                 .then(() =>
                   toast({ title: t('previewWorkspace.preferenceSaved'), type: 'success' })
                 )
@@ -98,9 +94,13 @@ export function PreviewViewMenu({
                 )
             }}
           >
-            {t('previewWorkspace.preferView', {
-              type: active.facetId?.split('.').at(-1)?.toUpperCase() ?? sourceLabel(active),
-            })}
+            <PanelsTopLeft aria-hidden="true" size={14} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 space-y-0.5">
+              <span className="block font-medium">{t('previewWorkspace.preferView')}</span>
+              <span className="block text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                {t('previewWorkspace.preferScope', { type: preference.name })}
+              </span>
+            </span>
           </DropdownMenuItem>
         )}
         <DropdownMenuItem className="gap-2 px-2 py-2 text-xs" onSelect={controls.onShowInspector}>

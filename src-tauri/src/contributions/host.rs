@@ -1402,10 +1402,12 @@ pub async fn views(
         let capability_preference = renderer_preferences
             .by_capability_id
             .get(&view.capability_id);
-        let preferred = facet_preference
-            .or(capability_preference)
-            .or(mime_preference)
-            .is_some_and(|id| id == &view.renderer_id);
+        let preference_rank = [facet_preference, capability_preference, mime_preference]
+            .into_iter()
+            .enumerate()
+            .find_map(|(rank, preference)| preference.map(|id| (rank, id)))
+            .filter(|(_, id)| *id == &view.renderer_id)
+            .map_or(3, |(rank, _)| rank);
         let purpose_rank = match (faithful_first, view.purpose.as_str()) {
             (true, "faithful") | (false, "structured") => 0,
             (true, "structured") | (false, "semantic") => 1,
@@ -1414,7 +1416,7 @@ pub async fn views(
             _ => 4,
         };
         (
-            !preferred,
+            preference_rank,
             purpose_rank,
             -view.match_specificity,
             Reverse(*renderer_priority),
@@ -2309,6 +2311,41 @@ mod tests {
             .find(|view| view.id == result.primary_view_id)
             .unwrap();
         assert_eq!(primary.renderer_id, "builtin.text");
+    }
+
+    #[tokio::test]
+    async fn resolver_table_default_beats_html_default_for_office_capture() {
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:Biff12".into(), canonical_mime_type: None,
+                native_type: Some("Biff12".into()), platform: "windows".into(),
+                capture_priority: 1, payload: CapturedPayload::Binary(vec![1,2,3]),
+            },
+            CapturedRepresentation {
+                format_key: "windows:HTML Format".into(), canonical_mime_type: Some("text/html".into()),
+                native_type: Some("HTML Format".into()), platform: "windows".into(),
+                capture_priority: 10, payload: CapturedPayload::Text("<table><tr><td>Name</td><td>Hours</td></tr><tr><td>Work</td><td>2</td></tr></table>".into()),
+            },
+            CapturedRepresentation {
+                format_key: "windows:CF_UNICODETEXT".into(), canonical_mime_type: Some("text/plain".into()),
+                native_type: Some("CF_UNICODETEXT".into()), platform: "windows".into(),
+                capture_priority: 20, payload: CapturedPayload::Text("Name\tHours\nWork\t2".into()),
+            },
+        ]).await;
+        let mut preferences = RendererPreferences::default();
+        preferences
+            .by_mime_type
+            .insert("text/html".into(), "builtin.html".into());
+        preferences
+            .by_facet_id
+            .insert("core.data.table".into(), "builtin.table".into());
+        update_preferences(&repo, &preferences).await.unwrap();
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        assert_eq!(result.presentation_kind, "table");
+        preferences.by_facet_id.clear();
+        update_preferences(&repo, &preferences).await.unwrap();
+        let result = views(&repo, &extensions, &clip_id).await.unwrap();
+        assert_eq!(result.presentation_kind, "html");
     }
 
     #[tokio::test]
