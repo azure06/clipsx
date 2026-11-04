@@ -6,6 +6,7 @@ import {
   useState,
   useLayoutEffect,
   type ReactNode,
+  type CompositionEvent,
 } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -423,7 +424,7 @@ export interface RecallChatProps {
   initialDraft?: string
   onDraft?: (text: string) => void
   onCompositionStart?: () => void
-  onCompositionEnd?: () => void
+  onCompositionEnd?: (event: CompositionEvent<HTMLTextAreaElement>) => void
 }
 export function RecallChat(props: RecallChatProps) {
   const { t } = useTranslation()

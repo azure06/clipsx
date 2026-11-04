@@ -44,6 +44,7 @@ export function RecallPage({
   const { toast } = useToast()
   const [query, setQuery] = useState(initialQuery)
   const [draftSeed, setDraftSeed] = useState(initialAsk ? '' : initialQuery)
+  const composingDraft = useRef(false)
   const [filters, storeFilters] = useState(initialFilters)
   const [status, setStatus] = useState<ClipboardStatus | null>(null)
   const [facets, setFacets] = useState<ClipboardFilters | null>(null)
@@ -82,9 +83,19 @@ export function RecallPage({
     storeFilters(next)
   }
   const changeQuery = useCallback((next: string) => {
+    if (composingDraft.current) return
     setDraftSeed('')
     setQuery(next)
   }, [])
+  const startComposition = () => {
+    composingDraft.current = true
+    search.compositionStart()
+  }
+  const endComposition = (event: import('react').CompositionEvent<HTMLTextAreaElement>) => {
+    composingDraft.current = false
+    changeQuery(event.currentTarget.value)
+    search.compositionEnd()
+  }
   const selected = [...(search.keyword?.items ?? []), ...search.related].find(
     item => item.clip.id === search.selectedId
   )
@@ -763,8 +774,8 @@ export function RecallPage({
             }
             initialDraft={draftSeed}
             onDraft={changeQuery}
-            onCompositionStart={search.compositionStart}
-            onCompositionEnd={search.compositionEnd}
+            onCompositionStart={startComposition}
+            onCompositionEnd={endComposition}
             thread={thread}
             preset={preset}
             filters={search.filters}
