@@ -221,6 +221,28 @@ describe('Recall workspace context', () => {
       vi.mocked(invoke).mock.calls.some(([command]) => command === 'assistant_run_begin')
     ).toBe(false)
   })
+  it('searches the committed Japanese text only after composition ends', async () => {
+    render(<RecallPage />)
+    const input = await screen.findByRole('textbox', { name: 'recallPage.message' })
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: 'k' } })
+    fireEvent.change(input, { target: { value: 'か' } })
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([command]) => command === 'assistant_search_clips')
+    ).toHaveLength(0)
+    fireEvent.compositionEnd(input)
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(
+            ([command, args]) =>
+              command === 'assistant_search_clips' &&
+              (args as { request: { query: string } }).request.query === 'か'
+          )
+      ).toBe(true)
+    )
+  })
   it('opens context by default and keeps the same chat mounted while closing and reopening it', async () => {
     render(<RecallPage />)
     const chat = await screen.findByTestId('chat-submission')
