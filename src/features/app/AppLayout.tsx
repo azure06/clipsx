@@ -81,6 +81,7 @@ export const AppLayout = () => {
   const setSemanticActive = useUIStore(state => state.setSemanticActive)
   const settings = useSettingsStore(state => state.settings)
   const clips = useClipboardStore(state => state.clips)
+  const pinnedPreview = useClipboardStore(state => state.pinnedPreview)
   const activeTab = useClipboardStore(state => state.activeTab)
   const setClipboardTab = useClipboardStore(state => state.setActiveTab)
   const refreshSearch = useClipboardStore(state => state.refreshSearch)
@@ -108,7 +109,10 @@ export const AppLayout = () => {
   const [splitContainerWidth, setSplitContainerWidth] = useState(0)
   const [splitSaveError, setSplitSaveError] = useState(false)
   const effectiveHistoryRatio = clampHistoryRatio(historyRatio, splitContainerWidth)
-  const previewClip = clips.find(clip => clip.id === previewClipId) ?? null
+  const previewClip =
+    clips.find(clip => clip.id === previewClipId) ??
+    pinnedPreview.find(clip => clip.id === previewClipId) ??
+    null
   const runRecall = useCallback(() => {
     const parsed = parseSearch(useUIStore.getState().searchQuery)
     if (!parsed.query.trim()) return
