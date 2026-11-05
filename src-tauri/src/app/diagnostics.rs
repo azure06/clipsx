@@ -119,13 +119,29 @@ fn sanitize_native_event(
         breadcrumb.data.clear();
     }
     super::telemetry::enrich_runtime(&mut event);
+    let description = safe_native_event_message(&event);
     if let Some(message) = event.message.as_mut() {
-        *message = "A native application failure occurred".into();
+        *message = description.clone();
     }
     for value in event.exception.values.iter_mut() {
-        value.value = Some("A native application failure occurred".into());
+        value.value = Some(description.clone());
     }
     event
+}
+
+fn safe_native_event_message(event: &sentry::protocol::Event<'_>) -> String {
+    if let Some(message) = super::telemetry::safe_extension_message(event) {
+        return message;
+    }
+    match event.tags.get("error_code").map(String::as_str) {
+        Some("search_cleanup_terminal") => "Search index cleanup failed after retries",
+        Some("search_index_terminal") => "Search indexing failed after retries",
+        _ if event.message.as_deref() == Some("User submitted a diagnostic report") => {
+            "User submitted a diagnostic report"
+        }
+        _ => "A native application failure occurred",
+    }
+    .into()
 }
 
 pub fn initialize_sentry() -> Option<sentry::ClientInitGuard> {
@@ -489,6 +505,115 @@ mod tests {
         assert!(!serde_json::to_string(&sanitized)
             .unwrap()
             .contains("private-content-sentinel"));
+    }
+
+    #[test]
+    fn extension_reports_explain_the_failure_without_preserving_raw_content() {
+        for (stage, code, expected) in [
+            (
+                "execution",
+                "provider_timeout",
+                "Extension execution failed: The model provider did not finish within the allowed time.",
+            ),
+            (
+                "output_persistence",
+                "invalid_output",
+                "Extension output persistence failed: The extension returned output that ClipsX cannot use.",
+            ),
+        ] {
+            let event: sentry::protocol::Event<'static> = serde_json::from_value(serde_json::json!({
+                "message": "private-content-sentinel",
+                "fingerprint": ["clipsx.extension", "example.tool", "example.tool/run", stage, "provider", code],
+                "tags": {"extension_id": "example.tool", "stage": stage, "error_code": code, "extension_version": "1.0.0"},
+                "extra": {"input": "private-content-sentinel"},
+                "exception": {"values": [{"type": "Error", "value": "private-content-sentinel"}]},
+                "breadcrumbs": {"values": [{"category": "clipsx.error", "message": "private-content-sentinel", "data": {"response": "private-content-sentinel"}}]}
+            })).unwrap();
+            let fingerprint = event.fingerprint.clone();
+            let sanitized = sanitize_native_event(event);
+            assert_eq!(sanitized.message.as_deref(), Some(expected));
+            assert_eq!(sanitized.exception.values[0].value.as_deref(), Some(expected));
+            assert_eq!(sanitized.tags["error_code"], code);
+            assert_eq!(sanitized.tags["extension_version"], "1.0.0");
+            assert_eq!(sanitized.fingerprint, fingerprint);
+            assert!(!serde_json::to_string(&sanitized)
+                .unwrap()
+                .contains("private-content-sentinel"));
+            // The upload path can sanitize an event more than once.
+            assert_eq!(sanitize_native_event(sanitized).message.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn unrecognized_extension_metadata_cannot_supply_error_descriptions() {
+        for (fingerprint, stage, code) in [
+            (
+                "clipsx.extension",
+                "execution",
+                "provider_timeout: copied text",
+            ),
+            (
+                "clipsx.extension",
+                "execution: copied text",
+                "provider_timeout",
+            ),
+            ("unknown", "execution", "provider_timeout"),
+        ] {
+            let event = serde_json::from_value(serde_json::json!({
+                "message": "private-content-sentinel",
+                "fingerprint": [fingerprint],
+                "tags": {"stage": stage, "error_code": code}
+            }))
+            .unwrap();
+            assert_eq!(
+                sanitize_native_event(event).message.as_deref(),
+                Some("A native application failure occurred")
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_reports_use_reviewed_reasons_and_unknown_reasons_stay_generic() {
+        for (code, expected) in [
+            (
+                "search_cleanup_terminal",
+                "Search index cleanup failed after retries",
+            ),
+            (
+                "search_index_terminal",
+                "Search indexing failed after retries",
+            ),
+            ("unknown", "A native application failure occurred"),
+        ] {
+            let event = serde_json::from_value(serde_json::json!({
+                "message": "private-content-sentinel", "tags": {"error_code": code}
+            }))
+            .unwrap();
+            assert_eq!(
+                sanitize_native_event(event).message.as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn manual_report_description_must_match_the_reviewed_message_exactly() {
+        for (message, expected) in [
+            (
+                "User submitted a diagnostic report",
+                "User submitted a diagnostic report",
+            ),
+            (
+                "User submitted a diagnostic report: private-content-sentinel",
+                "A native application failure occurred",
+            ),
+        ] {
+            let event = serde_json::from_value(serde_json::json!({"message": message})).unwrap();
+            assert_eq!(
+                sanitize_native_event(event).message.as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[tokio::test]
