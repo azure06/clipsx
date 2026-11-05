@@ -2,7 +2,7 @@
 use super::diagnostics::{error_reporting_enabled, release_name};
 use crate::failure::FailureCode;
 use sentry::protocol::{Context, Event, OsContext, Request};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::VecDeque,
@@ -146,7 +146,8 @@ pub struct ExecutionTelemetry {
     pub state: FailureState,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Stage {
     Validation,
     Detection,
@@ -270,6 +271,21 @@ fn extension_event(
     event
 }
 
+// Reconstruct reviewed descriptions; never trust an event's original error text.
+pub(super) fn safe_extension_message(event: &Event<'_>) -> Option<String> {
+    if event.fingerprint.first()?.as_ref() != "clipsx.extension" {
+        return None;
+    }
+    let stage: Stage = serde_json::from_value(event.tags.get("stage")?.clone().into()).ok()?;
+    let code: FailureCode =
+        serde_json::from_value(event.tags.get("error_code")?.clone().into()).ok()?;
+    Some(format!(
+        "Extension {} failed: {}",
+        stage.as_str().replace('_', " "),
+        code.message()
+    ))
+}
+
 #[derive(Default)]
 struct SuppressionCache(VecDeque<(Vec<String>, Instant)>);
 
@@ -315,7 +331,14 @@ pub fn report_extension(
     code: FailureCode,
     state: FailureState,
 ) {
-    if !error_reporting_enabled() || !reportable(code) {
+    if !reportable(code) {
+        return;
+    }
+    log::error!(target: "clipsx::extensions",
+        "extension.operation.failed extension_id={} contribution_id={} stage={} error_code={} failure_origin={}",
+        bounded(&context.package_id, 200), bounded(&context.contribution_id, 200),
+        stage.as_str(), code.as_str(), origin(code));
+    if !error_reporting_enabled() {
         return;
     }
     let event = extension_event(context, stage, code, state.count, state.quarantined);
@@ -377,6 +400,12 @@ mod tests {
         assert_eq!(event.tags["extension_version"], "2.0.0");
         assert_eq!(event.tags["contribution_version"], "1.0.0");
         assert_eq!(event.tags["failure_origin"], "extension");
+        assert_eq!(
+            safe_extension_message(&event).as_deref(),
+            Some(
+                "Extension execution failed: The extension stopped unexpectedly during execution."
+            )
+        );
         assert_eq!(event.fingerprint, next.fingerprint);
         assert_ne!(event.fingerprint, other.fingerprint);
         assert_eq!(other.tags["extension_id"], "example.other");

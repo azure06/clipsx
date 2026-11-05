@@ -20,6 +20,10 @@ When the user enables desktop error reports, the host attributes unexpected
 extension failures to the validated package and contribution that executed.
 Reports distinguish installed package version from contribution version and
 include the failure stage, safe reason code, and extension/provider/host origin.
+Report descriptions are reconstructed from known stages and typed failure codes;
+raw error messages are never used as descriptions. The same safe failure metadata
+is logged locally even when desktop error reports are disabled. Unknown reasons
+retain a generic description.
 Registry and developer-installed packages are covered; developer installs use
 the telemetry source label `local`. Metadata is snapshotted before execution or
 custom-view creation, so package changes cannot relabel an in-flight failure.
