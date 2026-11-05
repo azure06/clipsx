@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from './AppLayout'
 import { useAuthStore, useClipboardStore, useSettingsStore, useUIStore } from '../../stores'
+import { clip as makeClip } from '../clipboard/previewFixtures.test-utils'
+import type { ClipSummary } from '../../shared/types/v2'
 
 const {
   listenMock,
@@ -83,7 +85,7 @@ vi.mock('../clipboard/ClipboardHistory', () => ({
 }))
 
 vi.mock('../clipboard/ClipPreview', () => ({
-  ClipPreview: () => <div data-testid="clip-preview" />,
+  ClipPreview: ({ clip }: { clip: ClipSummary }) => <div data-testid="clip-preview">{clip.id}</div>,
 }))
 
 vi.mock('../settings/Settings', () => ({
@@ -183,6 +185,7 @@ describe('AppLayout search focus ownership', () => {
 
     useClipboardStore.setState({
       clips: [],
+      pinnedPreview: [],
       availableTags: [],
       loading: false,
       resultsStale: false,
@@ -236,6 +239,37 @@ describe('AppLayout search focus ownership', () => {
     rerender(<AppLayout />)
 
     expect(testRefs.clipboardHistoryProps?.onPreviewItem).toBe(first)
+  })
+
+  it('previews an off-page pin when shortcuts load and clears it when removed', async () => {
+    const pin = { ...makeClip('older-pin'), isPinned: true }
+    const recent = makeClip('recent')
+    useClipboardStore.setState({ clips: [recent] })
+    render(<AppLayout />)
+    await act(async () => {})
+
+    act(() => testRefs.clipboardHistoryProps?.onPreviewItem?.(pin.id))
+    expect(screen.queryByTestId('clip-preview')).not.toBeInTheDocument()
+
+    act(() => useClipboardStore.setState({ pinnedPreview: [pin] }))
+    expect(screen.getByTestId('clip-preview')).toHaveTextContent(pin.id)
+    expect(useClipboardStore.getState().clips).toEqual([recent])
+
+    act(() => useClipboardStore.setState({ pinnedPreview: [] }))
+    expect(screen.queryByTestId('clip-preview')).not.toBeInTheDocument()
+  })
+
+  it('still previews an item selected from loaded history', async () => {
+    const recent = makeClip('recent')
+    useClipboardStore.setState({
+      clips: [recent],
+      pinnedPreview: [{ ...makeClip('older-pin'), isPinned: true }],
+    })
+    render(<AppLayout />)
+    await act(async () => {})
+
+    act(() => testRefs.clipboardHistoryProps?.onPreviewItem?.(recent.id))
+    expect(screen.getByTestId('clip-preview')).toHaveTextContent(recent.id)
   })
 
   it('processes a callback that launched ClipsX and brings the main window forward', async () => {
