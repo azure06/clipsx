@@ -5,6 +5,10 @@ import { command } from './github.mjs'
 const transient =
   /ECONNRESET|ETIMEDOUT|EAI_AGAIN|connection (?:reset|lost|timed out)|network connection was lost|NSURLErrorDomain[^\n]*-100[159]|CloudKit[^\n]*(?:unavailable|network)|HTTP(?:\/\S+)?\s+(?:429|502|503|504)|HTTP (?:Error|error):? (?:429|502|503|504)|Could not resolve host|Failed to connect|curl: \((?:5|6|7|18|28|35|52|56)\)|ticket not yet available/i
 
+export function isTransientFailure(error) {
+  return transient.test([error.message, error.stderr, error.stdout].filter(Boolean).join('\n'))
+}
+
 export function withTransientRetry(
   operation,
   {
@@ -22,8 +26,7 @@ export function withTransientRetry(
     try {
       return operation()
     } catch (error) {
-      const detail = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n')
-      if (attempt >= 2 || !transient.test(detail)) throw error
+      if (attempt >= 2 || !isTransientFailure(error)) throw error
       report(`Temporary network failure; retry ${attempt + 1}/2 in ${attempt ? 5 : 2} seconds.`)
       wait(attempt ? 5000 : 2000)
     }

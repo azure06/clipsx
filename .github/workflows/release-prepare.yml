@@ -168,14 +168,10 @@ jobs:
             codesign --display --entitlements - --xml "$bundle/macos/ClipsX.app/Contents/MacOS/clipsx" > .release/mac-entitlements.plist
             plutil -convert json -o .release/mac-entitlements.json .release/mac-entitlements.plist
             /usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.allow-unsigned-executable-memory' .release/mac-entitlements.plist | grep -qx true
+            node .tooling/scripts/release/platforms/macos/staple.mjs "$bundle/macos/ClipsX.app"
             spctl --assess --verbose=4 --type execute "$bundle/macos/ClipsX.app"
-            node .tooling/scripts/release/core/retry.mjs xcrun stapler staple "$bundle/macos/ClipsX.app"
-            xcrun stapler validate "$bundle/macos/ClipsX.app"
             for dmg in "$bundle"/dmg/*.dmg; do
-              codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
-              node .tooling/scripts/release/core/retry.mjs xcrun notarytool submit "$dmg" --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --timeout 20m
-              node .tooling/scripts/release/core/retry.mjs xcrun stapler staple "$dmg"
-              xcrun stapler validate "$dmg"
+              node .tooling/scripts/release/platforms/macos/staple.mjs "$dmg" --notarize-dmg
               codesign --verify --strict "$dmg"
               spctl --assess --verbose=4 --type open --context context:primary-signature "$dmg"
             done

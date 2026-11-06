@@ -159,7 +159,10 @@ gh workflow run release-prepare.yml --repo azure06/clipsx --ref main -f build_ru
 
 After correcting release scripts, deploy them to `main`, then dispatch preparation
 against the same build/candidate. Successful Mac/Linux packages remain untouched
-when retrying Windows. Another build running or finishing does not supersede the
+when retrying missing platforms. Use a new dispatch on updated `main`: re-running
+an old Actions run retains that run's original tooling revision. Each newly prepared
+platform records the tooling revision that actually packaged it. Another build
+running or finishing does not supersede the
 selection. Failed compilation can use **Re-run failed jobs**; packaging retries
 use the preparation dispatch rather than restarting compilation.
 
@@ -678,6 +681,12 @@ complete only when linked evidence identifies the artifact and result.
 ## Packaging and updates
 
 Windows release helpers use the system `tar.exe` so Git Bash cannot interpret drive letters as remote archive hosts. Linux packaging requires AppIndicator development metadata for bundler discovery, alongside the runtime libraries; installing that metadata does not compile the application.
+
+Mac packaging validates an existing stapled ticket before changing an app or DMG.
+Only an explicit missing-ticket diagnostic permits stapling; a missing DMG ticket
+also requires signing and accepted notarization first. Transport failures retry
+with a fresh validation, while invalid or indeterminate tickets fail packaging.
+Signature, ticket and Gatekeeper verification remain required.
 
 | Platform | Required result                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------- |
