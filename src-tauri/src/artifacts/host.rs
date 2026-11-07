@@ -205,17 +205,7 @@ pub async fn update_ocr_settings(repo: &HistoryRepository, settings: &OcrSetting
             .await?;
     }
     if previous != *settings {
-        sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
-            .bind(now)
-            .bind(now)
-            .bind(OCR_PRODUCER_ID)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
-            .bind(now)
-            .bind(OCR_PRODUCER_ID)
-            .execute(&mut *transaction)
-            .await?;
+        invalidate_ocr_settings(&mut transaction).await?;
     }
     transaction.commit().await?;
     if settings.enabled && previous != *settings {
@@ -255,6 +245,18 @@ pub async fn invalidate_ocr_settings(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<()> {
     let now = now_ms();
+    // Persist search refreshes with the removal of OCR input. Notifications and
+    // settings retries must not reset completed embedding jobs for unchanged images.
+    let clips: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT owner_clip_id FROM artifact_records
+         WHERE producer_id=? AND lifecycle_state='ready'",
+    )
+    .bind(OCR_PRODUCER_ID)
+    .fetch_all(&mut **transaction)
+    .await?;
+    for clip_id in clips {
+        crate::search::enqueue_index_intent(transaction, &clip_id).await?;
+    }
     sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
         .bind(now).bind(now).bind(OCR_PRODUCER_ID).execute(&mut **transaction).await?;
     sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
@@ -270,19 +272,8 @@ pub async fn reconcile_ocr_settings(
     if current == *previous {
         return Ok(());
     }
-    let now = now_ms();
     let mut transaction = repo.pool.begin().await?;
-    sqlx::query("UPDATE artifact_jobs SET status='cancelled',updated_at=?,completed_at=? WHERE artifact_kind='ocr' AND producer_id=? AND status IN ('pending','running')")
-        .bind(now)
-        .bind(now)
-        .bind(OCR_PRODUCER_ID)
-        .execute(&mut *transaction)
-        .await?;
-    sqlx::query("UPDATE artifact_records SET lifecycle_state='invalidated',updated_at=? WHERE producer_id=? AND lifecycle_state='ready'")
-        .bind(now)
-        .bind(OCR_PRODUCER_ID)
-        .execute(&mut *transaction)
-        .await?;
+    invalidate_ocr_settings(&mut transaction).await?;
     transaction.commit().await?;
     if current.enabled {
         enqueue_all_ocr(repo).await?;
@@ -1207,6 +1198,104 @@ mod tests {
             },
             result,
         }
+    }
+
+    #[tokio::test]
+    async fn unchanged_ocr_settings_preserve_completed_work() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let provider = fake_provider(Ok("saved recognition".into()));
+        enqueue_ocr(&repo, &representation_id).await.unwrap();
+        run_next_ocr_with_provider(&repo, &provider).await.unwrap();
+        crate::recall::mutations::process_index_intents(&repo)
+            .await
+            .unwrap();
+
+        let settings = ocr_settings(&repo).await.unwrap();
+        // Sync reconciliation, identical saves, and recovery sweeps can repeat.
+        for _ in 0..2 {
+            reconcile_ocr_settings(&repo, &settings).await.unwrap();
+            update_ocr_settings(&repo, &settings).await.unwrap();
+            recover_ocr_queue_with_provider(&repo, &provider)
+                .await
+                .unwrap();
+            assert_eq!(
+                crate::recall::mutations::process_index_intents(&repo)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert!(run_next_ocr_with_provider(&repo, &provider)
+                .await
+                .unwrap()
+                .is_none());
+        }
+        let jobs: Vec<String> =
+            sqlx::query_scalar("SELECT status FROM artifact_jobs WHERE artifact_kind='ocr'")
+                .fetch_all(&repo.pool)
+                .await
+                .unwrap();
+        assert_eq!(jobs, vec!["completed"]);
+    }
+
+    #[tokio::test]
+    async fn ocr_invalidation_refreshes_search_atomically_and_survives_restart() {
+        let (_temp, repo, representation_id) = image_fixture().await;
+        let provider = fake_provider(Ok("recognition to remove".into()));
+        enqueue_ocr(&repo, &representation_id).await.unwrap();
+        let work = run_next_ocr_with_provider(&repo, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+        crate::recall::mutations::process_index_intents(&repo)
+            .await
+            .unwrap();
+
+        let mut transaction = repo.pool.begin().await.unwrap();
+        invalidate_ocr_settings(&mut transaction).await.unwrap();
+        transaction.rollback().await.unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(matches!(
+            ocr_presentation(&repo, &representation_id).await.unwrap(),
+            OcrPresentation::Ready { .. }
+        ));
+
+        let disabled = OcrSettings {
+            enabled: false,
+            language: "auto".into(),
+        };
+        update_ocr_settings(&repo, &disabled).await.unwrap();
+        // Stop before notifications or the index worker can run.
+        let database = repo.pool.connect_options().get_filename().to_path_buf();
+        let managed_root = repo.managed_root.clone();
+        repo.pool.close().await;
+        let repo = HistoryRepository::connect(&database, managed_root)
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            1
+        );
+        let text: String =
+            sqlx::query_scalar("SELECT search_text FROM search_documents WHERE clip_id=?")
+                .bind(&work.clip_id)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert!(!text.contains("recognition to remove"));
+        update_ocr_settings(&repo, &disabled).await.unwrap();
+        assert_eq!(
+            crate::recall::mutations::process_index_intents(&repo)
+                .await
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

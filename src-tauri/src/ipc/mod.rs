@@ -236,9 +236,9 @@ fn refresh_ocr_dependents(app: tauri::AppHandle, history: HistoryRepository) {
         };
         for clip_id in clip_ids {
             emit_clip_artifact_updates(&app, &history, &clip_id).await;
-            let _ = search::upsert_projection(&history, &clip_id).await;
-            let _ = embeddings::enqueue_clip(&history, &clip_id).await;
         }
+        // OCR writes and invalidation commit their own durable index intents.
+        // A settings notification (including an unchanged sync) is not new data.
         wake_embedding_worker(app, history);
     });
 }

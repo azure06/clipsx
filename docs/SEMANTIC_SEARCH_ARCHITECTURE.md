@@ -62,7 +62,10 @@ current provider and resolved language. Existing results, including empty text,
 do not create new recognition or indexing work. Failed attempts with unchanged
 parameters remain available for explicit retry. New OCR results commit a durable
 search-refresh intent in the same transaction; cached results and failed attempts
-do not requeue semantic indexing.
+do not requeue semantic indexing. OCR invalidation also commits refresh intents
+for affected clips so removed text leaves both indexes even after interruption.
+Settings notifications and unchanged configuration sync responses do not reset
+completed embedding jobs.
 
 Semantic indexing excludes secret- and private-faceted clips for every provider, including
 local Ollama. Before chunking or provider access, the host also scans complete
