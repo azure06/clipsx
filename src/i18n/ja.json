@@ -1740,6 +1740,7 @@
     "catalogEmpty": "モデルを取得して一覧を表示します。下でモデルIDを手動で追加することもできます。",
     "unknownPurpose": "機能情報なし",
     "activeTitle": "使用中のモデル",
+    "done": "完了",
     "savedTitle": "保存済みの構成",
     "remove": "削除",
     "removeProvider": "プロバイダー「{{name}}」を削除",
