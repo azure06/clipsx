@@ -6,6 +6,23 @@ use crate::text::{html_visible_text, rtf_visible_text};
 
 const SNIPPET_MAX_CHARS: usize = 200;
 
+pub(crate) fn secret_history_preview(kind: &str) -> (&'static str, HistoryPreview) {
+    let (kind, label) = match kind {
+        "aws_access_key" => ("aws_access_key", "AWS access key"),
+        "github_token" => ("github_token", "GitHub token"),
+        "stripe_key" => ("stripe_key", "Stripe key"),
+        "private_key" => ("private_key", "Private key"),
+        "credential_assignment" => ("credential_assignment", "Credential"),
+        "api_key" => ("api_key", "API key"),
+        "url_credential" => ("url_credential", "URL with password"),
+        "authorization_header" => ("authorization_header", "Authorization header"),
+        _ => ("secret", "Secret"),
+    };
+    let mut preview = finish(host_icon("key"), format!("{label} · ••••••••"), None, None);
+    preview.accessibility_label = format!("{label}, hidden");
+    (kind, preview)
+}
+
 pub(crate) struct PreviewContext<'a> {
     pub presentation_kind: &'a str,
     pub leading_mime: Option<&'a str>,

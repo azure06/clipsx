@@ -1943,15 +1943,47 @@ mod tests {
     #[tokio::test]
     async fn detected_secret_is_persisted_and_exposed_as_the_primary_view() {
         let secret = "API_KEY=Abcdefghijklmnop123456";
-        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![CapturedRepresentation {
-            format_key: "windows:text/plain".into(),
-            canonical_mime_type: Some("text/plain".into()),
-            native_type: None,
-            platform: "windows".into(),
-            capture_priority: 10,
-            payload: CapturedPayload::Text(secret.into()),
-        }])
+        let (_temp, repo, extensions, clip_id) = resolver_fixture(vec![
+            CapturedRepresentation {
+                format_key: "windows:text/html".into(),
+                canonical_mime_type: Some("text/html".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 5,
+                payload: CapturedPayload::Text(format!("<p>{secret}</p>")),
+            },
+            CapturedRepresentation {
+                format_key: "windows:text/plain".into(),
+                canonical_mime_type: Some("text/plain".into()),
+                native_type: None,
+                platform: "windows".into(),
+                capture_priority: 10,
+                payload: CapturedPayload::Text(secret.into()),
+            },
+        ])
         .await;
+
+        let detail = repo.detail(&clip_id).await.unwrap();
+        let summaries = repo
+            .summaries(std::slice::from_ref(&clip_id))
+            .await
+            .unwrap();
+        for summary in [&detail.clip, &summaries[&clip_id]] {
+            assert_eq!(
+                summary.secret_kind.as_deref(),
+                Some("credential_assignment")
+            );
+            assert_eq!(summary.history_preview.title, "Credential · ••••••••");
+            assert_eq!(
+                summary.history_preview.accessibility_label,
+                "Credential, hidden"
+            );
+            assert!(summary.history_preview.subtitle.is_none());
+        }
+        assert!(detail
+            .representations
+            .iter()
+            .any(|representation| { representation.text_value.as_deref() == Some(secret) }));
 
         let view_set = views(&repo, &extensions, &clip_id).await.unwrap();
         let secret_view = view_set

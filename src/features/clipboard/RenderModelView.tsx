@@ -41,6 +41,7 @@ import {
 import type { ClipPresentation, RenderModel } from '../../shared/types/v2'
 import { copyLiteralText } from '../../shared/clipboardOutput'
 import { managedAssetUrl } from '../../shared/utils/assetUrl'
+import { secretKindKey } from './secretKind'
 
 const assertNever = (value: never): never => {
   throw new Error(`Unhandled render model: ${JSON.stringify(value)}`)
@@ -148,16 +149,6 @@ const DEFAULT_FILE_CHIP = 'bg-slate-500/15 text-slate-500'
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'])
 const VIDEO_EXTS = new Set(['mp4', 'webm', 'ogg', 'mov', 'm4v'])
 const SCROLL_AREA = 'custom-scrollbar h-full min-h-0 overflow-auto overscroll-contain'
-const SECRET_KIND_KEYS = {
-  aws_access_key: 'preview.secretKinds.awsAccessKey',
-  github_token: 'preview.secretKinds.githubToken',
-  stripe_key: 'preview.secretKinds.stripeKey',
-  private_key: 'preview.secretKinds.privateKey',
-  credential_assignment: 'preview.secretKinds.credentialAssignment',
-  api_key: 'preview.secretKinds.apiKey',
-  url_credential: 'preview.secretKinds.urlCredential',
-  authorization_header: 'preview.secretKinds.authorizationHeader',
-} as const
 
 const iframeDocument = (html: string, theme: 'light' | 'dark', richText = false) => {
   const dark = theme === 'dark'
@@ -855,8 +846,6 @@ const SemanticView = ({
   if (kind === 'secret') {
     const secretKind =
       semanticScalar(model.payload, 'kind') ?? semanticScalar(model.payload, 'format') ?? 'secret'
-    const secretKindKey = SECRET_KIND_KEYS[secretKind as keyof typeof SECRET_KIND_KEYS]
-    const secretKindLabel = secretKindKey ? t(secretKindKey) : secretKind.replaceAll('_', ' ')
     return (
       <div className={`${SCROLL_AREA} p-4`}>
         <div className="flex flex-col items-center gap-3 rounded-xl border border-red-500/20 bg-linear-to-br from-red-500/15 via-rose-500/10 to-transparent p-6">
@@ -867,7 +856,7 @@ const SemanticView = ({
             {t('preview.secretDetected')}
           </span>
           <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-400">
-            {secretKindLabel}
+            {t(secretKindKey(secretKind))}
           </span>
           <p className="max-w-xs text-center text-xs text-gray-500 dark:text-gray-400">
             {t('preview.secretDescription')}

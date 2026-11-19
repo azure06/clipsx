@@ -177,6 +177,7 @@
     }
   },
   "clipboard": {
+    "hiddenSecret": "{{label}}, hidden",
     "manageTags": "Manage tags",
     "clipDetails": "Details",
     "pinOrderHint": "Use the arrows to arrange your pins. The first three appear above recent history.",
@@ -369,6 +370,7 @@
     "secretDescription": "This clip looks like a secret, so it isn't shown here. Open the Original tab to see it.",
     "searchDomain": "Search {{domain}}",
     "secretKinds": {
+      "unknown": "Secret",
       "awsAccessKey": "AWS access key",
       "githubToken": "GitHub token",
       "stripeKey": "Stripe key",
