@@ -406,6 +406,7 @@ export interface RecallChatProps {
   thread: RecallThread
   initializeThread?: () => Promise<string>
   preset: AiModelPreset | null
+  hasSelectableModel: boolean
   filters: ClipFilters
   attachments: ClipRevision[]
   ask: { id: string; text: string; retrieve?: boolean } | null
@@ -602,6 +603,7 @@ export function RecallChat(props: RecallChatProps) {
                         onCompositionStart={props.onCompositionStart}
                         onCompositionEnd={props.onCompositionEnd}
                         className="max-h-48 min-h-[48px] w-full resize-none bg-transparent px-1 py-1 text-sm outline-none placeholder:text-slate-400 text-slate-800 dark:text-slate-100"
+                        submitMode={props.preset ? 'enter' : 'none'}
                         placeholder={t('recallPage.composerPlaceholder')}
                         aria-label={t('recallPage.message')}
                         rows={2}
@@ -633,9 +635,22 @@ export function RecallChat(props: RecallChatProps) {
                       </div>
                     </ComposerPrimitive.Root>
                   </div>
-                  <p className="mx-auto mt-1.5 max-w-3xl px-1 text-[10px] text-slate-400">
-                    {props.preset ? t('recallPage.composerHelp') : t('recallPage.setupHelp')}
-                  </p>
+                  {props.preset ? (
+                    <p className="mx-auto mt-1.5 max-w-3xl px-1 text-[10px] text-slate-400">
+                      {t('recallPage.composerHelp')}
+                    </p>
+                  ) : (
+                    <p
+                      role="status"
+                      className="mx-auto mt-2 max-w-3xl rounded-lg bg-violet-500/8 px-3 py-2 text-xs font-medium text-violet-800 dark:text-violet-200"
+                    >
+                      {t(
+                        props.hasSelectableModel
+                          ? 'recallPage.chooseModelToSend'
+                          : 'recallPage.setupHelp'
+                      )}
+                    </p>
+                  )}
                 </div>
               </ThreadPrimitive.Root>
               {props.contextOpen && (

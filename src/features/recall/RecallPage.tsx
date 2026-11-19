@@ -100,13 +100,13 @@ export function RecallPage({
     item => item.clip.id === search.selectedId
   )
   const presetId = thread?.presetId ?? configuration?.selections.defaultChat ?? null
-  const preset =
-    configuration?.presets.find(
+  const chatPresets =
+    configuration?.presets.filter(
       p =>
-        p.id === presetId &&
         p.purpose === 'chat' &&
         configuration.connections.some(c => c.id === p.connectionId && c.enabled)
-    ) ?? null
+    ) ?? []
+  const preset = chatPresets.find(p => p.id === presetId) ?? null
   const fail = useCallback(() => {
     toast({ title: t('recallPage.operationFailed'), type: 'error' })
   }, [toast, t])
@@ -778,6 +778,7 @@ export function RecallPage({
             onCompositionEnd={endComposition}
             thread={thread}
             preset={preset}
+            hasSelectableModel={chatPresets.length > 0}
             filters={search.filters}
             attachments={attachments}
             onClearAttachments={() => setAttachments([])}

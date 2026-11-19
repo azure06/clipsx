@@ -30,6 +30,7 @@ const thread = {
 const props = (): RecallChatProps => ({
   thread,
   preset: fixtureContext().preset,
+  hasSelectableModel: true,
   filters: fixtureContext().filters,
   attachments: [],
   ask: null,
@@ -53,6 +54,26 @@ beforeEach(() => {
   )
 })
 describe('Recall conversation runtime presentation', () => {
+  it.each([
+    [true, 'recallPage.chooseModelToSend'],
+    [false, 'recallPage.setupHelp'],
+  ])(
+    'shows the appropriate model prompt and keeps the draft editable (%s)',
+    async (hasSelectableModel, prompt) => {
+      const run = vi.fn()
+      vi.mocked(createRecallAdapter).mockReturnValue({ run })
+      render(<RecallChat {...props()} preset={null} hasSelectableModel={hasSelectableModel} />)
+
+      expect(await screen.findByText(prompt)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'recallPage.send' })).toBeDisabled()
+      const input = screen.getByRole('textbox', { name: 'recallPage.message' })
+      fireEvent.change(input, { target: { value: 'Keep this draft' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(input).toHaveValue('Keep this draft')
+      expect(run).not.toHaveBeenCalled()
+    }
+  )
+
   it('starts a handed-off Recall question once', async () => {
     const run = vi.fn()
     const onAskConsumed = vi.fn()
