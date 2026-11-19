@@ -13,13 +13,16 @@ import {
 import { Button, dropdownSurfaceClass } from '../../shared/components/ui'
 import type { OcrPresentation } from '../../shared/types/v2'
 import type { presentationTextStats } from './presentationModel'
+import { ClipAutomationActivity } from './ClipAutomationActivity'
 
 export function ClipDetails({
+  clipId,
   capturedAt,
   source,
   stats,
   ocr,
 }: {
+  clipId: string
   capturedAt: number
   source: string | null
   stats: ReturnType<typeof presentationTextStats>
@@ -126,6 +129,7 @@ export function ClipDetails({
                   t(`clipDetails.ocrState.${ocr.state}`)
                 )}
             </dl>
+            <ClipAutomationActivity key={clipId} clipId={clipId} />
           </div>
         </Popover.Content>
       </Popover.Portal>

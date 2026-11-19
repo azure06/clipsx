@@ -649,6 +649,7 @@ export const ClipPreview = memo(function ClipPreview({
         <ClipSecretControl key={`secret:${clip.id}`} clipId={clip.id} />
         <ClipDetails
           key={clip.id}
+          clipId={clip.id}
           capturedAt={clip.capturedAt}
           source={sourceLabel}
           stats={stats}

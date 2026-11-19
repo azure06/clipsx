@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ArrowDown,
   Command,
+  CircleAlert,
   CornerDownLeft,
   MessageSquare,
   Pin,
@@ -167,6 +168,15 @@ const ClipboardListItemComponent = ({
         {/* Far Right Area: Shortcut, Icons, Enter Key */}
         <div className="flex items-center gap-2 shrink-0 ml-auto pl-2">
           <DecisionReviewNotice reviews={clip.decisionReviews} compact />
+          {clip.hasAutomationFailure && (
+            <span title={t('automationRules.needsAttention')}>
+              <CircleAlert
+                aria-hidden="true"
+                className="h-3 w-3 text-amber-600 dark:text-amber-400"
+              />
+              <span className="sr-only">{t('automationRules.needsAttention')}</span>
+            </span>
+          )}
           {preview.badge && (
             <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
               {preview.badge}

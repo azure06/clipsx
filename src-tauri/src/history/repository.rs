@@ -32,52 +32,43 @@ async fn enqueue_capture_intents(
 ) -> Result<()> {
     let platform = source_platform(snapshot.source_app_id.as_deref());
     let app_id = platform.and(snapshot.source_app_id.as_deref());
-    let event_id = new_id();
+    let capture_event_id = new_id();
     let rows=sqlx::query("SELECT r.*,i.sha256 AS package_sha256,COALESCE(p.configuration_revision,0) AS configuration_revision,COALESCE(p.grant_revision,0) AS grant_revision FROM extension_automation_rules r JOIN extension_installs i ON i.package_id=r.package_id JOIN extension_runtime_state s ON s.extension_id=i.id LEFT JOIN extension_package_revisions p ON p.package_id=r.package_id WHERE r.enabled=1 AND i.enabled=1 AND s.status='ready' AND (r.app_platform IS NULL OR (r.app_platform=? AND r.app_id=?)) AND EXISTS(SELECT 1 FROM extension_permission_grants g WHERE g.extension_id=i.id AND g.package_sha256=i.sha256 AND g.permission_kind='background_clip_created' AND g.permission_value='clip.created') ORDER BY r.package_id,r.activation_id,(r.app_platform IS NULL),r.rule_order,r.rule_id")
         .bind(platform).bind(app_id).fetch_all(&mut **tx).await?;
-    let mut groups =
-        std::collections::BTreeMap::<(String, String), Vec<&sqlx::sqlite::SqliteRow>>::new();
-    for row in &rows {
-        groups
-            .entry((row.get("package_id"), row.get("activation_id")))
-            .or_default()
-            .push(row);
-    }
-    for ((package, activation), rules) in groups {
-        let candidates = rules
-            .iter()
-            .map(|r| {
-                Ok(crate::extensions::automation::Candidate {
-                    rule_id: r.get("rule_id"),
-                    condition_question: r.get("condition_question"),
-                    order: r.get("rule_order"),
-                    application: r.get::<Option<String>, _>("app_platform").map(|platform| {
-                        crate::extensions::SourceApplication {
-                            platform,
-                            id: r.get("app_id"),
-                            display_name: r.get("app_display_name"),
-                        }
-                    }),
-                    parameters: serde_json::from_str(r.get::<&str, _>("parameters_json"))?,
-                    setup_label: r.get("setup_label"),
-                    default_view: r.get("default_view"),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let first = rules[0];
-        sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at,candidates_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)")
-            .bind(&event_id).bind(package).bind(activation).bind(clip_id).bind(captured_at).bind(is_new_clip)
+    for (index, row) in rows.into_iter().enumerate() {
+        let event_id = format!("{capture_event_id}:{index:08}");
+        let package: String = row.get("package_id");
+        let activation: String = row.get("activation_id");
+        let candidate = crate::extensions::automation::Candidate {
+            rule_id: row.get("rule_id"),
+            order: row.get("rule_order"),
+            condition_question: row.get("condition_question"),
+            application: row
+                .get::<Option<String>, _>("app_platform")
+                .map(|platform| crate::extensions::SourceApplication {
+                    platform,
+                    id: row.get("app_id"),
+                    display_name: row.get("app_display_name"),
+                }),
+            parameters: serde_json::from_str(row.get::<&str, _>("parameters_json"))?,
+            setup_label: row.get("setup_label"),
+            default_view: row.get("default_view"),
+        };
+        let request_id =
+            crate::extensions::automation::request_id(&event_id, &package, &activation);
+        sqlx::query("INSERT INTO extension_activation_events(event_id,package_id,activation_id,source_clip_id,captured_at,is_new_clip,app_platform,app_id,app_display_name,package_sha256,configuration_revision,grant_revision,rule_id,parameters_json,setup_label,default_view,status,created_at,updated_at,candidates_json,request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)")
+            .bind(event_id).bind(package).bind(activation).bind(clip_id).bind(captured_at).bind(is_new_clip)
             .bind(platform).bind(app_id).bind(platform.and(snapshot.source_app_name.as_deref()))
-            .bind(first.get::<String,_>("package_sha256")).bind(first.get::<i64,_>("configuration_revision")).bind(first.get::<i64,_>("grant_revision"))
-            .bind(first.get::<String,_>("rule_id")).bind(first.get::<String,_>("parameters_json")).bind(first.get::<String,_>("setup_label")).bind(first.get::<String,_>("default_view"))
-            .bind(captured_at).bind(captured_at).bind(serde_json::to_string(&candidates)?).execute(&mut **tx).await?;
+            .bind(row.get::<String,_>("package_sha256")).bind(row.get::<i64,_>("configuration_revision")).bind(row.get::<i64,_>("grant_revision"))
+            .bind(&candidate.rule_id).bind(row.get::<String,_>("parameters_json")).bind(&candidate.setup_label).bind(&candidate.default_view)
+            .bind(captured_at).bind(captured_at).bind(serde_json::to_string(std::slice::from_ref(&candidate))?).bind(request_id).execute(&mut **tx).await?;
     }
     Ok(())
 }
 
 pub const CAPTURE_FINGERPRINT_VERSION: &str = "clipsx-capture-v1";
 
-const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform,c.pin_order,(SELECT COALESCE(CASE WHEN json_valid(f.payload_json) THEN CAST(json_extract(f.payload_json,'$.kind') AS TEXT) END,'secret') FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret' ORDER BY (f.detector_id='core.security.secret') DESC,f.created_at DESC,f.source_representation_id,f.detector_id,f.detector_version LIMIT 1) AS secret_kind FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
+const SUMMARY_SELECT: &str = "SELECT c.id,c.source_app_name,c.source_app_id,c.captured_at,c.updated_at,c.is_pinned,c.is_favorite,c.note,(SELECT count(*) FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready'),(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),COALESCE((SELECT CASE WHEN r.storage_kind='file_list' THEN 'files' WHEN r.canonical_mime_type LIKE 'image/%' THEN 'image' WHEN r.canonical_mime_type='text/html' THEN 'html' WHEN r.canonical_mime_type IN ('text/rtf','application/rtf') THEN 'rich_text' WHEN r.canonical_mime_type IN ('application/pdf','image/svg+xml') THEN 'document' WHEN r.format_family='office' THEN 'office' WHEN r.storage_kind='text' THEN 'text' ELSE 'unsupported' END FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' ORDER BY r.capture_priority,r.ordinal LIMIT 1),'unsupported'),(SELECT r.binary_file_id FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type LIKE 'image/%' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM search_index_jobs j JOIN search_index_generations g ON g.id=j.generation_id WHERE j.clip_id=c.id AND j.status='completed' AND g.status='active'),(SELECT aj.status FROM artifact_jobs aj JOIN clip_representations cr ON cr.id=aj.target_representation_id WHERE cr.clip_id=c.id AND aj.artifact_kind='ocr' AND aj.producer_id='builtin.artifact.ocr' AND aj.producer_version='3' ORDER BY aj.requested_at DESC LIMIT 1),lead.id,lead.canonical_mime_type,lead.format_family,(SELECT substr(t.text_value,1,500) FROM clip_representations r JOIN clip_text_values t ON t.representation_id=r.id WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.canonical_mime_type='text/plain' ORDER BY r.capture_priority,r.ordinal LIMIT 1),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND r.storage_kind='text' AND r.canonical_mime_type='text/plain'),EXISTS(SELECT 1 FROM clip_representations r WHERE r.clip_id=c.id AND r.lifecycle_state='ready' AND (r.storage_kind='file_list' OR r.storage_kind='text' OR r.canonical_mime_type LIKE 'image/%' OR r.canonical_mime_type IN ('application/pdf','image/svg+xml','text/html','text/rtf','application/rtf') OR r.format_family='office')),c.source_app_platform,c.pin_order,(SELECT COALESCE(CASE WHEN json_valid(f.payload_json) THEN CAST(json_extract(f.payload_json,'$.kind') AS TEXT) END,'secret') FROM content_clip_facets f WHERE f.clip_id=c.id AND f.facet_id='core.security.secret' ORDER BY (f.detector_id='core.security.secret') DESC,f.created_at DESC,f.source_representation_id,f.detector_id,f.detector_version LIMIT 1) AS secret_kind,EXISTS(SELECT 1 FROM extension_activation_events e LEFT JOIN extension_automation_dispatches d ON d.request_id=e.request_id LEFT JOIN extension_jobs j ON j.id=d.job_id WHERE e.source_clip_id=c.id AND (e.status='failed' OR j.status='failed')) AS has_automation_failure FROM clip_items c LEFT JOIN (SELECT r1.clip_id AS clip_id,r1.id AS id,r1.canonical_mime_type AS canonical_mime_type,r1.format_family AS format_family FROM clip_representations r1 WHERE r1.lifecycle_state='ready' AND r1.id=(SELECT r2.id FROM clip_representations r2 WHERE r2.clip_id=r1.clip_id AND r2.lifecycle_state='ready' ORDER BY r2.capture_priority,r2.ordinal LIMIT 1)) lead ON lead.clip_id=c.id";
 
 #[derive(Clone)]
 pub struct HistoryRepository {
@@ -747,6 +738,7 @@ impl HistoryRepository {
             ocr_status,
             history_preview,
             secret_kind,
+            has_automation_failure: row.get("has_automation_failure"),
             history_renderer_id,
             tags,
         })
@@ -2908,7 +2900,7 @@ mod tests {
         }
         sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at) VALUES('example.rewrite','all','rewrite-on-capture',1,'{}',0,?)").bind(now_ms()).execute(&repo.pool).await.unwrap();
 
-        // Multiple rules in both scopes coexist, and the capture snapshots every candidate.
+        // Multiple rules in both scopes coexist as independent attempts.
         sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,app_platform,app_id,app_display_name,enabled,parameters_json,revision,updated_at,condition_question,rule_order) VALUES('example.rewrite','outlook-second','rewrite-on-capture','windows','exe:outlook.exe','Outlook',1,'{}',0,?,'Is this a draft?',1)")
             .bind(now).execute(&repo.pool).await.unwrap();
         sqlx::query("INSERT INTO extension_automation_rules(package_id,rule_id,activation_id,enabled,parameters_json,revision,updated_at,rule_order) VALUES('example.rewrite','global-second','rewrite-on-capture',1,'{}',0,?,2)")
@@ -2935,36 +2927,57 @@ mod tests {
             .await
             .unwrap();
         assert!(!duplicate);
-        let candidates_snapshot: String = sqlx::query_scalar(
-            "SELECT candidates_json FROM extension_activation_events WHERE source_clip_id=?",
-        )
-        .bind(&clip_id)
-        .fetch_one(&repo.pool)
-        .await
-        .unwrap();
-        let candidates: Vec<crate::extensions::automation::Candidate> =
-            serde_json::from_str(&candidates_snapshot).unwrap();
+        let snapshots = async {
+            sqlx::query_as::<_, (String, String, String)>(
+                "SELECT rule_id,candidates_json,request_id FROM extension_activation_events WHERE source_clip_id=? ORDER BY event_id",
+            )
+            .bind(&clip_id)
+            .fetch_all(&repo.pool)
+            .await
+            .unwrap()
+        };
+        let before = snapshots.await;
         assert_eq!(
-            candidates
+            before
                 .iter()
-                .map(|c| c.rule_id.as_str())
+                .map(|(id, _, _)| id.as_str())
                 .collect::<Vec<_>>(),
             vec!["outlook", "outlook-second", "all", "global-second"]
         );
         assert_eq!(
-            candidates[1].condition_question.as_deref(),
-            Some("Is this a draft?")
+            before
+                .iter()
+                .map(|(_, _, request)| request)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
         );
+        for (id, json, _) in &before {
+            let candidates: Vec<crate::extensions::automation::Candidate> =
+                serde_json::from_str(json).unwrap();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(&candidates[0].rule_id, id);
+            if id == "outlook-second" {
+                assert_eq!(
+                    candidates[0].condition_question.as_deref(),
+                    Some("Is this a draft?")
+                );
+            }
+        }
         sqlx::query("DELETE FROM extension_automation_rules WHERE rule_id IN ('outlook-second','global-second')")
             .execute(&repo.pool).await.unwrap();
-        let retained: String = sqlx::query_scalar(
-            "SELECT candidates_json FROM extension_activation_events WHERE source_clip_id=?",
+        let retained: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT rule_id,candidates_json,request_id FROM extension_activation_events WHERE source_clip_id=? ORDER BY event_id",
         )
         .bind(&clip_id)
-        .fetch_one(&repo.pool)
+        .fetch_all(&repo.pool)
         .await
         .unwrap();
-        assert_eq!(retained, candidates_snapshot);
+        assert_eq!(retained, before);
+        assert!(!repo.summary(&clip_id).await.unwrap().has_automation_failure);
+        sqlx::query("UPDATE extension_activation_events SET status='failed',reason_code='decision_timeout' WHERE rule_id='outlook'")
+            .execute(&repo.pool).await.unwrap();
+        assert!(repo.summary(&clip_id).await.unwrap().has_automation_failure);
 
         let (again, duplicate) = repo
             .capture(
@@ -2977,23 +2990,27 @@ mod tests {
         assert!(duplicate);
         let events: Vec<(String, i64)> = sqlx::query_as("SELECT app_id,is_new_clip FROM extension_activation_events WHERE source_clip_id=? ORDER BY created_at,event_id")
             .bind(&clip_id).fetch_all(&repo.pool).await.unwrap();
-        assert_eq!(events.len(), 2);
-        assert!(events.contains(&("exe:outlook.exe".into(), 1)));
-        assert!(events.contains(&("exe:slack.exe".into(), 0)));
-        let exact: Vec<String> = sqlx::query_scalar(
-            "SELECT rule_id FROM extension_activation_events WHERE source_clip_id=?",
-        )
-        .bind(&clip_id)
-        .fetch_all(&repo.pool)
-        .await
-        .unwrap();
-        assert!(!exact.contains(&"all".into()));
+        assert_eq!(events.len(), 6);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(app, new)| app == "exe:outlook.exe" && *new == 1)
+                .count(),
+            4
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(app, new)| app == "exe:slack.exe" && *new == 0)
+                .count(),
+            2
+        );
         let mut unknown = snapshot("Unknown", "exe:unknown.exe");
         unknown.source_app_id = None;
         repo.capture(unknown, &CaptureSettings::default())
             .await
             .unwrap();
-        let all: (Option<String>, Option<String>, String) = sqlx::query_as("SELECT app_platform,app_id,rule_id FROM extension_activation_events WHERE rule_id='all'")
+        let all: (Option<String>, Option<String>, String) = sqlx::query_as("SELECT app_platform,app_id,rule_id FROM extension_activation_events WHERE rule_id='all' AND app_id IS NULL")
             .fetch_one(&repo.pool).await.unwrap();
         assert_eq!(all, (None, None, "all".into()));
         repo.capture(
@@ -3008,7 +3025,7 @@ mod tests {
         .fetch_one(&repo.pool)
         .await
         .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 4);
         sqlx::query("UPDATE extension_automation_rules SET enabled=0 WHERE rule_id='all'")
             .execute(&repo.pool)
             .await
@@ -3025,6 +3042,6 @@ mod tests {
         .fetch_one(&repo.pool)
         .await
         .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 4);
     }
 }

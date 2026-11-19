@@ -3,7 +3,7 @@
 ClipsX is the host. Extensions are packaged WebAssembly components and optional
 sandboxed detail/dialog UI assets. The current contract is
 `schemaVersion = 3`, `contractRevision = 3`, host API `3.4.0`, and
-WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability and API 3.4 Copy as metadata do not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. The current local schema is 32. Supported v3 databases upgrade through forward migrations; unsupported legacy storage uses explicit recovery rather than silent conversion.
+WIT package `clipsx:extension@3.2.0`. The additive API 3.3 decision capability and API 3.4 Copy as metadata do not change the WebAssembly interface. Existing `apiVersion = "^3.2"` extensions remain compatible. Decision-capable extensions must declare `apiVersion = "^3.3"`. The host rejects other contract revisions. The current local schema is 33. Supported v3 databases upgrade through forward migrations; unsupported legacy storage uses explicit recovery rather than silent conversion.
 
 Custom detail/dialog views share the main native window. The system-wide
 show/hide shortcut remains available while a custom view is open or focused;
@@ -237,24 +237,22 @@ including multiple rules for the same operation and application. Each rule selec
 an exact application or All copied clips, a built-in or saved setup, and an
 optional “Only run when…” question. The manifest filter and rule intersect.
 
-The host tries enabled application-specific rules in their displayed order, then
-All copied clips rules in order. Only the first matching rule runs per capture,
-extension and activation. An unconditional rule always matches and hides later
-rules in its scope. Conditions use the user's General decisions model; a Yes
-probability of at least 50% matches. Related questions are batched within provider
-limits. Global questions are evaluated only if application-specific rules do not
-match. Errors stop evaluation and expose a retryable failure, never a false result
-or fallback to another provider. Manual operations bypass automation conditions.
+Each enabled rule that applies to the capture is evaluated independently,
+including All copied clips rules. Matching rules queue their own attempts even
+when other rules match, skip, or fail. An unconditional rule needs no model.
+Conditions use the user's General decisions model and match at a Yes probability
+of at least 50%. Missing text skips a conditional attempt. Model and connection
+errors produce a retryable outcome for that rule. Manual operations bypass
+automation conditions.
 
 Every accepted external capture occurrence is considered, including repeated
-copies of an existing clip. Capture commits ordered candidate snapshots, resolved
-setup parameters, labels and views without waiting for guest or model work. A
-claimed coordinator persists decision progress and the selected rule, then
-schedules the shared transformer executor idempotently. Restart recovery cannot
-schedule a capture twice. Equivalent jobs reuse outstanding or completed results;
-a capture's dispatch identity also survives reuse. Jobs waiting for external-write
-review participate in deduplication, so another capture cannot bypass that pause.
-Explicit Regenerate creates another run.
+copies of an existing clip. Capture commits one durable attempt per applicable
+rule with its resolved setup parameters, label and view. A claimed coordinator
+persists its decision and schedules the transformer idempotently. Equivalent
+attempts may share an outstanding or completed job. Each attempt retains its
+dispatch identity, and an outstanding shared job stays eligible while any of its
+matching rules is enabled. Jobs waiting for external-write review participate in
+deduplication. Explicit Regenerate creates another run.
 
 Extension settings are the canonical editor, with add, edit, duplicate, delete,
 keyboard-accessible ordering, and sample testing. Tests evaluate saved enabled
@@ -270,9 +268,10 @@ intents and existing jobs retain snapshots. Deleting a setup disables its rules
 with `setup_deleted`; incompatible declarations leave rules inactive with
 `setup_unavailable`. Privacy exclusions, source deletion, package identity and live
 permission checks apply before model disclosure and scheduling. Disabled rules
-cannot win. Recent attempts expose no-match, privacy, stale-context and retryable
-failure outcomes. Completed results stay attached and readable; automation never
-copies or pastes.
+cannot schedule an attempt. **Clip details → Automation** shows recent rule
+outcomes and linked job status. History marks failures for attention without
+interrupting routine skips. Completed results stay attached and readable;
+automation never copies or pastes.
 
 Source application IDs are normalized platform-specific keys, not publisher
 proof and not the paste destination. Missing identity does not stop capture

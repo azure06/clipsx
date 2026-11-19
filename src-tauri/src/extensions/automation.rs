@@ -24,15 +24,69 @@ pub(crate) struct Candidate {
 #[serde(rename_all = "camelCase")]
 pub struct RuleEvaluation {
     pub rule_id: String,
+    pub setup_label: String,
     pub probability: Option<f64>,
     pub matched: bool,
+    pub reason_code: Option<&'static str>,
 }
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TestResult {
+#[derive(Debug)]
+pub(crate) struct Selection {
     pub selected_rule_id: Option<String>,
-    pub setup_label: Option<String>,
     pub evaluations: Vec<RuleEvaluation>,
+}
+
+pub(crate) fn decision_reason(error: &anyhow::Error) -> &'static str {
+    match error.to_string().as_str() {
+        "automation_privacy_restricted" => "privacy_restricted",
+        "automation_stale" => "stale_context",
+        "decision_input_limit" => "decision_input_limit",
+        "automation_no_text" => "no_text",
+        "decision_timeout" => "decision_timeout",
+        _ if crate::failure::OperationFailure::from_error(error).code
+            == crate::failure::FailureCode::ProviderTimeout =>
+        {
+            "decision_timeout"
+        }
+        _ => "decision_unavailable",
+    }
+}
+
+pub enum AttemptScope<'a> {
+    Package(&'a str),
+    Clip(&'a str),
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Attempt {
+    event_id: String,
+    package_id: String,
+    activation_id: String,
+    rule_id: String,
+    status: String,
+    reason_code: Option<String>,
+    setup_label: String,
+    captured_at: i64,
+    job_status: Option<String>,
+    job_reason_code: Option<String>,
+}
+
+pub async fn attempts(repo: &HistoryRepository, scope: AttemptScope<'_>) -> Result<Vec<Attempt>> {
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT e.event_id,e.package_id,e.activation_id,e.rule_id,e.status,e.reason_code,e.setup_label,e.captured_at,j.status AS job_status,j.reason_code AS job_reason_code FROM extension_activation_events e LEFT JOIN extension_automation_dispatches d ON d.request_id=e.request_id LEFT JOIN extension_jobs j ON j.id=d.job_id",
+    );
+    match scope {
+        AttemptScope::Package(id) => {
+            query.push(" WHERE e.package_id=").push_bind(id);
+            query.push(" ORDER BY");
+        }
+        AttemptScope::Clip(id) => {
+            query.push(" WHERE e.source_clip_id=").push_bind(id);
+            query.push(" ORDER BY (e.status='failed' OR j.status IS 'failed') DESC,");
+        }
+    }
+    query.push(" e.captured_at DESC,e.event_id DESC,e.activation_id LIMIT 64");
+    Ok(query.build_query_as().fetch_all(&repo.pool).await?)
 }
 
 pub(crate) fn validate_condition(question: Option<&str>) -> Result<()> {
@@ -98,7 +152,7 @@ pub(crate) async fn evaluate(
     text: &str,
     candidates: &[Candidate],
     key: Option<&EventKey<'_>>,
-) -> Result<TestResult> {
+) -> Result<Selection> {
     let document = ai::configuration::export(repo).await?;
     let revision = crate::history::sha256(serde_json::to_string(&document)?.as_bytes());
     let mut answers = BTreeMap::<String, f64>::new();
@@ -121,6 +175,9 @@ pub(crate) async fn evaluate(
     while index < candidates.len() {
         let candidate = &candidates[index];
         if candidate.condition_question.is_some() && !answers.contains_key(&candidate.rule_id) {
+            if text.trim().is_empty() {
+                bail!("automation_no_text");
+            }
             if crate::contributions::contains_secret(text) {
                 bail!("automation_privacy_restricted");
             }
@@ -184,23 +241,54 @@ pub(crate) async fn evaluate(
         let matched = probability.is_none_or(|p| p >= 0.5);
         evaluations.push(RuleEvaluation {
             rule_id: candidate.rule_id.clone(),
+            setup_label: candidate.setup_label.clone(),
             probability,
             matched,
+            reason_code: None,
         });
         if matched {
-            return Ok(TestResult {
+            return Ok(Selection {
                 selected_rule_id: Some(candidate.rule_id.clone()),
-                setup_label: Some(candidate.setup_label.clone()),
                 evaluations,
             });
         }
         index += 1;
     }
-    Ok(TestResult {
+    Ok(Selection {
         selected_rule_id: None,
-        setup_label: None,
         evaluations,
     })
+}
+
+pub(crate) async fn test_rules(
+    repo: &HistoryRepository,
+    text: &str,
+    candidates: &[Candidate],
+) -> Vec<RuleEvaluation> {
+    let mut evaluations = Vec::with_capacity(candidates.len());
+    for batch in candidates.chunks(4) {
+        let mut pending = Vec::with_capacity(batch.len());
+        for candidate in batch {
+            pending.push(async move {
+                match evaluate(repo, text, std::slice::from_ref(candidate), None).await {
+                    Ok(result) => result
+                        .evaluations
+                        .into_iter()
+                        .next()
+                        .expect("one rule evaluated"),
+                    Err(error) => RuleEvaluation {
+                        rule_id: candidate.rule_id.clone(),
+                        setup_label: candidate.setup_label.clone(),
+                        probability: None,
+                        matched: false,
+                        reason_code: Some(decision_reason(&error)),
+                    },
+                }
+            });
+        }
+        evaluations.extend(futures::future::join_all(pending).await);
+    }
+    evaluations
 }
 
 pub(crate) async fn select_event(
@@ -224,6 +312,9 @@ pub(crate) async fn select_event(
     let enabled:Vec<String>=sqlx::query_scalar("SELECT rule_id FROM extension_automation_rules WHERE package_id=? AND activation_id=? AND enabled=1 AND (app_platform IS NULL OR (app_platform=? AND app_id=?))")
         .bind(key.package).bind(key.activation).bind(row.get::<Option<String>,_>("app_platform")).bind(row.get::<Option<String>,_>("app_id")).fetch_all(&repo.pool).await?;
     candidates.retain(|c| enabled.contains(&c.rule_id));
+    if candidates.is_empty() {
+        bail!("automation_stale");
+    }
     if let Some(selected) = row.get::<Option<String>, _>("selected_rule_id") {
         live(repo, key).await?;
         return Ok(candidates
@@ -324,6 +415,10 @@ mod tests {
             candidate("conditional", 0, None, Some("Does this match?")),
             candidate("fallback", 1, None, None),
         ];
+        let independent = test_rules(&service.history, "Public draft", &rules).await;
+        assert_eq!(independent[0].reason_code, Some("decision_unavailable"));
+        assert!(independent[1].matched);
+        assert_eq!(independent[1].reason_code, None);
         assert!(evaluate(&service.history, "Public draft", &rules, None)
             .await
             .is_err());
@@ -552,6 +647,32 @@ mod tests {
             .await
             .is_err());
         assert_eq!(received.lock().unwrap().len(), 1);
+        let all = test_rules(
+            repo,
+            "Public draft",
+            &[
+                rules[1].clone(),
+                rules[2].clone(),
+                candidate("always", 3, None, None),
+            ],
+        )
+        .await;
+        assert_eq!(all.iter().filter(|entry| entry.matched).count(), 1);
+        assert_eq!(
+            all.iter()
+                .filter(|entry| entry.reason_code.is_some())
+                .count(),
+            2
+        );
+        failed.store(false, Ordering::SeqCst);
+        let all = test_rules(repo, "Public draft", &rules).await;
+        assert_eq!(
+            all.iter()
+                .filter(|entry| entry.matched)
+                .map(|entry| entry.rule_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["yes", "global"]
+        );
         server.abort();
     }
 }
